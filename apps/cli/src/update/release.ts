@@ -1,4 +1,4 @@
-import { type Exec, execError } from "@delacour/warden-runtime/exec";
+import { type Exec, execErrors } from "@delacour/warden-runtime/exec";
 import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
 import { releaseTarget } from "../npm/platforms";
 
@@ -58,7 +58,7 @@ export async function latestRelease(exec: Exec, repo: string): AsyncResult<Relea
 	const result = await exec(cmd);
 	if (result.exitCode !== 0) {
 		if (/release not found/i.test(result.stderr)) return resultFactory.err(`no release published on ${repo} yet`);
-		return resultFactory.err(`${execError(cmd, result)} (is gh installed and authenticated for ${repo}?)`);
+		return resultFactory.err(`${execErrors.format(cmd, result)} (is gh installed and authenticated for ${repo}?)`);
 	}
 	return parseReleaseView(result.stdout);
 }
@@ -86,5 +86,5 @@ export async function downloadRelease(
 		"--clobber",
 	];
 	const result = await exec(cmd);
-	return result.exitCode === 0 ? resultFactory.ok(undefined) : resultFactory.err(execError(cmd, result));
+	return result.exitCode === 0 ? resultFactory.ok(undefined) : resultFactory.err(execErrors.format(cmd, result));
 }

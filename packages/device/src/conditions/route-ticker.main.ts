@@ -7,7 +7,7 @@ import { geoFixArgv, geoFixFailure } from "@delacour/warden-driver-android/andro
  * process's pid as an `OwnedProcess` of the lease's location condition (see `detachedTickerArgv`).
  * A compiled `warden` runs the same loop as its hidden `__route-ticker` subcommand (`runRouteTicker`).
  */
-import { bunExec } from "@delacour/warden-runtime/exec";
+import { processExec } from "@delacour/warden-runtime/exec";
 
 /** Play the route in `raw` (a `TickerConfig` JSON). Exit code: 0 finished or stopped, 1 a fix kept failing, 2 bad config. */
 export async function runRouteTicker(raw: string): Promise<number> {
@@ -21,7 +21,7 @@ export async function runRouteTicker(raw: string): Promise<number> {
 	const ticker = startRouteTicker(route, {
 		...realTickerClock,
 		fix: async (point) => {
-			const res = await bunExec(geoFixArgv(adb, serial, point), { timeoutMs: 10_000 });
+			const res = await processExec.run(geoFixArgv(adb, serial, point), { timeoutMs: 10_000 });
 			return geoFixFailure(res);
 		},
 	});

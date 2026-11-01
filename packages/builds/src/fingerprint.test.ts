@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { bunExec, type Exec } from "@delacour/warden-runtime/exec";
+import { type Exec, processExec } from "@delacour/warden-runtime/exec";
 import { type Store, storeLocator } from "@delacour/warden-store/store";
 import {
 	computeCacheKey,
@@ -683,7 +683,7 @@ describe("computeCacheKey fingerprint memo on a real git checkout (R9)", () => {
 	};
 	/** real git, fake fingerprint */
 	const exec: Exec = async (cmd, opts) => {
-		if (cmd[0] === "git") return bunExec(cmd, opts);
+		if (cmd[0] === "git") return processExec.run(cmd, opts);
 		spawns++;
 		return { exitCode: 0, stdout: `{"hash":"${HASH}${spawns}"}`, stderr: "" };
 	};

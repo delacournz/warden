@@ -14,8 +14,8 @@ import type { HostFacts } from "@delacour/warden-leasing/host";
 import type { LeaseHost } from "@delacour/warden-leasing/lease-host";
 import { resolveOwner } from "@delacour/warden-leasing/owner";
 import { holdLeases } from "@delacour/warden-leasing/session";
-import { bunExec } from "@delacour/warden-runtime/exec";
-import { createGitFactsCache, type GitFactsCache } from "@delacour/warden-runtime/git-facts";
+import { processExec } from "@delacour/warden-runtime/exec";
+import { GitFactsCache } from "@delacour/warden-runtime/git-facts";
 import { liveness } from "@delacour/warden-store/liveness";
 import { type Store, storeLocator } from "@delacour/warden-store/store";
 import { type DeviceRequest, type Lease, leaseModel, type Owner } from "@delacour/warden-store/types";
@@ -179,7 +179,7 @@ export function createCore(options: WardenClientOptions, seams: ClientSeams = {}
 	const baseEnv = overrides.env ?? process.env;
 	const env = options.home === undefined ? baseEnv : { ...baseEnv, WARDEN_HOME: options.home };
 	const cwd = overrides.cwd ?? process.cwd();
-	const git = createGitFactsCache();
+	const git = new GitFactsCache();
 	const listeners = new Map<WardenEventKind, Set<(event: never) => void>>();
 	const emit = (event: WardenEvent): void => {
 		try {
@@ -225,7 +225,7 @@ export function createCore(options: WardenClientOptions, seams: ClientSeams = {}
 		cwd,
 		home: storeLocator.wardenHome(env),
 		now: overrides.now ?? (() => Date.now()),
-		exec: overrides.exec ?? bunExec,
+		exec: overrides.exec ?? processExec.run,
 		sleep: overrides.sleep ?? ((ms) => Bun.sleep(ms)),
 		pidAlive: overrides.pidAlive ?? liveness.processAlive,
 		log: (event) => {

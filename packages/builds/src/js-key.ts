@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Exec } from "@delacour/warden-runtime/exec";
-import { createGitFactsCache, type GitFactsCache, readGitFacts } from "@delacour/warden-runtime/git-facts";
+import { GitFactsCache, gitFactsReader } from "@delacour/warden-runtime/git-facts";
 import type { Platform } from "@delacour/warden-store/types";
 import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import { jsInputsHash, type ReadFile, readFileOrUndefined } from "./js-inputs";
@@ -82,7 +82,7 @@ export type GitContext = {
 
 /** The checkout `root` is in. Errors outside a git checkout or before the first commit. */
 export async function gitContext(exec: Exec, root: string, git?: GitFactsCache): AsyncResult<GitContext> {
-	const facts = await readGitFacts(exec, root, git ?? createGitFactsCache());
+	const facts = await gitFactsReader.read(exec, root, git ?? new GitFactsCache());
 	if (!facts) return resultFactory.err(`not a git checkout: ${root}`);
 	const head = await exec(["git", "rev-parse", "HEAD"], { cwd: root });
 	const sha = head.stdout.trim();

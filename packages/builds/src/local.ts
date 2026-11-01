@@ -9,9 +9,9 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
-import { type Exec, type ExecResult, execError } from "@delacour/warden-runtime/exec";
-import { createGitFactsCache, type GitFactsCache, readGitFacts } from "@delacour/warden-runtime/git-facts";
-import { readXcode } from "@delacour/warden-runtime/xcode";
+import { type Exec, type ExecResult, execErrors } from "@delacour/warden-runtime/exec";
+import { GitFactsCache, gitFactsReader } from "@delacour/warden-runtime/git-facts";
+import { xcodeReader } from "@delacour/warden-runtime/xcode";
 import { storeLocator } from "@delacour/warden-store/store";
 import type { Platform } from "@delacour/warden-store/types";
 import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
@@ -227,7 +227,7 @@ async function probe(deps: LocalBuildDeps, argv: string[], cwd?: string): Promis
 /** The project's git toplevel from the facts the command already read; a failed read is no toplevel, never a failed build. */
 async function gitToplevel(deps: LocalBuildDeps): Promise<string | undefined> {
 	try {
-		return (await readGitFacts(deps.exec, deps.project.root, deps.git ?? createGitFactsCache()))?.toplevel;
+		return (await gitFactsReader.read(deps.exec, deps.project.root, deps.git ?? new GitFactsCache()))?.toplevel;
 	} catch {
 		return undefined;
 	}
@@ -250,7 +250,7 @@ async function cacheEnv(deps: LocalBuildDeps): Promise<Record<string, string>> {
 	if (deps.compilerCache === false) return prebuilt;
 	const { platform } = deps;
 	const gitTop = platform === "ios" ? await gitToplevel(deps) : undefined;
-	const xcode = platform === "ios" ? await readXcode(deps.exec, deps.env) : undefined;
+	const xcode = platform === "ios" ? await xcodeReader.read(deps.exec, deps.env) : undefined;
 	return {
 		...prebuilt,
 		...compilerCacheEnv({
@@ -407,14 +407,14 @@ function expoBuildLog(root: string): string {
  */
 function describeBuildFailure(deps: LocalBuildDeps, argv: string[], res: ExecResult): string {
 	const logPath = keepBuildLog(deps, res);
-	if (deps.platform !== "ios") return `${execError(argv, res)}${logPath ? ` — full log: ${logPath}` : ""}`;
+	if (deps.platform !== "ios") return `${execErrors.format(argv, res)}${logPath ? ` — full log: ${logPath}` : ""}`;
 	const output = `${res.stdout}\n${res.stderr}`;
 	let diagnostics = parseBuildDiagnostics(output);
 	if (diagnostics.length === 0) diagnostics = parseBuildDiagnostics(expoBuildLog(deps.project.root));
 	const summary = formatBuildFailure(diagnostics, logPath);
 	return summary
 		? `exited ${res.exitCode}, ${summary}`
-		: `${execError(argv, res)}${logPath ? ` — full log: ${logPath}` : ""}`;
+		: `${execErrors.format(argv, res)}${logPath ? ` — full log: ${logPath}` : ""}`;
 }
 
 /**

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { Exec } from "@delacour/warden-runtime/exec";
-import { createGitFactsCache, readGitFacts } from "@delacour/warden-runtime/git-facts";
+import { GitFactsCache, gitFactsReader } from "@delacour/warden-runtime/git-facts";
 import { normaliseRemote, projectKey, readProjectKey, safeKey } from "./project-key";
 
 describe("normaliseRemote", () => {
@@ -79,7 +79,7 @@ describe("readProjectKey", () => {
 				return { exitCode: 0, stdout: "git@github.com:o/r.git\n", stderr: "" };
 			return { exitCode: 1, stdout: "", stderr: "" };
 		};
-		expect(await readProjectKey(exec, "/w/wt/app", createGitFactsCache())).toEqual({
+		expect(await readProjectKey(exec, "/w/wt/app", new GitFactsCache())).toEqual({
 			success: true,
 			data: "github.com/o/r:app",
 		});
@@ -93,7 +93,7 @@ describe("readProjectKey", () => {
 			if (cmd.join(" ") === COMBINED) return { exitCode: 0, stdout: "/w\n/w/.git\nrefs/heads/main\n", stderr: "" };
 			return { exitCode: 0, stdout: "https://github.com/o/r\n", stderr: "" };
 		};
-		await readProjectKey(exec, "/w", createGitFactsCache());
+		await readProjectKey(exec, "/w", new GitFactsCache());
 		expect(calls).toEqual([COMBINED, "git config --get remote.origin.url"]);
 	});
 
@@ -104,8 +104,8 @@ describe("readProjectKey", () => {
 			if (cmd.join(" ") === COMBINED) return { exitCode: 0, stdout: "/w\n/w/.git\nrefs/heads/main\n", stderr: "" };
 			return { exitCode: 0, stdout: "https://github.com/o/r\n", stderr: "" };
 		};
-		const cache = createGitFactsCache();
-		await readGitFacts(exec, "/w", cache);
+		const cache = new GitFactsCache();
+		await gitFactsReader.read(exec, "/w", cache);
 		await readProjectKey(exec, "/w", cache);
 		expect(calls.filter((c) => c === COMBINED)).toHaveLength(1);
 		expect(calls).toHaveLength(2);
@@ -120,12 +120,12 @@ describe("readProjectKey", () => {
 				return { exitCode: 0, stdout: "https://github.com/o/r", stderr: "" };
 			return { exitCode: 1, stdout: "", stderr: "" };
 		};
-		expect(await readProjectKey(exec, "/w", createGitFactsCache())).toEqual({
+		expect(await readProjectKey(exec, "/w", new GitFactsCache())).toEqual({
 			success: true,
 			data: "github.com/o/r:.",
 		});
 		const none: Exec = async () => ({ exitCode: 128, stdout: "", stderr: "not a git repo" });
-		expect(await readProjectKey(none, "/nonexistent-warden-test/x", createGitFactsCache())).toEqual({
+		expect(await readProjectKey(none, "/nonexistent-warden-test/x", new GitFactsCache())).toEqual({
 			success: true,
 			data: "path:/nonexistent-warden-test/x",
 		});
@@ -136,7 +136,7 @@ describe("readProjectKey", () => {
 			cmd.join(" ") === COMBINED
 				? { exitCode: 0, stdout: "/w/wt\n/w/main/.git\nHEAD\n", stderr: "" }
 				: { exitCode: 1, stdout: "", stderr: "" };
-		expect(await readProjectKey(exec, "/w/wt", createGitFactsCache())).toEqual({
+		expect(await readProjectKey(exec, "/w/wt", new GitFactsCache())).toEqual({
 			success: true,
 			data: "git:/w/main/.git:.",
 		});

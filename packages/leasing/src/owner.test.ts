@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { createGitFactsCache, type GitSyncRun } from "@delacour/warden-runtime/git-facts";
+import { GitFactsCache, type GitSyncRun } from "@delacour/warden-runtime/git-facts";
 import { detectOwner, leasePidFor, parseGitInfo, readGitInfo, resolveOwner } from "./owner";
 import { type TestLeaseHost, testLeaseHost } from "./testing/lease-host.testing";
 
@@ -90,14 +90,14 @@ describe("readGitInfo", () => {
 
 	test("owner resolution is one git spawn", () => {
 		const git = fakeRun({ [COMBINED]: { stdout: "/w/cowrie\n/code/warden/.git\nrefs/heads/feature/cowrie\n" } });
-		const info = readGitInfo("/w/cowrie/app", { run: git.run, cache: createGitFactsCache() });
+		const info = readGitInfo("/w/cowrie/app", { run: git.run, cache: new GitFactsCache() });
 		expect(info).toEqual({ repo: "warden", worktree: "cowrie@feature/cowrie" });
 		expect(git.spawns).toEqual([COMBINED]);
 	});
 
 	test("a second resolution of the same cwd spawns nothing", () => {
 		const git = fakeRun({ [COMBINED]: { stdout: "/code/warden\n/code/warden/.git\nrefs/heads/main\n" } });
-		const cache = createGitFactsCache();
+		const cache = new GitFactsCache();
 		const first = readGitInfo("/code/warden", { run: git.run, cache });
 		const second = readGitInfo("/code/warden", { run: git.run, cache });
 		expect(second).toEqual(first);
@@ -106,7 +106,7 @@ describe("readGitInfo", () => {
 
 	test("detached HEAD drops the branch from the worktree label", () => {
 		const git = fakeRun({ [COMBINED]: { stdout: "/code/warden\n/code/warden/.git\nHEAD\n" } });
-		expect(readGitInfo("/code/warden", { run: git.run, cache: createGitFactsCache() })).toEqual({
+		expect(readGitInfo("/code/warden", { run: git.run, cache: new GitFactsCache() })).toEqual({
 			repo: "warden",
 			worktree: "warden",
 		});
@@ -118,7 +118,7 @@ describe("readGitInfo", () => {
 			[COMBINED]: { exitCode: 128, stdout: "/code/new\n/code/new/.git\n" },
 			"branch --show-current": { stdout: "main\n" },
 		});
-		expect(readGitInfo("/code/new", { run: git.run, cache: createGitFactsCache() })).toEqual({
+		expect(readGitInfo("/code/new", { run: git.run, cache: new GitFactsCache() })).toEqual({
 			repo: "new",
 			worktree: "new@main",
 		});
@@ -127,7 +127,7 @@ describe("readGitInfo", () => {
 
 	test("outside git there is no info, after one spawn", () => {
 		const git = fakeRun({});
-		expect(readGitInfo("/tmp/plain", { run: git.run, cache: createGitFactsCache() })).toBeUndefined();
+		expect(readGitInfo("/tmp/plain", { run: git.run, cache: new GitFactsCache() })).toBeUndefined();
 		expect(git.spawns).toHaveLength(1);
 	});
 });

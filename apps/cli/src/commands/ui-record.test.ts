@@ -5,7 +5,7 @@ import { makeSuiteRepo } from "@delacour/warden-core/affected/fixture.testing";
 import type { DevtoolsFacet } from "@delacour/warden-devtools/devtools.types";
 import { type ElementSpec, el, fakeDriver, snapshotOf } from "@delacour/warden-driver/testing/driver";
 import { recordingSchema } from "@delacour/warden-e2e/authoring/recording.schema";
-import { bunExec } from "@delacour/warden-runtime/exec";
+import { processExec } from "@delacour/warden-runtime/exec";
 import type { DevtoolsDeps } from "@delacour/warden-sdk/ops/devtools";
 import { resultFactory } from "@delacour/warden-types/result";
 import type { VerifyInput, VerifyReport } from "../agent-ui/authoring-verify";
@@ -120,7 +120,7 @@ function harness(
 			},
 		},
 	};
-	const c = testContext([], { now: () => clock.t, ...(options.exec ? { exec: bunExec } : {}) });
+	const c = testContext([], { now: () => clock.t, ...(options.exec ? { exec: processExec.run } : {}) });
 	cleanups.push(c.cleanup);
 	if (options.cwd !== undefined) c.cwd = options.cwd;
 	c.env = { ...c.env, ...OWNER_ENV, WARDEN_UI_SECRET_PASSWORD: "hunter22" };

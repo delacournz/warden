@@ -1,5 +1,5 @@
-import { execError } from "@delacour/warden-runtime/exec";
-import { readXcode } from "@delacour/warden-runtime/xcode";
+import { execErrors } from "@delacour/warden-runtime/exec";
+import { xcodeReader } from "@delacour/warden-runtime/xcode";
 import { storeLocator } from "@delacour/warden-store/store";
 import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
 import { buildLockKey, withBuildLock } from "../lock";
@@ -92,7 +92,7 @@ async function runBuild(argv: string[], input: EnsureRunnerBuildInput): Promise<
 	const known = classifyRunnerOutput(output);
 	return {
 		built: false,
-		error: known ?? buildFailed(execError(argv.slice(0, 2), result), outputTail(output)),
+		error: known ?? buildFailed(execErrors.format(argv.slice(0, 2), result), outputTail(output)),
 	};
 }
 
@@ -105,7 +105,7 @@ export async function expectedRunnerDerivedData(
 	input: Pick<EnsureRunnerBuildInput, "team" | "configTeamId" | "env" | "home" | "exec" | "loadSources">
 ): AsyncResult<string, RunnerBuildError> {
 	const home = input.home ?? storeLocator.wardenHome(input.env);
-	const xcode = await readXcode(input.exec, input.env);
+	const xcode = await xcodeReader.read(input.exec, input.env);
 	if (!xcode.success) return failed(buildFailed(`no usable Xcode: ${xcode.error}`));
 	const team = await resolveTeam({
 		explicit: input.team,
@@ -132,7 +132,7 @@ export async function expectedRunnerDerivedData(
 export async function ensureRunnerBuild(input: EnsureRunnerBuildInput): AsyncResult<RunnerBuild, RunnerBuildError> {
 	const now = input.now ?? Date.now;
 	const home = input.home ?? storeLocator.wardenHome(input.env);
-	const xcode = await readXcode(input.exec, input.env);
+	const xcode = await xcodeReader.read(input.exec, input.env);
 	if (!xcode.success) return failed(buildFailed(`no usable Xcode: ${xcode.error}`));
 
 	const team = await resolveTeam({

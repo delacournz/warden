@@ -11,7 +11,7 @@ import { overlayDirUnlessRepoConfig } from "@delacour/warden-builds/overlay";
 import { type E2eSuiteConfig, e2eSuiteSchema } from "@delacour/warden-config/affected.schema";
 import { type ConditionsConfig, mergeConditionsConfig } from "@delacour/warden-config/conditions.config";
 import type { Exec } from "@delacour/warden-runtime/exec";
-import { createGitFactsCache, type GitFactsCache, readGitFacts } from "@delacour/warden-runtime/git-facts";
+import { GitFactsCache, gitFactsReader } from "@delacour/warden-runtime/git-facts";
 import type { Platform } from "@delacour/warden-store/types";
 import { type AsyncResult, type ErrorResult, type Result, resultFactory } from "@delacour/warden-types/result";
 import { DEFAULT_E2E_COUNT, DEFAULT_SPECS_DIR, DEV_MENU_OFF_ARGS } from "./affected.defaults";
@@ -152,7 +152,7 @@ export async function findSuite(
 	git: GitFactsCache | undefined,
 	env: Record<string, string | undefined>
 ): AsyncResult<Suite, SuiteError> {
-	const stopAt = (await readGitFacts(exec, cwd, git ?? createGitFactsCache()))?.toplevel;
+	const stopAt = (await gitFactsReader.read(exec, cwd, git ?? new GitFactsCache()))?.toplevel;
 	const overlay = await overlayDirUnlessRepoConfig(exec, cwd, stopAt, env, git);
 	const found = findWardenConfig(cwd, stopAt, env, overlay);
 	if (!found.success) return suiteError("config", found.error);

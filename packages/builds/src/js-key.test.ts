@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { bunExec } from "@delacour/warden-runtime/exec";
-import { createGitFactsCache } from "@delacour/warden-runtime/git-facts";
+import { processExec } from "@delacour/warden-runtime/exec";
+import { GitFactsCache } from "@delacour/warden-runtime/git-facts";
 import { DEFAULT_JS_INPUTS } from "./builds.defaults";
 import {
 	computeJsKey,
@@ -18,7 +18,7 @@ import {
 let dir: string;
 
 async function git(cwd: string, ...args: string[]): Promise<string> {
-	const res = await bunExec(["git", "-c", "user.email=t@t", "-c", "user.name=t", ...args], { cwd });
+	const res = await processExec.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", ...args], { cwd });
 	if (res.exitCode !== 0) throw new Error(`git ${args.join(" ")}: ${res.stderr}`);
 	return res.stdout.trim();
 }
@@ -48,7 +48,7 @@ afterEach(() => rmSync(dir, { recursive: true, force: true }));
 const APP = { "src/a.ts": "a", "app.json": "{}", "ios/Podfile": "pods", "android/build.gradle": "g" };
 
 const deps = (root: string, over: Partial<JsKeyDeps> = {}): JsKeyDeps => ({
-	exec: bunExec,
+	exec: processExec.run,
 	root,
 	jsInputs: DEFAULT_JS_INPUTS,
 	kind: "simulator",
@@ -137,27 +137,27 @@ describe("gitContext", () => {
 	test("worktree, branch and head", async () => {
 		const root = await repo("a", APP);
 		const head = await git(root, "rev-parse", "HEAD");
-		const ctx = await gitContext(bunExec, root, createGitFactsCache());
+		const ctx = await gitContext(processExec.run, root, new GitFactsCache());
 		expect(ctx).toEqual({ success: true, data: { worktree: root, branch: "main", head } });
 	});
 
 	test("a subdirectory reports the checkout's toplevel", async () => {
 		const root = await repo("a", APP);
-		const ctx = await gitContext(bunExec, join(root, "src"), createGitFactsCache());
+		const ctx = await gitContext(processExec.run, join(root, "src"), new GitFactsCache());
 		expect(ctx.success && ctx.data.worktree).toBe(root);
 	});
 
 	test("a detached HEAD has no branch", async () => {
 		const root = await repo("a", APP);
 		await git(root, "checkout", "-q", "--detach");
-		const ctx = await gitContext(bunExec, root, createGitFactsCache());
+		const ctx = await gitContext(processExec.run, root, new GitFactsCache());
 		expect(ctx.success && "branch" in ctx.data).toBe(false);
 	});
 
 	test("outside a checkout is an error", async () => {
 		const plain = join(dir, "plain");
 		mkdirSync(plain);
-		const ctx = await gitContext(bunExec, plain, createGitFactsCache());
+		const ctx = await gitContext(processExec.run, plain, new GitFactsCache());
 		expect(ctx.success).toBe(false);
 	});
 });

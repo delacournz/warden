@@ -18,7 +18,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, relative, resolve } from "node:path";
-import { bunExec, type Exec, execError } from "@delacour/warden-runtime/exec";
+import { type Exec, execErrors, processExec } from "@delacour/warden-runtime/exec";
 
 const ANDROID_DIR = resolve(import.meta.dir, "..");
 export const SOURCE_DIR = join(ANDROID_DIR, "src");
@@ -153,7 +153,7 @@ export type Manifest = {
 
 async function run(exec: Exec, cmd: readonly string[]): Promise<string> {
 	const result = await exec(cmd);
-	if (result.exitCode !== 0) throw new Error(execError(cmd, result));
+	if (result.exitCode !== 0) throw new Error(execErrors.format(cmd, result));
 	return `${result.stdout}${result.stderr}`.trim();
 }
 
@@ -205,7 +205,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
 	await mkdir(classes, { recursive: true });
 
 	const t0 = performance.now();
-	await run(bunExec, [
+	await run(processExec.run, [
 		toolchain.javac,
 		"-source",
 		"8",
@@ -219,7 +219,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
 		...sources,
 	]);
 	const classFiles = (await readdir(classes, { recursive: true })).filter((f) => f.endsWith(".class")).sort();
-	await run(bunExec, [
+	await run(processExec.run, [
 		toolchain.d8,
 		"--release",
 		"--min-api",
@@ -243,7 +243,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
 		sourceSha256: sourceHash(SOURCE_DIR, sources),
 		minApi: MIN_API,
 		d8: `build-tools ${toolchain.buildTools}`,
-		javac: (await run(bunExec, [toolchain.javac, "-version"])).split("\n")[0] ?? "javac",
+		javac: (await run(processExec.run, [toolchain.javac, "-version"])).split("\n")[0] ?? "javac",
 		androidJar: toolchain.platform,
 		builtAt: new Date().toISOString(),
 	};

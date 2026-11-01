@@ -1,5 +1,5 @@
 import { loadavg } from "node:os";
-import { readXcode } from "@delacour/warden-runtime/xcode";
+import { xcodeReader } from "@delacour/warden-runtime/xcode";
 import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import type { Host } from "../results/schema";
 import type { Exec } from "./exec";
@@ -18,7 +18,7 @@ function optional<K extends string>(key: K, value: string | undefined): { [P in 
 
 /** The selected Xcode's version (`27.1`), honouring `DEVELOPER_DIR`; undefined when none is readable. */
 async function xcodeVersion(exec: Exec): Promise<string | undefined> {
-	const xcode = await readXcode(async (cmd, opts) => {
+	const xcode = await xcodeReader.read(async (cmd, opts) => {
 		const [bin = "", ...args] = cmd;
 		const r = await exec.run(bin, args, { timeoutMs: 15_000, env: opts?.env });
 		return { exitCode: r.spawnError === undefined ? r.code : 127, stdout: r.stdout, stderr: r.stderr };

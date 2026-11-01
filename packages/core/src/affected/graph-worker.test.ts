@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { bunExec } from "@delacour/warden-runtime/exec";
+import { processExec } from "@delacour/warden-runtime/exec";
 import { graphOf, makeFixtureRepo } from "../testing/fixture.testing";
 import { reachable, TYPESCRIPT_MISSING } from "./graph";
 import { importsOfDoc, parseGraphDoc } from "./graph-snapshot";
@@ -53,7 +53,7 @@ describe("buildGraphDoc without a usable compiler (cli-size-R5)", () => {
 describe("graph-worker.ts as a script", () => {
 	test("prints the table for the request in argv", async () => {
 		const request = { platform: "android", repoRoot: dir, entries: [join(dir, "src/app/(app)/chats.tsx")] };
-		const res = await bunExec([process.execPath, WORKER, JSON.stringify(request)], { cwd: dir });
+		const res = await processExec.run([process.execPath, WORKER, JSON.stringify(request)], { cwd: dir });
 		expect(res.exitCode).toBe(0);
 		const doc = parseGraphDoc(res.stdout);
 		expect(doc?.files).toContain(join(dir, "src/chat/android-only.tsx"));
@@ -61,7 +61,7 @@ describe("graph-worker.ts as a script", () => {
 	});
 
 	test("a request that is not one fails", async () => {
-		const res = await bunExec([process.execPath, WORKER, '{"platform":"web"}'], { cwd: dir });
+		const res = await processExec.run([process.execPath, WORKER, '{"platform":"web"}'], { cwd: dir });
 		expect(res.exitCode).not.toBe(0);
 		expect(res.stdout).toBe("");
 	});

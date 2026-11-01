@@ -11,7 +11,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { bunExec } from "@delacour/warden-runtime/exec";
+import { processExec } from "@delacour/warden-runtime/exec";
 import { makeSuiteRepo } from "../testing/fixture.testing";
 import {
 	type GraphDoc,
@@ -97,7 +97,7 @@ describe("snapshotKey", () => {
 		...extra,
 	});
 	const key = (extra: Partial<GraphRequest> = {}, ignoreDir?: string) =>
-		snapshotKey(bunExec, request(extra), ignoreDir);
+		snapshotKey(processExec.run, request(extra), ignoreDir);
 	const git = (...args: string[]) => {
 		const res = Bun.spawnSync(["git", ...args], { cwd: dir });
 		if (res.exitCode !== 0) throw new Error(res.stderr.toString());
@@ -173,8 +173,8 @@ describe("snapshotKey", () => {
 		const empty = mkdtempSync(join(tmpdir(), "warden-empty-"));
 		try {
 			Bun.spawnSync(["git", "init", "-q"], { cwd: empty });
-			expect(await snapshotKey(bunExec, request({ repoRoot: plain }))).toBeUndefined();
-			expect(await snapshotKey(bunExec, request({ repoRoot: empty }))).toBeUndefined();
+			expect(await snapshotKey(processExec.run, request({ repoRoot: plain }))).toBeUndefined();
+			expect(await snapshotKey(processExec.run, request({ repoRoot: empty }))).toBeUndefined();
 		} finally {
 			rmSync(plain, { recursive: true, force: true });
 			rmSync(empty, { recursive: true, force: true });

@@ -48,8 +48,8 @@ import {
 } from "@delacour/warden-leasing/session";
 import { hideSimWindows } from "@delacour/warden-leasing/sim-windows";
 import { slimSimulator } from "@delacour/warden-providers/slim";
-import { bunExec, execError } from "@delacour/warden-runtime/exec";
-import { readGitFacts, readGitFactsSync } from "@delacour/warden-runtime/git-facts";
+import { execErrors, processExec } from "@delacour/warden-runtime/exec";
+import { gitFactsReader } from "@delacour/warden-runtime/git-facts";
 import { storeLocator } from "@delacour/warden-store/store";
 import { leaseModel, type Owner, type Platform } from "@delacour/warden-store/types";
 import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
@@ -352,7 +352,7 @@ export function parseBatchArgs(
 async function commandJobs(ctx: CommandContext, args: BatchArgs, command: string): AsyncResult<string[]> {
 	const cmd = ["sh", "-c", command];
 	const res = await ctx.exec(cmd, { cwd: args.cwd, env: { ...ctx.env, ...args.env } });
-	if (res.exitCode !== 0) return resultFactory.err(`jobsFrom.command: ${execError(cmd, res)}`);
+	if (res.exitCode !== 0) return resultFactory.err(`jobsFrom.command: ${execErrors.format(cmd, res)}`);
 	const jobs = parseJobLines(res.stdout);
 	return jobs.length > 0 ? resultFactory.ok(jobs) : resultFactory.err(`jobsFrom.command: no jobs from \`${command}\``);
 }
@@ -1208,7 +1208,7 @@ function launchRunMetro(
 				sleep: deps.sleep,
 				spawn: (cmd, env, cwd) => deps.spawn(cmd, { env, log: o.log, cwd, group: true, metro: true }),
 				expoBin: (root) => resolveExpoBin(root, deps.which),
-				git: (root) => readGitFactsSync(root, { cache: ctx.git }),
+				git: (root) => gitFactsReader.readSync(root, { cache: ctx.git }),
 			},
 			{
 				projectRoot: plan.projectRoot,
@@ -1283,7 +1283,7 @@ export async function openOnDevices(
 			if (plan.bundleId === undefined) return undefined;
 			const argv = devClientLaunchArgv(d.udid, plan.bundleId, metro.url, plan.launchArgs);
 			const res = await ctx.exec(argv, { timeoutMs: OPEN_LAUNCH_MS });
-			if (res.exitCode !== 0) warn(ctx, `warden ${name}: ${execError(argv, res)}`);
+			if (res.exitCode !== 0) warn(ctx, `warden ${name}: ${execErrors.format(argv, res)}`);
 			return undefined;
 		})
 	);
@@ -2037,7 +2037,7 @@ async function resolveTarget(
 		const platform = await resolvePlatform(ctx, target);
 		return platform.success ? resultFactory.ok({ platform: platform.data }) : platform;
 	}
-	const stopAt = (await readGitFacts(ctx.exec, ctx.cwd, ctx.git))?.toplevel;
+	const stopAt = (await gitFactsReader.read(ctx.exec, ctx.cwd, ctx.git))?.toplevel;
 	const found = findBatchPreset({ start: ctx.cwd, env: ctx.env, name: target, ...(stopAt ? { stopAt } : {}) });
 	if (!found.success) return found;
 	const { preset, names } = found.data;
@@ -2515,7 +2515,7 @@ export const defaultBatchDeps: BatchDeps = {
 	sleep: (ms) => Bun.sleep(ms),
 	record: (udid, path) => startSimRecording(udid, path, Date.now),
 	screenshot: captureScreenshot,
-	slim: (udid, profile) => slimSimulator(bunExec, udid, profile ? { profile } : {}),
+	slim: (udid, profile) => slimSimulator(processExec.run, udid, profile ? { profile } : {}),
 	writeFile: async (path, data) => {
 		await mkdir(dirname(path), { recursive: true });
 		await writeFile(path, data);
@@ -2541,7 +2541,7 @@ export const defaultBatchDeps: BatchDeps = {
 		const timer = setTimeout(fn, ms);
 		return () => clearTimeout(timer);
 	},
-	metroProbe: (port, projectRoot) => metroOwner(bunExec, port, projectRoot),
+	metroProbe: (port, projectRoot) => metroOwner(processExec.run, port, projectRoot),
 	prewarm: prewarmMetro,
 	warmConnect,
 	residentSocket,

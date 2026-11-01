@@ -17,7 +17,7 @@ import { createReadStream, existsSync } from "node:fs";
 import { cp, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { bunExec, type Exec, execError } from "@delacour/warden-runtime/exec";
+import { type Exec, execErrors, processExec } from "@delacour/warden-runtime/exec";
 import { z } from "zod";
 
 const lockSchema = z.object({
@@ -173,7 +173,7 @@ export type SourceDeps = { exec: Exec; srcDir: string; dest: string; log: (line:
 
 async function run(exec: Exec, cmd: readonly string[], cwd?: string): Promise<string> {
 	const result = await exec(cmd, { cwd });
-	if (result.exitCode !== 0) throw new Error(execError(cmd, result));
+	if (result.exitCode !== 0) throw new Error(execErrors.format(cmd, result));
 	return result.stdout;
 }
 
@@ -213,7 +213,7 @@ async function checkoutTag(exec: Exec, idbDir: string, version: string): Promise
 		await run(exec, ["git", "-C", idbDir, "fetch", "--depth", "1", "origin", "tag", version]);
 		result = await exec(describe);
 	}
-	if (result.exitCode !== 0) throw new Error(execError(describe, result));
+	if (result.exitCode !== 0) throw new Error(execErrors.format(describe, result));
 	return result.stdout.trim();
 }
 
@@ -266,7 +266,7 @@ export async function main(argv: readonly string[]): Promise<number> {
 	const home = process.env.HOME ?? homedir();
 	if (argv.includes("--from-source")) {
 		const srcDir = process.env.WARDEN_IDB_SRC || sourcePath(home, lock.source?.ref ?? lock.version);
-		await buildFromSource(lock, { exec: bunExec, srcDir, dest, log });
+		await buildFromSource(lock, { exec: processExec.run, srcDir, dest, log });
 		log(`built ${lock.version} from source -> ${dest}`);
 		return 0;
 	}

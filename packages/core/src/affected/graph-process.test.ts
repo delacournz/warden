@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
-import { bunExec, type Exec, type ExecResult } from "@delacour/warden-runtime/exec";
+import { type Exec, type ExecResult, processExec } from "@delacour/warden-runtime/exec";
 import { graphOf, makeSuiteRepo } from "../testing/fixture.testing";
 import { findSuite } from "./affected";
 import { reachable, TYPESCRIPT_UNUSABLE_EXIT } from "./graph";
@@ -23,7 +23,7 @@ let spawns: string[][];
 /** the real exec, remembering every command that is not git (the walker runs) */
 const counting: Exec = (cmd, opts) => {
 	if (cmd[0] !== "git") spawns.push([...cmd]);
-	return bunExec(cmd, opts);
+	return processExec.run(cmd, opts);
 };
 
 beforeEach(async () => {
@@ -140,7 +140,9 @@ describe("loadImportGraph", () => {
 	test("a worker with no usable typescript is that error, not an in-process walk (cli-size-R5)", async () => {
 		const res = await loadResult({
 			exec: async (cmd, o) =>
-				cmd[0] === "git" ? bunExec(cmd, o) : done("", TYPESCRIPT_UNUSABLE_EXIT, "typescript 4.6 at /x is too old\n"),
+				cmd[0] === "git"
+					? processExec.run(cmd, o)
+					: done("", TYPESCRIPT_UNUSABLE_EXIT, "typescript 4.6 at /x is too old\n"),
 		});
 		expect(res).toEqual({ success: false, error: "typescript 4.6 at /x is too old" });
 	});
@@ -149,7 +151,7 @@ describe("loadImportGraph", () => {
 		const colored = await loadResult({
 			exec: async (cmd, o) =>
 				cmd[0] === "git"
-					? bunExec(cmd, o)
+					? processExec.run(cmd, o)
 					: done(
 							"",
 							TYPESCRIPT_UNUSABLE_EXIT,
@@ -158,7 +160,7 @@ describe("loadImportGraph", () => {
 		});
 		expect(colored).toEqual({ success: false, error: "no typescript" });
 		const empty = await loadResult({
-			exec: async (cmd, o) => (cmd[0] === "git" ? bunExec(cmd, o) : done("", TYPESCRIPT_UNUSABLE_EXIT, "")),
+			exec: async (cmd, o) => (cmd[0] === "git" ? processExec.run(cmd, o) : done("", TYPESCRIPT_UNUSABLE_EXIT, "")),
 		});
 		expect(empty).toEqual({
 			success: false,
@@ -173,7 +175,7 @@ describe("loadImportGraph", () => {
 	});
 
 	test("a worker that crashes, or prints garbage, falls back with a warning and caches nothing", async () => {
-		const git: Exec = bunExec;
+		const git: Exec = processExec.run;
 		const crash = await load({
 			exec: async (cmd, o) => (cmd[0] === "git" ? git(cmd, o) : done("", 1, "SyntaxError: boom")),
 		});
@@ -312,7 +314,7 @@ describe("loadImportGraph in a compiled binary (no worker script on disk)", () =
 
 describe("graphEntries", () => {
 	test("every spec's entries that exist, then the router layouts above them", async () => {
-		const suite = await findSuite(bunExec, dir, undefined, undefined, {});
+		const suite = await findSuite(processExec.run, dir, undefined, undefined, {});
 		if (!suite.success) throw new Error(suite.error.message);
 		const config = { ...suite.data.config, routerRoot: "src/app" };
 		expect(rel(graphEntries(config, dir, "ios"))).toEqual([
@@ -328,7 +330,7 @@ describe("graphEntries", () => {
 	});
 
 	test("an entry that does not exist is left out", async () => {
-		const suite = await findSuite(bunExec, dir, undefined, undefined, {});
+		const suite = await findSuite(processExec.run, dir, undefined, undefined, {});
 		if (!suite.success) throw new Error(suite.error.message);
 		const specs = {
 			...suite.data.config.specs,

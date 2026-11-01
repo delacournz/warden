@@ -7,7 +7,7 @@ import { applyAndroidNetwork } from "@delacour/warden-driver-android/android-net
 import { createInjectChannel, injectStatePath } from "@delacour/warden-driver-ios/inject";
 import { createIosNetwork } from "@delacour/warden-driver-ios/ios-network";
 import { locationClearArgv, locationSetArgv } from "@delacour/warden-driver-ios/simctl";
-import { bunExec } from "@delacour/warden-runtime/exec";
+import { processExec } from "@delacour/warden-runtime/exec";
 import { storeLocator } from "@delacour/warden-store/store";
 import { leaseNetworkProxy } from "./lease-network-proxy";
 import type { SchedulerConfig, SchedulerPlatform } from "./scheduler.config";
@@ -29,7 +29,10 @@ const openAndroidTarget: TargetOpener = (config) => {
 	const session = openAdbSession({ adb, serial });
 	const target: SchedulerTarget = {
 		network: async (condition) => {
-			const res = await applyAndroidNetwork({ session, exec: bunExec, adb, serial, clock: realClock }, condition);
+			const res = await applyAndroidNetwork(
+				{ session, exec: processExec.run, adb, serial, clock: realClock },
+				condition
+			);
 			return res.success ? { success: true } : res;
 		},
 		location: async (op) => {
@@ -40,7 +43,9 @@ const openAndroidTarget: TargetOpener = (config) => {
 					error: { message: `a ${op.kind} location cannot run inside a scheduler step; use the route ticker` },
 				};
 			}
-			const failure = geoFixFailure(await bunExec(geoFixArgv(adb, serial, op, op.altM), { timeoutMs: GEO_FIX_MS }));
+			const failure = geoFixFailure(
+				await processExec.run(geoFixArgv(adb, serial, op, op.altM), { timeoutMs: GEO_FIX_MS })
+			);
 			return failure === undefined ? { success: true } : { success: false, error: { message: failure } };
 		},
 	};
@@ -87,7 +92,7 @@ const openIosTarget: TargetOpener = (config) => {
 				};
 			}
 			const argv = op.kind === "clear" ? locationClearArgv(udid) : locationSetArgv(udid, op);
-			const res = await bunExec(argv, { timeoutMs: GEO_FIX_MS });
+			const res = await processExec.run(argv, { timeoutMs: GEO_FIX_MS });
 			return res.exitCode === 0
 				? { success: true }
 				: { success: false, error: { message: `simctl location exited ${res.exitCode}: ${res.stderr.trim()}` } };

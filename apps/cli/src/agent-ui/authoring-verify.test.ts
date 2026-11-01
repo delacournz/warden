@@ -3,7 +3,7 @@ import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { findSuite } from "@delacour/warden-core/affected/affected";
 import { makeSuiteRepo } from "@delacour/warden-core/affected/fixture.testing";
-import { bunExec } from "@delacour/warden-runtime/exec";
+import { processExec } from "@delacour/warden-runtime/exec";
 import { resultFactory } from "@delacour/warden-types/result";
 import type { ProcHandle, SpawnOptions } from "../commands/batch";
 import { type TestContext, testContext } from "../testing";
@@ -31,7 +31,7 @@ const RESULT = (file: string, status: string) =>
 async function setup(code: number, results: string | undefined) {
 	const repo = await makeSuiteRepo();
 	cleanup.push(() => rmSync(repo.dir, { recursive: true, force: true }));
-	const ctx: TestContext = testContext([], { exec: bunExec });
+	const ctx: TestContext = testContext([], { exec: processExec.run });
 	cleanup.push(ctx.cleanup);
 	ctx.cwd = repo.dir;
 	const suite = await findSuite(ctx.exec, repo.dir, undefined, ctx.git, ctx.env);

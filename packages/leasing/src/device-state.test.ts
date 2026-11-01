@@ -3,7 +3,7 @@ import { simctlDevicesJson } from "@delacour/warden-providers/testing/ios.fixtur
 import { fakeExec } from "@delacour/warden-runtime/testing/exec.testing";
 import { deviceState } from "./device-state";
 
-const exec = fakeExec([
+const exec = fakeExec.build([
 	[
 		"xcrun simctl list devices -j",
 		{

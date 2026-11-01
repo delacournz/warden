@@ -7,7 +7,7 @@
  */
 import { mkdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { bunExec, type Exec, execError } from "@delacour/warden-runtime/exec";
+import { type Exec, execErrors, processExec } from "@delacour/warden-runtime/exec";
 
 const NATIVE_DIR = resolve(import.meta.dir, "..");
 export const INJECT_SOURCE = join(NATIVE_DIR, "ios-inject", "WardenInject.m");
@@ -68,7 +68,7 @@ export function harnessArgv(out: string): string[] {
 
 async function run(exec: Exec, cmd: readonly string[]): Promise<string> {
 	const result = await exec(cmd);
-	if (result.exitCode !== 0) throw new Error(execError(cmd, result));
+	if (result.exitCode !== 0) throw new Error(execErrors.format(cmd, result));
 	return result.stdout;
 }
 
@@ -79,7 +79,7 @@ export async function buildDylib(exec: Exec, target: Target, out: string): Promi
 }
 
 export async function main(argv: readonly string[]): Promise<number> {
-	const exec = bunExec;
+	const exec = processExec.run;
 	const macosAt = argv.indexOf("--macos");
 	if (macosAt >= 0) {
 		const dir = argv[macosAt + 1];

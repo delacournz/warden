@@ -1,7 +1,7 @@
 import { rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { RUNNER_BLOB } from "@delacour/warden-builds/ios-runner/pack";
-import { type Exec, execError } from "@delacour/warden-runtime/exec";
+import { type Exec, execErrors } from "@delacour/warden-runtime/exec";
 import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import { RUNTIME_BLOB } from "../e2e/e2e-runtime";
 import { type BuildInfo, DEFINE_KEY } from "./build-info";
@@ -92,12 +92,12 @@ export async function buildFromSource(
 	try {
 		for (const pack of [runtimeBlobArgs(sourceDir, blob, version), runnerBlobArgs(sourceDir, runnerBlob)]) {
 			const packed = await exec(pack, { cwd: cliDir(sourceDir) });
-			if (packed.exitCode !== 0) return resultFactory.err(execError(pack, packed));
+			if (packed.exitCode !== 0) return resultFactory.err(execErrors.format(pack, packed));
 		}
 		const embed = [blob, runnerBlob];
 		const cmd = compileArgs({ entry: join(cliDir(sourceDir), "src", "cli.ts"), outfile, info, embed });
 		const result = await exec(cmd, { cwd: cliDir(sourceDir) });
-		return result.exitCode === 0 ? resultFactory.ok(info) : resultFactory.err(execError(cmd, result));
+		return result.exitCode === 0 ? resultFactory.ok(info) : resultFactory.err(execErrors.format(cmd, result));
 	} finally {
 		rmSync(blob, { force: true });
 		rmSync(runnerBlob, { force: true });

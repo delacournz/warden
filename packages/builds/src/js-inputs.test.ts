@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { bunExec, type Exec } from "@delacour/warden-runtime/exec";
+import { type Exec, processExec } from "@delacour/warden-runtime/exec";
 import { combineKey, jsInputsHash, matchJsInputs, type ReadFile, readFileOrUndefined } from "./js-inputs";
 
 const INDEX_ARGV = "git ls-files -z -v -s --cached --others --exclude-standard -- .";
@@ -350,7 +350,7 @@ describe("jsInputsHash with ../ globs", () => {
 describe("jsInputsHash on a real git repo", () => {
 	const dirs: string[] = [];
 	const git = async (cwd: string, ...args: string[]): Promise<void> => {
-		const res = await bunExec(["git", ...args], { cwd });
+		const res = await processExec.run(["git", ...args], { cwd });
 		if (res.exitCode !== 0) throw new Error(`git ${args.join(" ")}: ${res.stderr}`);
 	};
 	const write = (root: string, path: string, text: string): void => {
@@ -391,7 +391,7 @@ describe("jsInputsHash on a real git repo", () => {
 		return readFileOrUndefined(path);
 	};
 	const hashOf = async (root: string, jsInputs: readonly string[] = ["src/**"]): Promise<string> => {
-		const res = await jsInputsHash({ exec: bunExec, readFile: spy, root, jsInputs });
+		const res = await jsInputsHash({ exec: processExec.run, readFile: spy, root, jsInputs });
 		if (!res.success) throw new Error(res.error);
 		return res.data;
 	};
@@ -486,12 +486,12 @@ describe("jsInputsHash on a real git repo", () => {
 
 	test("no file matches → error; not a git repository → error", async () => {
 		const dir = await repo();
-		const none = await jsInputsHash({ exec: bunExec, root: dir, jsInputs: ["nothing/**"] });
+		const none = await jsInputsHash({ exec: processExec.run, root: dir, jsInputs: ["nothing/**"] });
 		expect(none.success).toBe(false);
 		if (!none.success) expect(none.error).toContain("matched no files");
 		const bare = realpathSync(mkdtempSync(join(tmpdir(), "warden-not-git-")));
 		dirs.push(bare);
-		const res = await jsInputsHash({ exec: bunExec, root: bare, jsInputs: ["src/**"] });
+		const res = await jsInputsHash({ exec: processExec.run, root: bare, jsInputs: ["src/**"] });
 		expect(res.success).toBe(false);
 		if (!res.success) expect(res.error).toContain("could not list JS inputs");
 	});

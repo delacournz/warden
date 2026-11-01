@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import { existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, realpathSync, statSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
-import { type Exec, execError } from "@delacour/warden-runtime/exec";
-import { findNodeBin } from "@delacour/warden-runtime/node-bin";
+import { type Exec, execErrors } from "@delacour/warden-runtime/exec";
+import { nodeBin } from "@delacour/warden-runtime/node-bin";
 import { BuildsTable, type FingerprintMemoKey, type FingerprintMemoRow } from "@delacour/warden-store/builds-table";
 import type { Store } from "@delacour/warden-store/store";
 import type { Platform } from "@delacour/warden-store/types";
@@ -50,7 +50,7 @@ export function parseFingerprintOutput(stdout: string): Result<string> {
 
 /** `node_modules/.bin/fingerprint` nearest to `root` (hoisted monorepos put it at the repo root). */
 export function findFingerprintBin(root: string, exists: (path: string) => boolean = existsSync): string | undefined {
-	return findNodeBin(root, "fingerprint", exists);
+	return nodeBin.find(root, "fingerprint", exists);
 }
 
 /**
@@ -78,7 +78,7 @@ export async function computeFingerprint(exec: Exec, project: Project, platform:
 		env: { EXPO_NO_TELEMETRY: "1" },
 		timeoutMs: FINGERPRINT_TIMEOUT_MS,
 	});
-	if (res.exitCode !== 0) return resultFactory.err(`fingerprint failed: ${execError(argv, res)}`);
+	if (res.exitCode !== 0) return resultFactory.err(`fingerprint failed: ${execErrors.format(argv, res)}`);
 	return parseFingerprintOutput(res.stdout);
 }
 

@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { bunExec } from "@delacour/warden-runtime/exec";
+import { processExec } from "@delacour/warden-runtime/exec";
 import { resultFactory } from "@delacour/warden-types/result";
 import { fakeHelperDist } from "../npm/helper.testing";
 import { packHelper } from "../npm/helper-asset";
@@ -157,13 +157,13 @@ describe("tarExtractHelper", () => {
 
 	test("extracts a packHelper tarball, replacing the old dir, leaving no staging dirs", async () => {
 		fakeHelperDist(join(root, "dist"));
-		const packed = await packHelper({ distDir: join(root, "dist"), outDir: join(root, "out"), exec: bunExec });
+		const packed = await packHelper({ distDir: join(root, "dist"), outDir: join(root, "out"), exec: processExec.run });
 		if (!packed.success) throw new Error(packed.error);
 		const dest = join(root, "home", "simd", "0.3.0");
 		mkdirSync(dest, { recursive: true });
 		writeFileSync(join(dest, "stale"), "old");
 
-		const extracted = await tarExtractHelper(bunExec)(readFileSync(packed.data.tgz), dest);
+		const extracted = await tarExtractHelper(processExec.run)(readFileSync(packed.data.tgz), dest);
 		expect(extracted).toEqual({ success: true, data: undefined });
 		expect(existsSync(join(dest, "stale"))).toBe(false);
 		expect(existsSync(join(dest, "warden-simd"))).toBe(true);
@@ -175,14 +175,14 @@ describe("tarExtractHelper", () => {
 		const dest = join(root, "simd", "0.3.0");
 		mkdirSync(dest, { recursive: true });
 		writeFileSync(join(dest, "keep"), "x");
-		const garbage = await tarExtractHelper(bunExec)(new TextEncoder().encode("not a tarball"), dest);
+		const garbage = await tarExtractHelper(processExec.run)(new TextEncoder().encode("not a tarball"), dest);
 		expect(garbage.success).toBe(false);
 
 		mkdirSync(join(root, "empty"));
 		writeFileSync(join(root, "empty", "readme"), "hi");
 		const emptyTgz = join(root, "empty.tgz");
-		await bunExec(["tar", "-czf", emptyTgz, "-C", join(root, "empty"), "."]);
-		const noBinary = await tarExtractHelper(bunExec)(readFileSync(emptyTgz), dest);
+		await processExec.run(["tar", "-czf", emptyTgz, "-C", join(root, "empty"), "."]);
+		const noBinary = await tarExtractHelper(processExec.run)(readFileSync(emptyTgz), dest);
 		expect(noBinary.success).toBe(false);
 		if (!noBinary.success) expect(noBinary.error).toContain("no warden-simd");
 		expect(existsSync(join(dest, "keep"))).toBe(true);

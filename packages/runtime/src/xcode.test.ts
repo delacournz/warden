@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { Exec, ExecResult } from "./exec";
-import { parseXcodeVersion, readXcode } from "./xcode";
+import { xcodeReader } from "./xcode";
 
 const DEV = "/Applications/Xcode.app/Contents/Developer";
 
@@ -26,10 +26,10 @@ const plistReplies = {
 	[`plutil -extract CFBundleShortVersionString raw -o - ${plist}`]: ok("27.1\n"),
 };
 
-describe("readXcode", () => {
+describe("xcodeReader.read", () => {
 	test("xcode-select path + version.plist", async () => {
 		const { exec } = fakeExec(plistReplies);
-		expect(await readXcode(exec, {})).toEqual({
+		expect(await xcodeReader.read(exec, {})).toEqual({
 			success: true,
 			data: { path: DEV, version: "27.1", build: "27A9275", major: 27, source: "xcode-select" },
 		});
@@ -42,7 +42,7 @@ describe("readXcode", () => {
 			[`plutil -extract ProductBuildVersion raw -o - ${betaPlist}`]: ok("27B1\n"),
 			[`plutil -extract CFBundleShortVersionString raw -o - ${betaPlist}`]: ok("27.2\n"),
 		});
-		const result = await readXcode(exec, { DEVELOPER_DIR: beta });
+		const result = await xcodeReader.read(exec, { DEVELOPER_DIR: beta });
 		expect(result).toEqual({
 			success: true,
 			data: { path: beta, version: "27.2", build: "27B1", major: 27, source: "DEVELOPER_DIR" },
@@ -55,7 +55,7 @@ describe("readXcode", () => {
 			"xcode-select -p": ok(`${DEV}\n`),
 			"xcodebuild -version": ok("Xcode 26.6\nBuild version 17F113\n"),
 		});
-		const result = await readXcode(exec, { DEVELOPER_DIR: "" });
+		const result = await xcodeReader.read(exec, { DEVELOPER_DIR: "" });
 		expect(result).toEqual({
 			success: true,
 			data: { path: DEV, version: "26.6", build: "17F113", major: 26, source: "xcode-select" },
@@ -65,17 +65,17 @@ describe("readXcode", () => {
 
 	test("no Xcode selected is an error", async () => {
 		const { exec } = fakeExec({});
-		expect((await readXcode(exec, {})).success).toBe(false);
+		expect((await xcodeReader.read(exec, {})).success).toBe(false);
 	});
 });
 
-describe("parseXcodeVersion", () => {
+describe("xcodeReader.parseVersion", () => {
 	test("xcodebuild -version output", () => {
-		expect(parseXcodeVersion("Xcode 27.1\nBuild version 27A9275\n")).toEqual({
+		expect(xcodeReader.parseVersion("Xcode 27.1\nBuild version 27A9275\n")).toEqual({
 			version: "27.1",
 			build: "27A9275",
 			major: 27,
 		});
-		expect(parseXcodeVersion("garbage")).toBeUndefined();
+		expect(xcodeReader.parseVersion("garbage")).toBeUndefined();
 	});
 });

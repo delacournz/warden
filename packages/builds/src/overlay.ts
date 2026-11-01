@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import type { Exec } from "@delacour/warden-runtime/exec";
-import { createGitFactsCache, type GitFactsCache, readGitFacts } from "@delacour/warden-runtime/git-facts";
+import { GitFactsCache, gitFactsReader } from "@delacour/warden-runtime/git-facts";
 import { storeLocator } from "@delacour/warden-store/store";
 import { hasRepoConfig } from "./config";
 import { readProjectKey, safeKey } from "./project-key";
@@ -22,7 +22,7 @@ export async function overlayDirFor(
 	env: Record<string, string | undefined>,
 	git?: GitFactsCache
 ): Promise<string | undefined> {
-	const toplevel = (await readGitFacts(exec, start, git ?? createGitFactsCache()))?.toplevel;
+	const toplevel = (await gitFactsReader.read(exec, start, git ?? new GitFactsCache()))?.toplevel;
 	const key = await readProjectKey(exec, toplevel ?? start, git);
 	return key.success ? overlayDir(env, key.data) : undefined;
 }

@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { E2eError } from "@delacour/warden-driver/e2e-error";
-import { type Exec, execError } from "@delacour/warden-runtime/exec";
+import { type Exec, execErrors } from "@delacour/warden-runtime/exec";
 import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import { connectSimd } from "./simd-client";
 
@@ -102,7 +102,7 @@ export async function restartRunnerHost(
 	if (argv === undefined || argv.length === 0) return resultFactory.err("WARDEN_IOS_RUNNER_RESTART is not set");
 	const cmd = argv.map((arg) => arg.replaceAll("{udid}", udid));
 	const res = await deps.exec(cmd, { timeoutMs: RUNNER_RESTART_MS });
-	return res.exitCode === 0 ? resultFactory.ok(undefined) : resultFactory.err(execError(cmd, res));
+	return res.exitCode === 0 ? resultFactory.ok(undefined) : resultFactory.err(execErrors.format(cmd, res));
 }
 
 /**
@@ -114,10 +114,10 @@ export async function rebootSim(deps: HidRecoveryDeps, udid: string): AsyncResul
 	const down = ["xcrun", "simctl", "shutdown", udid];
 	const shutdown = await deps.exec(down, { timeoutMs: SHUTDOWN_MS });
 	const already = shutdown.exitCode === ALREADY_SHUTDOWN_EXIT || shutdown.stderr.includes(ALREADY_SHUTDOWN_TEXT);
-	if (shutdown.exitCode !== 0 && !already) return resultFactory.err(execError(down, shutdown));
+	if (shutdown.exitCode !== 0 && !already) return resultFactory.err(execErrors.format(down, shutdown));
 	const up = ["xcrun", "simctl", "bootstatus", udid, "-b"];
 	const boot = await deps.exec(up, { timeoutMs: BOOT_MS });
-	return boot.exitCode === 0 ? resultFactory.ok(undefined) : resultFactory.err(execError(up, boot));
+	return boot.exitCode === 0 ? resultFactory.ok(undefined) : resultFactory.err(execErrors.format(up, boot));
 }
 
 /**
@@ -133,7 +133,7 @@ export async function runAfterReboot(
 	const cmd = argv.map((arg) => arg.replaceAll("{udid}", udid));
 	try {
 		const out = await deps.exec(cmd, { timeoutMs: AFTER_REBOOT_MS });
-		if (out.exitCode !== 0) deps.log?.(`after-reboot hook failed: ${execError(cmd, out)}`);
+		if (out.exitCode !== 0) deps.log?.(`after-reboot hook failed: ${execErrors.format(cmd, out)}`);
 	} catch (error) {
 		deps.log?.(`after-reboot hook failed: ${error instanceof Error ? error.message : String(error)}`);
 	}

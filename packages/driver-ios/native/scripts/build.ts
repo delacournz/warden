@@ -13,7 +13,7 @@
 import { existsSync } from "node:fs";
 import { cp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
-import { bunExec, type Exec, execError } from "@delacour/warden-runtime/exec";
+import { type Exec, execErrors, processExec } from "@delacour/warden-runtime/exec";
 import { type IdbLock, parseLock } from "./deps";
 
 const NATIVE_DIR = resolve(import.meta.dir, "..");
@@ -97,7 +97,7 @@ export function stageSteps(input: {
 
 async function run(exec: Exec, cmd: readonly string[], cwd?: string): Promise<string> {
 	const result = await exec(cmd, { cwd });
-	if (result.exitCode !== 0) throw new Error(execError(cmd, result));
+	if (result.exitCode !== 0) throw new Error(execErrors.format(cmd, result));
 	return result.stdout;
 }
 
@@ -110,7 +110,7 @@ export async function main(): Promise<number> {
 	}
 	checkIdbConstant(await readFile(WIRE_SWIFT, "utf8"), lock);
 
-	const exec = bunExec;
+	const exec = processExec.run;
 	const packagePath = join(NATIVE_DIR, "ios");
 	log("swift build -c release");
 	await run(exec, ["swift", "build", "-c", "release", "--package-path", packagePath, "--product", PRODUCT]);

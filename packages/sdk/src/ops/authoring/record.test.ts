@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { makeSuiteRepo } from "@delacour/warden-core/testing/fixture.testing";
 import { el, fakeDriver, snapshotOf } from "@delacour/warden-driver/testing/driver";
 import { recordingSchema } from "@delacour/warden-e2e/authoring/recording.schema";
-import { bunExec } from "@delacour/warden-runtime/exec";
+import { processExec } from "@delacour/warden-runtime/exec";
 import { resultFactory } from "@delacour/warden-types/result";
 import { recordResultSchema } from "../../contracts/record.schema";
 import { press } from "../actions";
@@ -101,7 +101,7 @@ async function rig(options: { withVerify?: boolean } = {}): Promise<Rig> {
 			cwd: repo.dir,
 			home,
 			now: () => clock.t,
-			exec: bunExec,
+			exec: processExec.run,
 			sleep: async (ms) => {
 				clock.t += ms;
 			},

@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { bunExec } from "@delacour/warden-runtime/exec";
+import { processExec } from "@delacour/warden-runtime/exec";
 import { fakeHelperDist } from "./helper.testing";
 import { packHelper } from "./helper-asset";
 
@@ -18,7 +18,7 @@ describe("packHelper", () => {
 		const dist = join(root, "dist");
 		const out = join(root, "out");
 		fakeHelperDist(dist);
-		const packed = await packHelper({ distDir: dist, outDir: out, exec: bunExec });
+		const packed = await packHelper({ distDir: dist, outDir: out, exec: processExec.run });
 		if (!packed.success) throw new Error(packed.error);
 		const bytes = readFileSync(join(out, "warden-simd-darwin-arm64.tgz"));
 		const sha = createHash("sha256").update(bytes).digest("hex");
@@ -27,7 +27,7 @@ describe("packHelper", () => {
 
 		const extracted = join(root, "extracted");
 		mkdirSync(extracted);
-		expect((await bunExec(["tar", "-xzf", packed.data.tgz, "-C", extracted])).exitCode).toBe(0);
+		expect((await processExec.run(["tar", "-xzf", packed.data.tgz, "-C", extracted])).exitCode).toBe(0);
 		for (const path of ["warden-simd", "Resources/SimulatorFrameworkBridge-iOS", "manifest.json"]) {
 			expect(existsSync(join(extracted, path))).toBe(true);
 		}
@@ -36,7 +36,7 @@ describe("packHelper", () => {
 	test("incomplete dist → error, nothing written", async () => {
 		const dist = join(root, "dist");
 		fakeHelperDist(dist, { guest: false });
-		const packed = await packHelper({ distDir: dist, outDir: join(root, "out"), exec: bunExec });
+		const packed = await packHelper({ distDir: dist, outDir: join(root, "out"), exec: processExec.run });
 		expect(packed.success).toBe(false);
 		expect(existsSync(join(root, "out"))).toBe(false);
 	});

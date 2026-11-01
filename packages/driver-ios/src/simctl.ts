@@ -14,7 +14,7 @@ import type {
 	LaunchOptions,
 } from "@delacour/warden-driver/driver.types";
 import { driverError } from "@delacour/warden-driver/errors";
-import { type Exec, type ExecResult, execError } from "@delacour/warden-runtime/exec";
+import { type Exec, type ExecResult, execErrors } from "@delacour/warden-runtime/exec";
 
 /**
  * Everything the iOS driver does through `xcrun simctl` instead of the helper: app lifecycle,
@@ -290,7 +290,7 @@ export function parseRunning(launchctlOutput: string, bundleId: string): boolean
 /** Map a failed simctl run to a `DriverError`. `appCommand` marks launch-like calls where "not installed" means the app, not the device. */
 export function simctlFailure(argv: readonly string[], res: ExecResult, appCommand = false): DriverError {
 	const text = `${res.stderr}\n${res.stdout}`;
-	const message = execError(argv, res);
+	const message = execErrors.format(argv, res);
 	const detail = { argv, exitCode: res.exitCode };
 	if (/current state:\s*(Shutdown|Creating|Shutting Down)/i.test(text) || /Unable to .* not booted/i.test(text)) {
 		return driverError("E_NOT_BOOTED", message, { detail });

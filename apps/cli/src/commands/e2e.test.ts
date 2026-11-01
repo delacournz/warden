@@ -5,7 +5,7 @@ import { makeSuiteRepo } from "@delacour/warden-core/affected/fixture.testing";
 import type { TestResult } from "@delacour/warden-e2e/runner/results";
 import { PHONE_PROBE_SCRIPT } from "@delacour/warden-providers/android";
 import { PHONE_PROPS } from "@delacour/warden-providers/testing/android.fixtures";
-import { bunExec, type Exec } from "@delacour/warden-runtime/exec";
+import { type Exec, processExec } from "@delacour/warden-runtime/exec";
 import { e2eReportSchema } from "@delacour/warden-sdk/contracts/e2e-report";
 import { jsonl, result } from "../batch/results.testing";
 import { fakeSimctl, OWNER_ENV, wardenSim } from "../simctl.testing";
@@ -43,7 +43,7 @@ async function resuiteDefault(overrides: Record<string, unknown> = {}): Promise<
 
 function setup(argv: string[], calls: string[][] = []): TestContext {
 	const sim = fakeSimctl([wardenSim(1, "Booted"), wardenSim(2, "Booted")], calls);
-	const exec: Exec = (cmd, opts) => (cmd[0] === "git" ? bunExec(cmd, opts) : sim(cmd, opts));
+	const exec: Exec = (cmd, opts) => (cmd[0] === "git" ? processExec.run(cmd, opts) : sim(cmd, opts));
 	ctx = testContext(argv, { exec });
 	ctx.env = { ...ctx.env, ...OWNER_ENV };
 	ctx.cwd = dir;
@@ -81,7 +81,7 @@ function windowListReply(script: string, reads: string[]): Awaited<ReturnType<Ex
 /** An exec for the late-window test: real git, window reads logged, the dev-client launch held until `launch` resolves. */
 function lateWindowExec(sim: Exec, launch: Promise<void>, reads: string[]): Exec {
 	return async (cmd, opts) => {
-		if (cmd[0] === "git") return bunExec(cmd, opts);
+		if (cmd[0] === "git") return processExec.run(cmd, opts);
 		if (cmd[0] === "osascript") return windowListReply(cmd[4] ?? "", reads);
 		if (cmd[0] === "xcrun" && cmd[2] === "launch") {
 			reads.push("launch:start");
@@ -315,7 +315,7 @@ describe("warden e2e", () => {
 			await resuite(suite);
 			write("src/chat/lazy.tsx", "export const x = 2;\n");
 			const sim = fakeSimctl([bioSim, wardenSim(1, "Booted")], []);
-			const exec: Exec = (cmd, opts) => (cmd[0] === "git" ? bunExec(cmd, opts) : sim(cmd, opts));
+			const exec: Exec = (cmd, opts) => (cmd[0] === "git" ? processExec.run(cmd, opts) : sim(cmd, opts));
 			ctx = testContext(["--files", "src/chat/lazy.tsx"], { exec });
 			ctx.env = { ...ctx.env, ...OWNER_ENV };
 			ctx.cwd = dir;
@@ -426,10 +426,10 @@ describe("warden e2e", () => {
 			const sim = fakeSimctl([wardenSim(1, "Booted")]);
 			const timeouts: Array<number | undefined> = [];
 			const exec: Exec = async (cmd, opts) => {
-				if (cmd[0] === "git") return bunExec(cmd, opts);
+				if (cmd[0] === "git") return processExec.run(cmd, opts);
 				if (cmd[0] === "xcrun" && cmd[2] === "launch") {
 					timeouts.push(opts?.timeoutMs);
-					// a hung launch: only the exec timeout ends it (bunExec kills it with SIGTERM)
+					// a hung launch: only the exec timeout ends it (processExec.run kills it with SIGTERM)
 					if (opts?.timeoutMs === undefined) await new Promise(() => {});
 					return { exitCode: 143, stdout: "", stderr: "" };
 				}
@@ -520,7 +520,7 @@ describe("warden e2e", () => {
 			await resuite({ ...suite, app: { kind: "dev" } }, projects);
 			// no warden sim exists and none may be created: the device claim fails after the port lease
 			const sim = fakeSimctl([]);
-			const exec: Exec = (cmd, opts) => (cmd[0] === "git" ? bunExec(cmd, opts) : sim(cmd, opts));
+			const exec: Exec = (cmd, opts) => (cmd[0] === "git" ? processExec.run(cmd, opts) : sim(cmd, opts));
 			ctx = testContext(["--files", "src/chat/lazy.tsx", "--max", "0", "--no-wait"], { exec });
 			ctx.env = { ...ctx.env, ...OWNER_ENV };
 			ctx.cwd = dir;
@@ -1092,7 +1092,7 @@ describe("warden e2e", () => {
 		const sims = () => [wardenSim(1, "Booted"), { udid: "P1", name: "warden-ipad-1", state: "Booted" as const }];
 		const legSetup = (argv: string[]) => {
 			const sim = fakeSimctl(sims(), []);
-			const exec: Exec = (cmd, opts) => (cmd[0] === "git" ? bunExec(cmd, opts) : sim(cmd, opts));
+			const exec: Exec = (cmd, opts) => (cmd[0] === "git" ? processExec.run(cmd, opts) : sim(cmd, opts));
 			ctx = testContext(argv, { exec });
 			ctx.env = { ...ctx.env, ...OWNER_ENV };
 			ctx.cwd = dir;
@@ -1253,7 +1253,7 @@ describe("warden e2e", () => {
 			});
 			const sims = [wardenSim(1, "Booted"), { udid: "P1", name: "warden-ipad-1", state: "Booted" as const }];
 			const sim = fakeSimctl(sims);
-			const exec: Exec = (cmd, opts) => (cmd[0] === "git" ? bunExec(cmd, opts) : sim(cmd, opts));
+			const exec: Exec = (cmd, opts) => (cmd[0] === "git" ? processExec.run(cmd, opts) : sim(cmd, opts));
 			ctx = testContext(["--files", "src/chat/lazy.tsx", "--devices", "all"], { exec });
 			ctx.env = { ...ctx.env, ...OWNER_ENV };
 			ctx.cwd = dir;
@@ -1272,7 +1272,7 @@ describe("warden e2e", () => {
 		const twoLegs = (...extra: string[]) => {
 			const sims = [wardenSim(1, "Booted"), { udid: "P1", name: "warden-ipad-1", state: "Booted" as const }];
 			const sim = fakeSimctl(sims);
-			const exec: Exec = (cmd, opts) => (cmd[0] === "git" ? bunExec(cmd, opts) : sim(cmd, opts));
+			const exec: Exec = (cmd, opts) => (cmd[0] === "git" ? processExec.run(cmd, opts) : sim(cmd, opts));
 			ctx = testContext(["--files", "src/chat/lazy.tsx", "--devices", "all", ...extra], { exec });
 			ctx.env = { ...ctx.env, ...OWNER_ENV };
 			ctx.cwd = dir;
@@ -1366,7 +1366,7 @@ describe("warden e2e", () => {
 			await resuite({ devices: legs, slim: true, project: "app", metro: {} }, projects);
 			const sim = fakeSimctl([wardenSim(1, "Booted"), { udid: "P1", name: "warden-ipad-1", state: "Booted" as const }]);
 			const exec: Exec = async (cmd, opts) => {
-				if (cmd[0] === "git") return bunExec(cmd, opts);
+				if (cmd[0] === "git") return processExec.run(cmd, opts);
 				if (cmd[0] === "xcrun" && cmd[2] === "launch" && cmd.includes("P1")) throw new Error("launch blew up");
 				return sim(cmd, opts);
 			};
@@ -1775,7 +1775,7 @@ describe("warden e2e", () => {
 			});
 			const sims = [wardenSim(1, "Booted"), { udid: "P1", name: "warden-ipad-1", state: "Booted" as const }];
 			const sim = fakeSimctl(sims);
-			const exec: Exec = (cmd, opts) => (cmd[0] === "git" ? bunExec(cmd, opts) : sim(cmd, opts));
+			const exec: Exec = (cmd, opts) => (cmd[0] === "git" ? processExec.run(cmd, opts) : sim(cmd, opts));
 			ctx = testContext(["--files", "src/chat/lazy.tsx", "--devices", "all"], { exec });
 			ctx.env = { ...ctx.env, ...OWNER_ENV };
 			ctx.cwd = dir;
@@ -1956,7 +1956,7 @@ describe("warden e2e", () => {
 	test("a device recorded as slimmed is not slimmed again even when the claim booted it (the provider did it)", async () => {
 		await resuite({ slim: true });
 		const sim = fakeSimctl([wardenSim(1, "Shutdown")]);
-		const exec: Exec = (cmd, opts) => (cmd[0] === "git" ? bunExec(cmd, opts) : sim(cmd, opts));
+		const exec: Exec = (cmd, opts) => (cmd[0] === "git" ? processExec.run(cmd, opts) : sim(cmd, opts));
 		ctx = testContext(["--files", "src/chat/lazy.tsx", "--no-shutdown"], { exec });
 		ctx.env = { ...ctx.env, ...OWNER_ENV };
 		ctx.cwd = dir;
@@ -2279,7 +2279,7 @@ describe("warden e2e on physical devices", () => {
 	/** adb sees one Android phone; every other command is recorded and refused, so a stray `emu` / `reboot` / `kill` shows up */
 	function phoneSetup(argv: string[], calls: string[][]): TestContext {
 		const exec: Exec = async (cmd, opts) => {
-			if (cmd[0] === "git" || cmd.some((arg) => arg.endsWith("graph-worker.ts"))) return bunExec(cmd, opts);
+			if (cmd[0] === "git" || cmd.some((arg) => arg.endsWith("graph-worker.ts"))) return processExec.run(cmd, opts);
 			calls.push([...cmd]);
 			return androidPhoneReply(cmd);
 		};
@@ -2386,7 +2386,7 @@ describe("warden e2e on physical devices", () => {
 
 		function twoPhones(argv: string[], calls: string[][]): TestContext {
 			const exec: Exec = async (cmd, opts) => {
-				if (cmd[0] === "git" || cmd.some((arg) => arg.endsWith("graph-worker.ts"))) return bunExec(cmd, opts);
+				if (cmd[0] === "git" || cmd.some((arg) => arg.endsWith("graph-worker.ts"))) return processExec.run(cmd, opts);
 				calls.push([...cmd]);
 				if (cmd.slice(1).join(" ") === "devices -l") return { exitCode: 0, stdout: ADB_TWO, stderr: "" };
 				if (cmd.at(-1) === PHONE_PROBE_SCRIPT)

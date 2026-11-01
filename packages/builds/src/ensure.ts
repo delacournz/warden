@@ -2,7 +2,7 @@ import { realpathSync } from "node:fs";
 import { join } from "node:path";
 import type { InstallMode } from "@delacour/warden-config/app-option.schema";
 import type { Exec } from "@delacour/warden-runtime/exec";
-import { createGitFactsCache, type GitFactsCache, readGitFacts } from "@delacour/warden-runtime/git-facts";
+import { GitFactsCache, gitFactsReader } from "@delacour/warden-runtime/git-facts";
 import { type BuildSource, BuildsTable } from "@delacour/warden-store/builds-table";
 import type { PidAlive } from "@delacour/warden-store/liveness";
 import type { Store } from "@delacour/warden-store/store";
@@ -75,7 +75,7 @@ export type ProjectContextInput = {
 
 /** Load the project for `start` (bounded by its git toplevel) and compute its project key. */
 export async function projectContext(input: ProjectContextInput): AsyncResult<ProjectContext> {
-	const facts = await readGitFacts(input.exec, input.start, input.git ?? createGitFactsCache());
+	const facts = await gitFactsReader.read(input.exec, input.start, input.git ?? new GitFactsCache());
 	const stopAt = facts?.toplevel;
 	const overlay = await overlayDirUnlessRepoConfig(input.exec, input.start, stopAt, input.env, input.git);
 	// a monorepo root with one app below it: look the project up from that app

@@ -1,7 +1,7 @@
 import type { ConditionArea, ConditionRecord } from "@delacour/warden-config/conditions.types";
 import { PENDING_PREFIX } from "@delacour/warden-leasing/claim";
 import { androidTools } from "@delacour/warden-providers/android-tools";
-import { type Exec, execError } from "@delacour/warden-runtime/exec";
+import { type Exec, execErrors } from "@delacour/warden-runtime/exec";
 import type { PidAlive } from "@delacour/warden-store/liveness";
 import { type Store, storeLocator } from "@delacour/warden-store/store";
 import type { Lease, Platform } from "@delacour/warden-store/types";
@@ -112,7 +112,7 @@ async function runResets(exec: Exec, cmds: readonly string[][]): Promise<string[
 	for (const cmd of cmds) {
 		try {
 			const result = await exec(cmd);
-			if (result.exitCode !== 0) failures.push(execError(cmd, result));
+			if (result.exitCode !== 0) failures.push(execErrors.format(cmd, result));
 		} catch (error) {
 			failures.push(`${cmd.join(" ")}: ${message(error)}`);
 		}

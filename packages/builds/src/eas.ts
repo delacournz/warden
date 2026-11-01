@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { easBuildSchema } from "@delacour/warden-config/eas.schema";
-import { type Exec, execError } from "@delacour/warden-runtime/exec";
+import { type Exec, execErrors } from "@delacour/warden-runtime/exec";
 import type { Platform } from "@delacour/warden-store/types";
 import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
 import type { z } from "zod";
@@ -168,7 +168,7 @@ export type EasOutcome = { kind: "downloaded"; path: string; buildId: string } |
 
 async function run(deps: EasDeps, argv: string[]): AsyncResult<string> {
 	const res = await deps.exec(argv, { cwd: deps.cwd, env: { EXPO_NO_TELEMETRY: "1" } });
-	return res.exitCode === 0 ? resultFactory.ok(res.stdout) : resultFactory.err(execError(argv, res));
+	return res.exitCode === 0 ? resultFactory.ok(res.stdout) : resultFactory.err(execErrors.format(argv, res));
 }
 
 async function downloadBuild(deps: EasDeps, build: EasBuild): AsyncResult<string> {

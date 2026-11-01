@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { HostFacts } from "@delacour/warden-leasing/host";
 import type { Exec, ExecResult } from "@delacour/warden-runtime/exec";
-import { createGitFactsCache } from "@delacour/warden-runtime/git-facts";
+import { GitFactsCache } from "@delacour/warden-runtime/git-facts";
 import { type Store, storeLocator } from "@delacour/warden-store/store";
 import { Chalk } from "chalk";
 import type { CommandContext } from "./context";
@@ -92,7 +92,7 @@ export function testContext(argv: string[], overrides: Partial<CommandContext> =
 		err: (line) => stderr.push(line),
 		store: () => db,
 		exec,
-		git: createGitFactsCache(),
+		git: new GitFactsCache(),
 		readStdin: async () => "",
 		ui: scriptedUi(),
 		hostFacts: async () => TEST_HOST,

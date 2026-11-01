@@ -1,6 +1,6 @@
 import { detectSimViewer } from "@delacour/warden-leasing/sim-windows";
 import type { Exec } from "@delacour/warden-runtime/exec";
-import { readXcode } from "@delacour/warden-runtime/xcode";
+import { xcodeReader } from "@delacour/warden-runtime/xcode";
 import type { CheckStatus, DoctorCheck } from "./doctor";
 
 type Probe = { ok: true; detail: string } | { ok: false; detail: string };
@@ -83,7 +83,7 @@ function status(probe: Probe): CheckStatus {
 
 /** Xcode version, agent-bridge state and sim viewer. Never `fail`: all optional context for agents. */
 export async function xcodeChecks(exec: Exec, env: Record<string, string | undefined>): Promise<DoctorCheck[]> {
-	const xcode = await readXcode(exec, env);
+	const xcode = await xcodeReader.read(exec, env);
 	const major = xcode.success ? xcode.data.major : undefined;
 	const xcodeProbe: Probe = xcode.success
 		? {

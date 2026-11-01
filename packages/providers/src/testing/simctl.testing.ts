@@ -10,7 +10,7 @@ export function fakeSimctl(
 	calls: string[][] = [],
 	extra: Array<[prefix: string, result: Partial<ExecResult>]> = []
 ): Exec {
-	return fakeExec(
+	return fakeExec.build(
 		[
 			...extra,
 			["xcrun simctl list devices available -j", { stdout: simctlDevicesJson({ "iOS-26-5": sims }) }],

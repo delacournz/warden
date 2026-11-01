@@ -13,7 +13,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Exec, ExecResult } from "@delacour/warden-runtime/exec";
-import { createGitFactsCache } from "@delacour/warden-runtime/git-facts";
+import { GitFactsCache } from "@delacour/warden-runtime/git-facts";
 import { releaseKey } from "./fingerprint";
 import { combineKey, jsInputsHash } from "./js-inputs";
 import { artifactCandidates, locateArtifact, runLocalBuild, snapshotArtifacts } from "./local";
@@ -474,7 +474,7 @@ describe("runLocalBuild compiler cache env", () => {
 
 	test("the ccache base dir is the git facts' toplevel: one rev-parse, shared through the git cache", async () => {
 		const s = iosSetup();
-		const git = createGitFactsCache();
+		const git = new GitFactsCache();
 		await runLocalBuild({
 			...common,
 			exec: s.exec,
@@ -491,7 +491,7 @@ describe("runLocalBuild compiler cache env", () => {
 
 	test("facts the caller already read cost no git spawn at all", async () => {
 		const s = iosSetup();
-		const git = createGitFactsCache();
+		const git = new GitFactsCache();
 		git.store(s.root, { toplevel: s.root, commonDir: join(s.root, ".git"), branch: "main" });
 		await runLocalBuild({
 			...common,
@@ -519,7 +519,7 @@ describe("runLocalBuild compiler cache env", () => {
 			hash: "h1",
 			env: { HOME: dir },
 			wardenHome: "/w",
-			git: createGitFactsCache(),
+			git: new GitFactsCache(),
 		});
 		expect(s.envs[0]?.USE_CCACHE).toBe("1");
 		expect(s.envs[0]?.CCACHE_BASEDIR).toBeUndefined();

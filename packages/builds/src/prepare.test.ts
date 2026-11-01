@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createGitFactsCache } from "@delacour/warden-runtime/git-facts";
+import { GitFactsCache } from "@delacour/warden-runtime/git-facts";
 import { fakeExec } from "@delacour/warden-runtime/testing/exec.testing";
 import { type Store, storeLocator } from "@delacour/warden-store/store";
 import type { Owner } from "@delacour/warden-store/types";
@@ -46,7 +46,7 @@ function setup(): { host: AppHost; events: WardenLogEvent[]; cwd: string } {
 		cwd: dir,
 		home: dir,
 		now: () => 1_000_000,
-		exec: fakeExec([
+		exec: fakeExec.build([
 			["sh -c fp ios", { stdout: JSON.stringify({ hash: HASH }) }],
 			["git", { exitCode: 128 }],
 		]),
@@ -54,7 +54,7 @@ function setup(): { host: AppHost; events: WardenLogEvent[]; cwd: string } {
 		pidAlive: () => false,
 		log: (event) => events.push(event),
 		store: () => db,
-		git: createGitFactsCache(),
+		git: new GitFactsCache(),
 	};
 	return { host, events, cwd: dir };
 }

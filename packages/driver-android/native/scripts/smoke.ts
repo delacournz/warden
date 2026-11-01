@@ -14,7 +14,7 @@ import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { Element } from "@delacour/warden-driver/driver.types";
 import { androidTools } from "@delacour/warden-providers/android-tools";
-import { bunExec } from "@delacour/warden-runtime/exec";
+import { processExec } from "@delacour/warden-runtime/exec";
 import { parseUiautomatorXml } from "../../src/uiautomator";
 import { main as buildMain, DEX_NAME } from "./build";
 
@@ -198,13 +198,13 @@ async function startServer(): Promise<StartResult> {
 
 async function sh(command: string): Promise<{ stdout: string; ms: number }> {
 	const t0 = performance.now();
-	const res = await bunExec([adb, "-s", serial ?? "", "shell", command]);
+	const res = await processExec.run([adb, "-s", serial ?? "", "shell", command]);
 	return { stdout: `${res.stdout}${res.stderr}`, ms: performance.now() - t0 };
 }
 
 async function dumpXml(): Promise<{ xml: string; ms: number }> {
 	const t0 = performance.now();
-	const res = await bunExec([adb, "-s", serial ?? "", "exec-out", "uiautomator", "dump", "/dev/tty"]);
+	const res = await processExec.run([adb, "-s", serial ?? "", "exec-out", "uiautomator", "dump", "/dev/tty"]);
 	return { xml: res.stdout, ms: performance.now() - t0 };
 }
 
@@ -447,7 +447,7 @@ const dexBytes = new Uint8Array(await Bun.file(join(DIST, DEX_NAME)).arrayBuffer
 // push: both the adb push and the stdin pipe route (no host file, no sync service)
 {
 	const t0 = performance.now();
-	await bunExec([adb, "-s", serial, "push", join(DIST, DEX_NAME), DEVICE_DEX]);
+	await processExec.run([adb, "-s", serial, "push", join(DIST, DEX_NAME), DEVICE_DEX]);
 	await sh(`chmod 444 ${DEVICE_DEX}`);
 	console.log(`push (adb push + chmod): ${Math.round(performance.now() - t0)} ms, ${dexBytes.length} B`);
 	const piped = performance.now();
@@ -567,7 +567,7 @@ for (let i = 0; i < 3; i++) {
 			`server footprint: VmRSS ${Math.round(busy.rssKb / 1024)} MB after ${samples * 3} snapshots; CPU ${busy.ticks} ticks so far (10 ms each), idle 10 s adds ${idle.ticks - busy.ticks} ticks`
 		);
 		const shotRaw = performance.now();
-		await bunExec([adb, "-s", serial ?? "", "exec-out", "screencap", "-p"]);
+		await processExec.run([adb, "-s", serial ?? "", "exec-out", "screencap", "-p"]);
 		console.log(`for comparison: exec-out screencap -p ${Math.round(performance.now() - shotRaw)} ms`);
 
 		// single client rule

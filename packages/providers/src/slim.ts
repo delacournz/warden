@@ -6,7 +6,7 @@ import {
 	type SlimProfile,
 	slimmableSet,
 } from "@delacour/warden-config/slim.profile";
-import { type Exec, type ExecResult, execError } from "@delacour/warden-runtime/exec";
+import { type Exec, type ExecResult, execErrors } from "@delacour/warden-runtime/exec";
 import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import { execWithin, realTimer, type Timer } from "./health";
 import { chunk, launchdJobPlists, runtimeRootForDevice } from "./slim.launchd";
@@ -178,7 +178,7 @@ async function readLaunchctl(ctx: Ctx, ...args: string[]): AsyncResult<string> {
 			continue;
 		}
 		if (res.exitCode === 0) return resultFactory.ok(res.stdout);
-		last = execError(launchctl(ctx.udid, ...args), res);
+		last = execErrors.format(launchctl(ctx.udid, ...args), res);
 		if (!isTransient(res)) return resultFactory.err(last);
 	}
 	return resultFactory.err(last);
@@ -219,7 +219,7 @@ async function labelStep(ctx: Ctx, args: string[], tolerate: readonly number[] =
 	if (res === undefined) return timedOut(args, ctx);
 	return res.exitCode === 0 || tolerate.includes(res.exitCode)
 		? undefined
-		: execError(launchctl(ctx.udid, ...args), res);
+		: execErrors.format(launchctl(ctx.udid, ...args), res);
 }
 
 /** `launchctl unload|load -w <plists…>` in chunks. Exit status is not trusted (one bad job fails the lot): the caller re-reads. */

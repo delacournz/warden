@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { type Exec, execError } from "@delacour/warden-runtime/exec";
+import { type Exec, execErrors } from "@delacour/warden-runtime/exec";
 import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import { HELPER_ASSET, HELPER_BINARY, HELPER_GUEST, HELPER_MANIFEST, HELPER_SUMS_ASSET } from "./helper";
 
@@ -23,7 +23,7 @@ export async function packHelper(input: { distDir: string; outDir: string; exec:
 	// COPYFILE_DISABLE: no `._*` AppleDouble entries for extended attributes.
 	const cmd = ["tar", "-czf", tgz, "-C", distDir, "."];
 	const result = await exec(cmd, { env: { COPYFILE_DISABLE: "1" } });
-	if (result.exitCode !== 0) return resultFactory.err(execError(cmd, result));
+	if (result.exitCode !== 0) return resultFactory.err(execErrors.format(cmd, result));
 	const sha256 = createHash("sha256").update(readFileSync(tgz)).digest("hex");
 	const sums = join(outDir, HELPER_SUMS_ASSET);
 	writeFileSync(sums, `${sha256}  ${HELPER_ASSET}\n`);

@@ -11,7 +11,7 @@ import {
 	metroUrl,
 } from "@delacour/warden-builds/metro";
 import type { EnsureOptions } from "@delacour/warden-builds/prepare";
-import { readGitFactsSync } from "@delacour/warden-runtime/git-facts";
+import { gitFactsReader } from "@delacour/warden-runtime/git-facts";
 import type { Owner, Platform } from "@delacour/warden-store/types";
 import { type WardenError, wardenErrors } from "@delacour/warden-types/error";
 import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
@@ -334,7 +334,7 @@ function earlyMetro(host: LeaseHost, deps: DevSessionDeps, req: DevRequest): Met
 					sleep: deps.sleep,
 					spawn: (cmd, metroEnv, cwd) => deps.spawn(cmd, metroEnv, cwd, req.json ? "stderr" : "inherit"),
 					...(deps.expoBin ? { expoBin: deps.expoBin } : {}),
-					git: (root) => readGitFactsSync(root, { cache: host.git }),
+					git: (root) => gitFactsReader.readSync(root, { cache: host.git }),
 				},
 				{
 					projectRoot: req.project.root,

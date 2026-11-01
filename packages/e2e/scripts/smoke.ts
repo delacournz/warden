@@ -19,7 +19,7 @@ import { canProbeFrontmost, canReadAlertOn } from "@delacour/warden-driver/alert
 import type { AlertInfo, Driver, DriverResult, Element, Point, Snapshot } from "@delacour/warden-driver/driver.types";
 import { canSelectAll } from "@delacour/warden-driver/typing";
 import { openIosDriver } from "@delacour/warden-driver-ios/ios-driver";
-import { bunExec } from "@delacour/warden-runtime/exec";
+import { processExec } from "@delacour/warden-runtime/exec";
 import { focusPoint } from "@delacour/warden-screen/actions";
 import { focusClearType, tapToFocus } from "@delacour/warden-screen/field";
 import { entryOfElement, indexSnapshot, type NodeEntry } from "@delacour/warden-screen/nodes";
@@ -320,7 +320,7 @@ async function interact(driver: Driver, snapshot: Snapshot): Promise<void> {
 
 /** `launchctl list` inside the simulator: the pid of the bundle's app job, undefined while it is not running. */
 async function pidOf(bundleId: string): Promise<number | undefined> {
-	const res = await bunExec(["xcrun", "simctl", "spawn", device, "launchctl", "list"], { timeoutMs: 15_000 });
+	const res = await processExec.run(["xcrun", "simctl", "spawn", device, "launchctl", "list"], { timeoutMs: 15_000 });
 	const row = new RegExp(`^(\\d+)\\s+\\S+\\s+UIKitApplication:${bundleId.replace(/\./g, "\\.")}\\[`, "m").exec(
 		res.stdout
 	);
@@ -330,7 +330,7 @@ async function pidOf(bundleId: string): Promise<number | undefined> {
 /** `launchctl procinfo <pid>` inside the simulator: the process's arguments and environment, among other blocks. */
 async function procinfo(pid: number): Promise<string> {
 	const argv = ["xcrun", "simctl", "spawn", device, "launchctl", "procinfo", String(pid)];
-	const res = await bunExec(argv, { timeoutMs: 15_000 });
+	const res = await processExec.run(argv, { timeoutMs: 15_000 });
 	return `${res.stdout}\n${res.stderr}`;
 }
 
@@ -558,7 +558,7 @@ async function killBridgeCheck(driver: Driver): Promise<void> {
 
 const opened = await openIosDriver({
 	udid,
-	exec: bunExec,
+	exec: processExec.run,
 	env: {
 		simd: process.env[ENV_NAMES.simd],
 		simdSocket: process.env[ENV_NAMES.simdSocket],

@@ -15,7 +15,7 @@ import { join } from "node:path";
 import type { Driver, DriverResult, Element, Point } from "@delacour/warden-driver/driver.types";
 import { openAndroidDriver } from "@delacour/warden-driver-android/android-driver";
 import { androidTools } from "@delacour/warden-providers/android-tools";
-import { bunExec } from "@delacour/warden-runtime/exec";
+import { processExec } from "@delacour/warden-runtime/exec";
 
 function arg(name: string): string | undefined {
 	const i = process.argv.indexOf(`--${name}`);
@@ -54,7 +54,7 @@ const centre = (e: Element): Point =>
 const opened = await openAndroidDriver({
 	serial,
 	adb: androidTools(process.env).adb,
-	exec: bunExec,
+	exec: processExec.run,
 	uiad: true,
 	log: (line) => console.log(`      ${line}`),
 });

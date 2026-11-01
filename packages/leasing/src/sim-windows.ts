@@ -1,7 +1,7 @@
 import { probeIosWarm, realTimer, type Timer } from "@delacour/warden-providers/health";
 import { IOS_TIMEOUTS } from "@delacour/warden-providers/ios";
 import { parseAllSims } from "@delacour/warden-providers/simctl-list";
-import { type Exec, execError } from "@delacour/warden-runtime/exec";
+import { type Exec, execErrors } from "@delacour/warden-runtime/exec";
 import type { Store } from "@delacour/warden-store/store";
 import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
 
@@ -213,7 +213,7 @@ function scriptError(cmd: string, result: { exitCode: number; stdout: string; st
 	const hint = /assistive|-1719|-25211|not allowed/i.test(result.stderr)
 		? " — allow your terminal in System Settings → Privacy & Security → Accessibility"
 		: "";
-	return `${execError(["osascript", cmd], result)}${hint}`;
+	return `${execErrors.format(["osascript", cmd], result)}${hint}`;
 }
 
 /** What `arrangeSimWindows` did, and which viewer it found. */
@@ -366,15 +366,15 @@ export async function revealSimWindow(deps: Pick<AutoArrangeDeps, "exec" | "os">
 		const out = await simulator();
 		return out.exitCode === 0
 			? resultFactory.ok({ viewer: "simulator" })
-			: resultFactory.err(`Simulator: ${execError(["open"], out)}`);
+			: resultFactory.err(`Simulator: ${execErrors.format(["open"], out)}`);
 	}
 	const viaHub = await hub();
 	if (viaHub.exitCode === 0) return resultFactory.ok({ viewer: "device-hub" });
-	if (kind === "device-hub") return resultFactory.err(`Device Hub: ${execError(["open"], viaHub)}`);
+	if (kind === "device-hub") return resultFactory.err(`Device Hub: ${execErrors.format(["open"], viaHub)}`);
 	const viaSimulator = await simulator();
 	if (viaSimulator.exitCode === 0) return resultFactory.ok({ viewer: "simulator" });
 	return resultFactory.err(
-		`Device Hub: ${execError(["open"], viaHub)}; Simulator: ${execError(["open"], viaSimulator)}`
+		`Device Hub: ${execErrors.format(["open"], viaHub)}; Simulator: ${execErrors.format(["open"], viaSimulator)}`
 	);
 }
 
@@ -464,7 +464,8 @@ async function restoreDetachPref(deps: HideDeps, before: DetachPref): Promise<vo
 	const argv =
 		before === "off" ? ["defaults", "write", ...DETACH_PREF, "-bool", "false"] : ["defaults", "delete", ...DETACH_PREF];
 	const out = await deps.exec(argv);
-	if (out.exitCode !== 0) deps.warn(`headless: couldn't restore Simulator's close setting: ${execError(argv, out)}`);
+	if (out.exitCode !== 0)
+		deps.warn(`headless: couldn't restore Simulator's close setting: ${execErrors.format(argv, out)}`);
 }
 
 /** meta row arbitrating `DetachOnWindowClose` across warden processes */
@@ -797,12 +798,12 @@ async function rebootOne(deps: HideDeps, sim: LeasedSim, beat: () => void): Prom
 	beat();
 	// not fatal: `bootstatus -b` boots the device itself (one still `Shutting Down`, a transient refusal)
 	if (boot.exitCode !== 0 && !ALREADY_BOOTED.test(boot.stderr)) {
-		deps.warn(`headless: ${sim.name}: ${execError(bootArgv, boot)} — waiting for bootstatus to boot it`);
+		deps.warn(`headless: ${sim.name}: ${execErrors.format(bootArgv, boot)} — waiting for bootstatus to boot it`);
 	}
 	const statusArgv = ["xcrun", "simctl", "bootstatus", sim.udid, "-b"];
 	const ready = await deps.exec(statusArgv, { timeoutMs: BOOT_TIMEOUT_MS });
 	if (ready.exitCode !== 0) {
-		deps.warn(`headless: ${sim.name}: ${execError(statusArgv, ready)}`);
+		deps.warn(`headless: ${sim.name}: ${execErrors.format(statusArgv, ready)}`);
 		return false;
 	}
 	const probe = await probeIosWarm({ exec: deps.exec, timer: deps.timer ?? realTimer }, sim.udid);

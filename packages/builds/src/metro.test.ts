@@ -58,7 +58,7 @@ function metroStatus(root?: string): (url: URL) => Response {
 
 /** `lsof` answers for a listener on `port` whose cwd is `cwd`. */
 function lsof(port: number, cwd: string | undefined, calls: string[][] = []) {
-	return fakeExec(
+	return fakeExec.build(
 		cwd === undefined
 			? [["lsof", { exitCode: 1 }]]
 			: [
@@ -69,7 +69,7 @@ function lsof(port: number, cwd: string | undefined, calls: string[][] = []) {
 	);
 }
 
-const noExec = fakeExec([]);
+const noExec = fakeExec.build([]);
 
 describe("metroOwner (the verify matrix)", () => {
 	test("header names this project root → ours", async () => {

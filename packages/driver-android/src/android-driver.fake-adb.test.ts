@@ -2,12 +2,12 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { bunExec, type Exec } from "@delacour/warden-runtime/exec";
+import { type Exec, processExec } from "@delacour/warden-runtime/exec";
 import { spawnAdb } from "./adb-session";
 import { openAndroidDriver } from "./android-driver";
 import { SYNTHETIC_FORM_DUMP } from "./uiautomator.fixture";
 
-/** End to end through real child processes: default spawn, `bunExec`, `bunExecBinary` against fake-adb.ts. */
+/** End to end through real child processes: default spawn, `processExec.run`, `bunExecBinary` against fake-adb.ts. */
 
 const FAKE_ADB = join(import.meta.dir, "../native/scripts/fake-adb.ts");
 const dir = mkdtempSync(join(tmpdir(), "wdn-fake-adb-"));
@@ -31,7 +31,7 @@ writeFileSync(
 );
 
 const env = { FAKE_ADB_RULES: rulesFile };
-const exec: Exec = (cmd, opts) => bunExec(cmd, { ...opts, env });
+const exec: Exec = (cmd, opts) => processExec.run(cmd, { ...opts, env });
 
 describe("android driver against fake-adb.ts", () => {
 	test("open, snapshot via the tty route, tap, screenshot, install", async () => {

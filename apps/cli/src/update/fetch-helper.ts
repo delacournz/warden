@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { type Exec, execError } from "@delacour/warden-runtime/exec";
+import { type Exec, execErrors } from "@delacour/warden-runtime/exec";
 import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
 import { HELPER_ASSET, HELPER_BINARY, HELPER_SUMS_ASSET, HELPER_TARGET } from "../npm/helper";
 import type { Fetch } from "./npm-registry";
@@ -93,7 +93,7 @@ export function tarExtractHelper(exec: Exec): ExtractHelper {
 			writeFileSync(archive, tgz);
 			const cmd = ["tar", "-xzf", archive, "-C", files];
 			const result = await exec(cmd);
-			if (result.exitCode !== 0) return resultFactory.err(execError(cmd, result));
+			if (result.exitCode !== 0) return resultFactory.err(execErrors.format(cmd, result));
 			if (!existsSync(join(files, HELPER_BINARY))) return resultFactory.err(`${HELPER_ASSET} has no ${HELPER_BINARY}`);
 			rmSync(destDir, { recursive: true, force: true });
 			renameSync(files, destDir);

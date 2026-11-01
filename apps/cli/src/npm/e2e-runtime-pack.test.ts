@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { bunExec } from "@delacour/warden-runtime/exec";
+import { processExec } from "@delacour/warden-runtime/exec";
 import { parseRuntime } from "../e2e/e2e-runtime";
 
 const SCRIPT = resolve(import.meta.dir, "../../scripts/e2e-runtime.ts");
@@ -18,7 +18,7 @@ describe("scripts/e2e-runtime.ts (the real packages/e2e)", () => {
 	/** In a child process: `Bun.build` inside `bun test` mis-resolves files the test process already loaded. */
 	test("writes a blob with index/preload, zod inlined (only bun:test left external) and the version baked in", async () => {
 		const blob = join(out, "e2e-runtime.bin");
-		const result = await bunExec(["bun", SCRIPT, REPO, blob, "9.8.7"]);
+		const result = await processExec.run(["bun", SCRIPT, REPO, blob, "9.8.7"]);
 		if (result.exitCode !== 0) throw new Error(result.stderr || result.stdout);
 		const parsed = parseRuntime(readFileSync(blob, "utf8"));
 		expect(parsed.success).toBe(true);

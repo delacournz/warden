@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { bunExec } from "@delacour/warden-runtime/exec";
+import { processExec } from "@delacour/warden-runtime/exec";
 import { MIGRATIONS } from "@delacour/warden-store/store";
 import { Chalk } from "chalk";
 import { mergeClaudeSettings } from "../hooks/claude-settings";
@@ -335,13 +335,13 @@ describe("warden doctor --fetch-helper", () => {
 		const out = join(tmpdir(), `warden-doctor-out-${process.pid}`);
 		try {
 			fakeHelperDist(dist);
-			const packed = await packHelper({ distDir: dist, outDir: out, exec: bunExec });
+			const packed = await packHelper({ distDir: dist, outDir: out, exec: processExec.run });
 			if (!packed.success) throw new Error(packed.error);
 			const bytes = readFileSync(packed.data.tgz);
 			const sums = `${packed.data.sha256}  warden-simd-darwin-arm64.tgz\n`;
 
 			const c = setup(["--fetch-helper", "--json"], async (cmd, opts) =>
-				cmd[0] === "tar" ? bunExec(cmd, opts) : { exitCode: 127, stdout: "", stderr: "" }
+				cmd[0] === "tar" ? processExec.run(cmd, opts) : { exitCode: 127, stdout: "", stderr: "" }
 			);
 			c.env = { ...c.env, WARDEN_HELPER_URL: BASE };
 			const command = createDoctorCommand({

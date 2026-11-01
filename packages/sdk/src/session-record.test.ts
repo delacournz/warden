@@ -6,7 +6,7 @@ import { makeSuiteRepo } from "@delacour/warden-core/testing/fixture.testing";
 import { el, fakeDriver, snapshotOf } from "@delacour/warden-driver/testing/driver";
 import { recordingSchema } from "@delacour/warden-e2e/authoring/recording.schema";
 import type { DeviceProvider } from "@delacour/warden-providers/provider.types";
-import { bunExec } from "@delacour/warden-runtime/exec";
+import { processExec } from "@delacour/warden-runtime/exec";
 import { wardenErrors } from "@delacour/warden-types/error";
 import { resultFactory } from "@delacour/warden-types/result";
 import { createWardenClient } from "./client";
@@ -94,7 +94,7 @@ test("session.record journals interactions and stop writes a verified spec", asy
 					HOME: "/nonexistent",
 				},
 				cwd: repoDir,
-				exec: bunExec,
+				exec: processExec.run,
 			},
 		},
 		seams
@@ -173,7 +173,7 @@ test("stop verifies through the specs runner by default: `warden e2e --specs <id
 			host: {
 				env: { WARDEN_CAPACITY: "off", WARDEN_ARRANGE: "0", WARDEN_HOME: home, HOME: "/nonexistent" },
 				cwd: repoDir,
-				exec: bunExec,
+				exec: processExec.run,
 			},
 		},
 		{

@@ -12,7 +12,7 @@ import { maxConcurrent } from "@delacour/warden-leasing/capacity";
 import { capacityEnabled, hostInventoryOf, readCapacityBasis } from "@delacour/warden-leasing/capacity-deps";
 import { markWardenDevices } from "@delacour/warden-leasing/inventory";
 import { claimPorts, isPortFree, releasePorts } from "@delacour/warden-leasing/ports";
-import { readGitFactsSync } from "@delacour/warden-runtime/git-facts";
+import { gitFactsReader } from "@delacour/warden-runtime/git-facts";
 import { BuildsTable } from "@delacour/warden-store/builds-table";
 import { liveness } from "@delacour/warden-store/liveness";
 import { type InventoryDevice, type Lease, leaseModel, type Platform } from "@delacour/warden-store/types";
@@ -368,7 +368,7 @@ function metroDeps(core: Core): Parameters<typeof startMetro>[0] {
 			};
 		},
 		expoBin: (projectRoot) => resolveExpoBin(projectRoot, (cmd) => Bun.which(cmd)),
-		git: (projectRoot) => readGitFactsSync(projectRoot, { cache: core.git }),
+		git: (projectRoot) => gitFactsReader.readSync(projectRoot, { cache: core.git }),
 	};
 }
 

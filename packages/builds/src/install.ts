@@ -3,7 +3,7 @@ import { createReadStream } from "node:fs";
 import { mkdir, readdir, rm, stat } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { androidTools } from "@delacour/warden-providers/android-tools";
-import { type Exec, execError } from "@delacour/warden-runtime/exec";
+import { type Exec, execErrors } from "@delacour/warden-runtime/exec";
 import type { Platform } from "@delacour/warden-store/types";
 import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import { type DeviceIo, installOnPhone, probePhone, uninstallFromPhone } from "./install-device";
@@ -215,7 +215,7 @@ export async function uninstallApp(deps: InstallerDeps, target: InstallTarget, b
 	const argv = uninstallArgv(target, bundleId, deps.env);
 	const res = await deps.exec(argv, { timeoutMs: INSTALL_TIMEOUT_MS });
 	if (res.exitCode !== 0 || /Failure/.test(res.stdout))
-		return resultFactory.err(`uninstall failed: ${execError(argv, res)}`);
+		return resultFactory.err(`uninstall failed: ${execErrors.format(argv, res)}`);
 	const after = await isAppInstalled(deps, target, bundleId);
 	if (!after.success) return after;
 	return after.data
@@ -281,7 +281,7 @@ function installFailure(
 			"uninstall it yourself (warden never uninstalls it for you), then retry"
 		);
 	}
-	return `install failed: ${execError(argv, res)}`;
+	return `install failed: ${execErrors.format(argv, res)}`;
 }
 
 /** `installApp`, keeping what the confirming probe found (iOS: the new bundle container, 17-7). */
@@ -383,7 +383,7 @@ async function resetIos(
 	const data = await deps.exec(dataArgv);
 	const dataDir = data.stdout.trim();
 	if (data.exitCode !== 0 || dataDir === "")
-		return resultFactory.err(`data container not found: ${execError(dataArgv, data)}`);
+		return resultFactory.err(`data container not found: ${execErrors.format(dataArgv, data)}`);
 	try {
 		await wipeDir(deps.fs, dataDir);
 		for (const sub of DATA_SUBDIRS) await deps.fs.mkdir(`${dataDir}/${sub}`);
@@ -394,7 +394,7 @@ async function resetIos(
 
 	const privacy = resetArgv(target, bundleId, deps.env);
 	const priv = await deps.exec(privacy);
-	if (priv.exitCode !== 0) return resultFactory.err(`privacy reset failed: ${execError(privacy, priv)}`);
+	if (priv.exitCode !== 0) return resultFactory.err(`privacy reset failed: ${execErrors.format(privacy, priv)}`);
 
 	return opts.keychain ? resetSimKeychain(deps, target) : resultFactory.ok(undefined);
 }
@@ -411,7 +411,7 @@ export async function resetSimKeychain(deps: InstallerDeps, target: InstallTarge
 	const res = await deps.exec(argv);
 	return res.exitCode === 0
 		? resultFactory.ok(undefined)
-		: resultFactory.err(`keychain reset failed: ${execError(argv, res)}`);
+		: resultFactory.err(`keychain reset failed: ${execErrors.format(argv, res)}`);
 }
 
 /**
@@ -440,6 +440,6 @@ export async function resetAppData(
 	const argv = resetArgv(target, bundleId, deps.env);
 	const res = await deps.exec(argv);
 	if (res.exitCode !== 0 || !res.stdout.includes("Success"))
-		return resultFactory.err(`pm clear failed: ${execError(argv, res)}`);
+		return resultFactory.err(`pm clear failed: ${execErrors.format(argv, res)}`);
 	return resultFactory.ok(undefined);
 }

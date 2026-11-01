@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Exec, ExecResult } from "@delacour/warden-runtime/exec";
-import { createGitFactsCache } from "@delacour/warden-runtime/git-facts";
+import { GitFactsCache } from "@delacour/warden-runtime/git-facts";
 import { BuildsTable } from "@delacour/warden-store/builds-table";
 import { type Store, storeLocator } from "@delacour/warden-store/store";
 import { EXPO_CONFIG_ARGV } from "./app-config";
@@ -611,7 +611,7 @@ describe("ensureApp", () => {
 		};
 		const project = testProject({ root, fingerprintCommand: "fp", build: { ios: "make-ios", android: "x" } });
 		mkdirSync(join(root, "ios"), { recursive: true }); // prebuilt: no mid-build `git status` snapshot
-		const git = createGitFactsCache();
+		const git = new GitFactsCache();
 		git.store(root, { toplevel: root, commonDir: join(root, ".git"), branch: "main" });
 		const res = await ensureApp(
 			input(exec, { project, deviceId: undefined, build: true, eas: false, now: () => Date.now(), git })
@@ -790,7 +790,7 @@ describe("projectContext", () => {
 				return { exitCode: 0, stdout: "git@github.com:o/r.git", stderr: "" };
 			return { exitCode: 1, stdout: "", stderr: "" };
 		};
-		const res = await projectContext({ exec, env, start: repo, git: createGitFactsCache() });
+		const res = await projectContext({ exec, env, start: repo, git: new GitFactsCache() });
 		expect(res.success).toBe(true);
 		expect(spawns).toEqual([
 			"git rev-parse --show-toplevel --git-common-dir --symbolic-full-name HEAD",

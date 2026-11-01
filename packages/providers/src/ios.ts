@@ -1,5 +1,5 @@
 import { DEFAULT_SLIM_PROFILE, desiredLabels, type SlimProfile } from "@delacour/warden-config/slim.profile";
-import { type Exec, type ExecResult, execError } from "@delacour/warden-runtime/exec";
+import { type Exec, type ExecResult, execErrors } from "@delacour/warden-runtime/exec";
 import { type DeviceState, type InventoryDevice, leaseModel } from "@delacour/warden-store/types";
 import { type WardenError, wardenErrors } from "@delacour/warden-types/error";
 import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
@@ -268,7 +268,9 @@ async function simctl(runner: TimedExec, args: string[], timeoutMs?: number): As
 	const cmd = ["xcrun", "simctl", ...args];
 	const result = await runCmd(runner, cmd, timeoutMs);
 	if (typeof result === "string") return wardenErrors.err("timeout", result, { retryable: true });
-	return result.exitCode === 0 ? resultFactory.ok(result.stdout) : wardenErrors.err("failed", execError(cmd, result));
+	return result.exitCode === 0
+		? resultFactory.ok(result.stdout)
+		: wardenErrors.err("failed", execErrors.format(cmd, result));
 }
 
 /** simctl reports "Unable to <verb> device in current state: <State>" when already there. */
@@ -284,7 +286,7 @@ async function idempotent(
 	if (result.exitCode === 0) return resultFactory.ok(undefined);
 	if (`${result.stderr}\n${result.stdout}`.includes(`current state: ${alreadyState}`))
 		return resultFactory.ok(undefined);
-	return wardenErrors.err("failed", execError(cmd, result));
+	return wardenErrors.err("failed", execErrors.format(cmd, result));
 }
 
 /**

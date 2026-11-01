@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { bunExec } from "@delacour/warden-runtime/exec";
-import { createGitFactsCache } from "@delacour/warden-runtime/git-facts";
+import { processExec } from "@delacour/warden-runtime/exec";
+import { GitFactsCache } from "@delacour/warden-runtime/git-facts";
 import { storeLocator } from "@delacour/warden-store/store";
 import { fakeFarm } from "../../examples/fake-provider";
 import { createWardenClient } from "../client";
@@ -130,7 +130,7 @@ describe("config search bounds", () => {
 		mkdirSync(nested, { recursive: true });
 		Bun.spawnSync(["git", "init", "-q", repo]);
 		writeConfig([EXAMPLE]);
-		const stopAt = await configStopAt(bunExec, nested, createGitFactsCache(), { HOME: "/nonexistent" });
+		const stopAt = await configStopAt(processExec.run, nested, new GitFactsCache(), { HOME: "/nonexistent" });
 		expect(realpathSync(stopAt)).toBe(realpathSync(repo));
 		expect(await loadConfigProviders(nested, ENV, stopAt)).toEqual([]);
 	});
@@ -139,8 +139,8 @@ describe("config search bounds", () => {
 		const project = join(home, "work", "app");
 		mkdirSync(project, { recursive: true });
 		const env = { HOME: home };
-		expect(await configStopAt(bunExec, project, createGitFactsCache(), env)).toBe(resolve(home));
-		expect(await configStopAt(bunExec, project, createGitFactsCache(), { HOME: "/nonexistent" })).toBe(
+		expect(await configStopAt(processExec.run, project, new GitFactsCache(), env)).toBe(resolve(home));
+		expect(await configStopAt(processExec.run, project, new GitFactsCache(), { HOME: "/nonexistent" })).toBe(
 			resolve(project)
 		);
 	});

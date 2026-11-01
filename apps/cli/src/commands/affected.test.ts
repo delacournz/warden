@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { rmSync } from "node:fs";
 import { makeSuiteRepo } from "@delacour/warden-core/testing/fixture.testing";
-import { bunExec } from "@delacour/warden-runtime/exec";
+import { processExec } from "@delacour/warden-runtime/exec";
 import { type TestContext, testContext } from "../testing";
 import { affectedCommand } from "./affected";
 
@@ -19,7 +19,7 @@ afterEach(() => {
 });
 
 async function run(argv: string[]): Promise<{ code: number; ctx: TestContext }> {
-	ctx = testContext(argv, { exec: bunExec });
+	ctx = testContext(argv, { exec: processExec.run });
 	ctx.cwd = dir;
 	return { code: await affectedCommand.run(ctx), ctx };
 }
@@ -34,12 +34,12 @@ describe("warden affected", () => {
 
 	test("git is asked for the toplevel once per command: the suite lookup and the diff share the command's git cache", async () => {
 		write("src/chat/lazy.tsx", "export const x = 2;\n");
-		ctx = testContext([], { exec: bunExec });
+		ctx = testContext([], { exec: processExec.run });
 		ctx.cwd = dir;
 		const spawns: string[] = [];
 		ctx.exec = (cmd, opts) => {
 			spawns.push(cmd.join(" "));
-			return bunExec(cmd, opts);
+			return processExec.run(cmd, opts);
 		};
 		expect(await affectedCommand.run(ctx)).toBe(0);
 		const facts = "git rev-parse --show-toplevel --git-common-dir --symbolic-full-name HEAD";

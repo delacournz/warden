@@ -1,6 +1,6 @@
 import { activeConditions } from "@delacour/warden-core/conditions/conditions";
 import { undoConditions } from "@delacour/warden-core/conditions/undo";
-import { bunExec, type Exec } from "@delacour/warden-runtime/exec";
+import { type Exec, processExec } from "@delacour/warden-runtime/exec";
 import { liveness } from "@delacour/warden-store/liveness";
 import type { Store } from "@delacour/warden-store/store";
 import type { Lease } from "@delacour/warden-store/types";
@@ -30,7 +30,7 @@ export async function undoLeaseConditions(host: ConditionHost, lease: Lease): Pr
 	const done = await undoConditions(
 		{
 			store,
-			exec: host.exec ?? bunExec,
+			exec: host.exec ?? processExec.run,
 			env,
 			now: host.now,
 			pidAlive: liveness.processAlive,

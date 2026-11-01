@@ -1,5 +1,5 @@
 import { delta, desiredLabels, managedSet, type SlimProfile } from "@delacour/warden-config/slim.profile";
-import { type Exec, execError } from "@delacour/warden-runtime/exec";
+import { type Exec, execErrors } from "@delacour/warden-runtime/exec";
 import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import { disabledLabels, readDisabledStore, writeDisabledStore } from "./disabled-store";
 import { parsePrintDisabled } from "./slim";
@@ -69,7 +69,7 @@ export async function verifyOfflineSlim(
 			return resultFactory.ok({ missing });
 		}
 		const wait = VERIFY_BACKOFF_MS[attempt];
-		if (!isTransient(res) || wait === undefined) return resultFactory.err(execError(cmd, res));
+		if (!isTransient(res) || wait === undefined) return resultFactory.err(execErrors.format(cmd, res));
 		await sleep(wait);
 	}
 }

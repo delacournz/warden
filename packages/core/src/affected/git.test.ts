@@ -2,14 +2,14 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { bunExec, type Exec } from "@delacour/warden-runtime/exec";
-import { createGitFactsCache, readGitFacts } from "@delacour/warden-runtime/git-facts";
+import { type Exec, processExec } from "@delacour/warden-runtime/exec";
+import { GitFactsCache, gitFactsReader } from "@delacour/warden-runtime/git-facts";
 import { changedFiles } from "./git";
 
 let dir: string;
 
 async function git(...args: string[]): Promise<void> {
-	const res = await bunExec(["git", ...args], { cwd: dir });
+	const res = await processExec.run(["git", ...args], { cwd: dir });
 	if (res.exitCode !== 0) throw new Error(res.stderr);
 }
 
@@ -41,7 +41,7 @@ describe("changedFiles", () => {
 		await git("rm", "-q", "gone.ts");
 		await git("mv", "old.ts", "new.ts");
 		write("src/fresh.ts", "new");
-		const res = await changedFiles(bunExec, join(dir), "main");
+		const res = await changedFiles(processExec.run, join(dir), "main");
 		if (!res.success) throw new Error(res.error);
 		expect(res.data.top).toBe(dir);
 		const byPath = Object.fromEntries(res.data.files.map((f) => [f.path, f]));
@@ -61,7 +61,7 @@ describe("changedFiles", () => {
 		await git("merge", "-q", "main");
 		write("apps/x/src/a.ts", "a2");
 		write("apps/x/src/new.ts", "new");
-		const res = await changedFiles(bunExec, join(dir, "apps", "x"), "main");
+		const res = await changedFiles(processExec.run, join(dir, "apps", "x"), "main");
 		if (!res.success) throw new Error(res.error);
 		const byPath = Object.fromEntries(res.data.files.map((f) => [f.path, f]));
 		expect(byPath["apps/x/src/a.ts"]?.status).toBe("modified");
@@ -70,7 +70,7 @@ describe("changedFiles", () => {
 	});
 
 	test("unknown base → error naming the ref", async () => {
-		const res = await changedFiles(bunExec, dir, "nope");
+		const res = await changedFiles(processExec.run, dir, "nope");
 		expect(res.success).toBe(false);
 		if (!res.success) expect(res.error).toContain("nope");
 	});
@@ -81,14 +81,14 @@ describe("changedFiles git spawns", () => {
 		const spawns: string[] = [];
 		const exec: Exec = (cmd, opts) => {
 			spawns.push(cmd.slice(1).join(" "));
-			return bunExec(cmd, opts);
+			return processExec.run(cmd, opts);
 		};
 		return { spawns, exec };
 	}
 
 	test("a cold cache costs one rev-parse (the facts), then merge-base, diff and ls-files", async () => {
 		const { spawns, exec } = counting();
-		const res = await changedFiles(exec, dir, "main", createGitFactsCache());
+		const res = await changedFiles(exec, dir, "main", new GitFactsCache());
 		if (!res.success) throw new Error(res.error);
 		expect(res.data.top).toBe(dir);
 		expect(spawns.map((s) => s.split(" ")[0])).toEqual(["rev-parse", "merge-base", "diff", "ls-files"]);
@@ -97,8 +97,8 @@ describe("changedFiles git spawns", () => {
 
 	test("facts a caller already read are not asked for again", async () => {
 		const { spawns, exec } = counting();
-		const cache = createGitFactsCache();
-		await readGitFacts(exec, dir, cache);
+		const cache = new GitFactsCache();
+		await gitFactsReader.read(exec, dir, cache);
 		spawns.length = 0;
 		const res = await changedFiles(exec, dir, "main", cache);
 		expect(res.success).toBe(true);
@@ -108,7 +108,7 @@ describe("changedFiles git spawns", () => {
 	test("a directory inside the checkout resolves the same top, and its root is then cached", async () => {
 		write("src/deep/x.ts", "x");
 		const { spawns, exec } = counting();
-		const cache = createGitFactsCache();
+		const cache = new GitFactsCache();
 		const res = await changedFiles(exec, join(dir, "src", "deep"), "main", cache);
 		if (!res.success) throw new Error(res.error);
 		expect(res.data.top).toBe(dir);
@@ -120,7 +120,7 @@ describe("changedFiles git spawns", () => {
 	test("not a git checkout is an error that names the directory", async () => {
 		const plain = realpathSync(mkdtempSync(join(tmpdir(), "warden-git-plain-")));
 		try {
-			const res = await changedFiles(bunExec, plain, "main", createGitFactsCache());
+			const res = await changedFiles(processExec.run, plain, "main", new GitFactsCache());
 			expect(res.success).toBe(false);
 			if (!res.success) expect(res.error).toContain(plain);
 		} finally {

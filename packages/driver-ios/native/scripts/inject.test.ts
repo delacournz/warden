@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { bunExec } from "@delacour/warden-runtime/exec";
+import { processExec } from "@delacour/warden-runtime/exec";
 import { createInjectChannel, injectLaunchEnv } from "../../src/inject";
 import { dylibArgv, harnessArgv, INJECT_DYLIB, IOS_MIN, main } from "./inject";
 
@@ -216,6 +216,6 @@ run("libwarden-inject (macOS build, real dyld insertion)", () => {
 	}, 30_000);
 });
 
-test("bunExec is the exec the build uses", () => {
-	expect(typeof bunExec).toBe("function");
+test("processExec.run is the exec the build uses", () => {
+	expect(typeof processExec.run).toBe("function");
 });

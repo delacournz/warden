@@ -1,8 +1,8 @@
 import { existsSync, realpathSync } from "node:fs";
 import { basename } from "node:path";
-import { type Exec, execError } from "@delacour/warden-runtime/exec";
+import { type Exec, execErrors } from "@delacour/warden-runtime/exec";
 import type { GitFacts } from "@delacour/warden-runtime/git-facts";
-import { findNodeBin } from "@delacour/warden-runtime/node-bin";
+import { nodeBin } from "@delacour/warden-runtime/node-bin";
 import type { Platform } from "@delacour/warden-store/types";
 import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
 import type { AppFramework } from "./native-ids";
@@ -96,7 +96,7 @@ export function resolveExpoBin(
 	which: (cmd: string) => string | null | undefined,
 	exists: (path: string) => boolean = existsSync
 ): string | undefined {
-	return which("node") ? findNodeBin(root, "expo", exists) : undefined;
+	return which("node") ? nodeBin.find(root, "expo", exists) : undefined;
 }
 
 /** `resolveExpoBin` for any package bin (`react-native` for a bare app). */
@@ -106,7 +106,7 @@ export function resolveNodeBin(
 	which: (cmd: string) => string | null | undefined,
 	exists: (path: string) => boolean = existsSync
 ): string | undefined {
-	return which("node") ? findNodeBin(root, name, exists) : undefined;
+	return which("node") ? nodeBin.find(root, name, exists) : undefined;
 }
 
 function real(path: string): string {
@@ -430,5 +430,5 @@ export async function reverseMetroPort(exec: Exec, serial: string, port: number)
 	if ((await exec(argv)).exitCode === 0) return resultFactory.ok(undefined);
 	await exec(["adb", "-s", serial, "wait-for-device"], { timeoutMs: ADB_WAIT_MS });
 	const again = await exec(argv);
-	return again.exitCode === 0 ? resultFactory.ok(undefined) : resultFactory.err(execError(argv, again));
+	return again.exitCode === 0 ? resultFactory.ok(undefined) : resultFactory.err(execErrors.format(argv, again));
 }

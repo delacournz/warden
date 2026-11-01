@@ -3,7 +3,7 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { UIAD_DEX } from "@delacour/warden-driver-android/uiad-dex.generated";
-import { bunExec } from "@delacour/warden-runtime/exec";
+import { processExec } from "@delacour/warden-runtime/exec";
 
 /** Bun writes node built-ins without the `node:` prefix. */
 const BUILTINS = new Set(["fs", "fs/promises", "path", "os", "crypto", "async_hooks", "child_process", "net"]);
@@ -21,7 +21,7 @@ describe("bundleE2e (the real packages/e2e)", () => {
 
 	/** In a child process: `Bun.build` inside `bun test` mis-resolves files the test process already loaded. */
 	async function bundle(version: string): Promise<void> {
-		const result = await bunExec(["bun", MAIN, SRC, out, version]);
+		const result = await processExec.run(["bun", MAIN, SRC, out, version]);
 		if (result.exitCode !== 0) throw new Error(result.stderr || result.stdout);
 	}
 

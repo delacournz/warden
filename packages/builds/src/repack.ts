@@ -14,7 +14,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, relative } from "node:path";
 import type { Exec } from "@delacour/warden-runtime/exec";
-import { findNodeBin } from "@delacour/warden-runtime/node-bin";
+import { nodeBin } from "@delacour/warden-runtime/node-bin";
 import { BuildsTable } from "@delacour/warden-store/builds-table";
 import type { Platform } from "@delacour/warden-store/types";
 import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
@@ -228,7 +228,7 @@ async function compileHermes(step: BundleStep, bundle: string, assetsDir: string
 async function bundleJs(step: BundleStep): AsyncResult<BundleOutput> {
 	const { exec, root, platform, scratch } = step;
 	const binName = step.framework === "expo" ? "expo" : "react-native";
-	const bin = findNodeBin(root, binName);
+	const bin = nodeBin.find(root, binName);
 	if (!bin)
 		return resultFactory.err(`repack: no ${binName} binary under ${root}/node_modules/.bin (install dependencies)`);
 	const bundle = join(scratch, BUNDLE_FILE[platform]);

@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { bunExec } from "@delacour/warden-runtime/exec";
+import { processExec } from "@delacour/warden-runtime/exec";
 import { SDK_ENTRIES } from "./manifests";
 import { sdkDependencies } from "./sdk-stage";
 
@@ -57,7 +57,7 @@ describe("stageSdk (the real packages/sdk)", () => {
 	let pkg: string;
 	beforeAll(async () => {
 		out = mkdtempSync(join(tmpdir(), "warden-sdk-stage-"));
-		const staged = await bunExec(["bun", join(CLI, "scripts/npm-packages.ts"), "--sdk-only", "--out", out]);
+		const staged = await processExec.run(["bun", join(CLI, "scripts/npm-packages.ts"), "--sdk-only", "--out", out]);
 		if (staged.exitCode !== 0) throw new Error(staged.stderr || staged.stdout);
 		pkg = join(out, "warden-sdk");
 	}, 120_000);
@@ -86,13 +86,13 @@ describe("stageSdk (the real packages/sdk)", () => {
 	});
 
 	test("publint is clean", async () => {
-		const result = await bunExec([join(BIN, "publint"), "--strict", pkg]);
+		const result = await processExec.run([join(BIN, "publint"), "--strict", pkg]);
 		expect(result.stdout + result.stderr).toContain("All good!");
 		expect(result.exitCode).toBe(0);
 	}, 120_000);
 
 	test("are-the-types-wrong is clean for an ESM-only, Bun-only package (node16 ESM + bundler)", async () => {
-		const result = await bunExec([join(BIN, "attw"), "--pack", pkg, "--profile", "esm-only"]);
+		const result = await processExec.run([join(BIN, "attw"), "--pack", pkg, "--profile", "esm-only"]);
 		expect(result.stderr).toBe("");
 		expect(result.exitCode).toBe(0);
 	}, 120_000);

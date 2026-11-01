@@ -12,7 +12,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { bunExec, type Exec, type ExecResult } from "@delacour/warden-runtime/exec";
+import { type Exec, type ExecResult, processExec } from "@delacour/warden-runtime/exec";
 import { BuildsTable } from "@delacour/warden-store/builds-table";
 import { type Store, storeLocator } from "@delacour/warden-store/store";
 import { resultFactory } from "@delacour/warden-types/result";
@@ -39,7 +39,7 @@ const KEY = "github.com/o/r:app";
 const HBC = Uint8Array.from([0xc6, 0x1f, 0xbc, 0x03, 0xc1, 0x03, 0x19, 0x1f, 0, 0]);
 
 async function git(...args: string[]): Promise<void> {
-	const res = await bunExec(["git", "-c", "user.email=t@t", "-c", "user.name=t", ...args], { cwd: root });
+	const res = await processExec.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", ...args], { cwd: root });
 	if (res.exitCode !== 0) throw new Error(`git ${args.join(" ")}: ${res.stderr}`);
 }
 
@@ -75,7 +75,7 @@ function host(over: { bundleFails?: boolean; hermescFails?: boolean; hermescBadM
 	const exec: Exec = async (cmd, opts) => {
 		const [bin = "", ...args] = cmd;
 		if (cmd.join(" ") === "sh -c fp") return { ...done, stdout: '{"hash":"native-1"}' };
-		if (bin === "git") return bunExec(cmd, opts);
+		if (bin === "git") return processExec.run(cmd, opts);
 		calls.push([...cmd]);
 		const flag = (name: string) => args[args.indexOf(name) + 1] ?? "";
 		if (bin.endsWith("/.bin/expo") || bin.endsWith("/.bin/react-native")) {

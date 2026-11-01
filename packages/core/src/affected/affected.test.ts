@@ -11,8 +11,8 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { bunExec, type Exec } from "@delacour/warden-runtime/exec";
-import { createGitFactsCache } from "@delacour/warden-runtime/git-facts";
+import { type Exec, processExec } from "@delacour/warden-runtime/exec";
+import { GitFactsCache } from "@delacour/warden-runtime/git-facts";
 import { makeSuiteRepo } from "../testing/fixture.testing";
 import { computeAffected, findSuite } from "./affected";
 import { DEV_MENU_OFF_ARGS } from "./affected.defaults";
@@ -34,7 +34,7 @@ describe("computeAffected", () => {
 	test("git changes vs base → selection for the suite's platform; imports cached to disk", async () => {
 		write("src/settings/form.tsx", "export const changed = 1;\n");
 		const cacheDir = join(dir, ".cache");
-		const res = await computeAffected({ env: {}, exec: bunExec, cwd: join(dir, "src"), cacheDir });
+		const res = await computeAffected({ env: {}, exec: processExec.run, cwd: join(dir, "src"), cacheDir });
 		if (!res.success) throw new Error(res.error);
 		expect(res.data.suite.name).toBe("mobile");
 		expect(res.data.base).toBe("main");
@@ -53,7 +53,7 @@ describe("computeAffected", () => {
 		const workers: string[][] = [];
 		const exec: Exec = (cmd, opts) => {
 			if (cmd[0] !== "git") workers.push([...cmd]);
-			return bunExec(cmd, opts);
+			return processExec.run(cmd, opts);
 		};
 		const first = await computeAffected({ env: {}, exec, cwd: join(dir, "src"), cacheDir });
 		const again = await computeAffected({ env: {}, exec, cwd: join(dir, "src"), cacheDir });
@@ -85,13 +85,18 @@ describe("computeAffected", () => {
 			if (res.exitCode !== 0) throw new Error(res.stderr.toString());
 		}
 		writeFileSync(join(app, "src/settings/extra.tsx"), "export {};\n");
-		const res = await computeAffected({ env: {}, exec: bunExec, cwd: join(app, "src") });
+		const res = await computeAffected({ env: {}, exec: processExec.run, cwd: join(app, "src") });
 		if (!res.success) throw new Error(res.error);
 		expect(res.data.changes).toEqual([{ path: "src/settings/extra.tsx", status: "added" }]);
 	});
 
 	test("--files instead of git, relative to cwd", async () => {
-		const res = await computeAffected({ env: {}, exec: bunExec, cwd: join(dir, "src"), files: ["chat/lazy.tsx"] });
+		const res = await computeAffected({
+			env: {},
+			exec: processExec.run,
+			cwd: join(dir, "src"),
+			files: ["chat/lazy.tsx"],
+		});
 		if (!res.success) throw new Error(res.error);
 		expect(res.data.base).toBeUndefined();
 		expect(res.data.selections[0]?.selected.map((f) => f.id)).toEqual(["chats"]);
@@ -99,7 +104,12 @@ describe("computeAffected", () => {
 
 	test("a diff run in a project without typescript: a clear error naming the fix", async () => {
 		write("src/settings/form.tsx", "export const changed = 1;\n");
-		const res = await computeAffected({ env: {}, exec: bunExec, cwd: join(dir, "src"), typescript: () => undefined });
+		const res = await computeAffected({
+			env: {},
+			exec: processExec.run,
+			cwd: join(dir, "src"),
+			typescript: () => undefined,
+		});
 		expect(res.success).toBe(false);
 		if (res.success) return;
 		expect(res.error).toStartWith("needs typescript in the analysed project: add it as a devDependency");
@@ -111,7 +121,12 @@ describe("computeAffected", () => {
 		write("node_modules/typescript/package.json", JSON.stringify({ name: "typescript", version: "4.9.5" }));
 		write("node_modules/typescript/index.js", "module.exports = {};\n");
 		const entry = join(dir, "node_modules/typescript/index.js");
-		const res = await computeAffected({ env: {}, exec: bunExec, cwd: join(dir, "src"), typescript: () => entry });
+		const res = await computeAffected({
+			env: {},
+			exec: processExec.run,
+			cwd: join(dir, "src"),
+			typescript: () => entry,
+		});
 		expect(res.success).toBe(false);
 		if (!res.success) expect(res.error).toContain(`typescript 4.9.5 at ${entry}`);
 	});
@@ -119,7 +134,7 @@ describe("computeAffected", () => {
 	test("no typescript is fine when no graph is needed (--only)", async () => {
 		const res = await computeAffected({
 			env: {},
-			exec: bunExec,
+			exec: processExec.run,
 			cwd: dir,
 			only: { mode: "all" },
 			typescript: () => undefined,
@@ -128,7 +143,7 @@ describe("computeAffected", () => {
 	});
 
 	test("unknown suite", async () => {
-		const res = await computeAffected({ env: {}, exec: bunExec, cwd: dir, suite: "web" });
+		const res = await computeAffected({ env: {}, exec: processExec.run, cwd: dir, suite: "web" });
 		expect(res.success).toBe(false);
 		if (!res.success) expect(res.error).toContain('no e2e suite "web"');
 	});
@@ -139,7 +154,7 @@ describe("computeAffected", () => {
 		const none = await makeSuiteRepo();
 		try {
 			const [a, b, c] = await Promise.all(
-				[top, own, none].map((r) => findSuite(bunExec, r.dir, undefined, undefined, {}))
+				[top, own, none].map((r) => findSuite(processExec.run, r.dir, undefined, undefined, {}))
 			);
 			expect(a?.success && a.data.headless).toBe(true);
 			expect(b?.success && b.data.headless).toBe(false);
@@ -155,7 +170,7 @@ describe("computeAffected", () => {
 		const none = await makeSuiteRepo();
 		try {
 			const [a, b, c] = await Promise.all(
-				[top, own, none].map((r) => findSuite(bunExec, r.dir, undefined, undefined, {}))
+				[top, own, none].map((r) => findSuite(processExec.run, r.dir, undefined, undefined, {}))
 			);
 			expect(a?.success && a.data.biometrics).toBe(true);
 			expect(b?.success && b.data.biometrics).toBe(false);
@@ -172,7 +187,9 @@ describe("computeAffected", () => {
 		);
 		const none = await makeSuiteRepo();
 		try {
-			const [a, b] = await Promise.all([merged, none].map((r) => findSuite(bunExec, r.dir, undefined, undefined, {})));
+			const [a, b] = await Promise.all(
+				[merged, none].map((r) => findSuite(processExec.run, r.dir, undefined, undefined, {}))
+			);
 			expect(a?.success && a.data.perfBudgets).toEqual({ jankPct: 2, startupColdMs: 2000 });
 			expect(b?.success && b.data.perfBudgets).toBeUndefined();
 		} finally {
@@ -187,7 +204,9 @@ describe("computeAffected", () => {
 		);
 		const none = await makeSuiteRepo();
 		try {
-			const [a, b] = await Promise.all([merged, none].map((r) => findSuite(bunExec, r.dir, undefined, undefined, {})));
+			const [a, b] = await Promise.all(
+				[merged, none].map((r) => findSuite(processExec.run, r.dir, undefined, undefined, {}))
+			);
 			expect(a?.success && a.data.conditions).toEqual({ network: "offline", timezone: "UTC", locale: "fr" });
 			expect(b?.success && b.data.conditions).toBeUndefined();
 		} finally {
@@ -201,7 +220,7 @@ describe("computeAffected", () => {
 		const env = { WARDEN_HOME: home };
 		rmSync(join(dir, "warden.config.json"));
 		const { overlayDirFor } = await import("@delacour/warden-builds/overlay");
-		const overlay = await overlayDirFor(bunExec, dir, env);
+		const overlay = await overlayDirFor(processExec.run, dir, env);
 		if (!overlay) throw new Error("no overlay dir");
 		mkdirSync(join(overlay, "e2e"), { recursive: true });
 		writeFileSync(
@@ -211,7 +230,7 @@ describe("computeAffected", () => {
 				e2e: { priv: { project: "app", specsDir: "e2e" } },
 			})
 		);
-		const res = await findSuite(bunExec, join(dir, "src"), undefined, undefined, env);
+		const res = await findSuite(processExec.run, join(dir, "src"), undefined, undefined, env);
 		if (!res.success) throw new Error(res.error.message);
 		expect(res.data.source).toBe("overlay");
 		expect(res.data.configDir).toBe(overlay);
@@ -225,9 +244,9 @@ describe("computeAffected", () => {
 		const spawns: string[] = [];
 		const exec: Exec = (cmd, opts) => {
 			spawns.push(cmd.slice(cmd[0] === "git" ? 1 : 0).join(" "));
-			return bunExec(cmd, opts);
+			return processExec.run(cmd, opts);
 		};
-		const git = createGitFactsCache();
+		const git = new GitFactsCache();
 		for (let i = 0; i < 2; i++) {
 			const res = await computeAffected({ env: {}, exec, cwd: join(dir, "src"), git });
 			expect(res.success).toBe(true);
@@ -244,10 +263,10 @@ describe("computeAffected", () => {
 			const config = JSON.parse(readFileSync(join(many, "warden.config.json"), "utf8"));
 			config.e2e.other = config.e2e[Object.keys(config.e2e)[0] as string];
 			writeFileSync(join(many, "warden.config.json"), JSON.stringify(config));
-			const several = await findSuite(bunExec, many, undefined, undefined, {});
+			const several = await findSuite(processExec.run, many, undefined, undefined, {});
 			expect(!several.success && several.error.code).toBe("several_suites");
 			expect(!several.success && several.error.suites).toEqual(Object.keys(config.e2e));
-			const unknown = await findSuite(bunExec, many, "nope", undefined, {});
+			const unknown = await findSuite(processExec.run, many, "nope", undefined, {});
 			expect(!unknown.success && unknown.error.code).toBe("unknown_suite");
 		} finally {
 			rmSync(many, { recursive: true, force: true });
@@ -258,9 +277,9 @@ describe("computeAffected", () => {
 		const spawns: string[] = [];
 		const counting: Exec = (cmd, opts) => {
 			spawns.push(cmd.join(" "));
-			return bunExec(cmd, opts);
+			return processExec.run(cmd, opts);
 		};
-		const git = createGitFactsCache();
+		const git = new GitFactsCache();
 		for (let i = 0; i < 3; i++) {
 			const res = await findSuite(counting, dir, undefined, git, {});
 			expect(res.success).toBe(true);
@@ -282,7 +301,7 @@ describe("computeAffected without e2e suites (an Expo app with an e2e/ dir)", ()
 		writeFileSync(join(app, "e2e/a.e2e.ts"), "export {};\n");
 		writeFileSync(join(app, "e2e/b.e2e.ts"), "export {};\n");
 		writeFileSync(join(app, "e2e/helpers/ids.ts"), "export {};\n");
-		const res = await computeAffected({ env: {}, exec: bunExec, cwd: join(app, "e2e") });
+		const res = await computeAffected({ env: {}, exec: processExec.run, cwd: join(app, "e2e") });
 		if (!res.success) throw new Error(res.error);
 		const { suite } = res.data;
 		expect(suite).toMatchObject({ name: "fresh", implicit: true, configDir: app, cwd: app, projectRoot: app });
@@ -302,7 +321,7 @@ describe("computeAffected without e2e suites (an Expo app with an e2e/ dir)", ()
 	test("the default suite is iOS unless asked: platform android runs the same specs on Android", async () => {
 		mkdirSync(join(app, "e2e"));
 		writeFileSync(join(app, "e2e/a.e2e.ts"), "export {};\n");
-		const res = await computeAffected({ env: {}, exec: bunExec, cwd: app, platform: "android" });
+		const res = await computeAffected({ env: {}, exec: processExec.run, cwd: app, platform: "android" });
 		if (!res.success) throw new Error(res.error);
 		expect(res.data.selections.map((s) => s.platform)).toEqual(["android"]);
 		expect(res.data.selections[0]?.selected.map((f) => f.id)).toEqual(["a"]);
@@ -318,7 +337,7 @@ describe("computeAffected without e2e suites (an Expo app with an e2e/ dir)", ()
 				],
 			})
 		);
-		const res = await computeAffected({ env: {}, exec: bunExec, cwd: app });
+		const res = await computeAffected({ env: {}, exec: processExec.run, cwd: app });
 		if (!res.success) throw new Error(res.error);
 		expect(res.data.suite.config.app).toEqual({ variant: "dev" });
 	});
@@ -329,20 +348,20 @@ describe("computeAffected without e2e suites (an Expo app with an e2e/ dir)", ()
 			join(app, "warden.config.json"),
 			JSON.stringify({ headless: true, projects: [{ name: "fresh", bundleId: { ios: "x.y" } }] })
 		);
-		const res = await computeAffected({ env: {}, exec: bunExec, cwd: app });
+		const res = await computeAffected({ env: {}, exec: processExec.run, cwd: app });
 		if (!res.success) throw new Error(res.error);
 		expect(res.data.suite).toMatchObject({ implicit: true, headless: true });
 	});
 
 	test("no e2e/ dir → an error pointing at warden init", async () => {
-		const res = await computeAffected({ env: {}, exec: bunExec, cwd: app });
+		const res = await computeAffected({ env: {}, exec: processExec.run, cwd: app });
 		expect(res.success).toBe(false);
 		if (!res.success) expect(res.error).toContain("warden init");
 	});
 
 	test("a named suite still needs a config", async () => {
 		mkdirSync(join(app, "e2e"));
-		const res = await computeAffected({ env: {}, exec: bunExec, cwd: app, suite: "mobile" });
+		const res = await computeAffected({ env: {}, exec: processExec.run, cwd: app, suite: "mobile" });
 		expect(res.success).toBe(false);
 		if (!res.success) expect(res.error).toContain("warden.config.ts");
 	});

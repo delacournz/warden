@@ -2,7 +2,7 @@ import { wardenDeviceName } from "@delacour/warden-leasing/allocate";
 import { isGoldenName } from "@delacour/warden-providers/golden-name";
 import { shortRuntime } from "@delacour/warden-providers/ios";
 import { parseAllSims, type SimctlSim } from "@delacour/warden-providers/simctl-list";
-import { execError } from "@delacour/warden-runtime/exec";
+import { execErrors } from "@delacour/warden-runtime/exec";
 import { leaseModel } from "@delacour/warden-store/types";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { defineCommand } from "../command";
@@ -49,7 +49,7 @@ async function clone(ctx: CommandContext, ref: string, opts: { name?: string; js
 	const { color } = ctx.ui;
 	const listCmd = ["xcrun", "simctl", "list", "devices", "-j"];
 	const listed = await ctx.exec(listCmd);
-	if (listed.exitCode !== 0) return fail(ctx, execError(listCmd, listed));
+	if (listed.exitCode !== 0) return fail(ctx, execErrors.format(listCmd, listed));
 	const sims = parseAllSims(listed.stdout);
 	if (!sims.success) return fail(ctx, sims.error.message);
 	const source = findSource(sims.data, ref);
@@ -70,7 +70,7 @@ async function clone(ctx: CommandContext, ref: string, opts: { name?: string; js
 		else spinner.fail("clone failed");
 		return result;
 	});
-	if (cloned.exitCode !== 0) return fail(ctx, execError(cloneCmd, cloned));
+	if (cloned.exitCode !== 0) return fail(ctx, execErrors.format(cloneCmd, cloned));
 	const udid = cloned.stdout.trim();
 	const runtime = shortRuntime(source.data.runtimeId);
 	ctx.store().recordDevice({ platform: "ios", id: udid, name, profile, runtime }, ctx.now());

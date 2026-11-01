@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import type { Exec } from "@delacour/warden-runtime/exec";
-import { createGitFactsCache, type GitFactsCache, readGitFacts } from "@delacour/warden-runtime/git-facts";
+import { GitFactsCache, gitFactsReader } from "@delacour/warden-runtime/git-facts";
 import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 
 /**
@@ -92,7 +92,7 @@ function realpath(path: string): string {
 export async function readProjectKey(exec: Exec, dir: string, cache?: GitFactsCache): AsyncResult<string> {
 	// git reports real paths; `/var` vs `/private/var` (macOS tmp) must not look like a different dir
 	const root = realpath(dir);
-	const facts = await readGitFacts(exec, root, cache ?? createGitFactsCache());
+	const facts = await gitFactsReader.read(exec, root, cache ?? new GitFactsCache());
 	if (!facts) return resultFactory.ok(projectKey({ root }));
 	const toplevel = realpath(facts.toplevel);
 	let remote = await git(exec, root, ["config", "--get", "remote.origin.url"]);

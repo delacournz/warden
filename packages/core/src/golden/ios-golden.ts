@@ -9,8 +9,8 @@ import { GOLDEN_PREFIX } from "@delacour/warden-providers/golden-name";
 import { execWithin, realTimer, type Timer } from "@delacour/warden-providers/health";
 import { IOS_TIMEOUTS, lookupCreateTarget, timedOutError } from "@delacour/warden-providers/ios";
 import { parseAllSims, type SimctlSim } from "@delacour/warden-providers/simctl-list";
-import { type Exec, type ExecOptions, execError } from "@delacour/warden-runtime/exec";
-import { readXcode } from "@delacour/warden-runtime/xcode";
+import { type Exec, type ExecOptions, execErrors } from "@delacour/warden-runtime/exec";
+import { xcodeReader } from "@delacour/warden-runtime/xcode";
 import type { PidAlive } from "@delacour/warden-store/liveness";
 import type { Store } from "@delacour/warden-store/store";
 import type { Owner } from "@delacour/warden-store/types";
@@ -89,7 +89,7 @@ async function run(deps: GoldenDeps, cmd: string[], timeoutMs?: number): AsyncRe
 			? await deps.exec(cmd)
 			: await execWithin({ exec: deps.exec, timer: deps.timer ?? realTimer }, cmd, timeoutMs);
 	if (result === undefined) return resultFactory.err(timedOutError(cmd, timeoutMs ?? 0));
-	return result.exitCode === 0 ? resultFactory.ok(result.stdout) : resultFactory.err(execError(cmd, result));
+	return result.exitCode === 0 ? resultFactory.ok(result.stdout) : resultFactory.err(execErrors.format(cmd, result));
 }
 
 const simctl = (deps: GoldenDeps, args: string[], timeoutMs?: number) =>
@@ -114,7 +114,7 @@ async function readXcodeBuild(deps: GoldenDeps): AsyncResult<string> {
 		const result = await execWithin(within, cmd, XCODE_READ_TIMEOUT_MS);
 		return result ?? { exitCode: 124, stdout: "", stderr: `timed out after ${XCODE_READ_TIMEOUT_MS} ms` };
 	};
-	const xcode = await readXcode(timed, deps.env);
+	const xcode = await xcodeReader.read(timed, deps.env);
 	return xcode.success ? resultFactory.ok(xcode.data.build) : xcode;
 }
 

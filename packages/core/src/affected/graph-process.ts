@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { E2eSuiteConfig } from "@delacour/warden-config/affected.schema";
-import { type Exec, execError } from "@delacour/warden-runtime/exec";
+import { type Exec, execErrors } from "@delacour/warden-runtime/exec";
 import type { Platform } from "@delacour/warden-store/types";
 import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import { openImportCache } from "./cache";
@@ -131,7 +131,7 @@ async function runWorker(
 	const doc = res.exitCode === 0 ? parseGraphDoc(res.stdout) : undefined;
 	if (doc) return resultFactory.ok({ doc });
 	if (res.exitCode === CANNOT_RUN) return resultFactory.ok({});
-	const why = res.exitCode === 0 ? "printed no import graph" : execError(cmd.slice(0, 2), res);
+	const why = res.exitCode === 0 ? "printed no import graph" : execErrors.format(cmd.slice(0, 2), res);
 	return resultFactory.ok({ warning: `import graph worker failed (${why}); built the graph in-process` });
 }
 

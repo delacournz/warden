@@ -18,7 +18,7 @@ const SIM = { udid: "U1", name: "warden-iphone-17-1" };
 describe("closeSimWindowsAfter", () => {
 	test("closes the shut-down sims' Device Hub windows in one osascript call, by name", async () => {
 		const calls: string[][] = [];
-		const exec = fakeExec(
+		const exec = fakeExec.build(
 			[
 				["pgrep -xq Simulator", { exitCode: 1 }],
 				["pgrep -xq DeviceHub", { exitCode: 0 }],
@@ -34,7 +34,7 @@ describe("closeSimWindowsAfter", () => {
 	});
 
 	test("a failed close comes back as the error, never a throw", async () => {
-		const exec = fakeExec([
+		const exec = fakeExec.build([
 			["pgrep -xq Simulator", { exitCode: 1 }],
 			["pgrep -xq DeviceHub", { exitCode: 0 }],
 			["osascript", { exitCode: 1, stderr: "not allowed assistive access" }],
@@ -44,7 +44,7 @@ describe("closeSimWindowsAfter", () => {
 
 	test("nothing shut down, or not macOS → the window module is never loaded", async () => {
 		const calls: string[][] = [];
-		const exec = fakeExec([], calls);
+		const exec = fakeExec.build([], calls);
 		const { load, loads } = counting();
 		expect(await closeSimWindowsAfter({ exec, os: "darwin" }, [], load)).toBeUndefined();
 		expect(await closeSimWindowsAfter({ exec, os: "linux" }, [SIM], load)).toBeUndefined();

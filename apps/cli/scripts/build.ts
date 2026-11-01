@@ -9,7 +9,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { RUNNER_BLOB } from "@delacour/warden-builds/ios-runner/pack";
-import { bunExec } from "@delacour/warden-runtime/exec";
+import { processExec } from "@delacour/warden-runtime/exec";
 import cliPackage from "../package.json" with { type: "json" };
 import { RUNTIME_BLOB } from "../src/e2e/e2e-runtime";
 import { RELEASE_TARGETS } from "../src/npm/platforms";
@@ -28,7 +28,7 @@ const dist = join(cliRoot, "dist");
 const { values } = parseArgs({ options: { channel: { type: "string", default: "local" } }, strict: true });
 
 async function run(cmd: string[]): Promise<void> {
-	const result = await bunExec(cmd, { cwd: cliRoot });
+	const result = await processExec.run(cmd, { cwd: cliRoot });
 	if (result.exitCode !== 0) throw new Error(`${cmd.join(" ")}\n${result.stderr}`);
 }
 
@@ -37,12 +37,12 @@ const dropStraySourceMap = () => rmSync(join(dist, STRAY_SOURCE_MAP), { force: t
 
 mkdirSync(dist, { recursive: true });
 if (values.channel === "local") {
-	const built = await buildFromSource(bunExec, sourceDir, cliPackage.version, join(dist, "warden"), Date.now);
+	const built = await buildFromSource(processExec.run, sourceDir, cliPackage.version, join(dist, "warden"), Date.now);
 	if (!built.success) throw new Error(built.error);
 	dropStraySourceMap();
 	console.log(`built dist/warden ${built.data.version} (local ${built.data.commit ?? "?"})`);
 } else if (values.channel === "release") {
-	const commit = process.env.GITHUB_SHA?.slice(0, 7) ?? (await sourceCommit(bunExec, sourceDir));
+	const commit = process.env.GITHUB_SHA?.slice(0, 7) ?? (await sourceCommit(processExec.run, sourceDir));
 	const info = {
 		channel: "release" as const,
 		version: cliPackage.version,

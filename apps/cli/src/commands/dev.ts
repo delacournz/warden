@@ -55,8 +55,8 @@ import {
 } from "@delacour/warden-leasing/session";
 import { revealSimWindow } from "@delacour/warden-leasing/sim-windows";
 import type { DeviceProvider } from "@delacour/warden-providers/provider.types";
-import { bunExec } from "@delacour/warden-runtime/exec";
-import { readGitFacts, readGitFactsSync } from "@delacour/warden-runtime/git-facts";
+import { processExec } from "@delacour/warden-runtime/exec";
+import { gitFactsReader } from "@delacour/warden-runtime/git-facts";
 import { storeLocator } from "@delacour/warden-store/store";
 import type { Lease, Owner, Platform } from "@delacour/warden-store/types";
 import { wardenErrors } from "@delacour/warden-types/error";
@@ -933,7 +933,7 @@ function earlyMetro(
 					spawn: (cmd, metroEnv, cwd) => spawnMetro(ui, deps, cmd, metroEnv, cwd, json),
 					...(deps.expoBin ? { expoBin: deps.expoBin } : {}),
 					...(deps.reactNativeBin ? { reactNativeBin: deps.reactNativeBin } : {}),
-					git: (root) => readGitFactsSync(root, { cache: ctx.git }),
+					git: (root) => gitFactsReader.readSync(root, { cache: ctx.git }),
 				},
 				{
 					projectRoot,
@@ -983,7 +983,7 @@ function noteAppBelow(ctx: CommandContext, start: string, project: Project): voi
  * used without asking.
  */
 async function pickApp(ctx: CommandContext, start: string, opts: DevOpts): AsyncResult<string> {
-	const stopAt = (await readGitFacts(ctx.exec, start, ctx.git))?.toplevel;
+	const stopAt = (await gitFactsReader.read(ctx.exec, start, ctx.git))?.toplevel;
 	const overlay = await overlayDirUnlessRepoConfig(ctx.exec, start, stopAt, ctx.env, ctx.git);
 	const choices = appChoices(start, stopAt, overlay);
 	if (choices.length === 0 || !ctx.ui.interactive || opts.json === true) return resultFactory.ok(start);
@@ -1083,7 +1083,7 @@ type Prepared = {
 
 /** The repo's `~/.warden` overlay (shared by its worktrees) and the checkout root an overlay config's `root` is relative to. */
 async function devOverlay(ctx: CommandContext, start: string): Promise<DevOverlay> {
-	const checkoutRoot = (await readGitFacts(ctx.exec, start, ctx.git))?.toplevel;
+	const checkoutRoot = (await gitFactsReader.read(ctx.exec, start, ctx.git))?.toplevel;
 	const overlayDir = await overlayDirFor(ctx.exec, start, ctx.env, ctx.git);
 	return { ...(overlayDir ? { overlayDir } : {}), ...(checkoutRoot ? { checkoutRoot } : {}) };
 }
@@ -1328,7 +1328,7 @@ export const defaultDevDeps: DevDeps = {
 	},
 	onSignal: processOnSignal,
 	every: intervalEvery,
-	probe: (port, projectRoot) => metroOwner(bunExec, port, projectRoot),
+	probe: (port, projectRoot) => metroOwner(processExec.run, port, projectRoot),
 	sleep: (ms) => Bun.sleep(ms),
 	ensureApp: (host, owner, platform, deviceId, opts) =>
 		ensureAppFor(host, defaultAppDeps, owner, platform, deviceId, opts),

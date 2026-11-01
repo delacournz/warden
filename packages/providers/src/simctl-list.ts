@@ -4,7 +4,7 @@
  * Used by goldens, `warden clone`, and every `warden sims` subcommand.
  */
 
-import { type Exec, execError } from "@delacour/warden-runtime/exec";
+import { type Exec, execErrors } from "@delacour/warden-runtime/exec";
 import { type WardenError, wardenErrors } from "@delacour/warden-types/error";
 import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
 
@@ -68,7 +68,7 @@ export function parseAllSims(stdout: string, opts: { allPlatforms?: boolean } = 
 
 async function run(exec: Exec, cmd: string[]): AsyncResult<string> {
 	const result = await exec(cmd);
-	return result.exitCode === 0 ? resultFactory.ok(result.stdout) : resultFactory.err(execError(cmd, result));
+	return result.exitCode === 0 ? resultFactory.ok(result.stdout) : resultFactory.err(execErrors.format(cmd, result));
 }
 
 /** `du -sk` → bytes; undefined when du fails (e.g. the data dir is gone). */

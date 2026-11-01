@@ -1,5 +1,5 @@
 import { basename, dirname, isAbsolute, resolve } from "node:path";
-import { type GitFactsCache, type GitFactsSyncOptions, readGitFactsSync } from "@delacour/warden-runtime/git-facts";
+import { type GitFactsCache, type GitFactsSyncOptions, gitFactsReader } from "@delacour/warden-runtime/git-facts";
 import type { Owner } from "@delacour/warden-store/types";
 
 export type GitInfo = { repo: string; worktree: string };
@@ -52,7 +52,7 @@ export function parseGitInfo(raw: { toplevel: string; commonDir: string; branch:
  * `git-facts`). `cache` scopes the memo (one per command or host).
  */
 export function readGitInfo(cwd: string, options: GitFactsSyncOptions): GitInfo | undefined {
-	const facts = readGitFactsSync(cwd, options);
+	const facts = gitFactsReader.readSync(cwd, options);
 	return facts ? parseGitInfo(facts) : undefined;
 }
 

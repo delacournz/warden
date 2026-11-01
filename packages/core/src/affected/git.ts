@@ -1,5 +1,5 @@
-import { type Exec, execError } from "@delacour/warden-runtime/exec";
-import { createGitFactsCache, type GitFactsCache, readGitFacts } from "@delacour/warden-runtime/git-facts";
+import { type Exec, execErrors } from "@delacour/warden-runtime/exec";
+import { GitFactsCache, gitFactsReader } from "@delacour/warden-runtime/git-facts";
 import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 
 export type ChangeStatus = "added" | "modified" | "deleted" | "renamed" | "copied" | "type-changed";
@@ -47,9 +47,9 @@ export async function changedFiles(
 	const run = async (args: string[]) => {
 		const cmd = ["git", ...args];
 		const res = await exec(cmd, { cwd });
-		return res.exitCode === 0 ? resultFactory.ok(res.stdout) : resultFactory.err(execError(cmd, res));
+		return res.exitCode === 0 ? resultFactory.ok(res.stdout) : resultFactory.err(execErrors.format(cmd, res));
 	};
-	const facts = await readGitFacts(exec, cwd, git ?? createGitFactsCache());
+	const facts = await gitFactsReader.read(exec, cwd, git ?? new GitFactsCache());
 	if (!facts) return resultFactory.err(`not a git checkout: ${cwd}`);
 	const mergeBase = await run(["merge-base", base, "HEAD"]);
 	if (!mergeBase.success) return resultFactory.err(`no merge-base with "${base}": ${mergeBase.error}`);

@@ -1,4 +1,4 @@
-import { execError } from "@delacour/warden-runtime/exec";
+import { execErrors } from "@delacour/warden-runtime/exec";
 import type { InventoryDevice, PhysicalInfo } from "@delacour/warden-store/types";
 import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
 import { execWithin, type TimedExec } from "./health";
@@ -137,7 +137,7 @@ async function runDevicectl(runner: TimedExec, cmd: string[], timeoutMs: number)
 	const result = await execWithin(runner, cmd, timeoutMs);
 	if (result === undefined)
 		return resultFactory.err(`\`${cmd.join(" ")}\` did not finish within ${Math.round(timeoutMs / 1000)}s`);
-	return result.exitCode === 0 ? resultFactory.ok(result.stdout) : resultFactory.err(execError(cmd, result));
+	return result.exitCode === 0 ? resultFactory.ok(result.stdout) : resultFactory.err(execErrors.format(cmd, result));
 }
 
 /** Connected right now without asking: a wired transport or an up tunnel. */

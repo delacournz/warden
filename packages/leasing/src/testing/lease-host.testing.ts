@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { createAndroidProvider } from "@delacour/warden-providers/android";
 import { createIosProvider } from "@delacour/warden-providers/ios";
 import type { Exec } from "@delacour/warden-runtime/exec";
-import { createGitFactsCache } from "@delacour/warden-runtime/git-facts";
+import { GitFactsCache } from "@delacour/warden-runtime/git-facts";
 import { liveness } from "@delacour/warden-store/liveness";
 import { type Store, storeLocator } from "@delacour/warden-store/store";
 import type { WardenLogEvent } from "@delacour/warden-types/host";
@@ -41,7 +41,7 @@ export function testLeaseHost(overrides: Partial<LeaseHost> = {}): TestLeaseHost
 		pidAlive: liveness.processAlive,
 		log: (event) => events.push(event),
 		store: () => db,
-		git: createGitFactsCache(),
+		git: new GitFactsCache(),
 		hostFacts: async () => TEST_HOST_FACTS,
 		providerFor: (platform, owner) => {
 			const deps = {

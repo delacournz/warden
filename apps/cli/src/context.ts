@@ -1,7 +1,7 @@
 import type { AppHost } from "@delacour/warden-builds/prepare";
 import type { HostFacts } from "@delacour/warden-leasing/host";
-import { bunExec, type Exec } from "@delacour/warden-runtime/exec";
-import { createGitFactsCache, type GitFactsCache } from "@delacour/warden-runtime/git-facts";
+import { type Exec, processExec } from "@delacour/warden-runtime/exec";
+import { GitFactsCache } from "@delacour/warden-runtime/git-facts";
 import { liveness } from "@delacour/warden-store/liveness";
 import { type Store, storeLocator } from "@delacour/warden-store/store";
 import type { WardenHost } from "@delacour/warden-types/host";
@@ -114,8 +114,8 @@ export function defaultContext(argv: string[]): CommandContext {
 			store ??= storeLocator.open(storeLocator.defaultDbPath(env));
 			return store;
 		},
-		exec: bunExec,
-		git: createGitFactsCache(),
+		exec: processExec.run,
+		git: new GitFactsCache(),
 		readStdin: () => Bun.stdin.text(),
 		ui: terminalUi(process.env),
 	};

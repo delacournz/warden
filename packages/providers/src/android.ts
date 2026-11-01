@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { closeSync, mkdirSync, openSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { DEFAULT_TTL_MS } from "@delacour/warden-config/config.defaults";
-import { type Exec, type ExecOptions, execError } from "@delacour/warden-runtime/exec";
+import { type Exec, type ExecOptions, execErrors } from "@delacour/warden-runtime/exec";
 import { liveness, type PidAlive } from "@delacour/warden-store/liveness";
 import { storeLocator } from "@delacour/warden-store/store";
 import type { InventoryDevice, Lease } from "@delacour/warden-store/types";
@@ -108,7 +108,9 @@ export const LIST_AVDS_TIMEOUT_MS = 15_000;
 async function run(deps: ExecDeps, cmd: readonly string[], opts?: ExecOptions): AsyncResult<string, WardenError> {
 	try {
 		const result = await deps.exec(cmd, opts);
-		return result.exitCode === 0 ? resultFactory.ok(result.stdout) : wardenErrors.err("failed", execError(cmd, result));
+		return result.exitCode === 0
+			? resultFactory.ok(result.stdout)
+			: wardenErrors.err("failed", execErrors.format(cmd, result));
 	} catch (error) {
 		return wardenErrors.err(
 			"failed",

@@ -16,7 +16,7 @@ import type {
 	LaunchOptions,
 } from "@delacour/warden-driver/driver.types";
 import { driverErr } from "@delacour/warden-driver/errors";
-import { type Exec, execError } from "@delacour/warden-runtime/exec";
+import { type Exec, execErrors } from "@delacour/warden-runtime/exec";
 
 /**
  * iOS simulator device settings over `xcrun simctl` (verified on a simulator): `privacy` for permissions, `ui` for
@@ -167,7 +167,7 @@ export function createIosSettings(deps: IosSettingsDeps): IosSettings {
 		if (retryHung && res.exitCode === KILLED_BY_TIMEOUT) res = await exec(argv, { timeoutMs: SIMCTL_MS });
 		return res.exitCode === 0
 			? { success: true, data: undefined }
-			: driverErr("E_IO", execError(argv, res), { detail: { udid } });
+			: driverErr("E_IO", execErrors.format(argv, res), { detail: { udid } });
 	}
 
 	return {

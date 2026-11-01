@@ -5,7 +5,7 @@ import { type AndroidDriverOptions, openAndroidDriver } from "@delacour/warden-d
 import { androidStateDir, createAndroidStateStore } from "@delacour/warden-driver-android/android-state";
 import { type OpenIosDeviceDriverOptions, openIosDeviceDriver } from "@delacour/warden-driver-ios/device/device-driver";
 import { type OpenIosDriverOptions, openIosDriver } from "@delacour/warden-driver-ios/ios-driver";
-import { bunExec, type Exec } from "@delacour/warden-runtime/exec";
+import { type Exec, processExec } from "@delacour/warden-runtime/exec";
 import { leaseModel } from "@delacour/warden-store/types";
 
 /**
@@ -19,7 +19,7 @@ export type OpenDriverOptions = {
 	/** the app under test: Android deep links go to this package only */
 	appId?: string;
 	/**
-	 * The parts of a `WardenHost` the opener uses: the process runner (default `bunExec`) and the warden home
+	 * The parts of a `WardenHost` the opener uses: the process runner (default `processExec.run`) and the warden home
 	 * (`$WARDEN_HOME`; without it the Android per-device state is not saved and the iOS staged helper is not looked up).
 	 */
 	host?: { exec?: Exec; home?: string };
@@ -89,7 +89,7 @@ export function androidOptions(options: OpenDriverOptions, debug: boolean): Andr
 		...leaseSeams(options, android),
 		serial: options.id,
 		adb: android.adb ?? "adb",
-		exec: options.host?.exec ?? bunExec,
+		exec: options.host?.exec ?? processExec.run,
 		...(appPackage === undefined ? {} : { appPackage }),
 		...(android.uiad === undefined && android.spawn === undefined ? { uiad: true } : {}),
 		...(state === undefined ? {} : { state }),
@@ -111,7 +111,7 @@ function iosOptions(options: OpenDriverOptions, debug: boolean): OpenIosDriverOp
 			...(helperDir === undefined ? {} : { helperDir }),
 			...(socketPath === undefined ? {} : { simdSocket: socketPath }),
 		},
-		exec: options.host?.exec ?? bunExec,
+		exec: options.host?.exec ?? processExec.run,
 		debug,
 		...(home === undefined ? {} : { wardenHome: home }),
 		...(options.log ? { log: options.log } : debug ? { log: stderrLog } : {}),
@@ -124,7 +124,7 @@ function iosDeviceOptions(options: OpenDriverOptions, debug: boolean): OpenIosDe
 	return {
 		...seams,
 		udid: options.id,
-		exec: options.host?.exec ?? bunExec,
+		exec: options.host?.exec ?? processExec.run,
 		...(runnerSocket === undefined ? {} : { socketPath: runnerSocket }),
 		...(appPath === undefined ? {} : { appPath }),
 		...(options.appId === undefined ? {} : { bundleId: options.appId }),

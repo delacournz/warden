@@ -5,7 +5,7 @@
  */
 
 import { shortRuntime } from "@delacour/warden-providers/ios";
-import { type Exec, execError } from "@delacour/warden-runtime/exec";
+import { type Exec, execErrors } from "@delacour/warden-runtime/exec";
 import { type WardenError, wardenErrors } from "@delacour/warden-types/error";
 import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
 import type { SimEntry } from "./rules";
@@ -85,7 +85,7 @@ export function parseRuntimeList(stdout: string): Result<DiskRuntime[], WardenEr
 export async function listDiskRuntimes(exec: Exec): AsyncResult<DiskRuntime[]> {
 	const cmd = ["xcrun", "simctl", "runtime", "list", "-j"];
 	const result = await exec(cmd);
-	if (result.exitCode !== 0) return resultFactory.err(execError(cmd, result));
+	if (result.exitCode !== 0) return resultFactory.err(execErrors.format(cmd, result));
 	const runtimes = parseRuntimeList(result.stdout);
 	return runtimes.success ? runtimes : resultFactory.err(runtimes.error.message);
 }

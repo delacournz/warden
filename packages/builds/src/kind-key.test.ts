@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { bunExec, type Exec } from "@delacour/warden-runtime/exec";
+import { type Exec, processExec } from "@delacour/warden-runtime/exec";
 import { kindHash } from "./cache";
 import { computeKindKey, type KindKeyDeps, type KindKeys } from "./kind-key";
 import { testProject } from "./testing/builds.testing";
@@ -12,7 +12,7 @@ let root: string;
 let fingerprint: string;
 
 async function git(...args: string[]): Promise<void> {
-	const res = await bunExec(["git", "-c", "user.email=t@t", "-c", "user.name=t", ...args], { cwd: root });
+	const res = await processExec.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", ...args], { cwd: root });
 	if (res.exitCode !== 0) throw new Error(`git ${args.join(" ")}: ${res.stderr}`);
 }
 
@@ -31,7 +31,9 @@ afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
 /** the project's own fingerprint command answers `fingerprint`; git is real */
 const exec: Exec = async (cmd, opts) =>
-	cmd.join(" ") === "sh -c fp" ? { exitCode: 0, stdout: `{"hash":"${fingerprint}"}`, stderr: "" } : bunExec(cmd, opts);
+	cmd.join(" ") === "sh -c fp"
+		? { exitCode: 0, stdout: `{"hash":"${fingerprint}"}`, stderr: "" }
+		: processExec.run(cmd, opts);
 
 const deps = (over: Partial<KindKeyDeps> = {}): KindKeyDeps => ({
 	exec,

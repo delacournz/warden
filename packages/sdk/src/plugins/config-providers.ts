@@ -1,7 +1,7 @@
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { findWardenConfig } from "@delacour/warden-builds/config";
 import type { Exec } from "@delacour/warden-runtime/exec";
-import { type GitFactsCache, readGitFacts } from "@delacour/warden-runtime/git-facts";
+import { type GitFactsCache, gitFactsReader } from "@delacour/warden-runtime/git-facts";
 import { WardenError } from "../errors";
 import { defineProvider, type ProviderPlugin } from "./define-provider";
 
@@ -49,7 +49,7 @@ export async function configStopAt(
 	cache: GitFactsCache,
 	env: Record<string, string | undefined>
 ): Promise<string> {
-	const toplevel = (await readGitFacts(exec, cwd, cache))?.toplevel;
+	const toplevel = (await gitFactsReader.read(exec, cwd, cache))?.toplevel;
 	if (toplevel !== undefined) return toplevel;
 	const home = env.HOME;
 	if (home !== undefined && home !== "") {

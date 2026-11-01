@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { bunExec, type Exec } from "@delacour/warden-runtime/exec";
+import { type Exec, processExec } from "@delacour/warden-runtime/exec";
 import { findWardenConfig, loadProject } from "./config";
 import { overlayDir, overlayDirFor, overlayDirUnlessRepoConfig } from "./overlay";
 
@@ -27,7 +27,7 @@ const config = (name: string, root = ".") => ({
 });
 
 async function git(cwd: string, ...args: string[]): Promise<void> {
-	const res = await bunExec(["git", ...args], { cwd });
+	const res = await processExec.run(["git", ...args], { cwd });
 	if (res.exitCode !== 0) throw new Error(res.stderr);
 }
 
@@ -95,8 +95,8 @@ describe("overlayDirFor", () => {
 		await git(main, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "i");
 		const wt = join(dir, "wt");
 		await git(main, "worktree", "add", "-q", wt, "-b", "other");
-		const a = await overlayDirFor(bunExec, main, env);
-		const b = await overlayDirFor(bunExec, wt, env);
+		const a = await overlayDirFor(processExec.run, main, env);
+		const b = await overlayDirFor(processExec.run, wt, env);
 		expect(a).toBeDefined();
 		expect(a).toBe(b);
 	});
@@ -105,7 +105,9 @@ describe("overlayDirFor", () => {
 		const repo = join(dir, "repo");
 		mkdirSync(join(repo, "apps/a"), { recursive: true });
 		await git(repo, "init", "-q");
-		expect(await overlayDirFor(bunExec, join(repo, "apps/a"), env)).toBe(await overlayDirFor(bunExec, repo, env));
+		expect(await overlayDirFor(processExec.run, join(repo, "apps/a"), env)).toBe(
+			await overlayDirFor(processExec.run, repo, env)
+		);
 	});
 
 	test("different repos get different overlays", async () => {
@@ -113,8 +115,8 @@ describe("overlayDirFor", () => {
 			mkdirSync(join(dir, n));
 			await git(join(dir, n), "init", "-q");
 		}
-		expect(await overlayDirFor(bunExec, join(dir, "r1"), env)).not.toBe(
-			await overlayDirFor(bunExec, join(dir, "r2"), env)
+		expect(await overlayDirFor(processExec.run, join(dir, "r1"), env)).not.toBe(
+			await overlayDirFor(processExec.run, join(dir, "r2"), env)
 		);
 	});
 });
@@ -125,7 +127,7 @@ describe("overlayDirUnlessRepoConfig", () => {
 		const calls: string[][] = [];
 		const exec: Exec = (cmd, opts) => {
 			calls.push([...cmd]);
-			return bunExec(cmd, opts);
+			return processExec.run(cmd, opts);
 		};
 		expect(await overlayDirUnlessRepoConfig(exec, dir, dir, env)).toBeUndefined();
 		expect(calls).toEqual([]);
@@ -134,8 +136,8 @@ describe("overlayDirUnlessRepoConfig", () => {
 	test("no repo config: the overlay dir", async () => {
 		mkdirSync(join(dir, "r"));
 		await git(join(dir, "r"), "init", "-q");
-		expect(await overlayDirUnlessRepoConfig(bunExec, join(dir, "r"), join(dir, "r"), env)).toBe(
-			await overlayDirFor(bunExec, join(dir, "r"), env)
+		expect(await overlayDirUnlessRepoConfig(processExec.run, join(dir, "r"), join(dir, "r"), env)).toBe(
+			await overlayDirFor(processExec.run, join(dir, "r"), env)
 		);
 	});
 });

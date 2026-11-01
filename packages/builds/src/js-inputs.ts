@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
-import { type Exec, execError } from "@delacour/warden-runtime/exec";
+import { type Exec, execErrors } from "@delacour/warden-runtime/exec";
 import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
 
 /** Matched files' bytes, or undefined when unreadable (a tracked file deleted from disk). */
@@ -128,9 +128,10 @@ async function listFiles(exec: Exec, dir: string): AsyncResult<Listing> {
 	const indexArgv = ["git", "ls-files", "-z", "-v", "-s", "--cached", "--others", "--exclude-standard", "--", "."];
 	const modifiedArgv = ["git", "ls-files", "-z", "-m", "--", "."];
 	const [indexed, modified] = await Promise.all([exec(indexArgv, { cwd: dir }), exec(modifiedArgv, { cwd: dir })]);
-	if (indexed.exitCode !== 0) return resultFactory.err(`could not list JS inputs: ${execError(indexArgv, indexed)}`);
+	if (indexed.exitCode !== 0)
+		return resultFactory.err(`could not list JS inputs: ${execErrors.format(indexArgv, indexed)}`);
 	if (modified.exitCode !== 0)
-		return resultFactory.err(`could not list JS inputs: ${execError(modifiedArgv, modified)}`);
+		return resultFactory.err(`could not list JS inputs: ${execErrors.format(modifiedArgv, modified)}`);
 	return parseListing(indexed.stdout, modified.stdout);
 }
 
