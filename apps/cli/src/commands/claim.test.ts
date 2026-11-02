@@ -279,6 +279,146 @@ describe("warden claim auto-gc (16-1)", () => {
 	});
 });
 
+describe("warden claim --remote", () => {
+	test("refuses --physical, before any lease or API call", async () => {
+		const c = testContext(["android", "--remote", "--physical", "--json"]);
+		try {
+			expect(await claimCommand.run(c)).toBe(1);
+			expect(c.stderr.join("\n")).toContain("can't be combined with --physical");
+		} finally {
+			c.cleanup();
+		}
+	});
+
+	test("leases a hosted device; release stops it", async () => {
+		const { fakeServer } = await import("../remote/api.testing");
+		const { releaseCommand } = await import("./release");
+		const server = fakeServer();
+		const c = testContext(["ios", "--remote", "--json", "--profile", "iphone-17"], {
+			fetch: server.fetch,
+			sleep: async () => {},
+		});
+		try {
+			c.env = { ...c.env, WARDEN_API_URL: "https://api.test", WARDEN_TOKEN: server.token, WARDEN_SESSION_ID: "s1" };
+			expect(await claimCommand.run(c)).toBe(0);
+			const out = JSON.parse(c.stdout.join("\n"));
+			expect(out).toMatchObject({ remoteIds: ["rd1"], leases: [{ remote: true, remoteId: "rd1", name: "iphone-17" }] });
+			expect(c.db.listLeases()[0]?.resource).toEqual({
+				kind: "remote-device",
+				platform: "ios",
+				id: "rd1",
+				name: "iphone-17",
+			});
+
+			c.stdout.length = 0;
+			c.argv = [out.leases[0].leaseId, "--json"];
+			expect(await releaseCommand.run(c)).toBe(0);
+			expect(JSON.parse(c.stdout.join("\n"))).toMatchObject({
+				released: [out.leases[0].leaseId],
+				remoteStopped: ["rd1"],
+			});
+			expect(server.devices.get("rd1")?.status).toBe("stopped");
+		} finally {
+			c.cleanup();
+		}
+	});
+
+	test("--remote --json out of credits: a JSON failure with code credits_exhausted and the link", async () => {
+		const { fakeServer } = await import("../remote/api.testing");
+		const server = fakeServer();
+		server.createError = {
+			status: 402,
+			body: { success: false, code: "CREDITS_EXHAUSTED", error: "no credit", billingUrl: "https://app.test/billing" },
+		};
+		const c = testContext(["ios", "--remote", "--json"], { fetch: server.fetch, sleep: async () => {} });
+		try {
+			c.env = { ...c.env, WARDEN_API_URL: "https://api.test", WARDEN_TOKEN: server.token };
+			expect(await claimCommand.run(c)).toBe(1);
+			expect(JSON.parse(c.stdout.join("\n"))).toEqual({
+				ok: false,
+				command: "claim",
+				error: {
+					code: "credits_exhausted",
+					message: "remote claim failed: out of credits; top up at https://app.test/billing",
+					billingUrl: "https://app.test/billing",
+				},
+			});
+			expect(c.stderr.join("\n")).toContain("out of credits; top up at https://app.test/billing");
+		} finally {
+			c.cleanup();
+		}
+	});
+
+	test("release of a device stopped for credits reports stop_reason credits_exhausted", async () => {
+		const { fakeServer } = await import("../remote/api.testing");
+		const { releaseCommand } = await import("./release");
+		const server = fakeServer();
+		const c = testContext(["ios", "--remote", "--json"], { fetch: server.fetch, sleep: async () => {} });
+		try {
+			c.env = { ...c.env, WARDEN_API_URL: "https://api.test", WARDEN_TOKEN: server.token, WARDEN_SESSION_ID: "s1" };
+			expect(await claimCommand.run(c)).toBe(0);
+			const leaseId = JSON.parse(c.stdout.join("\n")).leases[0].leaseId;
+			const device = server.devices.get("rd1");
+			if (device) Object.assign(device, { status: "stopped", stopReason: "credits_exhausted" });
+			c.stdout.length = 0;
+			c.argv = [leaseId, "--json"];
+			expect(await releaseCommand.run(c)).toBe(0);
+			expect(JSON.parse(c.stdout.join("\n"))).toMatchObject({
+				released: [leaseId],
+				remoteStopReasons: { rd1: "credits_exhausted" },
+			});
+		} finally {
+			c.cleanup();
+		}
+	});
+
+	test("--remote without a login fails with the hint", async () => {
+		const c = testContext(["android", "--remote"]);
+		try {
+			expect(await claimCommand.run(c)).toBe(1);
+			expect(c.stderr.join("\n")).toContain("warden login");
+		} finally {
+			c.cleanup();
+		}
+	});
+
+	test("--view without --remote is a usage error and claims nothing", async () => {
+		const c = setup(["ios", "--view"]);
+		expect(await claimCommand.run(c)).toBe(1);
+		expect(c.stderr.join("\n")).toContain("--view needs --remote");
+		expect(c.db.listLeases()).toEqual([]);
+	});
+
+	test("--remote --view opens the viewer on the new lease and returns its exit code", async () => {
+		const { fakeServer } = await import("../remote/api.testing");
+		const { fakeViewer } = await import("../remote/viewer.testing");
+		const server = fakeServer();
+		const viewer = fakeViewer();
+		viewer.exit(0);
+		const c = testContext(["ios", "--remote", "--view", "--json", "--profile", "iphone-17"], {
+			fetch: server.fetch,
+			sleep: async () => {},
+			spawn: viewer.spawn,
+		});
+		try {
+			c.env = {
+				...c.env,
+				WARDEN_API_URL: "https://api.test",
+				WARDEN_TOKEN: server.token,
+				WARDEN_SESSION_ID: "s1",
+				WARDEN_VIEWER_PATH: "/dev/warden-viewer",
+			};
+			expect(await claimCommand.run(c)).toBe(0);
+			expect(viewer.spawns[0]?.cmd).toEqual(["/dev/warden-viewer"]);
+			expect(viewer.stdin[0]).toMatchObject({ deviceId: "rd1", scope: "drive", title: "iphone-17 · warden" });
+			expect(server.viewerTokens[0]?.ttlS).toBeUndefined();
+			expect(() => JSON.parse(c.stdout.join("\n"))).not.toThrow();
+		} finally {
+			c.cleanup();
+		}
+	});
+});
+
 describe("warden claim --physical", () => {
 	test("with no phone present it fails without booting or creating anything", async () => {
 		const calls: string[][] = [];

@@ -2,6 +2,9 @@ import { bunExec, type Exec } from "@delacour/warden-core/exec";
 import { createGitFactsCache, type GitFactsCache } from "@delacour/warden-core/git-facts";
 import type { HostFacts } from "@delacour/warden-core/host";
 import { openStore, type Store } from "@delacour/warden-core/store";
+import type { Fetch } from "./remote/api";
+import type { CloudErrorCode } from "./remote/errors";
+import type { SpawnViewer } from "./remote/viewer";
 import { terminalUi, type Ui } from "./ui";
 
 /** Everything a command touches from the outside world — injectable for tests. */
@@ -27,7 +30,18 @@ export type CommandContext = {
 	hostFacts?: () => Promise<HostFacts>;
 	/** where `reportError` records a failure, for the `--json` error envelope `runProgram` prints */
 	failure?: FailureSink;
+	/** HTTP for warden-api; unset = global fetch (tests inject a fake) */
+	fetch?: Fetch;
+	/** wall-clock wait (polling loops); unset = `Bun.sleep` */
+	sleep?: (ms: number) => Promise<void>;
+	/** text of a file, `undefined` when missing (the machine id on Linux); unset = the disk */
+	readFile?: (path: string) => Promise<string | undefined>;
+	/** starts the `warden view` window; unset = `Bun.spawn` (tests inject a fake) */
+	spawn?: SpawnViewer;
 };
+
+/** A machine-readable code (and link) for a failure, carried into the `--json` error envelope. */
+export type FailureDetail = { code: CloudErrorCode; billingUrl?: string };
 
 /** Collects the failures a command reports; `runProgram` keeps the first. */
 export type FailureSink = { record: (message: string, extra?: FailureExtra) => void };
@@ -35,7 +49,8 @@ export type FailureSink = { record: (message: string, extra?: FailureExtra) => v
 /** What a failure adds to the `--json` envelope beyond its message: a machine code, a fix and structured details. */
 export type FailureExtra =
 	| { code: "ambiguous_device"; hint: string; details: Record<string, unknown> }
-	| { code: "device_locked"; hint: string };
+	| { code: "device_locked"; hint: string }
+	| FailureDetail;
 
 /** Line writes to a process stream that remember backpressure, so the process can wait for them before exiting. */
 export type LineWriter = {

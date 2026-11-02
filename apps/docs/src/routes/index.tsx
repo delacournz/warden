@@ -28,7 +28,7 @@ import {
 } from "@/lib/landing.data";
 import { baseOptions } from "@/lib/layout.shared";
 import { canonicalLink, softwareApplicationJsonLd, tagline } from "@/lib/seo";
-import { appDescription, appName, githubUrl, privacyRoute } from "@/lib/shared";
+import { appDescription, appName, githubUrl, pricingRoute, privacyRoute, termsRoute } from "@/lib/shared";
 
 export const Route = createFileRoute("/")({
 	component: Home,
@@ -285,6 +285,12 @@ function Home(): ReactElement {
 					<a className="hover:text-ink" href={githubUrl} rel="noreferrer noopener" target="_blank">
 						github
 					</a>
+					<Link className="hover:text-ink" to={pricingRoute}>
+						pricing
+					</Link>
+					<Link className="hover:text-ink" to={termsRoute}>
+						terms
+					</Link>
 					<Link className="hover:text-ink" to={privacyRoute}>
 						privacy
 					</Link>

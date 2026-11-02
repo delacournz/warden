@@ -68,6 +68,19 @@ Builds:
   builds                        list, remove, prune (LRU) and import cached
                                 native app builds
 
+Account:
+  view [leaseId|remoteId]       open a hosted device in the warden viewer window
+  login                         log in to warden cloud (remote simulators) in
+                                the browser
+  logout                        log out of warden cloud and forget the saved
+                                token
+  whoami                        show the warden cloud account, organization,
+                                balance and remote-device status
+  billing                       show the warden cloud balance and ledger, or top
+                                up credit
+  org                           list warden cloud organizations or switch the
+                                active one
+
 Commands:
   ui                            drive a leased simulator / emulator (agents):
                                 status, snapshot, find, open, press, fill,
@@ -141,6 +154,10 @@ Options:
                          (implies --physical)
   --udid <udid...>       ios: claim these physical devices by CoreDevice UDID
                          (implies --physical)
+  --remote               lease a hosted device from warden cloud (warden login
+                         first)
+  --view                 with --remote: open the device in the warden viewer and
+                         stay until it closes
   -h, --help             display help for command"
 `;
 
@@ -4328,6 +4345,112 @@ MCP server on stdio: Metro logs, app console, network, eval, tree, logpoints,
 profiles of \`warden dev\`
 
 Options:
+  -h, --help  display help for command"
+`;
+
+exports[`help output warden view --help (and nested subcommands) 1`] = `
+"$ warden view --help
+Usage: warden view [options] [leaseId|remoteId]
+
+open a hosted device in the warden viewer window
+
+Arguments:
+  leaseId|remoteId  remote lease or hosted device id (default: your only remote
+                    lease)
+
+Options:
+  --watch           read-only: no taps, swipes or typing
+  --detach          leave the window open and return (one 30 min token; the
+                    lease TTL applies)
+  --json            machine-readable output
+  -h, --help        display help for command"
+`;
+
+exports[`help output warden login --help (and nested subcommands) 1`] = `
+"$ warden login --help
+Usage: warden login [options]
+
+log in to warden cloud (remote simulators) in the browser
+
+Options:
+  --api-url <url>  warden-api to log in to (default: $WARDEN_API_URL or
+                   https://api.warden.co.nz)
+  --no-browser     print the approval link instead of opening it
+  --json           machine-readable output
+  -h, --help       display help for command"
+`;
+
+exports[`help output warden logout --help (and nested subcommands) 1`] = `
+"$ warden logout --help
+Usage: warden logout [options]
+
+log out of warden cloud and forget the saved token
+
+Options:
+  --json      machine-readable output
+  -h, --help  display help for command"
+`;
+
+exports[`help output warden whoami --help (and nested subcommands) 1`] = `
+"$ warden whoami --help
+Usage: warden whoami [options]
+
+show the warden cloud account, organization, balance and remote-device status
+
+Options:
+  --json      machine-readable output
+  -h, --help  display help for command"
+`;
+
+exports[`help output warden billing --help (and nested subcommands) 1`] = `
+"$ warden billing --help
+Usage: warden billing [options]
+
+show the warden cloud balance and ledger, or top up credit
+
+Options:
+  --top-up [amount]  buy credit in USD ($10–$500) through Stripe Checkout; no
+                     amount = pick one
+  --limit <n>        ledger entries to show (default 10)
+  --no-browser       print the checkout link instead of opening it
+  --json             machine-readable output
+  -h, --help         display help for command"
+`;
+
+exports[`help output warden org --help (and nested subcommands) 1`] = `
+"$ warden org --help
+Usage: warden org [options] [command]
+
+list warden cloud organizations or switch the active one
+
+Options:
+  -h, --help      display help for command
+
+Commands:
+  list            list your organizations (the default)
+  use <org>       switch the active organization (remote devices are billed to
+                  it)
+  help [command]  display help for command
+
+$ warden org list --help
+Usage: warden org list [options]
+
+list your organizations (the default)
+
+Options:
+  --json      machine-readable output
+  -h, --help  display help for command
+
+$ warden org use --help
+Usage: warden org use [options] <org>
+
+switch the active organization (remote devices are billed to it)
+
+Arguments:
+  org         organization slug or id
+
+Options:
+  --json      machine-readable output
   -h, --help  display help for command"
 `;
 

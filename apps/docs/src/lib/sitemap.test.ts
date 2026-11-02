@@ -2,8 +2,15 @@ import { describe, expect, test } from "bun:test";
 import { sitemapPaths, sitemapXml } from "./sitemap";
 
 describe("sitemapPaths", () => {
-	test("home, every docs page and the privacy policy, once each", () => {
-		expect(sitemapPaths(["/docs", "/docs/e2e", "/docs/e2e"])).toEqual(["/", "/docs", "/docs/e2e", "/privacy"]);
+	test("home, every docs page, pricing, terms and the privacy policy, once each", () => {
+		expect(sitemapPaths(["/docs", "/docs/e2e", "/docs/e2e"])).toEqual([
+			"/",
+			"/docs",
+			"/docs/e2e",
+			"/pricing",
+			"/terms",
+			"/privacy",
+		]);
 	});
 });
 

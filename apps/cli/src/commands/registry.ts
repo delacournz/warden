@@ -274,4 +274,40 @@ export const COMMANDS: readonly CommandEntry[] = [
 		summary: "MCP server on stdio: Metro logs, app console, network, eval, tree, logpoints, profiles of `warden dev`",
 		load: async () => (await import("./mcp")).mcpCommand,
 	},
+	{
+		name: "view",
+		group: "Account",
+		summary: "open a hosted device in the warden viewer window",
+		load: async () => (await import("./view")).viewCommand,
+	},
+	{
+		name: "login",
+		group: "Account",
+		summary: "log in to warden cloud (remote simulators) in the browser",
+		load: async () => (await import("./login")).loginCommand,
+	},
+	{
+		name: "logout",
+		group: "Account",
+		summary: "log out of warden cloud and forget the saved token",
+		load: async () => (await import("./logout")).logoutCommand,
+	},
+	{
+		name: "whoami",
+		group: "Account",
+		summary: "show the warden cloud account, organization, balance and remote-device status",
+		load: async () => (await import("./whoami")).whoamiCommand,
+	},
+	{
+		name: "billing",
+		group: "Account",
+		summary: "show the warden cloud balance and ledger, or top up credit",
+		load: async () => (await import("./billing")).billingCommand,
+	},
+	{
+		name: "org",
+		group: "Account",
+		summary: "list warden cloud organizations or switch the active one",
+		load: async () => (await import("./org")).orgCommand,
+	},
 ];

@@ -16,6 +16,7 @@
 apps/
   cli/                # @delacour/warden — the `warden` binary (commands, Claude hook)
   docs/               # @delacour/warden-docs — Fumadocs + TanStack Start docs site (content/docs/*.mdx), :3210
+  viewer/             # @delacour/warden-viewer — Tauri v2 window for one hosted device (`warden view`); Rust holds the scoped token; see apps/viewer/AGENTS.md
   example/            # @delacour/warden-example — Expo + Delacour UI demo app; `@delacour/warden-e2e` specs run via `warden e2e example`
 packages/
   core/               # @delacour/warden-core — lease store, allocation, device providers, build cache
@@ -43,6 +44,17 @@ scripts/              # repo scripts (pre-commit biome, signoff/ = local CI gate
 ## Docs analytics (apps/docs)
 
 PostHog only, off unless `VITE_POSTHOG_TOKEN` (`phc_…`) and `VITE_POSTHOG_HOST` (`https://i.delacour.co.nz`) are set at **build** time; Railway sets them per environment (prod `warden.co.nz`, staging `staging.warden.co.nz`). delacour-monorepo declares them (`wardenAnalyticsEnv` in `.railway/analytics.ts`, used by `apps/warden/infra/railway.ts`, with a per-env `DEPLOY_ENV` so prod and staging never share an image): the same token every Delacour app uses, so each environment's PostHog project (cookieless mode enabled) holds every site: warden's events carry `site: "warden"` and `surface: "web"|"server"` (`SUPER_PROPERTIES` in `posthog.ts`). `i.delacour.co.nz` is PostHog's managed reverse proxy (DNS-only CNAME, attached to no Railway service); from `warden.co.nz` it is third-party, so strict blocker modes may drop events (PostHog's proxy limit rules out an `i.warden.co.nz`). Dev and CI set neither and render no analytics. `turbo.jsonc` lists `VITE_*` on `build` (strict env mode) and a test holds it to that. Cookieless until the visitor accepts the banner (`cookieless_mode: "on_reject"` + `opt_out_capturing_by_default`); Accept turns on the cookie, local storage and session replay (inputs masked, recorder bundled from `posthog-js/dist/recorder`, never loaded from outside). Heatmaps on; autocapture and surveys off in code (`apps/docs/src/lib/analytics/posthog.ts`). One stored answer (`consent.analytics` in localStorage) in `consent.ts`, the banner in `components/consent-banner.tsx`, reopened by the footer's cookie settings. `/privacy` renders `src/lib/privacy.ts`, and `privacy.test.ts` holds its claims to the code (installed packages, the SDK options, the CLI's update hosts). Events: `$pageview`, `$$heatmap`, `$snapshot`, `outbound`, `download`, `copy`, `search` from the browser, and `agent-fetch` from the server for `/llms*.txt` and `.md` reads (`src/lib/analytics/server.ts`, called from `start.ts`). Only counted hosts report, so a prod build on `localhost` sends nothing.
+
+## Design systems (`@delacournz/ui`, `@delacournz/apogee`)
+
+`apps/docs` lists both design systems from delacour-monorepo as optionalDependencies (GitHub Packages, `@delacournz` scope in `bunfig.toml`; CI installs with the `NPM_READ_TOKEN` secret, a tokenless clone skips them). **Installed, not yet used** — nothing imports their CSS or components.
+
+- `@delacournz/ui` — the "site" design system (Base UI + shadcn base-lyra, Tailwind v4). CSS: `@import "@delacournz/ui/styles";`
+- `@delacournz/apogee` — the "app" design system (coss on Base UI, Orbit palettes, Phosphor icons, Tailwind v4). CSS: `@import "@delacournz/apogee/styles.css";`
+- **Never load both in one document**: they define the same shadcn tokens (`--primary`, `.dark`, …) with different values. Pick one per page/app.
+- The CSS entry declares its own `@source`, so the single `@import` in the Tailwind v4 stylesheet (`apps/docs/src/styles/app.css`) is all a migration needs.
+- Peers: `react` / `react-dom` ^19.2, `tailwindcss` ^4. Web (React DOM) only — never add them to `apps/example` (Expo) or the CLI/packages.
+- Until a migration is planned, the docs site's current UI (`fumadocs-ui` + `apps/docs/src/components`) stays the source of truth, and `apps/example/src/components/ui` (React Native) is unaffected.
 
 ## File Naming
 
@@ -89,6 +101,7 @@ PRs into `develop` are gated on local signoff, not GitHub Actions. Branch protec
 - Merging the version PR triggers `promote.yml`: fast-forward `main`, push tag `v<version>`. Railway production builds `main`, staging builds `develop`.
 - The docs deploy as a Docker image from `apps/docs/Dockerfile` (repo-root context, root `.dockerignore`): Nitro's `.output` plus a vendored `@delacournz/otel-start` bundle on `oven/bun:*-slim`, no workspace `node_modules`. The Railway service (`warden-docs`: builder, `dockerfilePath`, watch patterns, variables, domains) is declared in `delacournz/delacour-monorepo`'s `apps/warden/infra/railway.ts`. A Dockerfile build sees a variable only when it is an `ARG`, so a new `VITE_*` needs one there; a new workspace dependency of `apps/docs` needs adding to that service's `watchPatterns`, or pushes touching it are skipped.
 - The tag triggers `release.yml`: GitHub Release with binaries + npm publish via OIDC trusted publishing (`release` environment, no token, no reviewer click).
+- The same tag builds the desktop viewer (`apps/viewer`, `viewer` job: darwin-arm64, darwin-x64 on the Mac runner, win32-x64 on `windows-latest`). `warden-viewer-<target>.tgz` assets ride the GitHub Release and are merged into `SHA256SUMS`; they are not npm packages. macOS is signed with the hardened runtime and notarized when the `APPLE_*` secrets are set, Windows is Authenticode-signed when `WINDOWS_CERTIFICATE*` are set; without them the build is unsigned with a `::warning::`. Secret list: `apps/viewer/AGENTS.md` § Release.
 - `bun run release <version>` (`apps/cli/scripts/release.ts`) is break-glass only, for when CI is down. It bypasses changesets.
 
 ## Checklists

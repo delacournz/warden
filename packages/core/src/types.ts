@@ -31,7 +31,9 @@ export type DeviceResource = {
 };
 export type PortResource = { kind: "port"; port: number };
 export type BuildResource = { kind: "build"; key: string };
-export type Resource = DeviceResource | PortResource | BuildResource;
+/** A hosted device leased through warden cloud: `id` is the warden-api device id, never a local udid/serial. */
+export type RemoteDeviceResource = { kind: "remote-device"; platform: Platform; id: string; name: string };
+export type Resource = DeviceResource | PortResource | BuildResource | RemoteDeviceResource;
 
 export type AgentOwner = { kind: "agent"; sessionId: string; cwd: string; repo?: string; worktree?: string };
 export type UserOwner = { kind: "user"; pid: number; tty?: string; cwd: string; repo?: string; worktree?: string };
@@ -117,6 +119,8 @@ export function resourceKey(resource: Resource): string {
 			return `port:${resource.port}`;
 		case "build":
 			return `build:${resource.key}`;
+		case "remote-device":
+			return `remote-device:${resource.platform}:${resource.id}`;
 	}
 }
 

@@ -35,7 +35,7 @@ export type CommandEntry = Pick<Command, "name" | "aliases" | "group" | "summary
 };
 
 /** `warden --help` sections, in the order they are shown. */
-export const COMMAND_GROUPS = ["Lease", "Run", "Devices", "Builds", "Setup"] as const;
+export const COMMAND_GROUPS = ["Lease", "Run", "Devices", "Builds", "Account", "Setup"] as const;
 export type CommandGroup = (typeof COMMAND_GROUPS)[number];
 
 export const PROGRAM_DESCRIPTION = "machine-wide device + port leasing for agents and users";
