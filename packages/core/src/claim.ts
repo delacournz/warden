@@ -383,8 +383,12 @@ function holdWaitRow(input: ClaimInput, cap: CapacityRound, reason: DeviceWaitRe
 	});
 }
 
-/** Log that this claim started waiting (once per claim call, with the first reason). */
+/**
+ * Log that this claim started waiting (once per claim call, with the first reason). A claim with no wait
+ * time left (`--no-wait`, or past its deadline) fails instead of waiting, so it logs nothing.
+ */
 function noteQueued(input: ClaimInput, cap: CapacityRound, reason: WaitReason, now: number): void {
+	if (now >= cap.enqueuedAt + input.waitMs) return;
 	input.store.recordQueuedOnce({
 		at: now,
 		type: "queued",

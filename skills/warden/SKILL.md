@@ -73,6 +73,7 @@ Open the reference file for details before acting; this file only routes.
 | clone / golden / disk | `warden clone <udid\|name>` · `warden golden ensure --profile iphone-17` (`golden ls`, `golden prune`) · `warden sims` (= `audit`; `prune --dry-run`, then `--yes`; `delete <udid…>`) |
 | reclaim dead leases | `warden gc` (auto every 10 min; deletes shut-down ephemeral warden sims; once a day prunes stale goldens, `WARDEN_GOLDEN_PRUNE=0` off; never touches foreign devices) |
 | setup / helper problems | `warden doctor [--fetch-helper]` |
+| lease registry drift | `warden doctor --leases [--fix] [--json]` (exit 1 on drift; `--fix` deletes registry rows only; suites.md "Lease drift") |
 | version / channel | `warden version [--json]` |
 | install / update | `npm i -g @delacour/warden && warden install` · `warden update [--check]` · skill: `warden skill install` · `warden skill show` |
 

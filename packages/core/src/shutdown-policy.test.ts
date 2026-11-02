@@ -128,3 +128,15 @@ describe("deleteAfterShutdown", () => {
 		expect(deleteAfterShutdown(record({ name: "warden-golden-iphone-17-iOS-26-5" }))).toBe(false);
 	});
 });
+
+describe("shouldShutdown ownership marker", () => {
+	const warden = new Set(["ios:U1"]);
+	test("a marker naming another instance vetoes, even for a warden device the owner booted", () => {
+		expect(shouldShutdown(lease({ bootedByOwner: true }), warden, () => true)).toBe(false);
+		expect(shouldShutdown(lease(), warden, () => true)).toBe(false);
+	});
+	test("no marker / matching marker keeps today's rules", () => {
+		expect(shouldShutdown(lease(), warden, () => false)).toBe(true);
+		expect(shouldShutdown(lease(), warden)).toBe(true);
+	});
+});

@@ -3,6 +3,7 @@ import { profileSlug } from "../allocate";
 import { splitBiometricProfile } from "../biometrics";
 import { type Exec, type ExecResult, execError } from "../exec";
 import { isGoldenName } from "../golden/golden";
+import { realMarkerFs, writeMarker } from "../ownership";
 import { disabledStoreRoot } from "../sims/disabled-store";
 import { slimSimulator } from "../sims/slim";
 import { prepareOfflineSlim, runtimeSupportsPersistentOverrides, verifyOfflineSlim } from "../sims/slim.offline";
@@ -389,6 +390,7 @@ export function createIosProvider(deps: ProviderDeps, options: IosProviderOption
 	};
 	const record = (id: string, name: string, profile: string, runtime: string): InventoryDevice => {
 		deps.store.recordDevice({ platform: "ios", id, name, profile, runtime }, deps.now());
+		writeMarker(deps.markerFs ?? realMarkerFs, deps.env, deps.store, id, name, deps.now());
 		return { platform: "ios", id, name, state: "shutdown", wardenCreated: true, profile, runtime };
 	};
 	const slim = options.slim === undefined ? DEFAULT_SLIM_PROFILE : options.slim;

@@ -32,8 +32,20 @@ describe("warden capacity", () => {
 		ctx.env = { ...ctx.env, WARDEN_CAPACITY_HEADROOM_GB: "8", WARDEN_CAPACITY_MAX: "1" };
 		expect(await capacityCommand.run(ctx)).toBe(0);
 		const out = JSON.parse(ctx.stdout.join("\n"));
-		expect(out.blocked).toBe("cpu-budget");
+		expect(out.blocked).toEqual({ ios: "cpu-budget", android: "cpu-budget" });
 		expect(out.usage.total.units).toBe(out.usage.ios.units + out.usage.android.units);
+	});
+
+	test("--json: at exactly the budget the next boot is blocked, as the claim gate says; with room it is null", async () => {
+		ctx = testContext(["--json"], { exec: fakeSimctl([wardenSim(1, "Booted")]) });
+		ctx.env = { ...ctx.env, WARDEN_CAPACITY_HEADROOM_GB: "8", WARDEN_CAPACITY_MAX: "1" };
+		expect(await capacityCommand.run(ctx)).toBe(0);
+		expect(JSON.parse(ctx.stdout.join("\n")).blocked).toEqual({ ios: "cpu-budget", android: "cpu-budget" });
+		ctx.cleanup();
+		ctx = testContext(["--json"], { exec: fakeSimctl([wardenSim(1, "Booted")]) });
+		ctx.env = { ...ctx.env, WARDEN_CAPACITY_HEADROOM_GB: "8", WARDEN_CAPACITY_MAX: "2" };
+		expect(await capacityCommand.run(ctx)).toBe(0);
+		expect(JSON.parse(ctx.stdout.join("\n")).blocked).toEqual({ ios: null, android: "cpu-budget" });
 	});
 
 	test("text output names host, budget and pressure; off is flagged", async () => {

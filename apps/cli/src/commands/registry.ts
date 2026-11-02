@@ -265,7 +265,7 @@ export const COMMANDS: readonly CommandEntry[] = [
 		name: "doctor",
 		group: "Setup",
 		summary:
-			"check warden's setup: home, db, device tools, simulator helper, install method, PATH, Claude/Codex hooks + skill, stale leases",
+			"check warden's setup: home, db, device tools, simulator helper, install method, PATH, Claude/Codex hooks + skill, stale leases (--leases: registry drift)",
 		load: async () => (await import("./doctor")).doctorCommand,
 	},
 	{

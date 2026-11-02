@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { activeConditions, recordCondition } from "@delacour/warden-core/conditions/conditions";
 import type { Exec } from "@delacour/warden-core/exec";
 import type { Lease, Owner } from "@delacour/warden-core/types";
@@ -80,6 +83,26 @@ describe("shutdownReleasedDevices", () => {
 		expect(result.shutdown).toEqual(["W", "BOOTED-BY-ME"]);
 		expect(result.notes.join("\n")).toContain("USERS");
 		expect(calls.filter((c) => c[2] === "shutdown").map((c) => c[3])).toEqual(["W", "BOOTED-BY-ME"]);
+	});
+
+	test("a sim whose ownership marker names another warden instance is left running, and the note says why", async () => {
+		const calls: string[][] = [];
+		ctx = testContext([], { exec: fakeSimctl([], calls) });
+		const home = mkdtempSync(join(tmpdir(), "warden-marker-home-"));
+		const dir = join(home, "Library/Developer/CoreSimulator/Devices/W");
+		mkdirSync(dir, { recursive: true });
+		writeFileSync(
+			join(dir, ".warden-owned.json"),
+			JSON.stringify({ instanceId: "other-host", name: "warden-iphone-17-1", createdAt: 0 })
+		);
+		ctx.env = { ...ctx.env, HOME: home, WARDEN_GOLDEN: "0" };
+		ctx.db.recordDevice({ platform: "ios", id: "W", name: "warden-iphone-17-1" }, 0);
+		const result = await shutdownReleasedDevices(ctx, [lease(ctx, "W", true)], owner);
+		rmSync(home, { recursive: true, force: true });
+		expect(result.shutdown).toEqual([]);
+		expect(result.notes.join("\n")).toContain("another warden instance (other-host)");
+		expect(result.notes.join("\n")).not.toContain("already running when leased");
+		expect(calls.filter((c) => c[2] === "shutdown")).toEqual([]);
 	});
 
 	test("closes the viewer windows of the iOS sims it shut down, once, by name (Device Hub keeps a page open)", async () => {

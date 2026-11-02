@@ -3,7 +3,8 @@
  * garbage, since the next claim clones a fresh one from the golden. `warden gc` sweeps them here: the rules of
  * `warden sims prune` with no idle wait (`canPrune`: warden-owned, not booted, not leased, not a golden), minus
  * quarantined sims (kept for `warden sim unquarantine`), persistent sims (`warden dev`'s) and sims a claim is still cloning (their name is held by a
- * `pending:` placeholder lease, before the real lease exists). Deleted through `deleteSims`, which leases each sim
+ * `pending:` placeholder lease, before the real lease exists) and sims whose ownership marker names another
+ * warden instance (`deps.markerBlock`: skipped, never reported as a failed delete). Deleted through `deleteSims`, which leases each sim
  * under the store lock first, so a claim that takes one meanwhile wins and it is skipped.
  */
 import { type AsyncResult, ok } from "@delacour/warden-types/result";
@@ -34,7 +35,9 @@ export async function sweepEphemeralSims(deps: SimsDeps): AsyncResult<EphemeralS
 				l.resource.kind === "device" && l.resource.id.startsWith(PENDING_PREFIX) ? [l.resource.name] : []
 			)
 	);
-	const doomed = judged.data.filter((e) => canPrune(e) && !kept.has(e.udid) && !pendingNames.has(e.name));
+	const doomed = judged.data.filter(
+		(e) => canPrune(e) && !kept.has(e.udid) && !pendingNames.has(e.name) && deps.markerBlock?.(e.udid) === undefined
+	);
 	if (doomed.length === 0) return ok({ removed: [], failed: [] });
 	const result = await deleteSims(deps, doomed, { label: "gc-ephemeral" });
 	return ok({ removed: result.removed, failed: result.failed });

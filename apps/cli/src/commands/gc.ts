@@ -24,6 +24,7 @@ import { releaseDevices } from "../device-lease";
 import { shutdownReleasedDevices } from "../device-shutdown";
 import { androidSnapshotPass } from "../golden-deps";
 import { goldenPrunePass } from "../golden-prune";
+import { simMarkerBlock } from "../marker-guard";
 import { emit, heading, plural, reportError } from "../output";
 import { providerFor } from "../providers";
 import { hasForegroundApp } from "../running-apps";
@@ -297,7 +298,7 @@ type GcOutcome = PlatformOutcome & {
 };
 
 /**
- * Ephemeral sims (`ephemeralEnabled`): every shut-down, unleased, unquarantined warden sim is deleted — including the
+ * Ephemeral sims (`ephemeralEnabled`): every shut-down, unleased, unquarantined warden sim is deleted, unless its ownership marker names another instance, — including the
  * idle ones this pass just shut down and the backlog an older warden left — and the next claim clones fresh from the
  * golden. Imported lazily: list + judge + delete code a gc with ephemeral sims off never loads.
  */
@@ -311,6 +312,7 @@ async function sweepEphemeral(ctx: CommandContext, owner: Owner): Promise<{ dele
 		pid: process.pid,
 		now: ctx.now,
 		pidAlive: processAlive,
+		markerBlock: (udid) => simMarkerBlock(ctx, udid),
 	});
 	// no simctl listing (no Xcode, Linux): nothing to sweep; the ios pass above already notes a failing inventory
 	if (!swept.success) return { deleted: [], notes: [] };

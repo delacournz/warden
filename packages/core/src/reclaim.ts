@@ -1,6 +1,7 @@
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import type { Exec } from "./exec";
 import { isGoldenName } from "./golden/golden";
+import { type MarkerFs, markerBlock, realMarkerFs } from "./ownership";
 import { androidTools, isEmulatorSerial } from "./providers/android";
 import type { DeviceRecord, Store } from "./store";
 import { isPhysicalIosId, type Platform } from "./types";
@@ -95,7 +96,14 @@ export function reclaimSkipReason(store: Store, platform: Platform, id: string, 
 	return undefined;
 }
 
-export type ReclaimDeps = { exec: Exec; store: Store; env: Record<string, string | undefined>; now: () => number };
+export type ReclaimDeps = {
+	exec: Exec;
+	store: Store;
+	env: Record<string, string | undefined>;
+	now: () => number;
+	/** where the ownership marker is read (default: the real filesystem) */
+	markerFs?: MarkerFs;
+};
 
 export type ReclaimOutcome =
 	| { kind: "done"; note?: string }
@@ -117,8 +125,11 @@ export function parseListApps(text: string): InstalledApp[] {
 	return apps;
 }
 
-/** warden's own runner apps are not the run's residue */
-const KEEP_APP_PREFIXES: readonly string[] = ["com.apple.", "nz.co.delacour.warden."];
+/**
+ * Apple's apps and warden's own XCUITest runner are not the run's residue. Only the runner prefix is kept:
+ * an app under test may share warden's namespace (the example app does) and must still be removed.
+ */
+const KEEP_APP_PREFIXES: readonly string[] = ["com.apple.", "nz.co.delacour.warden.runner."];
 
 /** User-installed apps on a sim: `ApplicationType = User`, minus system and warden's own. */
 export const userAppIds = (listapps: string): string[] =>
@@ -195,6 +206,8 @@ export async function reclaimDevice(
 	if (mode === "none") return { kind: "skipped", reason: "reclaim is none" };
 	const skip = reclaimSkipReason(deps.store, platform, id, physical);
 	if (skip !== undefined) return { kind: "skipped", reason: skip };
+	const owned = platform === "ios" ? markerBlock(deps.markerFs ?? realMarkerFs, deps.env, deps.store, id) : undefined;
+	if (owned !== undefined) return { kind: "skipped", reason: owned };
 	if (platform === "android") {
 		const done = await uninstallAndroid(deps, id);
 		if (!done.success) return { kind: "failed", error: done.error };

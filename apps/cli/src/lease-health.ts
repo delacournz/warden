@@ -8,6 +8,7 @@ import { isPhysicalIosId, type Lease, type Resource, resourceKey } from "@delaco
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import type { CommandContext } from "./context";
 import { errorMessage } from "./hooks/json";
+import { ownedElsewhere } from "./marker-guard";
 
 /**
  * Health monitor under a held lease (`run` / `dev` / `batch` / `e2e`). Each heartbeat tick reads every
@@ -136,7 +137,7 @@ export function createLeaseHealth(
 				consecutive: state.bad,
 			},
 		});
-		if (shouldShutdown(device, wardenDevices)) return true;
+		if (shouldShutdown(device, wardenDevices, ownedElsewhere(ctx))) return true;
 		ctx.err(
 			`warden: warning: ${device.resource.name} (${device.resource.id}) is unhealthy (${reading.reason}); not rebooting a device warden did not create (run goes on)`
 		);

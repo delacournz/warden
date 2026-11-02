@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CLAIM_QUARANTINE_PREFIX } from "./claim";
 import type { Exec } from "./exec";
+import { instanceId, type MarkerFs } from "./ownership";
 import {
 	parseListApps,
 	parseReclaimMode,
@@ -61,9 +62,13 @@ describe("parsers", () => {
         ApplicationType = User;
         CFBundleIdentifier = "nz.co.delacour.warden.runner.x";
     };
+    "e" = {
+        ApplicationType = User;
+        CFBundleIdentifier = "nz.co.delacour.warden.example";
+    };
 }`;
-		expect(parseListApps(text)).toHaveLength(4);
-		expect(userAppIds(text)).toEqual(["com.example.app"]);
+		expect(parseListApps(text)).toHaveLength(5);
+		expect(userAppIds(text)).toEqual(["com.example.app", "nz.co.delacour.warden.example"]);
 	});
 
 	test("pm list packages", () => {
@@ -105,5 +110,47 @@ describe("android and skips", () => {
 	test("a human quarantine is kept as it is", () => {
 		store.quarantineDevice({ platform: "android", id: "emulator-5554", name: "warden-pixel-1" }, "bad", 2);
 		expect(reclaimSkipReason(store, "android", "emulator-5554", false)).toContain("quarantined");
+	});
+});
+
+describe("ios erase honours the ownership marker", () => {
+	let dir: string;
+	let store: Store;
+	beforeEach(() => {
+		dir = mkdtempSync(join(tmpdir(), "warden-reclaim-marker-"));
+		store = openStore(join(dir, "warden.db"));
+		store.recordDevice({ platform: "ios", id: "U1", name: "warden-iphone-17-1" }, 1);
+	});
+	afterEach(() => {
+		store.close();
+		rmSync(dir, { recursive: true, force: true });
+	});
+
+	const devDir = "/h/Library/Developer/CoreSimulator/Devices/U1";
+	const fsWith = (text: string | undefined): MarkerFs => ({
+		readText: (p) => (p === `${devDir}/.warden-owned.json` ? text : undefined),
+		writeText: () => {},
+		isDir: () => true,
+	});
+	const run = async (markerFs: MarkerFs) => {
+		const calls: string[] = [];
+		const exec: Exec = async (cmd) => {
+			calls.push(cmd.join(" "));
+			return { exitCode: 0, stdout: "", stderr: "" };
+		};
+		const out = await reclaimDevice({ exec, store, env: { HOME: "/h" }, now: () => 1, markerFs }, "ios", "U1", "erase");
+		return { out, calls };
+	};
+
+	test("another instance's marker: skipped, nothing run", async () => {
+		const { out, calls } = await run(fsWith(JSON.stringify({ instanceId: "other", name: "n", createdAt: 1 })));
+		expect(out).toEqual({ kind: "skipped", reason: expect.stringContaining("another warden") });
+		expect(calls).toEqual([]);
+	});
+
+	test("missing or matching marker: erased", async () => {
+		expect((await run(fsWith(undefined))).calls).toEqual(["xcrun simctl shutdown U1", "xcrun simctl erase U1"]);
+		const own = JSON.stringify({ instanceId: instanceId(store), name: "n", createdAt: 1 });
+		expect((await run(fsWith(own))).out.kind).toBe("done");
 	});
 });
