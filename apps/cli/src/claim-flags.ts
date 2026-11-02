@@ -9,6 +9,7 @@ import { parseDuration } from "@delacour/warden-core/duration";
 import { isGoldenName } from "@delacour/warden-core/golden/golden";
 import { processAlive } from "@delacour/warden-core/liveness";
 import { detectOwner, type OwnerContext, readGitInfo } from "@delacour/warden-core/owner";
+import { limitFor, parseOwnerLimit } from "@delacour/warden-core/owner-limit";
 import { listAvds } from "@delacour/warden-core/providers/android";
 import { PRIORITY, parsePriority } from "@delacour/warden-core/queue";
 import { slimSimulator } from "@delacour/warden-core/sims/slim";
@@ -373,6 +374,8 @@ export type ClaimHideOptions = {
 	os?: NodeJS.Platform;
 	/** polled while the claim waits (queue, pool): true ends it with `CLAIM_ABORTED` */
 	abort?: () => boolean;
+	/** groups the leases of one command's claims, so `WARDEN_MAX_PER_OWNER` counts the command once (default: this claim alone) */
+	claimId?: string;
 	/** the wait between two `lockState` reads while a physical iPhone is locked (tests; default: real time) */
 	unlockSleep?: (ms: number) => Promise<void>;
 };
@@ -412,6 +415,12 @@ export async function withPhysicalAllowlist(ctx: CommandContext, request: Device
 	return ok(applyPhysicalAllow(request, resolvePhysicalAllow(ctx.env, configAllow)));
 }
 
+/** `WARDEN_MAX_PER_OWNER` for `platform` (undefined = unlimited); a malformed value is an error before any lease. */
+function ownerLimitOf(ctx: CommandContext, platform: Platform): Result<number | undefined> {
+	const parsed = parseOwnerLimit(ctx.env.WARDEN_MAX_PER_OWNER);
+	return parsed.success ? ok(limitFor(parsed.data, platform)) : parsed;
+}
+
 /** Run a device claim with the context's store + provider; iOS claims then tile the sims' windows (headless: close them; see `options.onHide`). */
 export async function claimWithFlags(
 	ctx: CommandContext,
@@ -420,6 +429,8 @@ export async function claimWithFlags(
 	pid: number | undefined,
 	options: ClaimHideOptions = {}
 ): AsyncResult<ClaimOutcome> {
+	const ownerLimit = ownerLimitOf(ctx, flags.request.platform);
+	if (!ownerLimit.success) return ownerLimit;
 	const resolved = await resolveRequest(ctx, flags.request);
 	if (!resolved.success) return resolved;
 	const allowed = await withPhysicalAllowlist(ctx, resolved.data);
@@ -445,6 +456,8 @@ export async function claimWithFlags(
 	if (!slim.success) return slim;
 	const outcome = await claimDevices({
 		store: ctx.store(),
+		...(ownerLimit.data !== undefined ? { ownerLimit: ownerLimit.data } : {}),
+		...(options.claimId !== undefined ? { claimId: options.claimId } : {}),
 		provider: providerFor(
 			request.platform,
 			ctx,

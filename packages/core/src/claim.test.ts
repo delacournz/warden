@@ -1466,3 +1466,93 @@ describe("claimDevices: leftover conditions of a deleted lease", () => {
 		expect(cmds).toEqual([]);
 	});
 });
+
+describe("claimDevices per-owner limit (LCTL-3)", () => {
+	const devices = () => [sim("1", { state: "booted" }), sim("2", { state: "booted" }), sim("3", { state: "booted" })];
+
+	test("unset limit never refuses", async () => {
+		const provider = fakeProvider(devices());
+		for (let i = 0; i < 3; i++) expect((await claimDevices(input(provider))).success).toBe(true);
+	});
+
+	test("a second claim over the limit fails REQUESTER_LIMIT naming the oldest lease", async () => {
+		const provider = fakeProvider(devices());
+		const first = await claimDevices(input(provider, { ownerLimit: 1 }));
+		expect(first.success).toBe(true);
+		if (!first.success) return;
+		const leaseId = first.data.claimed[0]?.lease.id;
+		const second = await claimDevices(input(provider, { ownerLimit: 1 }));
+		expect(second.success).toBe(false);
+		if (second.success) return;
+		const parsed = parseClaimError(second.error);
+		expect(parsed?.code).toBe("REQUESTER_LIMIT");
+		expect(parsed?.message).toContain(`warden release ${leaseId}`);
+		expect(store.listLeases()).toHaveLength(1);
+	});
+
+	test("another owner or platform is not counted", async () => {
+		const provider = fakeProvider(devices());
+		await claimDevices(input(provider, { ownerLimit: 1, owner: other }));
+		expect((await claimDevices(input(provider, { ownerLimit: 1 }))).success).toBe(true);
+	});
+
+	test("a wrapper claim of count 2 under limit 1 is unaffected, and its legs share one claim", async () => {
+		const provider = fakeProvider(devices());
+		const both = await claimDevices(
+			input(provider, { ownerLimit: 1, request: request({ count: 2 }), claimId: "wrap" })
+		);
+		expect(both.success).toBe(true);
+		const leg = await claimDevices(input(provider, { ownerLimit: 1, claimId: "wrap" }));
+		expect(leg.success).toBe(true);
+		const other2 = await claimDevices(input(provider, { ownerLimit: 1 }));
+		expect(!other2.success && parseClaimError(other2.error)?.code).toBe("REQUESTER_LIMIT");
+	});
+
+	test("a lease from an older binary without a claim id counts as one claim", async () => {
+		const provider = fakeProvider(devices());
+		store.insertLease(
+			{ resource: { kind: "device", platform: "ios", id: "old", name: "old" }, owner, ttlMs: 60_000 },
+			NOW
+		);
+		const result = await claimDevices(input(provider, { ownerLimit: 1 }));
+		expect(!result.success && parseClaimError(result.error)?.code).toBe("REQUESTER_LIMIT");
+	});
+
+	test("with wait left the claim stores requester-limit, then succeeds once the other lease is released", async () => {
+		const provider = fakeProvider(devices());
+		const first = await claimDevices(input(provider, { ownerLimit: 1 }));
+		expect(first.success).toBe(true);
+		if (!first.success) return;
+		const reasons: (string | undefined)[] = [];
+		const logs: string[] = [];
+		const result = await claimDevices(
+			input(provider, {
+				ownerLimit: 1,
+				waitMs: 10 * 60_000,
+				queueId: "lim",
+				pidAlive: (pid) => pid === process.pid,
+				log: (l) => logs.push(l),
+				capacity: {
+					budget: { memMb: 1_000_000, cpu: 4, maxUnits: Number.POSITIVE_INFINITY },
+					config: {},
+					hostInventory: async () => ok(provider.devices.map((d) => ({ ...d }))),
+				},
+				sleep: async () => {
+					reasons.push(store.listQueue().find((e) => e.id === "lim")?.reason);
+					store.deleteLeases(first.data.claimed.map((c) => c.lease.id));
+				},
+			})
+		);
+		expect(result.success).toBe(true);
+		expect(reasons).toEqual(["requester-limit"]);
+		expect(logs.some((l) => l.includes("[requester-limit]"))).toBe(true);
+		expect(store.listQueue()).toEqual([]);
+	});
+
+	test("the leases of one claim carry its claim id, create placeholders included", async () => {
+		const provider = fakeProvider([]);
+		const result = await claimDevices(input(provider, { claimId: "abc" }));
+		expect(result.success).toBe(true);
+		expect(store.listLeases().map((l) => l.claimId)).toEqual(["abc"]);
+	});
+});

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { constants } from "node:os";
 import type { Command as Commander, OptionValues } from "@commander-js/extra-typings";
 import type { InstallMode } from "@delacour/warden-core/builds/app-option.schema";
@@ -281,6 +282,8 @@ export type LeaseArgs = {
 	 * (still leased) instead of failing the claim, as long as some device is left (`warden batch` / `e2e`)
 	 */
 	dropLost?: boolean;
+	/** one id for every claim this command makes (set by `claimAll`): `WARDEN_MAX_PER_OWNER` counts the command once */
+	claimId?: string;
 };
 
 /** The error of a claim the caller gave up on (`aborted`) — nothing to add to it. */
@@ -498,6 +501,7 @@ async function runLeg(
 	try {
 		claim = await claimWithFlags(ctx, owner, flags, pid, {
 			onHide: (start) => hides.push(start),
+			...(args.claimId !== undefined ? { claimId: args.claimId } : {}),
 			...(args.aborted ? { abort: args.aborted } : {}),
 		});
 	} catch (error) {
@@ -559,6 +563,12 @@ async function runLegs(
 	);
 }
 
+/** `args` with the one claim id every claim of this command shares (`WARDEN_MAX_PER_OWNER` counts the command once). */
+const withClaimId = (args: LeaseArgs): LeaseArgs => ({
+	...args,
+	claimId: args.claimId ?? `c_${randomUUID().replaceAll("-", "").slice(0, 12)}`,
+});
+
 /**
  * Lease the ports, claim the devices and (with `--app`) ensure the app; on any failure nothing stays
  * leased. The ports come first (a bind probe, cheap) so `onPorts` can start the run's Metro while the
@@ -568,9 +578,10 @@ export async function claimAll(
 	ctx: CommandContext,
 	deps: Pick<LeaseSessionDeps, "pid" | "isPortFree" | "ensureApp">,
 	owner: Owner,
-	args: LeaseArgs,
+	input: LeaseArgs,
 	name = "run"
 ): AsyncResult<LeaseSession> {
+	const args = withClaimId(input);
 	const label = args.flags.label ?? `warden ${name}`;
 	const ports = await claimRunPorts(ctx, owner, args.ports, deps.pid, deps.isPortFree, label);
 	if (!ports.success) return ports;

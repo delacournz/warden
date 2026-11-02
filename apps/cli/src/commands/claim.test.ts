@@ -73,6 +73,33 @@ describe("warden claim", () => {
 		expect(ctx.db.listLeases()[0]?.pid).toBe(process.ppid);
 	});
 
+	test("WARDEN_MAX_PER_OWNER: a second claim over the limit exits 8 REQUESTER_LIMIT naming the release command", async () => {
+		const c = setup(["ios", "--json", "--no-wait"], fakeSimctl([wardenSim(1, "Booted"), wardenSim(2, "Booted")]));
+		c.env = { ...c.env, WARDEN_MAX_PER_OWNER: "ios=1" };
+		expect(await claimCommand.run(c)).toBe(0);
+		const [held] = c.db.listLeases();
+		c.stdout.length = 0;
+		expect(await claimCommand.run(c)).toBe(8);
+		const out = JSON.parse(c.stdout.join("\n"));
+		expect(out).toMatchObject({ ok: false, error: { code: "REQUESTER_LIMIT" } });
+		expect(out.error.message).toContain(`warden release ${held?.id}`);
+	});
+
+	test("WARDEN_MAX_PER_OWNER for the other platform, or unset, leaves a claim alone", async () => {
+		const c = setup(["ios", "--no-wait"], fakeSimctl([wardenSim(1, "Booted"), wardenSim(2, "Booted")]));
+		c.env = { ...c.env, WARDEN_MAX_PER_OWNER: "android=1" };
+		expect(await claimCommand.run(c)).toBe(0);
+		expect(await claimCommand.run(c)).toBe(0);
+	});
+
+	test("a bad WARDEN_MAX_PER_OWNER is a clear error before anything is leased", async () => {
+		const c = setup(["ios", "--no-wait"]);
+		c.env = { ...c.env, WARDEN_MAX_PER_OWNER: "lots" };
+		expect(await claimCommand.run(c)).toBe(1);
+		expect(c.stderr.join("\n")).toContain("WARDEN_MAX_PER_OWNER=lots");
+		expect(c.db.listLeases()).toEqual([]);
+	});
+
 	test("pool exhausted → exit 5 NO_DEVICE with guidance", async () => {
 		const c = setup(["ios", "--max", "1", "--no-wait"], fakeSimctl([wardenSim(1, "Booted")]));
 		c.db.insertLease(
