@@ -14,6 +14,7 @@ import type { BootReady, DeviceProvider } from "./providers/provider.types";
 import { PRIORITY } from "./queue";
 import { openStore, type Store } from "./store";
 import { type DeviceRequest, type InventoryDevice, type Owner, resourceKey } from "./types";
+import { saveWarmSet } from "./warm-pool";
 
 let dir: string;
 let store: Store;
@@ -1034,6 +1035,30 @@ describe("claim capacity queue", () => {
 		expect(result.success && result.data.claimed[0]?.action).toBe("create");
 		expect(logs.some((l) => l.includes("idle, shut down"))).toBe(true);
 		expect(store.listLeases().some((l) => l.label === "capacity-evict")).toBe(false);
+	});
+
+	test("the head evicts a non-warm idle device before a warm one, even when the warm one is older", async () => {
+		const provider = await fullHost([
+			sim("A", { name: "warden-ipad-1", state: "booted" }),
+			sim("B", { name: "warden-ipad-2", state: "booted" }),
+		]);
+		store.recordDevice({ platform: "ios", id: "A", name: "warden-ipad-1" }, NOW - 50 * MIN);
+		store.recordDevice({ platform: "ios", id: "B", name: "warden-ipad-2" }, NOW - 5 * MIN);
+		saveWarmSet(store, ["ios:A"], NOW);
+		const result = await claimDevices(capInput(provider, { cpu: 4 }));
+		expect(shutdownIdle).toEqual(["B"]);
+		expect(result.success).toBe(true);
+	});
+
+	test("without a warm set the older idle device goes first", async () => {
+		const provider = await fullHost([
+			sim("A", { name: "warden-ipad-1", state: "booted" }),
+			sim("B", { name: "warden-ipad-2", state: "booted" }),
+		]);
+		store.recordDevice({ platform: "ios", id: "A", name: "warden-ipad-1" }, NOW - 50 * MIN);
+		store.recordDevice({ platform: "ios", id: "B", name: "warden-ipad-2" }, NOW - 5 * MIN);
+		await claimDevices(capInput(provider, { cpu: 4 }));
+		expect(shutdownIdle).toEqual(["A"]);
 	});
 
 	test("foreign booted devices count against the budget but are never shut down", async () => {

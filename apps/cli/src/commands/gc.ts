@@ -9,6 +9,7 @@ import { isLeaseAlive, processAlive } from "@delacour/warden-core/liveness";
 import { ephemeralEnabled, staleShutdownBlock } from "@delacour/warden-core/shutdown-policy";
 import { type DeviceRecord, ownerKey, wardenHome } from "@delacour/warden-core/store";
 import type { DeviceResource, Lease, Owner, Platform } from "@delacour/warden-core/types";
+import { saveWarmSet, WARM_META_KEY, type WarmPlan, warmEnabled } from "@delacour/warden-core/warm-pool";
 import { ok, type Result } from "@delacour/warden-types/result";
 import { sweepDeadHelpersLazily } from "../agent-ui/helper-sweep";
 import { stopHelperAfter } from "../agent-ui/stop-helper-after";
@@ -26,6 +27,7 @@ import { emit, heading, plural, reportError } from "../output";
 import { providerFor } from "../providers";
 import { hasForegroundApp } from "../running-apps";
 import { withSpinner } from "../spinner-context";
+import { bootWarm, readWarmPlan } from "../warm-pool";
 
 const PLATFORMS: readonly Platform[] = ["ios", "android"];
 
@@ -39,7 +41,13 @@ const GC_SHUTDOWN_TTL_MS = 2 * 60_000;
 type ShutDevice = { platform: Platform; id: string; name: string };
 
 /** What a pass reads: when it is, how idle is idle, and which devices someone holds. */
-type GcPlan = { now: number; idleMs: number; leased: ReadonlySet<string> };
+type GcPlan = {
+	now: number;
+	idleMs: number;
+	leased: ReadonlySet<string>;
+	/** `platform:id` of the devices that make up the warm pool: never shut down as idle */
+	warm: ReadonlySet<string>;
+};
 
 /** Conditions a deleted lease left on devices nobody holds now are undone; a failed reset stays for the next pass. */
 async function undoUnleasedOrphans(ctx: CommandContext, leased: ReadonlySet<string>): Promise<string[]> {
@@ -117,7 +125,11 @@ async function gcPlatform(
 		}
 	}
 	const idle = records.filter(
-		(r) => booted.has(r.id) && !plan.leased.has(`${platform}:${r.id}`) && plan.now - r.lastUsedAt >= plan.idleMs
+		(r) =>
+			booted.has(r.id) &&
+			!plan.leased.has(`${platform}:${r.id}`) &&
+			!plan.warm.has(`${platform}:${r.id}`) &&
+			plan.now - r.lastUsedAt >= plan.idleMs
 	);
 	const results = await mapBounded(idle, SHUTDOWN_CONCURRENCY, async (record) => {
 		const hold = holdForShutdown(ctx, owner, record);
@@ -145,6 +157,25 @@ async function gcPlatform(
 	}
 	await closeShutDownWindows(ctx, platform, outcome);
 	return outcome;
+}
+
+/**
+ * With `WARDEN_WARM=1`: compute the warm pool and persist its set (claims evict it last, the idle pass spares it).
+ * Off: a previously saved set is cleared. A failure keeps gc going, with the pool treated as off this pass.
+ */
+async function planWarm(ctx: CommandContext, owner: Owner, now: number): Promise<WarmPlan | undefined> {
+	const store = ctx.store();
+	if (!warmEnabled(ctx.env)) {
+		if (store.getMeta(WARM_META_KEY) !== undefined) saveWarmSet(store, [], now);
+		return undefined;
+	}
+	try {
+		const plan = await readWarmPlan(ctx, owner);
+		saveWarmSet(store, plan.warm, now);
+		return plan;
+	} catch {
+		return undefined;
+	}
 }
 
 function parseIdle(raw: string | undefined): Result<number> {
@@ -246,11 +277,12 @@ function removeIfIdle(dir: string, now: number): boolean {
 
 type GcOpts = { idle?: string; maxCacheSize?: string; quiet?: true; json?: true };
 
-/** Everything a pass reports. `deleted`: ephemeral sims `simctl delete`d (stale-lease shutdowns + the sweep). */
+/** Everything a pass reports. `deleted`: ephemeral sims `simctl delete`d (stale-lease shutdowns + the sweep); `warmed`: warm-pool boots. */
 type GcOutcome = PlatformOutcome & {
 	reclaimed: string[];
 	deleted: ShutDevice[];
 	goldens: Array<{ platform: Platform; name: string }>;
+	warmed: ShutDevice[];
 };
 
 /**
@@ -344,16 +376,20 @@ async function gc(ctx: CommandContext, opts: GcOpts): Promise<number> {
 			store.touchDevice(l.resource.platform, l.resource.id, now);
 			leased.add(`${l.resource.platform}:${l.resource.id}`);
 		}
-		const plan: GcPlan = { now, idleMs: idle.data, leased };
+		const warmPlan = await planWarm(sctx, owner, now);
+		const plan: GcPlan = { now, idleMs: idle.data, leased, warm: new Set(warmPlan?.warm ?? []) };
 		const platforms = await Promise.all(PLATFORMS.map((platform) => gcPlatform(sctx, platform, owner, plan)));
 		// after the idle shutdowns, which may have freed the AVD: one pending Android snapshot build
 		const snapshotNotes = await androidSnapshotPass(sctx, owner);
 		const swept = await sweepEphemeral(sctx, owner);
 		// after the snapshot build, so a just-replaced snapshot is pruned this pass
 		const pruned = await goldenPrunePass(sctx, owner);
+		// last: after the sweep, so a sim booted warm is never deleted the same pass
+		const warmed = warmPlan === undefined ? { booted: [], notes: [] } : await bootWarm(sctx, owner, warmPlan);
 		return {
 			reclaimed,
 			goldens: pruned.goldens,
+			warmed: warmed.booted.map((d) => ({ platform: d.platform, id: d.id, name: d.name })),
 			shutdown: [
 				...stale.flatMap((l) =>
 					l.resource.kind === "device" && orphaned.shutdown.includes(l.resource.id)
@@ -377,13 +413,14 @@ async function gc(ctx: CommandContext, opts: GcOpts): Promise<number> {
 				...platforms.flatMap((p) => p.notes),
 				...snapshotNotes,
 				...swept.notes,
+				...warmed.notes,
 			],
 		};
 	};
 	if (!opts.quiet && !opts.json)
 		heading(ctx, "gc", `${plural(stale.length, "stale lease")} · idle > ${formatDuration(idle.data)}`);
 	// `--quiet` is the detached auto-gc: no terminal, so no spinner.
-	const { reclaimed, shutdown, forgotten, deleted, goldens, notes } = opts.quiet
+	const { reclaimed, shutdown, forgotten, deleted, goldens, warmed, notes } = opts.quiet
 		? await shutDownIdle(ctx)
 		: await withSpinner(ctx, "shutting down idle devices…", shutDownIdle);
 	notes.push(
@@ -400,6 +437,7 @@ async function gc(ctx: CommandContext, opts: GcOpts): Promise<number> {
 		shutdown.length > 0
 			? color.green(`shut down ${shutdown.map((d) => d.name).join(" ")} (idle > ${formatDuration(idle.data)})`)
 			: color.dim("no idle devices"),
+		...(warmed.length > 0 ? [color.green(`warm-booted ${warmed.map((d) => d.name).join(" ")}`)] : []),
 		...(forgotten.length > 0
 			? [color.yellow(`forgot exited emulators ${forgotten.map((d) => d.name).join(" ")}`)]
 			: []),
@@ -413,7 +451,7 @@ async function gc(ctx: CommandContext, opts: GcOpts): Promise<number> {
 		...(goldens.length > 0 ? [color.green(`pruned stale goldens ${goldens.map((g) => g.name).join(" ")}`)] : []),
 		...notes.map((n) => color.yellow(n)),
 	].join("\n");
-	emit(ctx, opts.json === true, { reclaimed, shutdown, forgotten, deleted, goldens, notes }, text);
+	emit(ctx, opts.json === true, { reclaimed, shutdown, forgotten, deleted, goldens, warmed, notes }, text);
 	return 0;
 }
 

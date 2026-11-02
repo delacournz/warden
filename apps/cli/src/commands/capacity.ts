@@ -9,11 +9,13 @@ import {
 	ZERO_COST,
 } from "@delacour/warden-core/capacity";
 import type { InventoryDevice, Platform } from "@delacour/warden-core/types";
+import { warmEnabled } from "@delacour/warden-core/warm-pool";
 import { CAPACITY_PLATFORMS, capacityEnabled, hostInventoryOf, pressureOf, readCapacityBasis } from "../capacity-deps";
 import { resolveOwner } from "../claim-flags";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { emit, table } from "../output";
+import { readWarmPlan } from "../warm-pool";
 
 type PlatformUsage = { booted: number; warden: number; foreign: number; memMb: number; units: number };
 
@@ -70,8 +72,19 @@ async function capacity(ctx: CommandContext, json: boolean): Promise<number> {
 	const why = explain(verdict, used, budget);
 	const cpuLimit = Math.min(budget.cpu, budget.maxUnits);
 
+	const warmOn = warmEnabled(ctx.env);
+	const warmPlan = warmOn ? await readWarmPlan(ctx, owner) : undefined;
+	const warmRows = (warmPlan?.rows ?? []).map(({ platform, profile, target, actual, peak }) => ({
+		platform,
+		profile,
+		target,
+		actual,
+		peak,
+	}));
+
 	const data = {
 		enabled,
+		warm: { enabled: warmOn, rows: warmRows },
 		host: {
 			os: host.os,
 			totalMemGb: Math.round((host.totalMem / 1024 ** 3) * 10) / 10,
@@ -105,6 +118,13 @@ async function capacity(ctx: CommandContext, json: boolean): Promise<number> {
 		`budget    ${Math.round(budget.memMb / MB_PER_GB)} GB · ${cpuLimit.toFixed(1)} cpu units${enabled ? "" : color.yellow("  (capacity gate OFF: WARDEN_CAPACITY=off)")}`,
 		`usage     ${used.cpu.toFixed(1)} units · ${Math.round(used.memMb)} MB booted`,
 		`pressure  ${data.pressure}`,
+		...(warmOn
+			? [
+					warmRows.length === 0
+						? "warm      on · no demand in the last 24 h"
+						: `warm      on · ${warmRows.map((r) => `${r.platform}/${r.profile} ${r.actual}/${r.target}`).join(", ")} (booted/target)`,
+				]
+			: []),
 		...(data.blocked === null ? [] : [`blocked   ${data.blocked}`]),
 		"",
 		table(ctx, ["PLATFORM", "BOOTED", "COST/DEVICE", "MAX ALONE"], rows),
