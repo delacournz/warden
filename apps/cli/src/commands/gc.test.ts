@@ -64,6 +64,31 @@ describe("warden gc", () => {
 		expect(c.db.listLeases().map((l) => l.resource)).toMatchObject([{ id: "U2" }]);
 	});
 
+	test("logs shutdown for idle devices and prunes events older than WARDEN_EVENTS_DAYS", async () => {
+		const calls: string[][] = [];
+		const c = setup(["--json"], calls);
+		c.env.WARDEN_EVENTS_DAYS = "2";
+		c.db.recordEvent({ at: NOW - 3 * 86_400_000, type: "released", data: { heldMs: 1 }, leaseId: "l_old" });
+		c.db.recordEvent({ at: NOW - 86_400_000, type: "released", data: { heldMs: 1 }, leaseId: "l_recent" });
+		expect(await gcCommand.run(c)).toBe(0);
+		const events = c.db.listEvents();
+		expect(events.some((e) => e.leaseId === "l_old")).toBe(false);
+		expect(events.some((e) => e.leaseId === "l_recent")).toBe(true);
+		expect(events.find((e) => e.type === "shutdown")).toMatchObject({
+			resourceKey: "device:ios:U1",
+			data: { cause: "idle", deviceId: "U1" },
+		});
+	});
+
+	test("a bad WARDEN_EVENTS_DAYS prunes at 7 days and says so", async () => {
+		const c = setup(["--json"], []);
+		c.env.WARDEN_EVENTS_DAYS = "soon";
+		c.db.recordEvent({ at: NOW - 8 * 86_400_000, type: "released", data: { heldMs: 1 }, leaseId: "l_old" });
+		expect(await gcCommand.run(c)).toBe(0);
+		expect(JSON.parse(c.stdout.join("\n")).notes.join("\n")).toContain("WARDEN_EVENTS_DAYS");
+		expect(c.db.listEvents().some((e) => e.leaseId === "l_old")).toBe(false);
+	});
+
 	test("undoes the orphaned conditions of an unleased device, and leaves a leased device's alone", async () => {
 		const calls: string[][] = [];
 		const c = setup(["--json"], calls);

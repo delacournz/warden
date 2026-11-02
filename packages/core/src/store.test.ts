@@ -231,9 +231,9 @@ describe("device quarantine + slim state", () => {
 		expect(store.listDevices()[0]).toMatchObject({ id: "U1", quarantinedAt: 5, quarantineReason: "dictation loop" });
 		store.recordDevice(dev, 9);
 		expect(store.listDevices()[0]?.quarantinedAt).toBe(5);
-		expect(store.unquarantineDevice("U1")).toBe(1);
+		expect(store.unquarantineDevice("U1", 6)).toBe(1);
 		expect(store.listDevices()[0]?.quarantinedAt).toBeUndefined();
-		expect(store.unquarantineDevice("U1")).toBe(0);
+		expect(store.unquarantineDevice("U1", 6)).toBe(0);
 	});
 
 	test("quarantine inserts a device only known by name", () => {

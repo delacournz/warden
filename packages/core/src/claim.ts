@@ -20,12 +20,13 @@ import { DEFAULT_READY_TIMEOUT_MS } from "./config.defaults";
 import { formatDuration } from "./duration";
 import type { MemoryPressure } from "./host";
 import { markWardenDevices } from "./inventory";
+import type { NewLeaseEvent } from "./lease-events";
 import { isLeaseAlive, type PidAlive } from "./liveness";
 import { countOtherClaims } from "./owner-limit";
 import { isProbeTimeout } from "./providers/health";
 import type { DeviceProvider } from "./providers/provider.types";
 import { admissionQueue, type DeviceWaitReason, PRIORITY, priorityName, queuePosition, type WaitReason } from "./queue";
-import type { DeviceRecord, Store } from "./store";
+import { type DeviceRecord, ownerKey, type Store } from "./store";
 import {
 	type AllocationStep,
 	type DeviceRequest,
@@ -80,6 +81,8 @@ export type ClaimInput = {
 	ownerLimit?: number;
 	/** groups the leases of one command's claims (a wrapper's legs share it); default: one per `claimDevices` call */
 	claimId?: string;
+	/** when the claim was requested (ms); `claimDevices` sets it, `granted` events measure their wait from it */
+	requestedAt?: number;
 	/** polled once per round: true ends the claim with `CLAIM_ABORTED` (nothing stays leased or queued) */
 	abort?: () => boolean;
 	/** conditions a deleted lease left on a claimed device are undone before the claim returns; absent = left for gc */
@@ -287,6 +290,7 @@ function ownerLimitHit(
  * slot, so `admissionQueue` leaves it out of positions and heads: it never delays a claim that does.
  */
 function holdWaitRow(input: ClaimInput, cap: CapacityRound, reason: DeviceWaitReason, now: number): void {
+	noteQueued(input, cap, reason, now);
 	input.store.enqueue({
 		id: cap.queueId,
 		platform: input.request.platform,
@@ -300,6 +304,18 @@ function holdWaitRow(input: ClaimInput, cap: CapacityRound, reason: DeviceWaitRe
 		pid: input.selfPid ?? process.pid,
 		reason,
 		...claimField(input),
+	});
+}
+
+/** Log that this claim started waiting (once per claim call, with the first reason). */
+function noteQueued(input: ClaimInput, cap: CapacityRound, reason: WaitReason, now: number): void {
+	input.store.recordQueuedOnce({
+		at: now,
+		type: "queued",
+		data: { platform: input.request.platform, profile: input.request.profile, queueId: cap.queueId, reason },
+		ownerKey: ownerKey(input.owner),
+		...claimField(input),
+		...(input.label !== undefined ? { label: input.label } : {}),
 	});
 }
 
@@ -379,6 +395,7 @@ function admit(
 	if (head && fit.fits && !held) return undefined;
 	const blocked: QueueBlocked = capacityBlock(fit, held) ?? "behind-earlier";
 	store.refreshQueue(cap.queueId, now, blocked);
+	noteQueued(input, cap, blocked, now);
 	const reason = !fit.fits
 		? explain(fit, usage, budget)
 		: held
@@ -486,7 +503,7 @@ function liftExpiredQuarantines(
 	return records.map((record) => {
 		if (!inPool.has(record.id) || !claimQuarantineExpired(record, now) || room <= 0) return record;
 		room--;
-		input.store.unquarantineDevice(record.id);
+		input.store.unquarantineDevice(record.id, now);
 		input.log?.(`${record.name} (${record.id}): quarantine expired after 24h — offering it again`);
 		const { quarantinedAt: _at, quarantineReason: _reason, ...lifted } = record;
 		return lifted;
@@ -766,8 +783,18 @@ async function completeRound(
  */
 export async function claimDevices(input: ClaimInput): AsyncResult<ClaimOutcome> {
 	const queueId = input.queueId ?? `q_${randomUUID().replaceAll("-", "").slice(0, 12)}`;
+	const claimId = input.claimId ?? queueId;
+	const requestedAt = input.now();
 	try {
-		return await claimRounds({ ...input, claimId: input.claimId ?? queueId }, queueId);
+		input.store.recordEvent({
+			at: requestedAt,
+			type: "requested",
+			data: { platform: input.request.platform, profile: input.request.profile, count: input.request.count },
+			ownerKey: ownerKey(input.owner),
+			claimId,
+			...(input.label !== undefined ? { label: input.label } : {}),
+		});
+		return await claimRounds({ ...input, claimId, requestedAt }, queueId);
 	} finally {
 		if (input.capacity) input.store.dequeue(queueId);
 	}
@@ -921,6 +948,14 @@ async function evictIdle(input: ClaimInput, evict: Eviction[], noEvict: Set<stri
 		for (const { device } of evict) {
 			const result = (await shutdown?.(device)) ?? err("no shutdown");
 			if (result.success) {
+				input.store.recordEvent({
+					at: input.now(),
+					type: "evicted",
+					data: { platform: device.platform, deviceId: device.id, deviceName: device.name },
+					resourceKey: resourceKey(deviceResourceOf(device)),
+					ownerKey: ownerKey(input.owner),
+					...claimField(input),
+				});
 				input.log?.(`${device.name} (${device.id}): idle, shut down to free capacity for the queue`);
 			} else {
 				noEvict.add(device.id);
@@ -1000,6 +1035,27 @@ async function undoClaimedOrphans(input: ClaimInput, claimed: ClaimedDevice[]): 
 	}
 }
 
+/** The `granted` event of a lease handed out now; `waitMs` runs from when the claim call began. */
+function grantedEvent(input: ClaimInput, c: ClaimedDevice, now: number): NewLeaseEvent {
+	return {
+		at: now,
+		type: "granted",
+		data: {
+			platform: c.device.platform,
+			profile: input.request.profile,
+			deviceId: c.device.id,
+			deviceName: c.device.name,
+			action: c.action,
+			waitMs: Math.max(0, now - (input.requestedAt ?? now)),
+		},
+		leaseId: c.lease.id,
+		resourceKey: resourceKey(c.lease.resource),
+		ownerKey: ownerKey(input.owner),
+		...(c.lease.label !== undefined ? { label: c.lease.label } : {}),
+		...claimField(input),
+	};
+}
+
 /**
  * Boot / create / wait-ready / probe every reserved device; all-or-nothing. A failed probe
  * quarantines that device and asks the caller to claim again without it (`retry`).
@@ -1031,10 +1087,13 @@ async function complete(
 	const claimed = results.flatMap((r) => (r.ok.success ? [r.ok.data] : []));
 	await undoClaimedOrphans(input, claimed);
 	const now = input.now();
-	input.store.heartbeat(
-		claimed.map((c) => c.lease.id),
-		now
-	);
+	input.store.transaction(() => {
+		input.store.heartbeat(
+			claimed.map((c) => c.lease.id),
+			now
+		);
+		for (const c of claimed) input.store.recordEvent(grantedEvent(input, c, now));
+	});
 	for (const c of claimed) input.store.touchDevice(c.device.platform, c.device.id, now);
 	const leases = claimed.map((c) => ({ ...c, lease: { ...c.lease, heartbeatAt: now } }));
 	return ok({ claimed: leases, reclaimed });

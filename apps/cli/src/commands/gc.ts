@@ -4,9 +4,10 @@ import { DEFAULT_MAX_CACHE_SIZE } from "@delacour/warden-core/builds/builds.defa
 import { cacheCap, formatSize, GC_PRUNE_GRACE_MS, isAlias, pruneBuilds } from "@delacour/warden-core/builds/prune";
 import { DEFAULT_IDLE_MS } from "@delacour/warden-core/config.defaults";
 import { formatDuration, parseDuration } from "@delacour/warden-core/duration";
+import { DEFAULT_EVENTS_DAYS, eventsRetentionMs } from "@delacour/warden-core/lease-events";
 import { isLeaseAlive, processAlive } from "@delacour/warden-core/liveness";
 import { ephemeralEnabled, staleShutdownBlock } from "@delacour/warden-core/shutdown-policy";
-import { type DeviceRecord, wardenHome } from "@delacour/warden-core/store";
+import { type DeviceRecord, ownerKey, wardenHome } from "@delacour/warden-core/store";
 import type { DeviceResource, Lease, Owner, Platform } from "@delacour/warden-core/types";
 import { ok, type Result } from "@delacour/warden-types/result";
 import { sweepDeadHelpersLazily } from "../agent-ui/helper-sweep";
@@ -131,8 +132,16 @@ async function gcPlatform(
 	});
 	for (const { record, result } of results) {
 		if (result === undefined) outcome.notes.push(`${record.name}: in use again, left running`);
-		else if (result.success) outcome.shutdown.push({ platform, id: record.id, name: record.name });
-		else outcome.notes.push(`shutdown ${record.id} failed: ${result.error}`);
+		else if (result.success) {
+			outcome.shutdown.push({ platform, id: record.id, name: record.name });
+			ctx.store().recordEvent({
+				at: ctx.now(),
+				type: "shutdown",
+				data: { platform, deviceId: record.id, deviceName: record.name, cause: "idle" },
+				resourceKey: `device:${platform}:${record.id}`,
+				ownerKey: ownerKey(owner),
+			});
+		} else outcome.notes.push(`shutdown ${record.id} failed: ${result.error}`);
 	}
 	await closeShutDownWindows(ctx, platform, outcome);
 	return outcome;
@@ -165,6 +174,20 @@ function pruneCache(ctx: CommandContext, maxBytes: number, now: number): string[
 	} catch (e) {
 		return [`build cache prune failed: ${e instanceof Error ? e.message : String(e)}`];
 	}
+}
+
+/** Delete lease events older than `WARDEN_EVENTS_DAYS` (default 7); a bad value keeps the default, with a note. */
+function pruneEvents(ctx: CommandContext, now: number): string[] {
+	const keep = eventsRetentionMs(ctx.env);
+	const ms = keep.success ? keep.data : DEFAULT_EVENTS_DAYS * 86_400_000;
+	const notes = keep.success ? [] : [`${keep.error}; pruning at ${DEFAULT_EVENTS_DAYS} days`];
+	try {
+		const removed = ctx.store().pruneEvents(now - ms);
+		if (removed > 0) notes.push(`pruned ${plural(removed, "old lease event")}`);
+	} catch (e) {
+		notes.push(`lease event prune failed: ${e instanceof Error ? e.message : String(e)}`);
+	}
+	return notes;
 }
 
 /** A `warden dev` session dir (`$WARDEN_HOME/dev/<leaseId>`) is swept once idle this long. */
@@ -302,6 +325,7 @@ async function gc(ctx: CommandContext, opts: GcOpts): Promise<number> {
 		const reclaimed = (
 			await releaseDevices(sctx, staleIds, {
 				touch: false,
+				end: "expired",
 				only: (l) => !isLeaseAlive(l, now, processAlive),
 				after: stopHelperAfter(sctx),
 			})
@@ -368,6 +392,7 @@ async function gc(ctx: CommandContext, opts: GcOpts): Promise<number> {
 			: [`WARDEN_MAX_CACHE_SIZE: ${cap.bytes.error}; build cache prune skipped`])
 	);
 	notes.push(...sweepDevDirs(ctx, now));
+	notes.push(...pruneEvents(ctx, now));
 	store.setMeta("last_gc_at", String(now));
 	if (opts.quiet) return 0;
 	const text = [

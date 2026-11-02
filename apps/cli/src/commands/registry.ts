@@ -75,6 +75,18 @@ export const COMMANDS: readonly CommandEntry[] = [
 		load: async () => (await import("./queue")).queueCommand,
 	},
 	{
+		name: "events",
+		group: "Lease",
+		summary: "lease history: requested, queued, granted, released, expired, evicted, quarantined … (--follow to tail)",
+		load: async () => (await import("./events")).eventsCommand,
+	},
+	{
+		name: "stats",
+		group: "Lease",
+		summary: "claim wait (median, p95), lease durations and peak concurrency per profile, from the lease history",
+		load: async () => (await import("./stats")).statsCommand,
+	},
+	{
 		name: "devices",
 		aliases: ["list"],
 		group: "Devices",

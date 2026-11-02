@@ -59,6 +59,7 @@ Open the reference file for details before acting; this file only routes.
 | a free port | `warden port claim --json` (`--from 8091 --span 20`) · `warden port ls` · `warden port release <port…>\|--lease <id…>\|--mine` |
 | who holds what / all devices | `warden ls` · `warden devices` (`list`) |
 | host budget / my place in the boot queue | `warden capacity` · `warden queue` |
+| lease history / numbers | `warden events [--since 1h] [--lease <id>] [--owner <s>] [--follow] [--json]` · `warden stats [--since 7d] [--json\|--csv]` (suites.md "Lease history") |
 | is this device free or mine | `warden check --udid <udid>` (exit 2 = someone else's) |
 | keep a bare lease alive | `warden heartbeat <leaseId…>` (prefer a wrapper) |
 | device misbehaving | `warden release <leaseId> --bad "<why>"` (undo: `warden sim unquarantine <udid>`) |

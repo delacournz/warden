@@ -374,6 +374,26 @@ describe("holdLeases", () => {
 		h.stop();
 	});
 
+	test("a lost device lease logs heartbeat_lost; a lost port lease does not", () => {
+		const h = hold([9001]);
+		const lease = h.c.db.insertLease(
+			{ resource: { kind: "device", platform: "ios", id: "U1", name: "n" }, owner, ttlMs: 60_000, pid: 4242 },
+			0
+		);
+		h.c.db.recordEvent({
+			at: 1,
+			type: "granted",
+			leaseId: lease.id,
+			data: { platform: "ios", deviceId: "U1", deviceName: "n", action: "boot", waitMs: 0 },
+		});
+		h.stop();
+		h.c.db.deleteLeases([...h.ids, lease.id]);
+		const stop = holdLeases(h.c, { every: () => () => {}, onSignal: () => () => {} }, [...h.ids, lease.id], () => {});
+		stop();
+		const lost = h.c.db.listEvents().filter((e) => e.type === "heartbeat_lost");
+		expect(lost.map((e) => e.leaseId)).toEqual([lease.id]);
+	});
+
 	test("leases intact: every tick heartbeats, nothing aborts", () => {
 		const h = hold([9001]);
 		h.tick();
