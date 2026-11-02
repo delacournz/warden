@@ -1,4 +1,5 @@
-import { shouldShutdown } from "@delacour/warden-core/shutdown-policy";
+import { deleteSim } from "@delacour/warden-core/providers/ios";
+import { deleteAfterShutdown, ephemeralEnabled, shouldShutdown } from "@delacour/warden-core/shutdown-policy";
 import type { Lease, Owner } from "@delacour/warden-core/types";
 import { stopHelperAfter } from "./agent-ui/stop-helper-after";
 import { closeSimWindowsAfter, type ShutDownSim } from "./close-sim-windows-after";
@@ -7,8 +8,11 @@ import { errorMessage } from "./hooks/json";
 import { undoLeaseConditions } from "./lease-conditions";
 import { providerFor } from "./providers";
 
-/** `kept`: devices left running because `guard` objected (not because warden never owned them). */
-export type ShutdownOutcome = { shutdown: string[]; notes: string[]; kept: string[] };
+/**
+ * `kept`: devices left running because `guard` objected (not because warden never owned them). `deleted`: shut-down
+ * ephemeral sims that were then `simctl delete`d (a subset of `shutdown`).
+ */
+export type ShutdownOutcome = { shutdown: string[]; notes: string[]; kept: string[]; deleted: string[] };
 
 /** Async veto per lease: a reason to leave the device running, else `undefined`. */
 export type ShutdownGuard = (lease: Lease) => Promise<string | undefined>;
@@ -27,7 +31,9 @@ type DeviceShutdown =
  * Simulator.app sim) is left running. Call while the leases are still held, so nobody is handed a
  * device mid-shutdown. Failures become notes — releasing must still go ahead. `guard` (gc's stale
  * grace + running-app check) can veto a shutdown the policy would allow. Devices shut down
- * concurrently; the outcome lists them in lease order.
+ * concurrently; the outcome lists them in lease order. With ephemeral sims on (`ephemeralEnabled`), each shut-down
+ * warden-created, unquarantined iOS sim is then `simctl delete`d and forgotten: the caller still holds its lease, so
+ * no claim can be handed it mid-delete, and the next claim clones a fresh one from the golden.
  */
 export async function shutdownReleasedDevices(
 	ctx: CommandContext,
@@ -66,7 +72,7 @@ export async function shutdownReleasedDevices(
 			return { kind: "failed", note: `shutdown ${r.id} failed: ${errorMessage(error)}` };
 		}
 	};
-	const outcome: ShutdownOutcome = { shutdown: [], notes: [], kept: [] };
+	const outcome: ShutdownOutcome = { shutdown: [], notes: [], kept: [], deleted: [] };
 	const sims: ShutDownSim[] = [];
 	for (const done of await Promise.all(leases.map(one))) {
 		if (done.kind === "shutdown") {
@@ -80,5 +86,29 @@ export async function shutdownReleasedDevices(
 	outcome.notes.push(...undoNotes);
 	const unclosed = await closeSimWindowsAfter(ctx, sims);
 	if (unclosed !== undefined) outcome.notes.push(`couldn't close the simulator window (${unclosed})`);
+	await deleteEphemeral(ctx, sims, outcome);
 	return outcome;
+}
+
+/** `simctl delete` + forget the shut-down `sims` that are ephemeral; a failed delete is a note and keeps the record (`warden sims prune` retries). */
+async function deleteEphemeral(
+	ctx: CommandContext,
+	sims: readonly ShutDownSim[],
+	outcome: ShutdownOutcome
+): Promise<void> {
+	if (sims.length === 0 || !ephemeralEnabled(ctx.env)) return;
+	const store = ctx.store();
+	const records = new Map(store.listDevices("ios").map((d) => [d.id, d]));
+	const doomed = sims.filter((s) => deleteAfterShutdown(records.get(s.udid)));
+	const results = await Promise.all(
+		doomed.map(async (s) => ({ sim: s, result: await deleteSim(ctx.exec, s.udid, { shutdown: false }) }))
+	);
+	for (const { sim, result } of results) {
+		if (!result.success) {
+			outcome.notes.push(`delete ${sim.udid} failed: ${result.error}`);
+			continue;
+		}
+		store.forgetDevice("ios", sim.udid);
+		outcome.deleted.push(sim.udid);
+	}
 }

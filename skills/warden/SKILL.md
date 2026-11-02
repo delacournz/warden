@@ -65,7 +65,7 @@ Open the reference file for details before acting; this file only routes.
 | slim categories (`--except` ids) | `warden sim profiles`; common: `store` push/StoreKit, `web` universal links, `search` Spotlight, `pim` Contacts/Calendar pickers, `photos` photo picker |
 | a sim's real memory | `warden sim measure [udid\|--booted]` · `warden devices --mem` |
 | clone / golden / disk | `warden clone <udid\|name>` · `warden golden ensure --profile iphone-17` (`golden ls`, `golden prune`) · `warden sims` (= `audit`; `prune --dry-run`, then `--yes`; `delete <udid…>`) |
-| reclaim dead leases | `warden gc` (auto every 10 min; never deletes, never touches foreign devices) |
+| reclaim dead leases | `warden gc` (auto every 10 min; deletes shut-down ephemeral warden sims; once a day prunes stale goldens, `WARDEN_GOLDEN_PRUNE=0` off; never touches foreign devices) |
 | setup / helper problems | `warden doctor [--fetch-helper]` |
 | version / channel | `warden version [--json]` |
 | install / update | `npm i -g @delacour/warden && warden install` · `warden update [--check]` · skill: `warden skill install` · `warden skill show` |
@@ -79,6 +79,7 @@ By hand, specs need the preload: `bun test --preload @delacour/warden-e2e/preloa
 - gc shuts a stale sim down 10+ min after it went stale, and never while a non-Apple app is in the foreground. It also shuts down unleased warden devices idle 20 min (`--idle`).
 - A declined `warden.config.ts` offer from `warden dev` is kept in `~/.warden/projects/<key>/`, shared by every worktree; nothing is written to the repo.
 - warden only creates, shuts down and erases `warden-<profile>-N` sims; `--adopt` opts a foreign device in.
+- iOS sims are ephemeral: a warden sim is `simctl delete`d once it shuts down (`release --shutdown`, SessionEnd, gc, a passed `e2e`), and the next claim clones a fresh one from the golden, so app installs and logins don't carry over. Kept: quarantined (`--bad`), foreign, physical, and `warden dev`'s sim (persistent, so its logins survive; `WARDEN_EPHEMERAL_DEV=1` makes it ephemeral too). `WARDEN_EPHEMERAL=0` (or `WARDEN_GOLDEN=0`) brings back the persistent pool. `release --json` / `gc --json` list them under `deleted`.
 - A physical device is never booted, created, shut down (`release --shutdown` and `gc` leave it and say "physical device: never shut down"), erased or slimmed, and costs no host capacity. A `--physical` claim takes only a ready device (Android adb state `device`; iPhone/iPad paired with Developer Mode on, as listed by `warden devices`) and fails with "no free ready physical <platform> device" when none is free; it never queues for capacity.
 - The SessionEnd hook releases and shuts down what the session booted; `/clear` keeps sims up.
 - Codex: set `WARDEN_SESSION_ID`, or leases count as the shell's user leases.

@@ -106,7 +106,7 @@ Paths and globs are relative to `warden.config.ts`. Unknown keys are errors.
 |---|---|---|
 | `spec` | `{}` | `{ bundleId, launchArgs, timeout = "2m", actionTimeout = "30s", assertionTimeout = "5s" }`. `bundleId` defaults to the project's |
 | `isolate` | `device` | `device` or `spec` (`spec` when `passes > 1`) |
-| `shutdown` | `always` | `always`: shut down warden's devices (and close their windows) after a passed gate. `idle`: leave them booted for the next run (`warden gc` reaps idle ones). A failed run always leaves them up |
+| `shutdown` | `always` | `always`: shut down warden's devices (and close their windows) after a passed gate; ephemeral iOS sims are then deleted. `idle`: leave them booted for the next run (`warden gc` reaps idle ones). A failed run always leaves them up |
 | `jobTimeoutMs` | `600000` | per spec: a process past this for each spec it runs is killed and counts as failed |
 | `passes` | `1` | consecutive green runs needed per spec. `isolate: device` with `passes > 1` is an error |
 | `retry` | `0` | re-run a failed job on the same device. Under `isolate: device` a retry reruns only the specs that did not pass |

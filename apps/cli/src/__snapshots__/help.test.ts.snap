@@ -23,7 +23,7 @@ Lease:
                                 another owner holds it
   heartbeat [leaseIds...]       refresh lease heartbeats so they don't go stale
   gc                            reclaim stale leases; shut down idle warden
-                                devices (never deletes)
+                                devices, delete shut-down ephemeral sims
   port                          lease TCP ports from a range (bind-probed, never
                                 handed out twice)
 
@@ -1741,7 +1741,8 @@ exports[`help output warden gc --help (and nested subcommands) 1`] = `
 "$ warden gc --help
 Usage: warden gc [options]
 
-reclaim stale leases; shut down idle warden devices (never deletes)
+reclaim stale leases; shut down idle warden devices, delete shut-down ephemeral
+sims
 
 Options:
   --idle <duration>        shut down unleased warden devices idle this long

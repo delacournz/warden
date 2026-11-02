@@ -163,3 +163,72 @@ describe("shutdownReleasedDevices", () => {
 		expect(result.notes.join("\n")).toContain("boom");
 	});
 });
+
+describe("shutdownReleasedDevices: ephemeral sims", () => {
+	const sim = (c: TestContext, id: string, o: { quarantined?: boolean } = {}) => {
+		c.db.recordDevice({ platform: "ios", id, name: `warden-iphone-17-${id}` }, 0);
+		if (o.quarantined) c.db.quarantineDevice({ platform: "ios", id, name: `warden-iphone-17-${id}` }, "bad", 1);
+	};
+	const verbs = (calls: string[][]) => calls.filter((c) => c[0] === "xcrun").map((c) => `${c[2]} ${c[3] ?? ""}`.trim());
+
+	test("a warden-created sim is deleted after its shutdown and forgotten", async () => {
+		const calls: string[][] = [];
+		ctx = testContext([], { exec: fakeSimctl([], calls) });
+		sim(ctx, "W");
+		const result = await shutdownReleasedDevices(ctx, [lease(ctx, "W")], owner);
+		expect(result.shutdown).toEqual(["W"]);
+		expect(result.deleted).toEqual(["W"]);
+		const v = verbs(calls);
+		expect(v.indexOf("delete W")).toBeGreaterThan(v.indexOf("shutdown W"));
+		expect(ctx.db.listDevices("ios")).toEqual([]);
+	});
+
+	test("WARDEN_EPHEMERAL=0 keeps the sim for the pool", async () => {
+		const calls: string[][] = [];
+		ctx = testContext([], { exec: fakeSimctl([], calls) });
+		ctx.env = { ...ctx.env, WARDEN_EPHEMERAL: "0" };
+		sim(ctx, "W");
+		const result = await shutdownReleasedDevices(ctx, [lease(ctx, "W")], owner);
+		expect(result.deleted).toEqual([]);
+		expect(verbs(calls)).not.toContain("delete W");
+		expect(ctx.db.listDevices("ios").map((d) => d.id)).toEqual(["W"]);
+	});
+
+	test("a sim the owner booted but warden didn't create is shut down, never deleted", async () => {
+		const calls: string[][] = [];
+		ctx = testContext([], { exec: fakeSimctl([], calls) });
+		const result = await shutdownReleasedDevices(ctx, [lease(ctx, "MINE", true)], owner);
+		expect(result.shutdown).toEqual(["MINE"]);
+		expect(result.deleted).toEqual([]);
+		expect(verbs(calls)).not.toContain("delete MINE");
+	});
+
+	test("a quarantined sim is kept for `warden sim unquarantine`", async () => {
+		const calls: string[][] = [];
+		ctx = testContext([], { exec: fakeSimctl([], calls) });
+		sim(ctx, "Q", { quarantined: true });
+		const result = await shutdownReleasedDevices(ctx, [lease(ctx, "Q")], owner);
+		expect(result.shutdown).toEqual(["Q"]);
+		expect(result.deleted).toEqual([]);
+		expect(ctx.db.listDevices("ios").map((d) => d.id)).toEqual(["Q"]);
+	});
+
+	test("a vetoed shutdown deletes nothing", async () => {
+		const calls: string[][] = [];
+		ctx = testContext([], { exec: fakeSimctl([], calls) });
+		sim(ctx, "W");
+		const result = await shutdownReleasedDevices(ctx, [lease(ctx, "W")], owner, async () => "busy");
+		expect(result.deleted).toEqual([]);
+		expect(verbs(calls)).not.toContain("delete W");
+	});
+
+	test("a failed delete is a note; the record stays so `warden sims prune` can retry", async () => {
+		ctx = testContext([], { exec: fakeSimctl([], [], [["xcrun simctl delete", { exitCode: 1, stderr: "nope" }]]) });
+		sim(ctx, "W");
+		const result = await shutdownReleasedDevices(ctx, [lease(ctx, "W")], owner);
+		expect(result.shutdown).toEqual(["W"]);
+		expect(result.deleted).toEqual([]);
+		expect(result.notes.join("\n")).toContain("nope");
+		expect(ctx.db.listDevices("ios").map((d) => d.id)).toEqual(["W"]);
+	});
+});

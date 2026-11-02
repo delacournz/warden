@@ -131,6 +131,7 @@ export const MIGRATIONS: readonly string[] = [
 			CAST(strftime('%s', 'now') AS INTEGER) * 1000
 		FROM lease_conditions c WHERE c.lease_id = OLD.id;
 	END;`,
+	`ALTER TABLE devices ADD COLUMN persistent_at INTEGER;`,
 ];
 
 /** A queued claim that has not refreshed within this long is dead (its waiter polls every few seconds). */
@@ -171,6 +172,8 @@ export type DeviceRecord = {
 	quarantineReason?: string;
 	/** set while the simulator's daemons are switched off (`sim slim`); cleared by `--restore` */
 	slimmedAt?: number;
+	/** set when `warden dev` took the sim: kept on shutdown (not ephemeral) so installs and logins survive */
+	persistentAt?: number;
 };
 
 type LeaseRow = {
@@ -227,6 +230,7 @@ type DeviceRow = {
 	quarantined_at: number | null;
 	quarantine_reason: string | null;
 	slimmed_at: number | null;
+	persistent_at: number | null;
 };
 
 function toLease(row: LeaseRow): Lease {
@@ -259,6 +263,7 @@ function toDevice(row: DeviceRow): DeviceRecord {
 	if (row.quarantined_at !== null) device.quarantinedAt = row.quarantined_at;
 	if (row.quarantine_reason !== null) device.quarantineReason = row.quarantine_reason;
 	if (row.slimmed_at !== null) device.slimmedAt = row.slimmed_at;
+	if (row.persistent_at !== null) device.persistentAt = row.persistent_at;
 	return device;
 }
 
@@ -486,7 +491,10 @@ export class Store {
 
 	/** Quarantine a warden device (recording it first when only its name marked it ours). */
 	quarantineDevice(
-		device: Omit<DeviceRecord, "createdAt" | "lastUsedAt" | "quarantinedAt" | "quarantineReason" | "slimmedAt">,
+		device: Omit<
+			DeviceRecord,
+			"createdAt" | "lastUsedAt" | "quarantinedAt" | "quarantineReason" | "slimmedAt" | "persistentAt"
+		>,
 		reason: string | undefined,
 		now: number
 	): void {
@@ -523,6 +531,14 @@ export class Store {
 	/** Record (`at` set) or clear (`at` undefined) that a recorded device's daemons are slimmed. */
 	setSlimmed(platform: Platform, id: string, at: number | undefined): void {
 		this.db.query("UPDATE devices SET slimmed_at = ? WHERE platform = ? AND id = ?").run(at ?? null, platform, id);
+	}
+
+	/**
+	 * Mark a recorded device persistent (never deleted as ephemeral). Update-only: a record is what makes a device
+	 * warden-created (`shouldShutdown`), so a sim that was already running when leased must not gain one here.
+	 */
+	markPersistent(platform: Platform, id: string, now: number): void {
+		this.db.query("UPDATE devices SET persistent_at = ? WHERE platform = ? AND id = ?").run(now, platform, id);
 	}
 
 	forgetDevice(platform: Platform, id: string): void {

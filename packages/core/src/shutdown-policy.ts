@@ -1,3 +1,5 @@
+import { isGoldenName } from "./golden/golden";
+import type { DeviceRecord } from "./store";
 import type { Lease } from "./types";
 
 /**
@@ -31,4 +33,39 @@ export function staleShutdownBlock(lease: Lease, now: number, appRunning: boolea
 	}
 	if (appRunning) return "an app is running on it";
 	return undefined;
+}
+
+const OFF = new Set(["0", "false", "off", "no"]);
+
+/**
+ * Ephemeral iOS sims: a warden sim is `simctl delete`d once it is shut down, and the next claim clones a
+ * fresh one from the golden. On unless `WARDEN_EPHEMERAL` is 0/false/off/no, and off with goldens off
+ * (`WARDEN_GOLDEN=0`), where a fresh sim would be a slow `simctl create` + first boot.
+ */
+export function ephemeralEnabled(env: Record<string, string | undefined>): boolean {
+	if (env.WARDEN_GOLDEN === "0") return false;
+	return !OFF.has(env.WARDEN_EPHEMERAL?.trim().toLowerCase() ?? "");
+}
+
+/**
+ * Delete this device once it is shut down (with `ephemeralEnabled`)? Only a warden-created iOS sim (it has a
+ * store `record`) that is not quarantined (kept for `warden sim unquarantine`), not persistent (`warden dev`'s,
+ * `devKeepsSim`) and not a golden. A sim warden
+ * didn't create — even one the lease owner booted — is never deleted.
+ */
+export function deleteAfterShutdown(record: DeviceRecord | undefined): boolean {
+	return (
+		record !== undefined &&
+		record.platform === "ios" &&
+		record.quarantinedAt === undefined &&
+		record.persistentAt === undefined &&
+		!isGoldenName(record.name)
+	);
+}
+
+const ON = new Set(["1", "true", "on", "yes"]);
+
+/** Does `warden dev` keep its sim (mark it persistent) so installs and logins survive? Yes unless `WARDEN_EPHEMERAL_DEV` is on. */
+export function devKeepsSim(env: Record<string, string | undefined>): boolean {
+	return !ON.has(env.WARDEN_EPHEMERAL_DEV?.trim().toLowerCase() ?? "");
 }

@@ -126,7 +126,7 @@ export const COMMANDS: readonly CommandEntry[] = [
 	{
 		name: "gc",
 		group: "Lease",
-		summary: "reclaim stale leases; shut down idle warden devices (never deletes)",
+		summary: "reclaim stale leases; shut down idle warden devices, delete shut-down ephemeral sims",
 		load: async () => (await import("./gc")).gcCommand,
 	},
 	{

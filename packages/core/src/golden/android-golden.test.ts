@@ -845,6 +845,15 @@ describe("stale snapshots", () => {
 		expect(existsSync(userBoot)).toBe(true);
 	});
 
+	test("cautious (gc's auto prune): an AVD whose key cannot be read keeps every snapshot", async () => {
+		const host = fakeAndroidHost();
+		const stale = plant("warden-0000000000");
+		rmSync(join(avdHomeDir, "Pixel_10.avd", "config.ini"));
+		const pruned = await pruneAndroidSnapshots(goldenDeps(host), { all: false, cautious: true });
+		expect(pruned).toEqual(ok([]));
+		expect(existsSync(stale)).toBe(true);
+	});
+
 	test("prune --all deletes the current one too; a running AVD keeps its snapshots", async () => {
 		const host = fakeAndroidHost();
 		const current = plant(snapshotName(await currentKey(host)));

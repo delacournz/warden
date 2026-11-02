@@ -250,6 +250,18 @@ describe("device quarantine + slim state", () => {
 		expect(store.listDevices()[0]?.slimmedAt).toBeUndefined();
 	});
 
+	test("markPersistent stamps a recorded device, keeps its profile, survives recordDevice", () => {
+		store.recordDevice(dev, 1);
+		store.markPersistent("ios", "U1", 7);
+		store.recordDevice(dev, 9);
+		expect(store.listDevices()[0]).toMatchObject({ persistentAt: 7, profile: "iphone-17" });
+	});
+
+	test("markPersistent never records a device only known by name (that would make it warden-created)", () => {
+		store.markPersistent("ios", "U1", 7);
+		expect(store.listDevices()).toEqual([]);
+	});
+
 	test("migrates a database created before the columns existed", () => {
 		const old = join(dir, "old.db");
 		const db = new Database(old, { create: true });
