@@ -25,6 +25,7 @@ import {
 	parseInstallFlags,
 	RESET_KEYCHAIN_HELP,
 } from "./install-flags";
+import { createLeaseHealth, healthMonitorDisabled, type LeaseHealthDeps } from "./lease-health";
 import { reportError } from "./output";
 import type { HideStart } from "./sim-windows";
 import type { Spinner } from "./ui";
@@ -53,6 +54,8 @@ export type LeaseSessionDeps = {
 	onSignal: (signal: ForwardedSignal, handler: () => void) => () => void;
 	/** run `fn` every `ms`; returns stop */
 	every: (ms: number, fn: () => void) => () => void;
+	/** device health monitor under the held leases (absent = none); the real one is `defaultLeaseHealthDeps` */
+	health?: LeaseHealthDeps;
 	/** bind probe for `--port` ranges */
 	isPortFree: (port: number) => Promise<boolean>;
 	/** `--app`: make sure the project's app is installed on a claimed device (default: `ensureAppFor`) */
@@ -714,14 +717,31 @@ export const LEASES_LOST =
  */
 export function holdLeases(
 	ctx: CommandContext,
-	deps: Pick<LeaseSessionDeps, "every" | "onSignal">,
+	deps: Pick<LeaseSessionDeps, "every" | "onSignal" | "health">,
 	leaseIds: readonly string[],
 	onSignal: (signal: ForwardedSignal) => void
 ): () => void {
 	const store = ctx.store();
 	let lost = false;
+	let closed = false;
+	const monitor =
+		deps.health && !healthMonitorDisabled(ctx.env)
+			? createLeaseHealth(ctx, deps.health, leaseIds, {
+					active: () => !lost && !closed,
+					giveUp: (message) => {
+						if (lost) return;
+						lost = true;
+						reportError(ctx, "lease", `${message} — stopping the run`, {
+							code: "LEASE_LOST",
+							hint: CLAIM_ERRORS.LEASE_LOST.hint,
+						});
+						onSignal("SIGTERM");
+					},
+				})
+			: undefined;
 	const beat = () => {
 		if (lost) return;
+		monitor?.tick();
 		const updated = store.heartbeat([...leaseIds], ctx.now(), HEARTBEAT_INTERVAL_MS);
 		if (updated >= leaseIds.length) return;
 		lost = true;
@@ -741,6 +761,7 @@ export function holdLeases(
 	const stopHeartbeat = deps.every(HEARTBEAT_INTERVAL_MS, beat);
 	const unsubscribe = FORWARDED_SIGNALS.map((signal) => deps.onSignal(signal, () => onSignal(signal)));
 	return () => {
+		closed = true;
 		stopHeartbeat();
 		for (const off of unsubscribe) off();
 	};
