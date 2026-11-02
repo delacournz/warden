@@ -10,8 +10,10 @@ import { parseDuration } from "@delacour/warden-core/duration";
 import { isGoldenName } from "@delacour/warden-core/golden/golden";
 import { processAlive } from "@delacour/warden-core/liveness";
 import { detectOwner, type OwnerContext, readGitInfo } from "@delacour/warden-core/owner";
+import { limitFor, parseOwnerLimit } from "@delacour/warden-core/owner-limit";
 import { listAvds } from "@delacour/warden-core/providers/android";
 import { PRIORITY, parsePriority } from "@delacour/warden-core/queue";
+import type { ReclaimMode } from "@delacour/warden-core/reclaim";
 import { slimSimulator } from "@delacour/warden-core/sims/slim";
 import type { SlimProfile } from "@delacour/warden-core/sims/slim.profile";
 import { resolveSlim, type SlimSetting } from "@delacour/warden-core/slim-policy";
@@ -121,6 +123,8 @@ export type ClaimFlagValues = {
 	biometrics?: boolean | undefined;
 	/** `--camera`: Android only (the `+cam` identity); iOS leaves the profile unchanged */
 	camera?: boolean | undefined;
+	/** `e2e.<suite>.reclaim` / preset `reclaim` / top-level `reclaim`, already picked by the caller (`WARDEN_RECLAIM` applies below it, at release) */
+	reclaimConfig?: ReclaimMode | undefined;
 };
 
 /** Does the claim ask for physical devices (`--physical`, or naming one with `--serial` / `--udid`)? */
@@ -164,6 +168,8 @@ export type ClaimFlags = {
 	headless?: true;
 	/** iOS daemon slimming layers (flag > suite / preset > top-level config > `WARDEN_SLIM` > on); android ignores them */
 	slim?: SlimLayers;
+	/** reclaim mode from config; released with `releaseDevices({ reclaim })` (absent: `WARDEN_RECLAIM`, then none) */
+	reclaim?: ReclaimMode;
 };
 
 /** Claim queue wait when `--wait` is not given. */
@@ -321,6 +327,7 @@ function withOptionalFlags(flags: ClaimFlags, values: ClaimFlagValues): ClaimFla
 	if (values.max === undefined) flags.maxDefaulted = true;
 	if (values.label !== undefined) flags.label = values.label;
 	if (values.headless) flags.headless = true;
+	if (values.reclaimConfig !== undefined) flags.reclaim = values.reclaimConfig;
 	const slim: SlimLayers = {};
 	if (values.slim !== undefined) slim.flag = values.slim;
 	if (values.slimConfig !== undefined) slim.config = values.slimConfig;
@@ -382,6 +389,10 @@ export type ClaimHideOptions = {
 	os?: NodeJS.Platform;
 	/** polled while the claim waits (queue, pool): true ends it with `CLAIM_ABORTED` */
 	abort?: () => boolean;
+	/** groups the leases of one command's claims, so `WARDEN_MAX_PER_OWNER` counts the command once (default: this claim alone) */
+	claimId?: string;
+	/** `warden claim --idempotency-key`: a repeat by the same owner returns the earlier claim's leases */
+	idempotencyKey?: string;
 	/** the wait between two `lockState` reads while a physical iPhone is locked (tests; default: real time) */
 	unlockSleep?: (ms: number) => Promise<void>;
 };
@@ -424,6 +435,12 @@ export async function withPhysicalAllowlist(ctx: CommandContext, request: Device
 	return ok(applyPhysicalAllow(request, resolvePhysicalAllow(ctx.env, configAllow)));
 }
 
+/** `WARDEN_MAX_PER_OWNER` for `platform` (undefined = unlimited); a malformed value is an error before any lease. */
+function ownerLimitOf(ctx: CommandContext, platform: Platform): Result<number | undefined> {
+	const parsed = parseOwnerLimit(ctx.env.WARDEN_MAX_PER_OWNER);
+	return parsed.success ? ok(limitFor(parsed.data, platform)) : parsed;
+}
+
 /** Run a device claim with the context's store + provider; iOS claims then tile the sims' windows (headless: close them; see `options.onHide`). */
 export async function claimWithFlags(
 	ctx: CommandContext,
@@ -432,6 +449,8 @@ export async function claimWithFlags(
 	pid: number | undefined,
 	options: ClaimHideOptions = {}
 ): AsyncResult<ClaimOutcome> {
+	const ownerLimit = ownerLimitOf(ctx, flags.request.platform);
+	if (!ownerLimit.success) return ownerLimit;
 	const resolved = await resolveRequest(ctx, flags.request);
 	if (!resolved.success) return resolved;
 	const allowed = await withPhysicalAllowlist(ctx, resolved.data);
@@ -457,6 +476,9 @@ export async function claimWithFlags(
 	if (!slim.success) return slim;
 	const outcome = await claimDevices({
 		store: ctx.store(),
+		...(ownerLimit.data !== undefined ? { ownerLimit: ownerLimit.data } : {}),
+		...(options.claimId !== undefined ? { claimId: options.claimId } : {}),
+		...(options.idempotencyKey !== undefined ? { idempotencyKey: options.idempotencyKey } : {}),
 		provider: providerFor(
 			request.platform,
 			ctx,

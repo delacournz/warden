@@ -1,5 +1,6 @@
 import type { AsyncResult } from "@delacour/warden-types/result";
 import type { Exec } from "../exec";
+import type { MarkerFs } from "../ownership";
 import type { Store } from "../store";
 import type { InventoryDevice, Owner, Platform } from "../types";
 import type { Timer } from "./health";
@@ -64,4 +65,6 @@ export type ProviderDeps = {
 	timer?: (ms: number) => Timer;
 	/** progress notes (e.g. "cloning from golden…") — stderr in the CLI */
 	log?: (line: string) => void;
+	/** where the iOS ownership marker is written (default: the real filesystem) */
+	markerFs?: MarkerFs;
 };

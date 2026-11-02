@@ -4,6 +4,7 @@ import { DEFAULT_IDLE_MS } from "@delacour/warden-core/config.defaults";
 import { androidSnapshotsDue } from "@delacour/warden-core/golden/android-snapshot-pending";
 import { type PidAlive, processAlive } from "@delacour/warden-core/liveness";
 import { ephemeralEnabled } from "@delacour/warden-core/shutdown-policy";
+import { warmEnabled } from "@delacour/warden-core/warm-pool";
 import type { CommandContext } from "./context";
 import { goldenPruneDue } from "./golden-prune";
 
@@ -77,7 +78,8 @@ export function maybeAutoGc(
 		!cacheOverCap(ctx) &&
 		!androidSnapshotsDue(store, ctx.env, now) &&
 		!(ephemeralEnabled(ctx.env) && store.getMeta(EPHEMERAL_SWEPT_META_KEY) === undefined) &&
-		!goldenPruneDue(store, ctx.env, now)
+		!goldenPruneDue(store, ctx.env, now) &&
+		!warmEnabled(ctx.env)
 	)
 		return;
 	run([...(opts.nice ?? niceCommand()), ...self, "gc", "--quiet"]);

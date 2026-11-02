@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { constants } from "node:os";
 import type { Command as Commander, OptionValues } from "@commander-js/extra-typings";
 import type { InstallMode } from "@delacour/warden-core/builds/app-option.schema";
@@ -5,6 +6,7 @@ import type { KindApp } from "@delacour/warden-core/builds/ensure-kind";
 import type { BuildKind } from "@delacour/warden-core/builds/kinds";
 import type { AppPhase, EnsureResult } from "@delacour/warden-core/builds/resolve";
 import { CLAIM_ABORTED, type ClaimOutcome } from "@delacour/warden-core/claim";
+import { CLAIM_ERRORS } from "@delacour/warden-core/claim-errors";
 import { DEFAULT_TTL_MS, HEARTBEAT_INTERVAL_MS } from "@delacour/warden-core/config.defaults";
 import { processAlive } from "@delacour/warden-core/liveness";
 import { claimPorts, parsePortSpec } from "@delacour/warden-core/ports";
@@ -23,6 +25,7 @@ import {
 	parseInstallFlags,
 	RESET_KEYCHAIN_HELP,
 } from "./install-flags";
+import { createLeaseHealth, healthMonitorDisabled, type LeaseHealthDeps } from "./lease-health";
 import { reportError } from "./output";
 import type { HideStart } from "./sim-windows";
 import type { Spinner } from "./ui";
@@ -51,6 +54,8 @@ export type LeaseSessionDeps = {
 	onSignal: (signal: ForwardedSignal, handler: () => void) => () => void;
 	/** run `fn` every `ms`; returns stop */
 	every: (ms: number, fn: () => void) => () => void;
+	/** device health monitor under the held leases (absent = none); the real one is `defaultLeaseHealthDeps` */
+	health?: LeaseHealthDeps;
 	/** bind probe for `--port` ranges */
 	isPortFree: (port: number) => Promise<boolean>;
 	/** `--app`: make sure the project's app is installed on a claimed device (default: `ensureAppFor`) */
@@ -280,6 +285,8 @@ export type LeaseArgs = {
 	 * (still leased) instead of failing the claim, as long as some device is left (`warden batch` / `e2e`)
 	 */
 	dropLost?: boolean;
+	/** one id for every claim this command makes (set by `claimAll`): `WARDEN_MAX_PER_OWNER` counts the command once */
+	claimId?: string;
 };
 
 /** The error of a claim the caller gave up on (`aborted`) — nothing to add to it. */
@@ -497,6 +504,7 @@ async function runLeg(
 	try {
 		claim = await claimWithFlags(ctx, owner, flags, pid, {
 			onHide: (start) => hides.push(start),
+			...(args.claimId !== undefined ? { claimId: args.claimId } : {}),
 			...(args.aborted ? { abort: args.aborted } : {}),
 		});
 	} catch (error) {
@@ -558,6 +566,12 @@ async function runLegs(
 	);
 }
 
+/** `args` with the one claim id every claim of this command shares (`WARDEN_MAX_PER_OWNER` counts the command once). */
+const withClaimId = (args: LeaseArgs): LeaseArgs => ({
+	...args,
+	claimId: args.claimId ?? `c_${randomUUID().replaceAll("-", "").slice(0, 12)}`,
+});
+
 /**
  * Lease the ports, claim the devices and (with `--app`) ensure the app; on any failure nothing stays
  * leased. The ports come first (a bind probe, cheap) so `onPorts` can start the run's Metro while the
@@ -567,9 +581,10 @@ export async function claimAll(
 	ctx: CommandContext,
 	deps: Pick<LeaseSessionDeps, "pid" | "isPortFree" | "ensureApp">,
 	owner: Owner,
-	args: LeaseArgs,
+	input: LeaseArgs,
 	name = "run"
 ): AsyncResult<LeaseSession> {
+	const args = withClaimId(input);
 	const label = args.flags.label ?? `warden ${name}`;
 	const ports = await claimRunPorts(ctx, owner, args.ports, deps.pid, deps.isPortFree, label);
 	if (!ports.success) return ports;
@@ -604,8 +619,9 @@ export async function claimAll(
 	const lost = runs.flatMap((r) => r.lost ?? []);
 	// a release leaves each iOS device's `warden-simd` resident: the next run on the device reuses it (no spawn, no
 	// handshake) and its idle timeout reaps it otherwise; `--shutdown` / a device shutdown / a new lease owner stop it
+	const reclaim = (args.legFlags ?? [args.flags]).find((f) => f.reclaim !== undefined)?.reclaim;
 	const release = async () => {
-		await releaseDevices(ctx, leaseIds);
+		await releaseDevices(ctx, leaseIds, { reclaim });
 	};
 	const claimMore = async (o: MoreClaimOptions): AsyncResult<MoreClaim> => {
 		const more: LeaseArgs = { ...args, aborted: o.aborted };
@@ -637,7 +653,7 @@ export async function claimAll(
 					const at = leaseIds.indexOf(id);
 					if (at >= 0) leaseIds.splice(at, 1);
 				}
-				await releaseDevices(ctx, ids);
+				await releaseDevices(ctx, ids, { reclaim: o.flags.reclaim ?? reclaim });
 			},
 		});
 	};
@@ -701,18 +717,40 @@ export const LEASES_LOST =
  */
 export function holdLeases(
 	ctx: CommandContext,
-	deps: Pick<LeaseSessionDeps, "every" | "onSignal">,
+	deps: Pick<LeaseSessionDeps, "every" | "onSignal" | "health">,
 	leaseIds: readonly string[],
 	onSignal: (signal: ForwardedSignal) => void
 ): () => void {
 	const store = ctx.store();
 	let lost = false;
+	let closed = false;
+	const monitor =
+		deps.health && !healthMonitorDisabled(ctx.env)
+			? createLeaseHealth(ctx, deps.health, leaseIds, {
+					active: () => !lost && !closed,
+					giveUp: (message) => {
+						if (lost) return;
+						lost = true;
+						reportError(ctx, "lease", `${message} — stopping the run`, {
+							code: "LEASE_LOST",
+							hint: CLAIM_ERRORS.LEASE_LOST.hint,
+						});
+						onSignal("SIGTERM");
+					},
+				})
+			: undefined;
 	const beat = () => {
 		if (lost) return;
+		monitor?.tick();
 		const updated = store.heartbeat([...leaseIds], ctx.now(), HEARTBEAT_INTERVAL_MS);
 		if (updated >= leaseIds.length) return;
 		lost = true;
-		reportError(ctx, "lease", LEASES_LOST);
+		try {
+			store.recordHeartbeatLost(leaseIds, ctx.now());
+		} catch {
+			// the history is best-effort here: the run still stops
+		}
+		reportError(ctx, "lease", LEASES_LOST, { code: "LEASE_LOST", hint: CLAIM_ERRORS.LEASE_LOST.hint });
 		onSignal("SIGTERM");
 	};
 	try {
@@ -723,6 +761,7 @@ export function holdLeases(
 	const stopHeartbeat = deps.every(HEARTBEAT_INTERVAL_MS, beat);
 	const unsubscribe = FORWARDED_SIGNALS.map((signal) => deps.onSignal(signal, () => onSignal(signal)));
 	return () => {
+		closed = true;
 		stopHeartbeat();
 		for (const off of unsubscribe) off();
 	};

@@ -206,10 +206,10 @@ describe("warden run", () => {
 		expect(c.stderr.join("\n")).toContain("ENOENT");
 	});
 
-	test("claim failure → exit 1, child never spawned", async () => {
+	test("claim failure → exit 5 NO_DEVICE, child never spawned", async () => {
 		const c = setup(["ios", "--count", "3", "--max", "2", "--no-wait", "--", "true"]);
 		const h = harness();
-		expect(await createRunCommand(h.deps).run(c)).toBe(1);
+		expect(await createRunCommand(h.deps).run(c)).toBe(5);
 		expect(h.spawned).toEqual([]);
 	});
 

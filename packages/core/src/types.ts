@@ -1,3 +1,5 @@
+import type { WaitReason } from "./queue";
+
 export type Platform = "ios" | "android";
 
 /** Facts about a real phone/tablet, from its provider. Only physical devices carry one. */
@@ -59,6 +61,11 @@ export type Lease = {
 	 * attaches to it instead of refusing with `device_busy`, and never releases it. Other owners still see it as foreign.
 	 */
 	shared?: boolean;
+	/**
+	 * The `claimDevices` call(s) that took this lease: a wrapper's legs share one id, so the per-owner limit counts
+	 * claims, not devices. Absent on leases an older binary wrote (each counts as its own claim).
+	 */
+	claimId?: string;
 };
 
 export type DeviceState = "booted" | "shutdown" | "booting";
@@ -159,6 +166,10 @@ export type QueueEntry = {
 	owner: Owner;
 	label?: string;
 	pid?: number;
+	/** why the claim waits, rewritten every round (absent on rows an older binary wrote) */
+	reason?: WaitReason;
+	/** the claim this row belongs to (absent on rows an older binary wrote) */
+	claimId?: string;
 };
 
 /** The one constructor of a device lease resource: carries `physical` for real devices. */

@@ -6,10 +6,16 @@ import type { Lease } from "./types";
  * Shut a device down when its lease ends? Only if warden created it (`wardenDevices` holds
  * `platform:id` of the store `devices` table) or the lease's owner booted it. A physical device
  * (`resource.physical`) is never shut down. A device that was already running when leased — e.g. the
- * user's own Simulator.app sim — is left running.
+ * user's own Simulator.app sim — is left running. `ownedElsewhere` (ownership marker naming another warden
+ * instance) vetoes a shutdown whatever else says.
  */
-export function shouldShutdown(lease: Lease, wardenDevices: ReadonlySet<string>): boolean {
+export function shouldShutdown(
+	lease: Lease,
+	wardenDevices: ReadonlySet<string>,
+	ownedElsewhere?: (platform: string, id: string) => boolean
+): boolean {
 	if (lease.resource.kind !== "device" || lease.resource.physical) return false;
+	if (ownedElsewhere?.(lease.resource.platform, lease.resource.id)) return false;
 	return lease.bootedByOwner === true || wardenDevices.has(`${lease.resource.platform}:${lease.resource.id}`);
 }
 

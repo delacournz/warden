@@ -200,6 +200,14 @@ describe("maybeAutoGc", () => {
 		expect(spawned).toEqual([[...NICE, "warden", "gc", "--quiet"]]);
 	});
 
+	test("WARDEN_WARM=1 makes every interval a pass, since the pool is topped up by gc", () => {
+		ctx = testContext([], { now: () => 5 * AUTO_GC_INTERVAL_MS });
+		ctx.env = { ...ctx.env, WARDEN_BACKGROUND: "1", WARDEN_WARM: "1" };
+		const spawned: string[][] = [];
+		maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: NICE });
+		expect(spawned).toEqual([[...NICE, "warden", "gc", "--quiet"]]);
+	});
+
 	test("WARDEN_AUTO_GC=0 and WARDEN_BACKGROUND=0 disable it, without even checking", () => {
 		ctx = withStaleLease(() => 5 * AUTO_GC_INTERVAL_MS);
 		ctx.env = { ...ctx.env, WARDEN_AUTO_GC: "0" };

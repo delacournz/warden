@@ -17,6 +17,8 @@ export type DeleteDeps = {
 	/** pid recorded on the delete lease */
 	pid: number;
 	now: () => number;
+	/** why a sim must not be deleted (ownership marker of another warden instance), else undefined */
+	markerBlock?: (udid: string) => string | undefined;
 };
 
 export type DeleteTarget = { udid: string; name: string; isAvailable: boolean };
@@ -53,6 +55,11 @@ export async function deleteSims<T extends DeleteTarget>(
 ): Promise<DeleteResult<T>> {
 	const result: DeleteResult<T> = { removed: [], skipped: [], failed: [] };
 	for (const entry of targets) {
+		const blocked = deps.markerBlock?.(entry.udid);
+		if (blocked !== undefined) {
+			result.failed.push({ entry, error: blocked });
+			continue;
+		}
 		const resource: DeviceResource = { kind: "device", platform: "ios", id: entry.udid, name: entry.name };
 		const reservation = reserve(deps, resource, opts.label);
 		if (reservation.kind === "held") {

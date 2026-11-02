@@ -1,3 +1,4 @@
+import type { ClaimErrorKind } from "@delacour/warden-core/claim-errors";
 import { bunExec, type Exec } from "@delacour/warden-core/exec";
 import { createGitFactsCache, type GitFactsCache } from "@delacour/warden-core/git-facts";
 import type { HostFacts } from "@delacour/warden-core/host";
@@ -35,7 +36,8 @@ export type FailureSink = { record: (message: string, extra?: FailureExtra) => v
 /** What a failure adds to the `--json` envelope beyond its message: a machine code, a fix and structured details. */
 export type FailureExtra =
 	| { code: "ambiguous_device"; hint: string; details: Record<string, unknown> }
-	| { code: "device_locked"; hint: string };
+	| { code: "device_locked"; hint: string }
+	| (ClaimErrorKind & { hint: string });
 
 /** Line writes to a process stream that remember backpressure, so the process can wait for them before exiting. */
 export type LineWriter = {

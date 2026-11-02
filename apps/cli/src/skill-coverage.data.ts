@@ -30,7 +30,6 @@ export const SKILL_OMITTED_OPTIONS: Readonly<Record<string, string>> = {
 	"perf js --sampling-interval": TUNING,
 	"perf logs --lines": TUNING,
 	"sims audit --stale": TUNING,
-	"sims audit --owner": TUNING,
 	"sims delete --suggested": "interactive disk cleanup for people",
 	"sims delete --stale": "interactive disk cleanup for people",
 	"clone --name": TUNING,

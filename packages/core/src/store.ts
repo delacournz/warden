@@ -2,7 +2,17 @@ import { Database } from "bun:sqlite";
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
+import {
+	type EventFilter,
+	INTERNAL_LEASE_LABELS,
+	insertLeaseEvent,
+	type LeaseEvent,
+	type NewLeaseEvent,
+	pruneLeaseEvents,
+	queryLeaseEvents,
+} from "./lease-events";
 import { isLeaseAlive, type PidAlive } from "./liveness";
+import { isWaitReason, type WaitReason } from "./queue";
 import type { Lease, Owner, Platform, QueueEntry, Resource } from "./types";
 import { resourceKey } from "./types";
 
@@ -15,6 +25,27 @@ export function wardenHome(env: Record<string, string | undefined> = process.env
 export function defaultDbPath(env: Record<string, string | undefined> = process.env): string {
 	return join(wardenHome(env), "warden.db");
 }
+
+/** An owner's idempotency key and the claim it created (one row per key, however many leases the claim holds). */
+export type ClaimKey = {
+	ownerKey: string;
+	key: string;
+	claimId: string;
+	platform: string;
+	profile: string;
+	count: number;
+	ready: boolean;
+};
+
+type ClaimKeyRow = {
+	owner_key: string;
+	key: string;
+	claim_id: string;
+	platform: string;
+	profile: string;
+	count: number;
+	ready: number;
+};
 
 /**
  * Ordered schema migrations; index + 1 = `PRAGMA user_version` after applying. Append only — never
@@ -132,6 +163,36 @@ export const MIGRATIONS: readonly string[] = [
 		FROM lease_conditions c WHERE c.lease_id = OLD.id;
 	END;`,
 	`ALTER TABLE devices ADD COLUMN persistent_at INTEGER;`,
+	`ALTER TABLE boot_queue ADD COLUMN reason TEXT;`,
+	`ALTER TABLE leases ADD COLUMN claim_id TEXT;
+	ALTER TABLE boot_queue ADD COLUMN claim_id TEXT;`,
+	`CREATE TABLE lease_events (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		at INTEGER NOT NULL,
+		type TEXT NOT NULL,
+		lease_id TEXT,
+		resource_key TEXT,
+		owner_key TEXT,
+		label TEXT,
+		claim_id TEXT,
+		data TEXT NOT NULL DEFAULT '{}'
+	);
+	CREATE INDEX lease_events_at ON lease_events(at);
+	CREATE INDEX lease_events_lease ON lease_events(lease_id);
+	CREATE INDEX lease_events_owner ON lease_events(owner_key, at);
+	CREATE INDEX lease_events_claim ON lease_events(claim_id);`,
+	`CREATE TABLE claim_keys (
+		owner_key TEXT NOT NULL,
+		key TEXT NOT NULL,
+		claim_id TEXT NOT NULL,
+		platform TEXT NOT NULL,
+		profile TEXT NOT NULL,
+		count INTEGER NOT NULL,
+		ready INTEGER NOT NULL DEFAULT 0,
+		created_at INTEGER NOT NULL,
+		PRIMARY KEY (owner_key, key)
+	);
+	CREATE INDEX claim_keys_claim ON claim_keys(claim_id);`,
 ];
 
 /** A queued claim that has not refreshed within this long is dead (its waiter polls every few seconds). */
@@ -148,6 +209,9 @@ export function ownerKey(owner: Owner): string {
 	}
 }
 
+/** Why leases are being deleted when it is history worth logging (see `Store.deleteLeases`). */
+export type LeaseEnd = { type: "released" | "expired"; now: number };
+
 export type NewLease = {
 	resource: Resource;
 	owner: Owner;
@@ -156,6 +220,7 @@ export type NewLease = {
 	pid?: number;
 	bootedByOwner?: boolean;
 	shared?: boolean;
+	claimId?: string;
 };
 
 /** A device warden created (sim) or launched (emulator). */
@@ -188,6 +253,14 @@ type LeaseRow = {
 	booted_by_owner: number | null;
 	heartbeat_ms: number | null;
 	shared: number | null;
+	claim_id: string | null;
+};
+
+type GrantedRow = {
+	resource_key: string | null;
+	owner_key: string | null;
+	label: string | null;
+	claim_id: string | null;
 };
 
 type QueueRow = {
@@ -201,6 +274,8 @@ type QueueRow = {
 	owner: string;
 	label: string | null;
 	pid: number | null;
+	reason: string | null;
+	claim_id: string | null;
 };
 
 function toQueueEntry(row: QueueRow): QueueEntry {
@@ -216,6 +291,8 @@ function toQueueEntry(row: QueueRow): QueueEntry {
 	};
 	if (row.label !== null) entry.label = row.label;
 	if (row.pid !== null) entry.pid = row.pid;
+	if (row.reason !== null && isWaitReason(row.reason)) entry.reason = row.reason;
+	if (row.claim_id !== null) entry.claimId = row.claim_id;
 	return entry;
 }
 
@@ -247,6 +324,7 @@ function toLease(row: LeaseRow): Lease {
 	if (row.booted_by_owner) lease.bootedByOwner = true;
 	if (row.heartbeat_ms !== null) lease.heartbeatMs = row.heartbeat_ms;
 	if (row.shared) lease.shared = true;
+	if (row.claim_id !== null) lease.claimId = row.claim_id;
 	return lease;
 }
 
@@ -305,10 +383,11 @@ export class Store {
 		if (input.pid !== undefined) lease.pid = input.pid;
 		if (input.bootedByOwner) lease.bootedByOwner = true;
 		if (input.shared) lease.shared = true;
+		if (input.claimId !== undefined) lease.claimId = input.claimId;
 		this.db
 			.query(
-				`INSERT INTO leases (id, resource_key, resource, owner_key, owner, label, acquired_at, heartbeat_at, ttl_ms, pid, booted_by_owner, shared)
-				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+				`INSERT INTO leases (id, resource_key, resource, owner_key, owner, label, acquired_at, heartbeat_at, ttl_ms, pid, booted_by_owner, shared, claim_id)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 			)
 			.run(
 				lease.id,
@@ -322,7 +401,8 @@ export class Store {
 				lease.ttlMs,
 				lease.pid ?? null,
 				lease.bootedByOwner ? 1 : null,
-				lease.shared ? 1 : null
+				lease.shared ? 1 : null,
+				lease.claimId ?? null
 			);
 		return lease;
 	}
@@ -383,10 +463,106 @@ export class Store {
 		return row ? toLease(row) : undefined;
 	}
 
-	deleteLeases(ids: readonly string[]): number {
+	/**
+	 * Delete leases. With `end`, a device lease that was granted (has a `granted` event) also logs `end.type`
+	 * in the same transaction. Without it nothing is logged: rollbacks, create placeholders, eviction holds,
+	 * ports and build locks are not lease history.
+	 */
+	deleteLeases(ids: readonly string[], end?: LeaseEnd): number {
 		if (ids.length === 0) return 0;
 		const stmt = this.db.query("DELETE FROM leases WHERE id = ?");
-		return this.transaction(() => ids.reduce((n, id) => n + stmt.run(id).changes, 0));
+		return this.transaction(() =>
+			ids.reduce((n, id) => {
+				const lease = end ? this.getLease(id) : undefined;
+				const changes = stmt.run(id).changes;
+				if (changes > 0 && lease && end) this.recordLeaseEnd(lease, end);
+				return n + changes;
+			}, 0)
+		);
+	}
+
+	private recordLeaseEnd(lease: Lease, end: LeaseEnd): void {
+		if (lease.resource.kind !== "device" || lease.resource.id.startsWith("pending:")) return;
+		if (lease.label !== undefined && INTERNAL_LEASE_LABELS.includes(lease.label)) return;
+		const granted = this.db
+			.query<{ at: number }, [string]>("SELECT at FROM lease_events WHERE lease_id = ? AND type = 'granted' LIMIT 1")
+			.get(lease.id);
+		if (!granted) return;
+		this.recordEvent({
+			at: end.now,
+			type: end.type,
+			data: { heldMs: Math.max(0, end.now - granted.at) },
+			leaseId: lease.id,
+			resourceKey: resourceKey(lease.resource),
+			ownerKey: ownerKey(lease.owner),
+			...(lease.label !== undefined ? { label: lease.label } : {}),
+			...(lease.claimId !== undefined ? { claimId: lease.claimId } : {}),
+		});
+	}
+
+	/** Append one lease event (join the caller's transaction when there is one). */
+	recordEvent(event: NewLeaseEvent): void {
+		insertLeaseEvent(this.db, event);
+	}
+
+	/** `queued` is logged once per claim call (its queue row is refreshed every round): false when already there. */
+	recordQueuedOnce(event: Extract<NewLeaseEvent, { type: "queued" }>): boolean {
+		return this.transaction(() => {
+			const seen = this.db
+				.query<{ n: number }, [string | null, string]>(
+					"SELECT 1 AS n FROM lease_events WHERE type = 'queued' AND claim_id IS ?1 AND json_extract(data, '$.queueId') = ?2 LIMIT 1"
+				)
+				.get(event.claimId ?? null, event.data.queueId);
+			if (seen) return false;
+			this.recordEvent(event);
+			return true;
+		});
+	}
+
+	/**
+	 * A holder's heartbeat found these leases gone: log `heartbeat_lost` for those no longer held, copying
+	 * who/what from their `granted` event. Returns how many were logged.
+	 */
+	recordHeartbeatLost(ids: readonly string[], now: number): number {
+		return this.transaction(() => {
+			let logged = 0;
+			for (const id of ids) {
+				const event = this.getLease(id) ? undefined : this.heartbeatLostEvent(id, now);
+				if (!event) continue;
+				this.recordEvent(event);
+				logged++;
+			}
+			return logged;
+		});
+	}
+
+	/** The `heartbeat_lost` event of a granted lease (who/what copied from its grant); undefined for one never granted (ports, builds). */
+	private heartbeatLostEvent(leaseId: string, at: number): NewLeaseEvent | undefined {
+		const granted = this.db
+			.query<GrantedRow, [string]>(
+				"SELECT resource_key, owner_key, label, claim_id FROM lease_events WHERE lease_id = ? AND type = 'granted' LIMIT 1"
+			)
+			.get(leaseId);
+		if (!granted) return undefined;
+		return {
+			at,
+			type: "heartbeat_lost",
+			data: {},
+			leaseId,
+			...(granted.resource_key ? { resourceKey: granted.resource_key } : {}),
+			...(granted.owner_key ? { ownerKey: granted.owner_key } : {}),
+			...(granted.label ? { label: granted.label } : {}),
+			...(granted.claim_id ? { claimId: granted.claim_id } : {}),
+		};
+	}
+
+	listEvents(filter: EventFilter = {}): LeaseEvent[] {
+		return queryLeaseEvents(this.db, filter);
+	}
+
+	/** Delete events older than `before` (ms). */
+	pruneEvents(before: number): number {
+		return pruneLeaseEvents(this.db, before);
 	}
 
 	/**
@@ -408,7 +584,7 @@ export class Store {
 			const stale = this.listLeases()
 				.filter((l) => !isLeaseAlive(l, now, pidAlive))
 				.map((l) => l.id);
-			this.deleteLeases(stale);
+			this.deleteLeases(stale, { type: "expired", now });
 			return stale;
 		});
 	}
@@ -418,10 +594,10 @@ export class Store {
 		return this.transaction(() => {
 			this.db
 				.query(
-					`INSERT INTO boot_queue (id, platform, profile, units, priority, enqueued_at, heartbeat_at, owner_key, owner, label, pid)
-					 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+					`INSERT INTO boot_queue (id, platform, profile, units, priority, enqueued_at, heartbeat_at, owner_key, owner, label, pid, reason, claim_id)
+					 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 					 ON CONFLICT (id) DO UPDATE SET platform = excluded.platform, profile = excluded.profile, units = excluded.units,
-					   heartbeat_at = excluded.heartbeat_at, label = excluded.label, pid = excluded.pid`
+					   heartbeat_at = excluded.heartbeat_at, label = excluded.label, pid = excluded.pid, reason = excluded.reason, claim_id = excluded.claim_id`
 				)
 				.run(
 					entry.id,
@@ -434,7 +610,9 @@ export class Store {
 					ownerKey(entry.owner),
 					JSON.stringify(entry.owner),
 					entry.label ?? null,
-					entry.pid ?? null
+					entry.pid ?? null,
+					entry.reason ?? null,
+					entry.claimId ?? null
 				);
 			const row = this.db.query<QueueRow, [string]>("SELECT * FROM boot_queue WHERE id = ?").get(entry.id);
 			if (!row) throw new Error(`boot_queue row ${entry.id} vanished`);
@@ -442,9 +620,53 @@ export class Store {
 		});
 	}
 
-	/** Stamp `heartbeat_at`; false when the row is gone (reclaimed or dequeued). */
-	refreshQueue(id: string, now: number): boolean {
-		return this.db.query("UPDATE boot_queue SET heartbeat_at = ? WHERE id = ?").run(now, id).changes > 0;
+	/** Stamp `heartbeat_at` and the live wait `reason`; false when the row is gone (reclaimed or dequeued). */
+	refreshQueue(id: string, now: number, reason?: WaitReason): boolean {
+		return (
+			this.db
+				.query("UPDATE boot_queue SET heartbeat_at = ?, reason = COALESCE(?, reason) WHERE id = ?")
+				.run(now, reason ?? null, id).changes > 0
+		);
+	}
+
+	/** The claim an owner's idempotency key points at (caller holds the transaction), if any. */
+	getClaimKey(ownerKey: string, key: string): ClaimKey | undefined {
+		const row = this.db
+			.query<ClaimKeyRow, [string, string]>("SELECT * FROM claim_keys WHERE owner_key = ? AND key = ?")
+			.get(ownerKey, key);
+		if (!row) return undefined;
+		return {
+			ownerKey: row.owner_key,
+			key: row.key,
+			claimId: row.claim_id,
+			platform: row.platform,
+			profile: row.profile,
+			count: row.count,
+			ready: row.ready === 1,
+		};
+	}
+
+	/** Point (owner, key) at a claim, replacing a stale mapping; `ready` stays false until the claim is granted. */
+	setClaimKey(entry: Omit<ClaimKey, "ready">, now: number): void {
+		this.db
+			.query(
+				"INSERT OR REPLACE INTO claim_keys (owner_key, key, claim_id, platform, profile, count, ready, created_at) VALUES (?, ?, ?, ?, ?, ?, 0, ?)"
+			)
+			.run(entry.ownerKey, entry.key, entry.claimId, entry.platform, entry.profile, entry.count, now);
+	}
+
+	/** The claim's leases are all granted: a repeat of its key now returns them. */
+	markClaimKeyReady(claimId: string): void {
+		this.db.query("UPDATE claim_keys SET ready = 1 WHERE claim_id = ?").run(claimId);
+	}
+
+	deleteClaimKey(ownerKey: string, key: string): void {
+		this.db.query("DELETE FROM claim_keys WHERE owner_key = ? AND key = ?").run(ownerKey, key);
+	}
+
+	/** Forget the keys of a claim that failed (its leases are gone). */
+	deleteClaimKeysOf(claimId: string): void {
+		this.db.query("DELETE FROM claim_keys WHERE claim_id = ?").run(claimId);
 	}
 
 	dequeue(id: string): boolean {
@@ -516,16 +738,43 @@ export class Store {
 					now,
 					reason ?? null
 				);
+			this.recordEvent({
+				at: now,
+				type: "quarantined",
+				data: {
+					platform: device.platform,
+					deviceId: device.id,
+					deviceName: device.name,
+					...(reason !== undefined ? { reason } : {}),
+				},
+				resourceKey: `device:${device.platform}:${device.id}`,
+			});
 		});
 	}
 
 	/** Clear quarantine on every recorded device with this id (any platform); returns how many were cleared. */
-	unquarantineDevice(id: string): number {
-		return this.db
-			.query(
-				"UPDATE devices SET quarantined_at = NULL, quarantine_reason = NULL WHERE id = ? AND quarantined_at IS NOT NULL"
-			)
-			.run(id).changes;
+	unquarantineDevice(id: string, now: number): number {
+		return this.transaction(() => {
+			const cleared = this.db
+				.query<{ platform: Platform }, [string]>(
+					"SELECT platform FROM devices WHERE id = ? AND quarantined_at IS NOT NULL"
+				)
+				.all(id);
+			this.db
+				.query(
+					"UPDATE devices SET quarantined_at = NULL, quarantine_reason = NULL WHERE id = ? AND quarantined_at IS NOT NULL"
+				)
+				.run(id);
+			for (const { platform } of cleared) {
+				this.recordEvent({
+					at: now,
+					type: "unquarantined",
+					data: { platform, deviceId: id },
+					resourceKey: `device:${platform}:${id}`,
+				});
+			}
+			return cleared.length;
+		});
 	}
 
 	/** Record (`at` set) or clear (`at` undefined) that a recorded device's daemons are slimmed. */

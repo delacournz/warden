@@ -231,9 +231,9 @@ describe("device quarantine + slim state", () => {
 		expect(store.listDevices()[0]).toMatchObject({ id: "U1", quarantinedAt: 5, quarantineReason: "dictation loop" });
 		store.recordDevice(dev, 9);
 		expect(store.listDevices()[0]?.quarantinedAt).toBe(5);
-		expect(store.unquarantineDevice("U1")).toBe(1);
+		expect(store.unquarantineDevice("U1", 6)).toBe(1);
 		expect(store.listDevices()[0]?.quarantinedAt).toBeUndefined();
-		expect(store.unquarantineDevice("U1")).toBe(0);
+		expect(store.unquarantineDevice("U1", 6)).toBe(0);
 	});
 
 	test("quarantine inserts a device only known by name", () => {
@@ -502,6 +502,33 @@ describe("boot queue", () => {
 		expect(store.dequeue("q1")).toBe(false);
 		expect(store.refreshQueue("q1", 60)).toBe(false);
 		expect(store.listQueue().map((e) => e.id)).toEqual(["q2"]);
+	});
+
+	test("the wait reason round-trips, a refresh rewrites it and a bare refresh keeps it", () => {
+		store.enqueue(newEntry("q1", 5, { reason: "behind-earlier" }));
+		expect(store.listQueue()[0]?.reason).toBe("behind-earlier");
+		store.refreshQueue("q1", 10, "ram-budget");
+		expect(store.listQueue()[0]?.reason).toBe("ram-budget");
+		store.refreshQueue("q1", 20);
+		expect(store.listQueue()[0]).toMatchObject({ reason: "ram-budget", heartbeatAt: 20 });
+		store.enqueue(newEntry("q1", 30));
+		expect(store.listQueue()[0]?.reason).toBeUndefined();
+	});
+
+	test("a queue row written before the reason column reads back without one", () => {
+		const old = join(dir, "old-queue.db");
+		const db = new Database(old, { create: true });
+		for (const sql of MIGRATIONS.slice(0, MIGRATIONS.length - 1)) db.exec(sql);
+		db.exec(`PRAGMA user_version = ${MIGRATIONS.length - 1}`);
+		db.exec(
+			`INSERT INTO boot_queue (id, platform, profile, units, priority, enqueued_at, heartbeat_at, owner_key, owner)
+			 VALUES ('q_old', 'ios', 'iphone-17', 1, 10, 0, 0, 'agent:s1', '{"kind":"agent","sessionId":"s1","cwd":"/tmp"}')`
+		);
+		db.close();
+		const migrated = openStore(old);
+		expect(migrated.listQueue()).toHaveLength(1);
+		expect(migrated.listQueue()[0]?.reason).toBeUndefined();
+		migrated.close();
 	});
 
 	test("re-enqueue of the same id keeps enqueuedAt and priority", () => {

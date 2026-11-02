@@ -17,6 +17,7 @@ import {
 } from "../claim-flags";
 import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
+import { defaultLeaseHealthDeps } from "../lease-health";
 import {
 	type AppFlagValues,
 	appPhaseProgress,
@@ -194,6 +195,7 @@ export const defaultRunDeps: RunDeps = {
 	},
 	onSignal: processOnSignal,
 	every: intervalEvery,
+	health: defaultLeaseHealthDeps,
 };
 
 export const runCommand: Command = createRunCommand(defaultRunDeps);
