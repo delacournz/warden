@@ -61,13 +61,13 @@ describe("docs demo clips", () => {
 				[...(m[1] as string).matchAll(/"([^"]+)"/g)].map((id) => id[1] as string)
 			)
 		);
-		expect(ids).toEqual(["network", "fault", "location", "clock"]);
+		expect([...new Set(ids)].sort()).toEqual([...known].sort());
 		expect(ids.filter((id) => !known.has(id))).toEqual([]);
 	});
 
 	test("a page's demo sits right under the page header, before any prose", () => {
 		const late = pages.filter(({ text }) => {
-			const body = text.replace(/^---[\s\S]*?---\s*/, "");
+			const body = text.replace(/^---[\s\S]*?---\s*/, "").replace(/^(import [^\n]*\n\s*)+/, "");
 			return /<Demo(Clip|Tabs)/.test(body) && !/^<Demo(Clip|Tabs)/.test(body);
 		});
 		expect(late.map((page) => page.file)).toEqual([]);

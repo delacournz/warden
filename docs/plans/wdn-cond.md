@@ -108,7 +108,7 @@ Active conditions persisted per lease in the store (`lease_conditions` table) so
 ### COND-10 — ✅ test: example app + specs + docs
 - `apps/example`: Conditions screen — NetInfo state, fetch with timing/timeouts/retry, `expo-location` live coords + geofence enter/exit text, permission state.
 - Specs: `network-offline.e2e.ts` (cold start offline → banner → online → recovers), `network-slow.e2e.ts` (3g → skeleton visible, request > 1 s), `network-flaky.e2e.ts` (flap → retry succeeds), `network-fault.e2e.ts` (503 → error UI), `location-route.e2e.ts` (route crosses geofence → "Entered"), `location-denied.e2e.ts`.
-- `warden e2e example` green on iOS + Android. Docs: `apps/docs/content/docs/e2e/conditions.mdx`.
+- `warden e2e example` green on iOS + Android. Docs: `apps/docs/content/docs/e2e/conditions/`.
 
 ### COND-12 — ✨ feat: mock clock / time travel
 - Model: `ClockCondition = { kind: "real" } | { kind: "offset"; ms: number } | { kind: "fixed"; at: string /* ISO */ } | { kind: "frozen"; at: string }`.

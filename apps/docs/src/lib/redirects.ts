@@ -1,4 +1,4 @@
-/** Docs pages that moved in the 2026-10 restructure: old slug path → new slug path. */
+/** Docs pages that moved (the 2026-10 restructure, then device conditions split 2026-11): old slug path → new slug path. */
 const MOVED: Record<string, string> = {
 	"guides/agents": "agents/rules",
 	"guides/agent-ui": "agents/ui",
@@ -12,6 +12,7 @@ const MOVED: Record<string, string> = {
 	"guides/golden-images": "devices/golden-images",
 	"guides/app-builds": "devices/app-builds",
 	"guides/bench": "bench/run",
+	"e2e/biometrics": "e2e/conditions/biometrics",
 };
 
 /**
