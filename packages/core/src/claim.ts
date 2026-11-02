@@ -7,13 +7,14 @@ import {
 	type Budget,
 	type CapacityConfig,
 	type Cost,
+	capacityBlock,
 	deviceCost,
 	explain,
-	type FitResult,
 	fits,
+	hostUsage,
 	totalCost,
 } from "./capacity";
-import { type CapacityReason, type ClaimErrorKind, claimError, isRuntimeMissing } from "./claim-errors";
+import { type ClaimErrorKind, claimError, isRuntimeMissing } from "./claim-errors";
 import type { OrphanHost } from "./conditions/orphans";
 import { DEFAULT_READY_TIMEOUT_MS } from "./config.defaults";
 import { formatDuration } from "./duration";
@@ -22,7 +23,7 @@ import { markWardenDevices } from "./inventory";
 import { isLeaseAlive, type PidAlive } from "./liveness";
 import { isProbeTimeout } from "./providers/health";
 import type { DeviceProvider } from "./providers/provider.types";
-import { PRIORITY, priorityName, queuePosition } from "./queue";
+import { admissionQueue, type DeviceWaitReason, PRIORITY, priorityName, queuePosition, type WaitReason } from "./queue";
 import type { DeviceRecord, Store } from "./store";
 import {
 	type AllocationStep,
@@ -132,11 +133,11 @@ type Reserved =
 
 type Reservation =
 	| { kind: "assign"; items: Reserved[] }
-	| { kind: "wait"; poolSize: number; notReady: string[] }
+	| { kind: "wait"; poolSize: number; notReady: string[]; blocked: DeviceWaitReason }
 	| { kind: "queued"; position: number; total: number; reason: string; blocked: QueueBlocked; evict: Eviction[] };
 
 /** What holds a queued claim: rows ahead of it, or (at the head) a resource the host is out of. */
-type QueueBlocked = "behind-earlier" | CapacityReason;
+type QueueBlocked = Exclude<WaitReason, DeviceWaitReason>;
 
 const DEFAULT_POLL_MS = 2_000;
 const MAX_CONFLICT_RETRIES = 5;
@@ -203,11 +204,12 @@ function reserve(
 		if (gate) return gate;
 	}
 	if (plan.kind === "wait") {
-		if (cap) store.dequeue(cap.queueId);
+		const blocked: DeviceWaitReason = request.physical ? "waiting-for-device" : "device-limit";
+		if (cap) holdWaitRow(input, cap, blocked, now);
 		const poolSize = inventory.filter(
 			(d) => d.platform === request.platform && d.wardenCreated && d.profile === request.profile
 		).length;
-		return { kind: "wait", poolSize, notReady: notReadyPhysical(inventory, request) };
+		return { kind: "wait", poolSize, notReady: notReadyPhysical(inventory, request), blocked };
 	}
 	if (cap) store.dequeue(cap.queueId);
 	const common = { owner, ...(input.label !== undefined ? { label: input.label } : {}) };
@@ -239,22 +241,38 @@ function reserve(
 	return { kind: "assign", items };
 }
 
+/**
+ * A claim polling for a device keeps a queue row carrying why (`warden queue` shows it). It needs no boot
+ * slot, so `admissionQueue` leaves it out of positions and heads: it never delays a claim that does.
+ */
+function holdWaitRow(input: ClaimInput, cap: CapacityRound, reason: DeviceWaitReason, now: number): void {
+	input.store.enqueue({
+		id: cap.queueId,
+		platform: input.request.platform,
+		profile: input.request.profile,
+		units: 0,
+		priority: input.priority ?? PRIORITY.normal,
+		enqueuedAt: cap.enqueuedAt,
+		heartbeatAt: now,
+		owner: input.owner,
+		...(input.label !== undefined ? { label: input.label } : {}),
+		pid: input.selfPid ?? process.pid,
+		reason,
+	});
+}
+
 const bootedState = (d: InventoryDevice): boolean => d.state === "booted" || d.state === "booting";
 
-/** Cost of everything booted or booting on the host (foreign included) plus creates not yet visible in it. */
-function hostUsage(cap: CapacityRound, leases: Lease[], slimmed: ReadonlySet<string>, slimCreates: boolean): Cost {
-	const live = cap.hostInventory.filter((d) => bootedState(d) && d.physical === undefined);
-	const names = new Set(live.map((d) => d.name));
+/** Usage as the planner sees it: the host inventory plus creates still pending in this lease table. */
+function claimUsage(cap: CapacityRound, leases: Lease[], slimmed: ReadonlySet<string>, slimCreates: boolean): Cost {
+	const names = new Set(cap.hostInventory.filter((d) => bootedState(d) && d.physical === undefined).map((d) => d.name));
 	const pending = leases.flatMap((l) =>
 		l.resource.kind === "device" && l.resource.id.startsWith(PENDING_PREFIX) && !names.has(l.resource.name)
 			? [l.resource.platform]
 			: []
 	);
 	// a create still pending counts slim unless the claim opted out (slim is default-on for new iOS sims)
-	return totalCost([...live.map((d) => d.platform), ...pending], cap.deps.config, [
-		...live.map((d) => d.platform === "ios" && slimmed.has(d.id)),
-		...pending.map(() => slimCreates),
-	]);
+	return hostUsage(cap.hostInventory, cap.deps.config, slimmed, { platforms: pending, slim: slimCreates });
 }
 
 /** Ids of iOS devices whose store record says `sim slim` ran. */
@@ -309,28 +327,22 @@ function admit(
 		...(input.label !== undefined ? { label: input.label } : {}),
 		pid: input.selfPid ?? process.pid,
 	});
-	store.refreshQueue(cap.queueId, now);
-	const entries = store.listQueue();
+	const entries = admissionQueue(store.listQueue());
 	const position = queuePosition(entries, cap.queueId, now) ?? 1;
 	const head = position === 1;
-	const usage = hostUsage(cap, leases, slimmed, slimCreates);
+	const usage = claimUsage(cap, leases, slimmed, slimCreates);
 	const fit = fits(usage, need, budget);
 	const held = cap.pressure !== "normal";
 	if (head && fit.fits && !held) return undefined;
+	const blocked: QueueBlocked = capacityBlock(fit, held) ?? "behind-earlier";
+	store.refreshQueue(cap.queueId, now, blocked);
 	const reason = !fit.fits
 		? explain(fit, usage, budget)
 		: held
 			? `memory pressure ${cap.pressure}`
 			: "waiting behind higher-priority claims";
-	const blocked = queueBlocked(fit, held);
 	const evict = head && !fit.fits ? pickEvictions(input, cap, steps, leases, usage, need, now) : [];
 	return { kind: "queued", position, total: entries.length, reason, blocked, evict };
-}
-
-/** The typed reason behind a queued claim's `reason` line. */
-function queueBlocked(fit: FitResult, held: boolean): QueueBlocked {
-	if (!fit.fits) return fit.binding === "mem" ? "ram-budget" : "cpu-budget";
-	return held ? "memory-pressure" : "behind-earlier";
 }
 
 /** The coded error of a claim whose `--wait` ran out in the boot queue. */
@@ -804,8 +816,8 @@ function logWaiting(
 	const left = formatDuration(remainingMs);
 	input.log?.(
 		first
-			? `waiting for ${waitingFor(input.request, reservation)} (up to ${left}; --no-wait fails at once)`
-			: `still waiting for ${waitingFor(input.request, reservation)} (${left} left)`
+			? `waiting for ${waitingFor(input.request, reservation)} [${reservation.blocked}] (up to ${left}; --no-wait fails at once)`
+			: `still waiting for ${waitingFor(input.request, reservation)} [${reservation.blocked}] (${left} left)`
 	);
 }
 
@@ -825,8 +837,10 @@ async function settle(
 		const key = `${reservation.position}/${reservation.total}/${reservation.reason}`;
 		if (key !== round.queuedKey) {
 			round.queuedKey = key;
-			const { position, total, reason } = reservation;
-			input.log?.(`queued #${position} of ${total} (${priorityName(input.priority ?? PRIORITY.normal)}) — ${reason}`);
+			const { position, total, reason, blocked } = reservation;
+			input.log?.(
+				`queued #${position} of ${total} (${priorityName(input.priority ?? PRIORITY.normal)}) — ${reason} [${blocked}]`
+			);
 		}
 		if (reservation.evict.length > 0) {
 			await evictIdle(input, reservation.evict, round.noEvict);

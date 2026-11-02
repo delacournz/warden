@@ -1,10 +1,11 @@
 import {
 	type Cost,
+	capacityBlock,
 	deviceCost,
 	explain,
 	fits,
+	hostUsage,
 	maxConcurrent,
-	totalCost,
 	ZERO_COST,
 } from "@delacour/warden-core/capacity";
 import type { InventoryDevice, Platform } from "@delacour/warden-core/types";
@@ -60,12 +61,7 @@ async function capacity(ctx: CommandContext, json: boolean): Promise<number> {
 	const usage = Object.fromEntries(
 		CAPACITY_PLATFORMS.map((p) => [p, usageOf(devices, p, costs[p], slimCosts[p], slimmed)])
 	) as Record<Platform, PlatformUsage>;
-	const live = devices.filter((d) => d.state === "booted" || d.state === "booting");
-	const used = totalCost(
-		live.map((d) => d.platform),
-		config,
-		live.map((d) => d.platform === "ios" && slimmed.has(d.id))
-	);
+	const used = hostUsage(devices, config, slimmed);
 	const concurrent = Object.fromEntries(CAPACITY_PLATFORMS.map((p) => [p, maxConcurrent(p, budget, config)])) as Record<
 		Platform,
 		number
@@ -94,6 +90,7 @@ async function capacity(ctx: CommandContext, json: boolean): Promise<number> {
 		maxConcurrent: concurrent,
 		pressure: pressure.success ? pressure.data : "unknown",
 		explain: why,
+		blocked: capacityBlock(verdict, pressure.success && pressure.data !== "normal") ?? null,
 	};
 
 	const { color } = ctx.ui;
@@ -108,6 +105,7 @@ async function capacity(ctx: CommandContext, json: boolean): Promise<number> {
 		`budget    ${Math.round(budget.memMb / MB_PER_GB)} GB · ${cpuLimit.toFixed(1)} cpu units${enabled ? "" : color.yellow("  (capacity gate OFF: WARDEN_CAPACITY=off)")}`,
 		`usage     ${used.cpu.toFixed(1)} units · ${Math.round(used.memMb)} MB booted`,
 		`pressure  ${data.pressure}`,
+		...(data.blocked === null ? [] : [`blocked   ${data.blocked}`]),
 		"",
 		table(ctx, ["PLATFORM", "BOOTED", "COST/DEVICE", "MAX ALONE"], rows),
 		"",

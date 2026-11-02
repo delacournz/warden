@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { isLeaseAlive, type PidAlive } from "./liveness";
+import { isWaitReason, type WaitReason } from "./queue";
 import type { Lease, Owner, Platform, QueueEntry, Resource } from "./types";
 import { resourceKey } from "./types";
 
@@ -132,6 +133,7 @@ export const MIGRATIONS: readonly string[] = [
 		FROM lease_conditions c WHERE c.lease_id = OLD.id;
 	END;`,
 	`ALTER TABLE devices ADD COLUMN persistent_at INTEGER;`,
+	`ALTER TABLE boot_queue ADD COLUMN reason TEXT;`,
 ];
 
 /** A queued claim that has not refreshed within this long is dead (its waiter polls every few seconds). */
@@ -201,6 +203,7 @@ type QueueRow = {
 	owner: string;
 	label: string | null;
 	pid: number | null;
+	reason: string | null;
 };
 
 function toQueueEntry(row: QueueRow): QueueEntry {
@@ -216,6 +219,7 @@ function toQueueEntry(row: QueueRow): QueueEntry {
 	};
 	if (row.label !== null) entry.label = row.label;
 	if (row.pid !== null) entry.pid = row.pid;
+	if (row.reason !== null && isWaitReason(row.reason)) entry.reason = row.reason;
 	return entry;
 }
 
@@ -418,10 +422,10 @@ export class Store {
 		return this.transaction(() => {
 			this.db
 				.query(
-					`INSERT INTO boot_queue (id, platform, profile, units, priority, enqueued_at, heartbeat_at, owner_key, owner, label, pid)
-					 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+					`INSERT INTO boot_queue (id, platform, profile, units, priority, enqueued_at, heartbeat_at, owner_key, owner, label, pid, reason)
+					 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 					 ON CONFLICT (id) DO UPDATE SET platform = excluded.platform, profile = excluded.profile, units = excluded.units,
-					   heartbeat_at = excluded.heartbeat_at, label = excluded.label, pid = excluded.pid`
+					   heartbeat_at = excluded.heartbeat_at, label = excluded.label, pid = excluded.pid, reason = excluded.reason`
 				)
 				.run(
 					entry.id,
@@ -434,7 +438,8 @@ export class Store {
 					ownerKey(entry.owner),
 					JSON.stringify(entry.owner),
 					entry.label ?? null,
-					entry.pid ?? null
+					entry.pid ?? null,
+					entry.reason ?? null
 				);
 			const row = this.db.query<QueueRow, [string]>("SELECT * FROM boot_queue WHERE id = ?").get(entry.id);
 			if (!row) throw new Error(`boot_queue row ${entry.id} vanished`);
@@ -442,9 +447,13 @@ export class Store {
 		});
 	}
 
-	/** Stamp `heartbeat_at`; false when the row is gone (reclaimed or dequeued). */
-	refreshQueue(id: string, now: number): boolean {
-		return this.db.query("UPDATE boot_queue SET heartbeat_at = ? WHERE id = ?").run(now, id).changes > 0;
+	/** Stamp `heartbeat_at` and the live wait `reason`; false when the row is gone (reclaimed or dequeued). */
+	refreshQueue(id: string, now: number, reason?: WaitReason): boolean {
+		return (
+			this.db
+				.query("UPDATE boot_queue SET heartbeat_at = ?, reason = COALESCE(?, reason) WHERE id = ?")
+				.run(now, reason ?? null, id).changes > 0
+		);
 	}
 
 	dequeue(id: string): boolean {
