@@ -39,6 +39,7 @@ import {
 	physicalNotReadyReason,
 	resourceKey,
 } from "./types";
+import { readWarmSet } from "./warm-pool";
 
 /**
  * Device id prefix of a placeholder lease taken while a new device is being created outside the
@@ -435,6 +436,8 @@ function pickEvictions(
 	const slimmed = slimmedIds(store);
 	const lastUsed = new Map(records.map((r) => [`${r.platform}:${r.id}`, r.lastUsedAt]));
 	const used = (d: InventoryDevice) => lastUsed.get(`${d.platform}:${d.id}`) ?? 0;
+	const warm = readWarmSet(store, now);
+	const inWarmSet = (d: InventoryDevice) => warm.has(`${d.platform}:${d.id}`);
 	const idle = markWardenDevices(cap.hostInventory, records)
 		.filter(
 			(d) =>
@@ -447,7 +450,7 @@ function pickEvictions(
 				!cap.noEvict.has(d.id) &&
 				!held.has(resourceKey(deviceResourceOf(d)))
 		)
-		.sort((a, b) => used(a) - used(b));
+		.sort((a, b) => Number(inWarmSet(a)) - Number(inWarmSet(b)) || used(a) - used(b));
 	const picked: InventoryDevice[] = [];
 	let left = usage;
 	for (const device of idle) {

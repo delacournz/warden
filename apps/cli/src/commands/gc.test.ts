@@ -622,3 +622,116 @@ describe("warden gc: stale goldens", () => {
 		expect(c.db.getMeta(GOLDEN_PRUNED_META_KEY)).toBeUndefined();
 	});
 });
+
+describe("warden gc: warm pool", () => {
+	const grant = (c: TestContext, lease: string, n: number) =>
+		c.db.recordEvent({
+			at: NOW - 1000,
+			type: "granted",
+			leaseId: lease,
+			data: {
+				platform: "ios",
+				profile: "iphone-17",
+				deviceId: `U${n}`,
+				deviceName: `n${n}`,
+				action: "reuse",
+				waitMs: 0,
+			},
+		});
+	const bootCalls = (calls: string[][]) =>
+		calls.filter((x) => x[1] === "simctl" && (x[2] === "bootstatus" || x[2] === "boot")).map((x) => x[3]);
+	const slimAll = (c: TestContext) => {
+		for (const id of ["U1", "U2", "U3", "U4"]) c.db.setSlimmed("ios", id, NOW);
+	};
+
+	test("off by default: nothing is booted and no set is saved", async () => {
+		const calls: string[][] = [];
+		const c = setup(["--json"], calls);
+		slimAll(c);
+		grant(c, "l1", 4);
+		expect(await gcCommand.run(c)).toBe(0);
+		expect(bootCalls(calls)).toEqual([]);
+		expect(c.db.getMeta("warm_set")).toBeUndefined();
+	});
+
+	test("WARDEN_WARM=1 boots a shut-down slim pool device under a warm-boot lease and releases it", async () => {
+		const calls: string[][] = [];
+		const c = setup(["--json"], calls);
+		c.env.WARDEN_WARM = "1";
+		slimAll(c);
+		for (const [l, n] of [
+			["l1", 1],
+			["l2", 2],
+			["l3", 3],
+			["l4", 4],
+		] as const)
+			grant(c, l, n);
+		let labelsDuringBoot: (string | undefined)[] = [];
+		const inner = c.exec;
+		c.exec = async (cmd, opts) => {
+			if (cmd.includes("bootstatus")) labelsDuringBoot = c.db.listLeases().map((l) => l.label);
+			return inner(cmd, opts);
+		};
+		expect(await gcCommand.run(c)).toBe(0);
+		const out = JSON.parse(c.stdout.join("\n"));
+		expect(out.warmed).toEqual([{ platform: "ios", id: "U4", name: "warden-iphone-17-4" }]);
+		expect(bootCalls(calls)).toContain("U4");
+		expect(labelsDuringBoot).toContain("warm-boot");
+		expect(c.db.listLeases().some((l) => l.label === "warm-boot")).toBe(false);
+		expect(c.db.getMeta("warm_set")).toContain("ios:U4");
+	});
+
+	test("the idle reaper spares the warm set", async () => {
+		const calls: string[][] = [];
+		const c = setup(["--json"], calls);
+		c.env.WARDEN_WARM = "1";
+		slimAll(c);
+		grant(c, "l1", 1);
+		expect(await gcCommand.run(c)).toBe(0);
+		const out = JSON.parse(c.stdout.join("\n"));
+		expect(out.shutdown).toEqual([]);
+		expect(calls.some((x) => x[2] === "shutdown")).toBe(false);
+	});
+
+	test("memory pressure boots nothing", async () => {
+		const calls: string[][] = [];
+		const c = setup(["--json"], calls);
+		c.env.WARDEN_WARM = "1";
+		slimAll(c);
+		grant(c, "l4", 4);
+		grant(c, "l5", 4);
+		grant(c, "l6", 4);
+		const inner = c.exec;
+		c.exec = async (cmd, opts) => {
+			const line = cmd.join(" ");
+			if (line.includes("kern.memorystatus_vm_pressure_level")) return { exitCode: 0, stdout: "4\n", stderr: "" };
+			if (line.startsWith("cat /proc/meminfo"))
+				return { exitCode: 0, stdout: "MemTotal: 1000\nMemAvailable: 10\n", stderr: "" };
+			return inner(cmd, opts);
+		};
+		expect(await gcCommand.run(c)).toBe(0);
+		expect(bootCalls(calls)).toEqual([]);
+	});
+
+	test("never boots a quarantined or unslimmed shut-down device", async () => {
+		const calls: string[][] = [];
+		const c = setup(["--json"], calls);
+		c.env.WARDEN_WARM = "1";
+		grant(c, "l4", 4);
+		grant(c, "l5", 4);
+		grant(c, "l6", 4);
+		expect(await gcCommand.run(c)).toBe(0);
+		expect(bootCalls(calls)).toEqual([]);
+		c.db.setSlimmed("ios", "U4", NOW);
+		c.db.quarantineDevice({ platform: "ios", id: "U4", name: "warden-iphone-17-4" }, "bad", NOW);
+		expect(await gcCommand.run(c)).toBe(0);
+		expect(bootCalls(calls)).toEqual([]);
+	});
+
+	test("turning WARDEN_WARM off clears the saved set", async () => {
+		const c = setup(["--json"], []);
+		c.db.setMeta("warm_set", JSON.stringify({ at: NOW, warm: ["ios:U1"] }));
+		expect(await gcCommand.run(c)).toBe(0);
+		expect(JSON.parse(c.db.getMeta("warm_set") ?? "{}").warm).toEqual([]);
+	});
+});
