@@ -73,7 +73,7 @@ describe("warden claim", () => {
 		expect(ctx.db.listLeases()[0]?.pid).toBe(process.ppid);
 	});
 
-	test("pool exhausted → exit 1 with guidance", async () => {
+	test("pool exhausted → exit 5 NO_DEVICE with guidance", async () => {
 		const c = setup(["ios", "--max", "1", "--no-wait"], fakeSimctl([wardenSim(1, "Booted")]));
 		c.db.insertLease(
 			{
@@ -83,8 +83,9 @@ describe("warden claim", () => {
 			},
 			c.now()
 		);
-		expect(await claimCommand.run(c)).toBe(1);
+		expect(await claimCommand.run(c)).toBe(5);
 		expect(c.stderr.join("\n")).toContain("all 1 warden-iphone-17 devices leased; max 1");
+		expect(c.stderr.join("\n")).not.toContain("NO_DEVICE:");
 	});
 
 	test("a full host queues: the progress line is on stderr and --json stdout is the failure envelope", async () => {
@@ -101,9 +102,13 @@ describe("warden claim", () => {
 			},
 			c.now()
 		);
-		expect(await claimCommand.run(c)).toBe(1);
+		expect(await claimCommand.run(c)).toBe(7);
 		expect(c.stdout).toHaveLength(1);
-		expect(JSON.parse(c.stdout[0] ?? "")).toMatchObject({ ok: false, command: "claim", error: { code: "failed" } });
+		expect(JSON.parse(c.stdout[0] ?? "")).toMatchObject({
+			ok: false,
+			command: "claim",
+			error: { code: "NO_CAPACITY", capacityReason: "cpu-budget", hint: expect.stringContaining("warden capacity") },
+		});
 		// withSpinner routes ctx.err progress through spinner.log, which the real UI writes to stderr
 		expect((c.ui as ScriptedUi).events.join("\n")).toMatch(/log: warden: queued #1 of 1 \(high\) — no room, /);
 		expect(c.db.listQueue()).toEqual([]);
@@ -286,7 +291,7 @@ describe("warden claim --physical", () => {
 			["ios", "--physical", "--no-wait", "--json"],
 			fakeSimctl([wardenSim(1), wardenSim(2, "Booted")], calls)
 		);
-		expect(await claimCommand.run(c)).toBe(1);
+		expect(await claimCommand.run(c)).toBe(5);
 		expect(c.stderr.join("\n")).toContain("no free ready physical ios device");
 		expect(calls.filter((x) => ["boot", "create", "shutdown", "clone"].includes(x[2] ?? ""))).toEqual([]);
 		expect(c.db.listLeases()).toEqual([]);
@@ -309,7 +314,7 @@ describe("warden claim --physical", () => {
 	test("WARDEN_HEADLESS in the environment does not reject --physical", async () => {
 		const c = setup(["ios", "--physical", "--no-wait"], fakeSimctl([]));
 		c.env = { ...c.env, WARDEN_HEADLESS: "1" };
-		expect(await claimCommand.run(c)).toBe(1);
+		expect(await claimCommand.run(c)).toBe(5);
 		expect(c.stderr.join("\n")).not.toContain("cannot be used");
 	});
 });

@@ -91,6 +91,13 @@
 | 85 | `ambiguous_device: several physical <platform> devices are available: …` (exit 2) from `claim`, `ui --claim`, `e2e`, `run`, `batch` | An id-less `--physical` claim with more than one usable phone and no terminal to ask in | Ask the user which device (list `details.candidates` names), then pass `--udid <id>` / `--serial <id>`, or set `WARDEN_PHYSICAL_IDS` / `physical.allow`. Do not guess |
 | 86 | `warden ui` / `warden e2e` on an iPhone fails `device_busy`: `the iPhone runner changed … leased to another session` (exit 2) | The runner sources or warden changed since the phone's runner host started, and another session holds the lease, so its run keeps the old host | Wait for that session or release the phone, run again: the host is restarted by the next call. Own lease: it restarts at once with `runner changed; restarting the iPhone runner host` |
 | 87 | `warden claim` / `run` / `batch` / `e2e` / `ui --claim` on an iPhone prints `<name> is locked: unlock it to continue (waiting up to 2m)`, then fails `device_locked: <name> is locked` (exit 2) | The phone was locked at claim time and stayed locked for 2 minutes (or `--no-wait` was given). warden polls `lockState` every 10 s and prints a progress line about every 30 s before taking any lease; it never unlocks a phone | Unlock the phone, then retry. A claim that waits for any other reason (a named phone that is offline, a pool that is leased) prints `waiting for …` and `still waiting …` lines every 30 s; add `--no-wait` to fail at once |
+| 88 | `warden claim` (or `run` / `batch` / `e2e` / `ui --claim`) exits 5 `NO_DEVICE`: `all N warden-<profile> devices leased; max N` | Every device of the profile is leased and the pool is at `--max` (physical: no free ready phone) | `--wait 10m` to queue for one, raise `--max`, or free one: `warden ls`, then `warden release <leaseId>` |
+| 89 | Claim exits 6 `QUEUE_TIMEOUT`: `timed out in the boot queue at #N of M: waiting behind higher-priority claims` | `--wait` ran out while other claims were ahead in the boot queue | Wait longer (`--wait 30m`), raise `--priority`, or see who is ahead: `warden queue` |
+| 90 | Claim exits 7 `NO_CAPACITY` (`--json` `error.capacityReason`: `ram-budget` / `cpu-budget` / `memory-pressure` / `host-load`) | At the queue head the host had no room to boot: the RAM or CPU budget is full, macOS reports memory pressure, or the 1-min load is at the core count | `warden capacity` shows what is booted; release idle leases (`warden ls`), let `warden gc` shut idle devices down, or retry later. `WARDEN_CAPACITY=off` skips the gate |
+| 91 | Claim exits 9 `RUNTIME_MISSING`: `no available iOS runtime matching …` / `no AVD matches profile …` | No installed iOS runtime / Android system image + AVD fits the profile | Install the runtime (Xcode > Settings > Components) or system image (`sdkmanager`), or pick another `--profile` / `--runtime` |
+| 92 | Claim exits 10 `HEALTH_FAILED`: `N device(s) failed the health probe, giving up` | Three devices in a row booted but failed the post-boot probe; each was quarantined for 24h | Retry; if it repeats, check the host (`warden doctor`), list them with `warden devices`, clear with `warden sim unquarantine <id>` |
+| 93 | `warden run` / `dev` / `batch` stop with `LEASE_LOST` (`--json` `error.code`) | Another process released the run's lease (`warden release`, SessionEnd) | Claim again; do not release leases another live session holds |
+| 94 | Claim exits 8 `REQUESTER_LIMIT` (reserved: nothing raises it until a per-owner limit exists) | This owner already holds as many separate claims as the per-owner limit allows | Release one (`warden release <leaseId>`), then claim again |
 
 ## Code lookup
 
@@ -103,7 +110,21 @@
 | 2 | `device_foreign` `device_busy` `device_not_leased` `no_device_leased` `ambiguous_device` `lease_not_found` `device_unknown` `device_unauthorized` `device_offline` |
 | 3 | `engine_unavailable` `devtools_unavailable` `tool_missing` |
 | 4 | `stale_ref` (snapshot again) |
+| 5-11 | a failed `--claim`: the claim codes below |
 | 130 | `interrupted` |
+
+Claim exit codes (`claim`, `run`, `batch`, `e2e`, `ui --claim`; `--json` prints `{ok:false, command, error:{code, message, hint}}`):
+
+| Exit | Code | Meaning |
+|---|---|---|
+| 5 | `NO_DEVICE` | every matching device leased at `--max` (#88) |
+| 6 | `QUEUE_TIMEOUT` | `--wait` ran out behind other claims in the boot queue (#89) |
+| 7 | `NO_CAPACITY` | no room to boot; `error.capacityReason` `ram-budget` `cpu-budget` `memory-pressure` `host-load` (#90) |
+| 8 | `REQUESTER_LIMIT` | reserved for a per-owner limit (#94) |
+| 9 | `RUNTIME_MISSING` | no runtime / AVD for the profile (#91) |
+| 10 | `HEALTH_FAILED` | devices kept failing the post-boot probe (#92) |
+| 11 | `LEASE_LOST` | a held lease was released by another process (#93) |
+| 2 | `device_locked` `ambiguous_device` `device_offline` | unchanged |
 
 Other codes:
 

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { CLAIM_ERRORS } from "@delacour/warden-core/claim-errors";
 import { HEARTBEAT_INTERVAL_MS } from "@delacour/warden-core/config.defaults";
 import type { Exec } from "@delacour/warden-core/exec";
 import type { InventoryDevice, Lease, Owner } from "@delacour/warden-core/types";
@@ -307,6 +308,8 @@ describe("holdLeases", () => {
 	function hold(ports: number[]) {
 		const c = testContext([]);
 		ctx = c;
+		const recorded: unknown[] = [];
+		c.failure = { record: (message, extra) => recorded.push([message, extra]) };
 		const ids = ports.map(
 			(port) => c.db.insertLease({ resource: { kind: "port", port }, owner, ttlMs: 60_000, pid: 4242 }, 0).id
 		);
@@ -329,7 +332,7 @@ describe("holdLeases", () => {
 		const tick = () => {
 			for (const fn of ticks) fn();
 		};
-		return { c, ids, tick, aborts, stop, intervals };
+		return { c, ids, tick, aborts, stop, intervals, recorded };
 	}
 
 	test("leases released by another process between ticks abort the run once, naming the cause", () => {
@@ -341,6 +344,7 @@ describe("holdLeases", () => {
 		h.tick();
 		expect(h.aborts).toEqual(["SIGTERM"]);
 		expect(h.c.stderr.filter((l) => l.includes(LEASES_LOST))).toHaveLength(1);
+		expect(h.recorded).toEqual([[LEASES_LOST, { code: "LEASE_LOST", hint: CLAIM_ERRORS.LEASE_LOST.hint }]]);
 		expect(LEASES_LOST).toContain("leases were released by another process: warden release or SessionEnd");
 		h.stop();
 	});

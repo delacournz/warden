@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { CLAIM_ERRORS } from "@delacour/warden-core/claim-errors";
 import { recordCondition } from "@delacour/warden-core/conditions/conditions";
 import type { Exec } from "@delacour/warden-core/exec";
 import { PHONE_PROBE_SCRIPT } from "@delacour/warden-core/providers/android";
@@ -6,7 +7,8 @@ import { ADB_DEVICES_STATES, EMULATOR_PROPS, PHONE_PROPS } from "@delacour/warde
 import type { Owner } from "@delacour/warden-core/types";
 import { OWNER_ENV } from "../simctl.testing";
 import { fakeExec, type TestContext, testContext } from "../testing";
-import { resolveUiDevice } from "./device";
+import { claimError, resolveUiDevice } from "./device";
+import { UI_ERROR_EXIT } from "./output";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
@@ -159,5 +161,28 @@ describe("resolveUiDevice --claim: leftover conditions", () => {
 		});
 		await resolveUiDevice(ctx, { udid: UDID, claim: true }, { exclusive: false, pidAlive: () => false });
 		expect(calls).toEqual([]);
+	});
+});
+
+describe("claimError", () => {
+	test("a coded claim error keeps its code, hint and exit code", () => {
+		const error = claimError("NO_CAPACITY[memory-pressure]: memory pressure warn");
+		expect(error).toEqual({
+			code: "NO_CAPACITY",
+			message: "memory pressure warn",
+			hint: CLAIM_ERRORS.NO_CAPACITY.hint,
+			details: { capacityReason: "memory-pressure" },
+		});
+	});
+
+	test("every claim code exits as the claim table says", () => {
+		for (const [code, entry] of Object.entries(CLAIM_ERRORS)) {
+			const exit: number = UI_ERROR_EXIT[code as keyof typeof CLAIM_ERRORS];
+			expect(exit).toBe(entry.exit);
+		}
+	});
+
+	test("an uncoded failure is failed", () => {
+		expect(claimError("simctl exploded").code).toBe("failed");
 	});
 });

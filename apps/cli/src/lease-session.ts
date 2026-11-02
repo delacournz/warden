@@ -5,6 +5,7 @@ import type { KindApp } from "@delacour/warden-core/builds/ensure-kind";
 import type { BuildKind } from "@delacour/warden-core/builds/kinds";
 import type { AppPhase, EnsureResult } from "@delacour/warden-core/builds/resolve";
 import { CLAIM_ABORTED, type ClaimOutcome } from "@delacour/warden-core/claim";
+import { CLAIM_ERRORS } from "@delacour/warden-core/claim-errors";
 import { DEFAULT_TTL_MS, HEARTBEAT_INTERVAL_MS } from "@delacour/warden-core/config.defaults";
 import { processAlive } from "@delacour/warden-core/liveness";
 import { claimPorts, parsePortSpec } from "@delacour/warden-core/ports";
@@ -712,7 +713,7 @@ export function holdLeases(
 		const updated = store.heartbeat([...leaseIds], ctx.now(), HEARTBEAT_INTERVAL_MS);
 		if (updated >= leaseIds.length) return;
 		lost = true;
-		reportError(ctx, "lease", LEASES_LOST);
+		reportError(ctx, "lease", LEASES_LOST, { code: "LEASE_LOST", hint: CLAIM_ERRORS.LEASE_LOST.hint });
 		onSignal("SIGTERM");
 	};
 	try {
