@@ -12,7 +12,7 @@ import { createIosProvider } from "./providers/ios";
 import { simctlDevicesJson } from "./providers/ios.fixture";
 import type { BootReady, DeviceProvider } from "./providers/provider.types";
 import { PRIORITY } from "./queue";
-import { openStore, type Store } from "./store";
+import { openStore, ownerKey as ownerKeyOf, type Store } from "./store";
 import { type DeviceRequest, type InventoryDevice, type Owner, resourceKey } from "./types";
 import { saveWarmSet } from "./warm-pool";
 
@@ -1579,5 +1579,101 @@ describe("claimDevices per-owner limit (LCTL-3)", () => {
 		const result = await claimDevices(input(provider, { claimId: "abc" }));
 		expect(result.success).toBe(true);
 		expect(store.listLeases().map((l) => l.claimId)).toEqual(["abc"]);
+	});
+});
+
+describe("claimDevices idempotency key", () => {
+	const keyed = (provider: DeviceProvider, key: string, overrides: Partial<ClaimInput> = {}) =>
+		input(provider, { idempotencyKey: key, ...overrides });
+	const events = () => store.listEvents().map((e) => e.type);
+
+	test("a repeat with the same key returns the same leases and takes no new device", async () => {
+		const provider = fakeProvider([sim("1", { state: "booted" }), sim("2", { state: "booted" })]);
+		const first = await claimDevices(keyed(provider, "k"));
+		const before = events();
+		const second = await claimDevices(keyed(provider, "k"));
+		expect(first.success && second.success).toBe(true);
+		if (!first.success || !second.success) return;
+		expect(second.data.claimed.map((c) => c.lease.id)).toEqual(first.data.claimed.map((c) => c.lease.id));
+		expect(second.data.claimed.map((c) => c.device.id)).toEqual(["1"]);
+		expect(second.data.claimed[0]?.device.name).toBe(first.data.claimed[0]?.device.name);
+		expect(second.data.claimed[0]?.action).toBe("reuse");
+		expect(store.listLeases()).toHaveLength(1);
+		expect(events()).toEqual(before);
+	});
+
+	test("a count of 2 repeats as the same two leases", async () => {
+		const provider = fakeProvider([sim("1", { state: "booted" }), sim("2", { state: "booted" })]);
+		const req = request({ count: 2 });
+		const first = await claimDevices(keyed(provider, "k", { request: req }));
+		const second = await claimDevices(keyed(provider, "k", { request: req }));
+		expect(first.success && second.success).toBe(true);
+		if (!first.success || !second.success) return;
+		expect(second.data.claimed.map((c) => c.lease.id).sort()).toEqual(first.data.claimed.map((c) => c.lease.id).sort());
+		expect(store.listLeases()).toHaveLength(2);
+	});
+
+	test("another owner with the same key claims an independent device", async () => {
+		const provider = fakeProvider([sim("1", { state: "booted" }), sim("2", { state: "booted" })]);
+		const a = await claimDevices(keyed(provider, "k"));
+		const b = await claimDevices(keyed(provider, "k", { owner: other }));
+		expect(a.success && b.success).toBe(true);
+		if (!a.success || !b.success) return;
+		expect(b.data.claimed[0]?.device.id).not.toBe(a.data.claimed[0]?.device.id);
+	});
+
+	test("the key is free again once the lease is released", async () => {
+		const provider = fakeProvider([sim("1", { state: "booted" }), sim("2", { state: "booted" })]);
+		const first = await claimDevices(keyed(provider, "k"));
+		if (!first.success) throw new Error(first.error);
+		store.deleteLeases(first.data.claimed.map((c) => c.lease.id));
+		const again = await claimDevices(keyed(provider, "k"));
+		expect(again.success).toBe(true);
+		if (!again.success) return;
+		expect(again.data.claimed[0]?.lease.id).not.toBe(first.data.claimed[0]?.lease.id);
+		expect(store.listLeases()).toHaveLength(1);
+	});
+
+	test("a different request under the key fails and takes nothing", async () => {
+		const provider = fakeProvider([sim("1", { state: "booted" }), sim("2", { state: "booted" })]);
+		await claimDevices(keyed(provider, "k"));
+		const clash = await claimDevices(keyed(provider, "k", { request: request({ profile: "iphone-air" }) }));
+		expect(clash.success).toBe(false);
+		if (clash.success) return;
+		expect(clash.error).toContain("idempotency key k was used for a different request");
+		expect(store.listLeases()).toHaveLength(1);
+	});
+
+	test("a failed claim frees its key", async () => {
+		const provider = fakeProvider([sim("1")], { boot: "1" });
+		expect((await claimDevices(keyed(provider, "k"))).success).toBe(false);
+		const healthy = fakeProvider([sim("1", { state: "booted" })]);
+		expect((await claimDevices(keyed(healthy, "k"))).success).toBe(true);
+	});
+
+	test("a repeat while the first claim is still starting waits, and fails when no wait is left", async () => {
+		const provider = fakeProvider([sim("1", { state: "booted" }), sim("2", { state: "booted" })]);
+		const inFlight = store.insertLease(
+			{ resource: { kind: "device", platform: "ios", id: "1", name: "n" }, owner, ttlMs: 60_000, claimId: "c-first" },
+			NOW
+		);
+		store.setClaimKey(
+			{ ownerKey: ownerKeyOf(owner), key: "k", claimId: "c-first", platform: "ios", profile: "iphone-17", count: 1 },
+			NOW
+		);
+		const second = await claimDevices(keyed(provider, "k"));
+		expect(second.success).toBe(false);
+		expect(second.success || second.error).toContain("still starting");
+		expect(store.listLeases().map((l) => l.id)).toEqual([inFlight.id]);
+		store.markClaimKeyReady("c-first");
+		const third = await claimDevices(keyed(provider, "k"));
+		expect(third.success && third.data.claimed[0]?.lease.id).toBe(inFlight.id);
+	});
+
+	test("without a key two claims take two devices", async () => {
+		const provider = fakeProvider([sim("1", { state: "booted" }), sim("2", { state: "booted" })]);
+		await claimDevices(input(provider));
+		await claimDevices(input(provider));
+		expect(store.listLeases()).toHaveLength(2);
 	});
 });

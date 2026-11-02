@@ -382,6 +382,8 @@ export type ClaimHideOptions = {
 	abort?: () => boolean;
 	/** groups the leases of one command's claims, so `WARDEN_MAX_PER_OWNER` counts the command once (default: this claim alone) */
 	claimId?: string;
+	/** `warden claim --idempotency-key`: a repeat by the same owner returns the earlier claim's leases */
+	idempotencyKey?: string;
 	/** the wait between two `lockState` reads while a physical iPhone is locked (tests; default: real time) */
 	unlockSleep?: (ms: number) => Promise<void>;
 };
@@ -464,6 +466,7 @@ export async function claimWithFlags(
 		store: ctx.store(),
 		...(ownerLimit.data !== undefined ? { ownerLimit: ownerLimit.data } : {}),
 		...(options.claimId !== undefined ? { claimId: options.claimId } : {}),
+		...(options.idempotencyKey !== undefined ? { idempotencyKey: options.idempotencyKey } : {}),
 		provider: providerFor(
 			request.platform,
 			ctx,
