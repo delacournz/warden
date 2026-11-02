@@ -75,7 +75,7 @@ warden e2e mobile --base origin/main --count 2 --report e2e-report.json
 warden e2e --dry-run --files src/modules/chat/api.ts
 ```
 
-With one suite the name is optional. `warden e2e` is [`warden batch`](/docs/devices/scripts) with the job list coming from the selection, so every batch and claim flag works.
+With one suite the name is optional. `warden e2e` is [`warden batch`](/docs/sims/scripts) with the job list coming from the selection, so every batch and claim flag works.
 
 | Flag | Effect |
 |---|---|
@@ -89,7 +89,7 @@ With one suite the name is optional. `warden e2e` is [`warden batch`](/docs/devi
 | `--app`, `--install-mode`, `--reset-keychain`, `--variant`, `--project`, `--bundle-id`, `--no-eas`, `--no-build` | the app install, as in the config's `app` |
 | `--retry <n>`, `--passes <n>`, `--job-timeout <duration>` | override the suite's values |
 | `--serve`, `--serve-ready`, `--serve-timeout`, `--port <from:span>` | a local service and leased ports for the run |
-| `--headless`, `--no-headless` | close or keep Simulator.app windows ([Headless](/docs/devices/headless)) |
+| `--headless`, `--no-headless` | close or keep Simulator.app windows ([Headless](/docs/sims/headless)) |
 | `--record <dir>`, `--logs <dir>`, `--no-tui`, `--json`, `--report <file>` | record every simulator and the TUI (iOS); job logs dir; plain lines instead of the live grid; JSON output; also write `e2e-report.json` here |
 | `--no-shutdown`, `--no-warm`, `--adopt` | keep devices up after a pass; skip the iOS driver pre-warm; allow foreign devices |
 

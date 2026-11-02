@@ -1,12 +1,12 @@
 import { createFileRoute, notFound, redirect } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
 import { useFumadocsLoader } from "fumadocs-core/source/client";
-import { DocsLayout } from "fumadocs-ui/layouts/docs";
-import { DocsBody, DocsDescription, DocsPage, DocsTitle } from "fumadocs-ui/layouts/docs/page";
+import { DocsLayout } from "fumadocs-ui/layouts/notebook";
+import { DocsBody, DocsDescription, DocsPage, DocsTitle } from "fumadocs-ui/layouts/notebook/page";
 import { Suspense, use } from "react";
 import { DocsToolbar } from "@/components/docs-toolbar";
 import { useMDXComponents } from "@/components/mdx";
-import { baseOptions } from "@/lib/layout.shared";
+import { baseOptions, docsTabs } from "@/lib/layout.shared";
 import { redirectSlugs } from "@/lib/redirects";
 import { docsHead } from "@/lib/seo";
 import { encodeMarkdownUrl } from "@/lib/shared";
@@ -68,7 +68,14 @@ function Page() {
 	const { path, pageTree, markdownUrl } = useFumadocsLoader(Route.useLoaderData());
 
 	return (
-		<DocsLayout {...baseOptions()} links={[]} tree={pageTree}>
+		<DocsLayout
+			{...baseOptions()}
+			links={[]}
+			nav={{ ...baseOptions().nav, mode: "top" }}
+			tabMode="navbar"
+			tabs={docsTabs}
+			tree={pageTree}
+		>
 			<Suspense>
 				<Content markdownUrl={markdownUrl} path={path} />
 			</Suspense>

@@ -1,0 +1,7 @@
+{
+	"title": "Getting Started",
+	"description": "Install warden and give your agent its own simulator",
+	"icon": "BookOpen",
+	"root": true,
+	"pages": ["index", "quickstart", "installation", "agent-setup", "concepts"]
+}

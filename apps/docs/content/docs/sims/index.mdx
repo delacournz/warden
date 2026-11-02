@@ -1,0 +1,222 @@
+---
+title: Get started
+description: Claim a simulator, let an agent drive your app on it and verify a screen, then release it.
+icon: Smartphone
+---
+
+By the end of this page your agent has its own simulator, has opened your app on it, read the screen as text, tapped and typed, checked the result and handed the device back. Nothing else on the Mac could take that simulator in the meantime, so several agents can do the same thing at once.
+
+You need an app to drive and one of:
+
+- macOS with Xcode and an iOS runtime, for simulators.
+- The Android SDK, for emulators.
+
+Install warden first: [Installation](/docs/getting-started/installation).
+
+## Drive a simulator
+
+<Steps>
+<Step>
+
+### Install warden and the agent skill
+
+```bash
+npm i -g @delacour/warden && warden install
+```
+
+`warden install` links the binary, installs the skill that teaches your agent the rules and wires the SessionEnd hook for Claude Code and Codex. It shows a diff and asks first. Other agents and options: [Set up your agent](/docs/getting-started/agent-setup).
+
+</Step>
+<Step>
+
+### Claim a device
+
+```bash
+warden claim ios --json
+```
+
+warden reuses a free warden simulator, boots a stopped one or clones a new one, then waits until it is ready. If the host is full the claim waits in the [boot queue](/docs/sims/capacity) (default `--wait 30m`). `--json` prints one document:
+
+```json
+{
+  "leases": [{ "leaseId": "…", "udid": "…", "name": "warden-iphone-17-1", "action": "reuse", "label": "…" }],
+  "udids": ["…"],
+  "reclaimed": []
+}
+```
+
+Keep the `udid` (Android: the serial) and pass it on every later call. Do not pick a device from `simctl list` or `adb devices`: you may take another agent's.
+
+A bare claim by an agent lasts 5 minutes and nothing refreshes it. Every `warden ui` call heartbeats the lease, so a device you keep driving stays yours. See [Claim & release devices](/docs/sims/leases).
+
+</Step>
+<Step>
+
+### Run the app
+
+In your app's directory:
+
+```bash
+warden dev ios --json
+```
+
+warden installs the dev build cached for your native fingerprint, starts Metro on a leased port and opens the dev client. The first stdout line is `{ udid, port, metroUrl, leaseIds, source }`; read the `udid` from it instead of running step 2. Ctrl-C releases the device and the port. See [`warden dev`](/docs/sims/dev).
+
+To skip Metro and use the build with this worktree's JS repacked in, open the app on a claimed device:
+
+```bash
+warden ui open com.example.app --kind simulator --udid $UDID
+```
+
+</Step>
+<Step>
+
+### Open the app and read the screen
+
+```bash
+warden ui open com.example.app --udid $UDID
+warden ui snapshot -i --udid $UDID
+```
+
+Under `warden dev`, `open` attaches to the running dev client. `snapshot -i` prints the interactive elements and anything with a `testID`:
+
+```text
+generation 4 · axbridge · 393×852@3x · 5 of 41 elements
+@e1 [textbox] "Add a todo" id=todo-input value="" enabled hittable (24,118 345×48)
+@e2 [button] "Add" id=todo-add enabled hittable (24,176 345×44)
+```
+
+Each line is `@eN [role] "name" id=<testID> value="…" <states> (x,y w×h)`. A ref is valid until the next snapshot; a selector such as `id=todo-add` outlives screen changes. Add `testID` and `accessible` in the component for anything the agent must touch.
+
+</Step>
+<Step>
+
+### Act
+
+```bash
+warden ui fill id=todo-input "Buy milk" --udid $UDID
+warden ui press id=todo-add --settle --udid $UDID
+```
+
+`fill` types per key and reads the text back. `--settle` waits for a quiet screen and prints what changed as `-` / `+` lines. `scroll`, `gesture`, `alert` and `key` cover the rest: [`warden ui`](/docs/sims/ui).
+
+</Step>
+<Step>
+
+### Verify
+
+```bash
+warden ui wait text "Buy milk" --udid $UDID
+warden ui is id=todo-add enabled --udid $UDID
+warden ui get id=todo-input value --udid $UDID
+```
+
+`wait` polls until the element or text appears (default `--timeout 5000`). `is` exits 0 for true and 1 for false. `get` reads `text`, `value`, `label`, `id`, `role`, `frame` or `count`. A screenshot is not verification.
+
+</Step>
+<Step>
+
+### Release
+
+```bash
+warden ui close --release --udid $UDID
+```
+
+This stops the device's helper and frees the lease. Without it the bare claim expires after 5 minutes. For a claim you made without `warden ui`: `warden release <leaseId> [--shutdown]`. A device held by your running `warden dev` stays leased until you stop `warden dev`.
+
+</Step>
+</Steps>
+
+## Let your agent do it
+
+With the skill installed, you describe the check and the agent follows the loop. Paste this into your agent:
+
+````text
+Use warden to check the home screen of this app on an iOS simulator.
+1. Run `warden claim ios --json` and keep the udid. Pass it on every call.
+2. Run the app with `warden dev ios --json` in the background, or open it with `warden ui open <bundleId> --udid <udid>`.
+3. Run `warden ui snapshot -i` and confirm the todo input is on screen.
+4. Fill it with "Buy milk", press Add, then verify with `warden ui wait text "Buy milk"`.
+5. Release with `warden ui close --release`. Never touch a device you did not claim.
+Report what you verified and the selectors you used.
+````
+
+The agent claims, looks, acts, verifies and releases. If a step fails it reads the exit code and hint, snapshots again and retries with a selector. Details of the loop: [Agents drive devices](/docs/sims/agent-loop). If the agent does not know warden yet: [Set up your agent](/docs/getting-started/agent-setup).
+
+## Control the device
+
+Change what the device sees: network, location, clock, biometrics, permissions, camera feed, locale and timezone, accessibility settings, battery, and one-off push or memory-warning events. Each is recorded on your lease and undone on release.
+
+```bash
+warden ui network set 3g --udid $UDID
+warden ui location set 37.3349,-122.009 --udid $UDID
+```
+
+Biometrics run the real Face ID, Touch ID or fingerprint prompt, with no app-side bypass:
+
+```bash
+warden ui biometrics enroll --udid $UDID
+warden ui biometrics match --udid $UDID
+```
+
+Every condition, its platform support and how to set it from a spec, a suite or `warden ui`: [Device conditions](/docs/sims/conditions). One page each: [Network](/docs/sims/conditions/network), [Location](/docs/sims/conditions/location), [Clock](/docs/sims/conditions/clock), [Biometrics](/docs/sims/conditions/biometrics), [Permissions](/docs/sims/conditions/permissions), [Camera](/docs/sims/conditions/camera), [Locale and timezone](/docs/sims/conditions/locale), [Accessibility settings](/docs/sims/conditions/accessibility), [Battery](/docs/sims/conditions/battery), [Push and memory warnings](/docs/sims/conditions/events).
+
+Feed a picture or clip into the app's real camera, or check what a screen reader would say:
+
+```bash
+warden ui camera set fixtures/qr-hello.png --udid $UDID
+warden ui a11y audit --udid $UDID
+```
+
+Audits, reading order, announcements and TalkBack: [Accessibility testing](/docs/e2e/accessibility).
+
+## Run many in parallel
+
+Each agent claims its own device, so five agents get five simulators. For your own script, `warden run` claims devices and ports, runs a command and releases everything on exit:
+
+```bash
+warden run ios --count 2 --port 8091:20 -- bun run e2e
+```
+
+`warden batch` hands a list of independent jobs to N devices, next job to whichever frees up first. How many boot at once depends on the host's RAM and CPU: `warden capacity` shows the budget and `warden queue` your place in line. See [Scripts](/docs/sims/scripts) and [Capacity & queue](/docs/sims/capacity).
+
+## Keep it as a test
+
+A check that must keep passing is a spec run by `warden e2e`. It uses the same driver, so a selector that works in `warden ui` works in a spec.
+
+<Cards>
+  <Card title="Keep it as a test" href="/docs/e2e" description="Specs and suites with warden e2e." />
+</Cards>
+
+## What else is here
+
+### Agent control
+
+<Cards>
+  <Card title="Agents drive devices" href="/docs/sims/agent-loop" description="The claim, look, act, verify, release loop." />
+  <Card title="warden ui" href="/docs/sims/ui" description="Every command, selector and exit code." />
+  <Card title="warden dev" href="/docs/sims/dev" description="A dev client and Metro per worktree." />
+  <Card title="Debug the running app" href="/docs/sims/debug" description="Metro output, console, exceptions, network, eval." />
+  <Card title="Agent rules" href="/docs/sims/rules" description="Sharing, subagents, hooks." />
+</Cards>
+
+### Device control
+
+<Cards>
+  <Card title="Claim & release devices" href="/docs/sims/leases" description="Claim, keep alive, see who holds what." />
+  <Card title="Device conditions" href="/docs/sims/conditions" description="Network, location, clock, biometrics, permissions, camera, locale, accessibility, battery, events." />
+  <Card title="Accessibility testing" href="/docs/e2e/accessibility" description="Audits, screen readers, announcements." />
+  <Card title="Physical devices" href="/docs/sims/physical-devices" description="Android phones and iPhones, opt-in." />
+  <Card title="Profile an app" href="/docs/sims/perf" description="CPU, memory, frames, startup." />
+</Cards>
+
+### Parallel & capacity
+
+<Cards>
+  <Card title="Scripts" href="/docs/sims/scripts" description="warden run and warden batch." />
+  <Card title="Ports" href="/docs/sims/ports" description="Free ports per worktree." />
+  <Card title="Capacity & queue" href="/docs/sims/capacity" description="Host budget and the boot queue." />
+  <Card title="Golden images" href="/docs/sims/golden-images" description="Fast clones for fresh simulators." />
+  <Card title="App builds" href="/docs/sims/app-builds" description="Cached builds per native fingerprint." />
+  <Card title="Headless" href="/docs/sims/headless" description="Run without Simulator.app windows." />
+</Cards>

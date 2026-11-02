@@ -231,8 +231,8 @@ function Home(): ReactElement {
 							<AgentLink href="/llms-full.txt" note="the whole docs in one file">
 								/llms-full.txt
 							</AgentLink>
-							<AgentLink href="/docs/quickstart.md" note="any page, append .md">
-								/docs/quickstart.md
+							<AgentLink href="/docs/getting-started/quickstart.md" note="any page, append .md">
+								/docs/getting-started/quickstart.md
 							</AgentLink>
 						</div>
 					</div>

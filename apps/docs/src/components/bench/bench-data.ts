@@ -5,7 +5,7 @@ import { isSummary } from "./bench-parse";
 export type { BenchSummary, SummaryFramework };
 export type OkFramework = Extract<SummaryFramework, { status: "ok" }>;
 
-const modules = import.meta.glob<unknown>("../../../content/docs/bench/data/*.json", {
+const modules = import.meta.glob<unknown>("../../../content/docs/e2e/bench/data/*.json", {
 	eager: true,
 	import: "default",
 });
@@ -18,7 +18,7 @@ const ENTRIES = orderSummaries(
 	)
 );
 
-/** Every committed summary in `content/docs/bench/data/`, platforms in order, newest run first. */
+/** Every committed summary in `content/docs/e2e/bench/data/`, platforms in order, newest run first. */
 export const SUMMARIES: readonly BenchSummary[] = ENTRIES.map((e) => e.summary);
 
 const SLUGS = new Map(ENTRIES.map((e) => [e.summary.runId, e.slug]));

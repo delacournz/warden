@@ -4,7 +4,7 @@ description: Turn a warden ui session into a reviewed, passing e2e spec - record
 icon: Clapperboard
 ---
 
-An agent (or you) asked for "an e2e test for onboarding and sign in" drives the app with [`warden ui`](/docs/agents/ui) between `warden ui record start` and `record stop`. `stop` writes a `@delacour/warden-e2e` [spec](/docs/e2e/specs) and runs it once on the same leased device. There is no intermediate file and no replay engine: the spec runner is the replay.
+An agent (or you) asked for "an e2e test for onboarding and sign in" drives the app with [`warden ui`](/docs/sims/ui) between `warden ui record start` and `record stop`. `stop` writes a `@delacour/warden-e2e` [spec](/docs/e2e/specs) and runs it once on the same leased device. There is no intermediate file and no replay engine: the spec runner is the replay.
 
 The journal lives under `$WARDEN_HOME/ui/<udid>/recording.json` and is internal. It is removed only by a successful `stop` or by `cancel`.
 
