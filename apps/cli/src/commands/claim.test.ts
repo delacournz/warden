@@ -23,6 +23,41 @@ function setup(argv: string[], exec = fakeSimctl([wardenSim(1), wardenSim(2, "Bo
 	return ctx;
 }
 
+describe("warden claim --idempotency-key", () => {
+	async function claimJson(c: TestContext) {
+		c.stdout.length = 0;
+		expect(await claimCommand.run(c)).toBe(0);
+		return JSON.parse(c.stdout.join("\n"));
+	}
+
+	test("a repeat returns the same lease JSON and takes no second device", async () => {
+		const c = setup(["ios", "--json", "--idempotency-key", "run-1"]);
+		const first = await claimJson(c);
+		const second = await claimJson(c);
+		expect(
+			second.leases.map((l: { leaseId: string; udid: string; name: string }) => [l.leaseId, l.udid, l.name])
+		).toEqual(first.leases.map((l: { leaseId: string; udid: string; name: string }) => [l.leaseId, l.udid, l.name]));
+		expect(Object.keys(second.leases[0]).sort()).toEqual(Object.keys(first.leases[0]).sort());
+		expect(c.db.listLeases()).toHaveLength(1);
+	});
+
+	test("WARDEN_IDEMPOTENCY_KEY is the fallback", async () => {
+		const c = setup(["ios", "--json"]);
+		c.env = { ...c.env, WARDEN_IDEMPOTENCY_KEY: "env-key" };
+		const first = await claimJson(c);
+		expect((await claimJson(c)).leases[0].leaseId).toBe(first.leases[0].leaseId);
+		expect(c.db.listLeases()).toHaveLength(1);
+	});
+
+	test("the flag beats the env var", async () => {
+		const c = setup(["ios", "--json", "--idempotency-key", "flag-key"]);
+		c.env = { ...c.env, WARDEN_IDEMPOTENCY_KEY: "env-key" };
+		await claimJson(c);
+		expect(c.db.getClaimKey("agent:me", "flag-key")).toBeDefined();
+		expect(c.db.getClaimKey("agent:me", "env-key")).toBeUndefined();
+	});
+});
+
 describe("warden claim", () => {
 	test("claims a booted warden sim first, --json output", async () => {
 		const c = setup(["ios", "--json", "--label", "e2e"]);

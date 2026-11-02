@@ -26,6 +26,27 @@ export function defaultDbPath(env: Record<string, string | undefined> = process.
 	return join(wardenHome(env), "warden.db");
 }
 
+/** An owner's idempotency key and the claim it created (one row per key, however many leases the claim holds). */
+export type ClaimKey = {
+	ownerKey: string;
+	key: string;
+	claimId: string;
+	platform: string;
+	profile: string;
+	count: number;
+	ready: boolean;
+};
+
+type ClaimKeyRow = {
+	owner_key: string;
+	key: string;
+	claim_id: string;
+	platform: string;
+	profile: string;
+	count: number;
+	ready: number;
+};
+
 /**
  * Ordered schema migrations; index + 1 = `PRAGMA user_version` after applying. Append only — never
  * edit an entry that has shipped.
@@ -160,6 +181,18 @@ export const MIGRATIONS: readonly string[] = [
 	CREATE INDEX lease_events_lease ON lease_events(lease_id);
 	CREATE INDEX lease_events_owner ON lease_events(owner_key, at);
 	CREATE INDEX lease_events_claim ON lease_events(claim_id);`,
+	`CREATE TABLE claim_keys (
+		owner_key TEXT NOT NULL,
+		key TEXT NOT NULL,
+		claim_id TEXT NOT NULL,
+		platform TEXT NOT NULL,
+		profile TEXT NOT NULL,
+		count INTEGER NOT NULL,
+		ready INTEGER NOT NULL DEFAULT 0,
+		created_at INTEGER NOT NULL,
+		PRIMARY KEY (owner_key, key)
+	);
+	CREATE INDEX claim_keys_claim ON claim_keys(claim_id);`,
 ];
 
 /** A queued claim that has not refreshed within this long is dead (its waiter polls every few seconds). */
@@ -594,6 +627,46 @@ export class Store {
 				.query("UPDATE boot_queue SET heartbeat_at = ?, reason = COALESCE(?, reason) WHERE id = ?")
 				.run(now, reason ?? null, id).changes > 0
 		);
+	}
+
+	/** The claim an owner's idempotency key points at (caller holds the transaction), if any. */
+	getClaimKey(ownerKey: string, key: string): ClaimKey | undefined {
+		const row = this.db
+			.query<ClaimKeyRow, [string, string]>("SELECT * FROM claim_keys WHERE owner_key = ? AND key = ?")
+			.get(ownerKey, key);
+		if (!row) return undefined;
+		return {
+			ownerKey: row.owner_key,
+			key: row.key,
+			claimId: row.claim_id,
+			platform: row.platform,
+			profile: row.profile,
+			count: row.count,
+			ready: row.ready === 1,
+		};
+	}
+
+	/** Point (owner, key) at a claim, replacing a stale mapping; `ready` stays false until the claim is granted. */
+	setClaimKey(entry: Omit<ClaimKey, "ready">, now: number): void {
+		this.db
+			.query(
+				"INSERT OR REPLACE INTO claim_keys (owner_key, key, claim_id, platform, profile, count, ready, created_at) VALUES (?, ?, ?, ?, ?, ?, 0, ?)"
+			)
+			.run(entry.ownerKey, entry.key, entry.claimId, entry.platform, entry.profile, entry.count, now);
+	}
+
+	/** The claim's leases are all granted: a repeat of its key now returns them. */
+	markClaimKeyReady(claimId: string): void {
+		this.db.query("UPDATE claim_keys SET ready = 1 WHERE claim_id = ?").run(claimId);
+	}
+
+	deleteClaimKey(ownerKey: string, key: string): void {
+		this.db.query("DELETE FROM claim_keys WHERE owner_key = ? AND key = ?").run(ownerKey, key);
+	}
+
+	/** Forget the keys of a claim that failed (its leases are gone). */
+	deleteClaimKeysOf(claimId: string): void {
+		this.db.query("DELETE FROM claim_keys WHERE claim_id = ?").run(claimId);
 	}
 
 	dequeue(id: string): boolean {

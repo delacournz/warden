@@ -84,6 +84,12 @@ export type ClaimInput = {
 	claimId?: string;
 	/** when the claim was requested (ms); `claimDevices` sets it, `granted` events measure their wait from it */
 	requestedAt?: number;
+	/**
+	 * Makes the claim repeatable: while this owner's earlier claim under the same key still holds its
+	 * leases, the claim returns them (action `reuse`) instead of taking devices, logs no events and
+	 * queues nothing. A different request under the key is an error; an earlier claim still booting is waited for.
+	 */
+	idempotencyKey?: string;
 	/** polled once per round: true ends the claim with `CLAIM_ABORTED` (nothing stays leased or queued) */
 	abort?: () => boolean;
 	/** conditions a deleted lease left on a claimed device are undone before the claim returns; absent = left for gc */
@@ -143,6 +149,9 @@ type Reserved =
 type Reservation =
 	| { kind: "assign"; items: Reserved[] }
 	| { kind: "limited"; message: string }
+	| { kind: "existing"; claimed: ClaimedDevice[] }
+	| { kind: "key-busy" }
+	| { kind: "key-mismatch"; message: string }
 	| { kind: "wait"; poolSize: number; notReady: string[]; blocked: DeviceWaitReason }
 	| { kind: "queued"; position: number; total: number; reason: string; blocked: QueueBlocked; evict: Eviction[] };
 
@@ -207,6 +216,8 @@ function reserve(
 		withPending,
 		liftExpiredQuarantines(input, withPending, store.listDevices(request.platform), now)
 	);
+	const keyed = idempotentReservation(input, leases, rawInventory, now);
+	if (keyed) return keyed;
 	if (cap || input.ownerLimit !== undefined) store.reclaimStaleQueue(now, input.pidAlive);
 	const limited = ownerLimitHit(input, leases, cap, now);
 	if (limited) return limited;
@@ -250,7 +261,71 @@ function reserve(
 		);
 		return { action: step.action, device: step.device, lease };
 	});
+	if (input.idempotencyKey !== undefined && input.claimId !== undefined) {
+		store.setClaimKey(
+			{
+				ownerKey: ownerKey(owner),
+				key: input.idempotencyKey,
+				claimId: input.claimId,
+				platform: request.platform,
+				profile: request.profile,
+				count: request.count,
+			},
+			now
+		);
+	}
 	return { kind: "assign", items };
+}
+
+/**
+ * The idempotency key check (caller holds the store lock): undefined to claim as usual, else the
+ * earlier claim's leases (`existing`), a wait for it to finish (`key-busy`) or a refusal (`key-mismatch`).
+ * A mapping whose leases are gone (released, expired, failed claim) is stale and replaced by this claim.
+ */
+function idempotentReservation(
+	input: ClaimInput,
+	leases: Lease[],
+	inventory: InventoryDevice[],
+	now: number
+): Reservation | undefined {
+	const key = input.idempotencyKey;
+	if (key === undefined) return undefined;
+	const { store, request } = input;
+	const okey = ownerKey(input.owner);
+	const row = store.getClaimKey(okey, key);
+	if (!row || row.claimId === input.claimId) return undefined;
+	const held = leases.filter((l) => l.claimId === row.claimId && ownerKey(l.owner) === okey);
+	if (held.length < row.count) {
+		store.deleteClaimKey(okey, key);
+		return undefined;
+	}
+	if (row.platform !== request.platform || row.profile !== request.profile || row.count !== request.count) {
+		const was = `${row.platform} ${row.profile} x${row.count}`;
+		return {
+			kind: "key-mismatch",
+			message: `idempotency key ${key} was used for a different request (${was}); use another key or release its leases first`,
+		};
+	}
+	if (!row.ready) return { kind: "key-busy" };
+	store.heartbeat(
+		held.map((l) => l.id),
+		now
+	);
+	const claimed = held.map((lease): ClaimedDevice => {
+		const res = lease.resource;
+		const device =
+			res.kind === "device"
+				? (inventory.find((d) => d.platform === res.platform && d.id === res.id) ?? {
+						platform: res.platform,
+						id: res.id,
+						name: res.name,
+						state: "booted" as const,
+						wardenCreated: false,
+					})
+				: undefined;
+		return { lease: { ...lease, heartbeatAt: now }, device: device as InventoryDevice, action: "reuse" };
+	});
+	return { kind: "existing", claimed };
 }
 
 const claimField = (input: ClaimInput): { claimId?: string } =>
@@ -788,7 +863,7 @@ export async function claimDevices(input: ClaimInput): AsyncResult<ClaimOutcome>
 	const queueId = input.queueId ?? `q_${randomUUID().replaceAll("-", "").slice(0, 12)}`;
 	const claimId = input.claimId ?? queueId;
 	const requestedAt = input.now();
-	try {
+	const recordRequested = (): void =>
 		input.store.recordEvent({
 			at: requestedAt,
 			type: "requested",
@@ -797,13 +872,22 @@ export async function claimDevices(input: ClaimInput): AsyncResult<ClaimOutcome>
 			claimId,
 			...(input.label !== undefined ? { label: input.label } : {}),
 		});
-		return await claimRounds({ ...input, claimId, requestedAt }, queueId);
+	// a keyed claim logs `requested` only once it is a real claim: a repeat that returns the earlier leases logs nothing
+	if (input.idempotencyKey === undefined) recordRequested();
+	try {
+		const keyed = input.idempotencyKey !== undefined;
+		return await claimRounds({ ...input, claimId, requestedAt }, queueId, keyed ? recordRequested : undefined);
 	} finally {
 		if (input.capacity) input.store.dequeue(queueId);
 	}
 }
 
-async function claimRounds(input: ClaimInput, queueId: string): AsyncResult<ClaimOutcome> {
+async function claimRounds(
+	input: ClaimInput,
+	queueId: string,
+	recordRequested?: () => void
+): AsyncResult<ClaimOutcome> {
+	let requestedLogged = recordRequested === undefined;
 	const startedAt = input.now();
 	const deadline = startedAt + input.waitMs;
 	const reclaimed: string[] = [];
@@ -815,11 +899,20 @@ async function claimRounds(input: ClaimInput, queueId: string): AsyncResult<Clai
 		const attempt = await reserveRound(input, queueId, startedAt, round);
 		if (!attempt.success) return attempt;
 		const reservation = attempt.data;
+		if (!requestedLogged && !isKeyedShortcut(reservation)) {
+			requestedLogged = true;
+			recordRequested?.();
+		}
 		if (reservation.kind === "conflict" && conflicts++ < MAX_CONFLICT_RETRIES) continue;
 		if (reservation.kind === "conflict" || reservation.kind === "error") return err(reservation.error);
 		const done = await settle(input, reservation, round);
 		if (done) return done;
 	}
+}
+
+/** A reservation that is the idempotency key's answer, not a claim being made: no `requested` event for it. */
+function isKeyedShortcut(reservation: Attempt): boolean {
+	return reservation.kind === "existing" || reservation.kind === "key-busy" || reservation.kind === "key-mismatch";
 }
 
 /** One round's reads (abort, inventory, capacity) and the reservation under the store lock. */
@@ -900,6 +993,9 @@ async function settle(
 	const { health } = round;
 	const skippedOnce = health.skipOnce.size > 0;
 	health.skipOnce.clear();
+	if (reservation.kind === "existing") return ok({ claimed: reservation.claimed, reclaimed: round.reclaimed });
+	if (reservation.kind === "key-mismatch") return err(reservation.message);
+	if (reservation.kind === "key-busy") return settleKeyBusy(input, round);
 	if (reservation.kind === "limited") return settleLimited(input, reservation.message, round);
 	if (reservation.kind === "assign")
 		return completeRound(input, reservation.items, round.reclaimed, health, round.deadline);
@@ -927,6 +1023,20 @@ async function settle(
 	if (reservation.kind === "wait") {
 		logWaiting(input, round, waitingFor(input.request, reservation), reservation.blocked, remaining);
 	}
+	await pause(input, remaining);
+	return undefined;
+}
+
+/** The earlier claim under this key is still booting: poll until it is granted or gone, else fail when no wait is left. */
+async function settleKeyBusy(input: ClaimInput, round: Round): Promise<Result<ClaimOutcome> | undefined> {
+	const remaining = round.deadline - input.now();
+	const key = input.idempotencyKey ?? "";
+	if (remaining <= 0) {
+		return err(
+			`idempotency key ${key}: an earlier claim with this key is still starting its devices; retry or use --wait`
+		);
+	}
+	logWaiting(input, round, `the earlier claim with idempotency key ${key} to finish`, "device-limit", remaining);
 	await pause(input, remaining);
 	return undefined;
 }
@@ -1076,6 +1186,7 @@ async function complete(
 		// claim can lease it in between and have it shut down under them
 		const held = (r: Realised) => r.unhealthy?.skipOnly === true && r.unhealthy.bootedByClaim === true;
 		input.store.deleteLeases(results.filter((r) => !held(r)).map((r) => r.leaseId));
+		if (input.claimId !== undefined) input.store.deleteClaimKeysOf(input.claimId);
 		try {
 			await quarantineUnhealthy(input, bad);
 		} finally {
@@ -1096,6 +1207,7 @@ async function complete(
 			now
 		);
 		for (const c of claimed) input.store.recordEvent(grantedEvent(input, c, now));
+		if (input.claimId !== undefined) input.store.markClaimKeyReady(input.claimId);
 	});
 	for (const c of claimed) input.store.touchDevice(c.device.platform, c.device.id, now);
 	const leases = claimed.map((c) => ({ ...c, lease: { ...c.lease, heartbeatAt: now } }));
