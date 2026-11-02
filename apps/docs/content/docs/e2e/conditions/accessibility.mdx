@@ -1,0 +1,38 @@
+---
+title: Accessibility settings
+description: Raise the text size, turn on bold text or increased contrast, and check the layout still holds.
+icon: Accessibility
+---
+
+`device.a11y` changes the system accessibility settings the app renders with, so a spec can check that a screen still fits at the largest text size.
+
+```ts
+await device.a11y({ textSize: "accessibility-large" });
+await app.open();
+await device.a11y(null); // defaults back
+```
+
+| Option | Takes | iOS | Android |
+|---|---|---|---|
+| `textSize` | an iOS category (`extra-small` … `accessibility-extra-extra-extra-large`) or a scale (`1.5`) | yes | yes, the scale clamped to 0.5-2 |
+| `boldText` | boolean | skipped | yes |
+| `contrast` | `"increased" \| "normal"` | yes | skipped |
+| `reduceMotion` | boolean | skipped | skipped |
+
+It returns `{ applied, skipped, notes }`. An option the platform cannot set is reported `skipped`; a call where every option is skipped throws `E_UNSUPPORTED`.
+
+## In a suite
+
+```ts title="warden.config.ts"
+conditions: { a11y: { textSize: "accessibility-large" } },
+```
+
+## By hand
+
+```bash
+warden ui a11y set --text-size accessibility-large --contrast increased
+warden ui a11y status
+warden ui a11y reset
+```
+
+Release puts the defaults back (iOS: text size `large`, contrast off; Android: `font_scale 1.0`, bold off).

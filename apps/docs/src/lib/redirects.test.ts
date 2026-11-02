@@ -8,6 +8,7 @@ describe("redirectSlugs", () => {
 		expect(redirectSlugs(["guides", "run-e2e"])).toEqual(["e2e", "suites"]);
 		expect(redirectSlugs(["guides", "bench"])).toEqual(["bench", "run"]);
 		expect(redirectSlugs(["guides", "e2e"])).toEqual(["devices", "scripts"]);
+		expect(redirectSlugs(["e2e", "biometrics"])).toEqual(["e2e", "conditions", "biometrics"]);
 	});
 
 	test("returns undefined for a path that never moved", () => {

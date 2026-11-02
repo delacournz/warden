@@ -260,7 +260,7 @@ export const DEVICE_CONTROL = {
 			caption:
 				"`warden ui biometrics fail` and `match` answer the real system prompt. Face ID and Touch ID on simulators, fingerprint on emulators, enrolled with `warden claim --biometrics`.",
 			src: "/demos/biometrics/faceid",
-			href: "e2e/biometrics",
+			href: "e2e/conditions/biometrics",
 			proof: { source: "skills/warden/references/ui.md" },
 		},
 		{
@@ -270,7 +270,7 @@ export const DEVICE_CONTROL = {
 			caption:
 				"`warden ui network set offline`, `edge`, `online`: the app's own requests are shaped, nothing else on the Mac slows down.",
 			src: "/demos/network/offline",
-			href: "e2e/conditions",
+			href: "e2e/conditions/network",
 			proof: { source: "packages/core/src/netproxy/proxy.ts" },
 		},
 		{
@@ -280,7 +280,7 @@ export const DEVICE_CONTROL = {
 			caption:
 				"`warden ui network fault <host> reset`: requests to that host fail while Wi-Fi still reads connected. `--clear` brings it back.",
 			src: "/demos/network/fault",
-			href: "e2e/conditions",
+			href: "e2e/conditions/network",
 			proof: { source: "packages/core/src/netproxy/proxy.ts" },
 		},
 		{
@@ -290,7 +290,7 @@ export const DEVICE_CONTROL = {
 			caption:
 				"`warden ui location route` plays fixes out of a 150 m geofence; the app gets them from plain `expo-location`.",
 			src: "/demos/location/route",
-			href: "e2e/conditions",
+			href: "e2e/conditions/location",
 			proof: { source: "skills/warden/references/ui.md" },
 		},
 		{
@@ -300,7 +300,7 @@ export const DEVICE_CONTROL = {
 			caption:
 				"`warden ui clock advance 10d` expires a 14-day trial; `reset` brings real time back. The app reads `Date.now()`.",
 			src: "/demos/clock/trial",
-			href: "e2e/conditions",
+			href: "e2e/conditions/clock",
 			proof: { source: "skills/warden/references/ui.md" },
 		},
 	] satisfies readonly Clip[],
@@ -329,7 +329,7 @@ export const SAFE_BY_DEFAULT = {
 			title: "Nothing listening",
 			command: "127.0.0.1",
 			body: "No server to run and no open port: leases are rows in one sqlite file, and warden's helpers talk over unix sockets. The network proxy binds loopback, only while it shapes traffic.",
-			href: "e2e/conditions",
+			href: "e2e/conditions/network",
 			proof: { source: "packages/core/src/netproxy/proxy.ts" },
 		},
 		{
