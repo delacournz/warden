@@ -31,8 +31,19 @@ export type DeviceResource = {
 };
 export type PortResource = { kind: "port"; port: number };
 export type BuildResource = { kind: "build"; key: string };
-/** A hosted device leased through warden cloud: `id` is the warden-api device id, never a local udid/serial. */
-export type RemoteDeviceResource = { kind: "remote-device"; platform: Platform; id: string; name: string };
+/**
+ * A hosted device leased through warden cloud: `id` is the warden-api device id, never a local udid/serial.
+ * `account` / `organizationId` = what it was claimed under, so release / heartbeat / view reach it from any directory
+ * (unset on leases from before named accounts: the caller's current login is used).
+ */
+export type RemoteDeviceResource = {
+	kind: "remote-device";
+	platform: Platform;
+	id: string;
+	name: string;
+	account?: string;
+	organizationId?: string;
+};
 export type Resource = DeviceResource | PortResource | BuildResource | RemoteDeviceResource;
 
 export type AgentOwner = { kind: "agent"; sessionId: string; cwd: string; repo?: string; worktree?: string };

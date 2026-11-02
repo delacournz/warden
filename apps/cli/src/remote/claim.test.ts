@@ -178,3 +178,58 @@ describe("claimRemote", () => {
 		expect(server.calls.at(-1)).toMatchObject({ method: "POST", path: "/v1/devices/rd1/heartbeat" });
 	});
 });
+
+describe("leases remember their account and org", () => {
+	test("a claim under WARDEN_ORG stamps it on the lease; release elsewhere still sends it", async () => {
+		const server = fakeServer();
+		const c = setup(server);
+		c.env = { ...c.env, WARDEN_ORG: "client" };
+		const r = await claimRemote(c, { platform: "ios", ttlMs: 60_000, waitMs: 60_000, owner });
+		expect(r.success).toBe(true);
+		if (!r.success) return;
+		expect(r.data.lease.resource).toMatchObject({ kind: "remote-device", organizationId: "client" });
+		expect(r.data.billedTo).toEqual({ organization: "client", orgVia: "env" });
+
+		const { WARDEN_ORG: _dropped, ...rest } = c.env;
+		c.env = rest;
+		server.calls.length = 0;
+		await heartbeatRemoteLeases(c, [r.data.lease]);
+		await stopRemoteLeases(c, [r.data.lease]);
+		expect(server.calls.length).toBeGreaterThan(0);
+		expect(server.calls.every((x) => x.organization === "client")).toBe(true);
+	});
+
+	test("leases from two orgs are each reached with their own org", async () => {
+		const server = fakeServer();
+		const c = setup(server);
+		const claimIn = async (org: string) => {
+			c.env = { ...c.env, WARDEN_ORG: org };
+			const r = await claimRemote(c, { platform: "ios", ttlMs: 60_000, waitMs: 60_000, owner });
+			if (!r.success) throw new Error(r.error.message);
+			return { lease: r.data.lease, id: r.data.device.id };
+		};
+		const a = await claimIn("org-a");
+		const b = await claimIn("org-b");
+		server.calls.length = 0;
+		const out = await stopRemoteLeases(c, [a.lease, b.lease]);
+		expect(out.stopped.sort()).toEqual([a.id, b.id].sort());
+		const orgFor = (id: string) => new Set(server.calls.filter((x) => x.path.includes(id)).map((x) => x.organization));
+		expect(orgFor(a.id)).toEqual(new Set(["org-a"]));
+		expect(orgFor(b.id)).toEqual(new Set(["org-b"]));
+	});
+
+	test("a lease from before named accounts uses the caller's current login", async () => {
+		const server = fakeServer();
+		const c = setup(server);
+		const r = await claimRemote(c, { platform: "ios", ttlMs: 60_000, waitMs: 60_000, owner });
+		if (!r.success) throw new Error(r.error.message);
+		expect(r.data.lease.resource).toEqual({
+			kind: "remote-device",
+			platform: "ios",
+			id: r.data.device.id,
+			name: "ios-remote",
+		});
+		const out = await stopRemoteLeases(c, [r.data.lease]);
+		expect(out.stopped).toEqual([r.data.device.id]);
+	});
+});

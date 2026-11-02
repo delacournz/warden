@@ -18,15 +18,6 @@ export type Credentials = {
 	savedAt: number;
 };
 
-/**
- * How a command authenticates: `env` = `WARDEN_TOKEN` (CI), `saved` = `$WARDEN_HOME/auth.json`, `none` = not
- * logged in to `apiUrl`.
- */
-export type ResolvedAuth =
-	| { kind: "env"; apiUrl: string; token: string }
-	| { kind: "saved"; apiUrl: string; credentials: Credentials }
-	| { kind: "none"; apiUrl: string };
-
 export function credentialsPath(env: Env): string {
 	return join(wardenHome(env), "auth.json");
 }
@@ -50,12 +41,46 @@ function parseCredentials(value: unknown): Credentials | undefined {
 	};
 }
 
-/** The saved login, `undefined` when there is none; a damaged file is an error (re-run `warden login`). */
-export function readCredentials(env: Env): Result<Credentials | undefined> {
+/** Name of the account a v1 file (or the first login) is saved under. */
+export const DEFAULT_ACCOUNT = "default";
+
+/** Account names: lowercase letters, digits and dashes, 1-32 chars, not starting with a dash. */
+export const ACCOUNT_NAME = /^[a-z0-9][a-z0-9-]{0,31}$/;
+
+export function isAccountName(name: string): boolean {
+	return ACCOUNT_NAME.test(name);
+}
+
+/** `auth.json` v2: every saved login by name, plus the one commands use unless told otherwise. */
+export type Accounts = {
+	version: 2;
+	default: string;
+	accounts: Record<string, Credentials>;
+};
+
+function parseAccounts(value: unknown): Accounts | undefined {
+	if (!isRecord(value)) return undefined;
+	if (value.version === undefined) {
+		const legacy = parseCredentials(value);
+		return legacy ? { version: 2, default: DEFAULT_ACCOUNT, accounts: { [DEFAULT_ACCOUNT]: legacy } } : undefined;
+	}
+	if (value.version !== 2 || typeof value.default !== "string" || !isRecord(value.accounts)) return undefined;
+	const accounts: Record<string, Credentials> = {};
+	for (const [name, raw] of Object.entries(value.accounts)) {
+		const creds = parseCredentials(raw);
+		if (!isAccountName(name) || !creds) return undefined;
+		accounts[name] = creds;
+	}
+	if (!(value.default in accounts)) return undefined;
+	return { version: 2, default: value.default, accounts };
+}
+
+/** Every saved login, `undefined` when there is no file; a damaged file is an error (re-run `warden login`). v1 files are migrated in memory. */
+export function readAccounts(env: Env): Result<Accounts | undefined> {
 	const path = credentialsPath(env);
 	if (!existsSync(path)) return ok(undefined);
 	try {
-		const parsed = parseCredentials(JSON.parse(readFileSync(path, "utf8")));
+		const parsed = parseAccounts(JSON.parse(readFileSync(path, "utf8")));
 		return parsed ? ok(parsed) : err(`${path} is not a warden login; run warden login again`);
 	} catch (e) {
 		return err(`${path}: ${e instanceof Error ? e.message : String(e)}`);
@@ -63,41 +88,89 @@ export function readCredentials(env: Env): Result<Credentials | undefined> {
 }
 
 /** Save atomically (temp file + rename), readable by the owner only. */
-export function writeCredentials(env: Env, credentials: Credentials): Result<void> {
+function writeAccounts(env: Env, accounts: Accounts): Result<Accounts> {
 	const path = credentialsPath(env);
 	const tmp = `${path}.${process.pid}.tmp`;
 	try {
 		mkdirSync(wardenHome(env), { recursive: true });
-		writeFileSync(tmp, `${JSON.stringify(credentials, null, 2)}\n`, { mode: 0o600 });
+		writeFileSync(tmp, `${JSON.stringify(accounts, null, 2)}\n`, { mode: 0o600 });
 		chmodSync(tmp, 0o600);
 		renameSync(tmp, path);
-		return ok(undefined);
+		return ok(accounts);
 	} catch (e) {
 		rmSync(tmp, { force: true });
 		return err(`could not save ${path}: ${e instanceof Error ? e.message : String(e)}`);
 	}
 }
 
-/** Forget the saved login; `true` when there was one. */
-export function clearCredentials(env: Env): boolean {
+/** Add or overwrite one account; the first one (or one when the default is gone) becomes the default. */
+export function writeAccount(env: Env, name: string, credentials: Credentials): Result<Accounts> {
+	if (!isAccountName(name)) return err(`invalid account name "${name}" (lowercase letters, digits, dashes; max 32)`);
+	const current = readAccounts(env);
+	if (!current.success) return current;
+	const existing = current.data;
+	const accounts = { ...existing?.accounts, [name]: credentials };
+	const keepDefault = existing !== undefined && existing.default in accounts;
+	return writeAccounts(env, { version: 2, default: keepDefault ? existing.default : name, accounts });
+}
+
+/** Remove one account; removing the default promotes the alphabetically first left, removing the last deletes the file. */
+export function removeAccount(env: Env, name: string): Result<{ removed: boolean; accounts: Accounts | undefined }> {
+	const current = readAccounts(env);
+	if (!current.success) return current;
+	const existing = current.data;
+	if (!existing || !(name in existing.accounts)) return ok({ removed: false, accounts: existing });
+	const { [name]: _gone, ...rest } = existing.accounts;
+	const names = Object.keys(rest).sort();
+	const first = names[0];
+	if (first === undefined) {
+		rmSync(credentialsPath(env), { force: true });
+		return ok({ removed: true, accounts: undefined });
+	}
+	const next = existing.default === name ? first : existing.default;
+	const written = writeAccounts(env, { version: 2, default: next, accounts: rest });
+	return written.success ? ok({ removed: true, accounts: written.data }) : written;
+}
+
+export function setDefaultAccount(env: Env, name: string): Result<Accounts> {
+	const current = readAccounts(env);
+	if (!current.success) return current;
+	if (!current.data || !(name in current.data.accounts)) return err(`no account ${name} (warden account list)`);
+	return writeAccounts(env, { ...current.data, default: name });
+}
+
+/** Forget every saved login; `true` when there was a file. */
+export function clearAllAccounts(env: Env): boolean {
 	const path = credentialsPath(env);
 	if (!existsSync(path)) return false;
 	rmSync(path, { force: true });
 	return true;
 }
 
-/**
- * `WARDEN_TOKEN` wins (CI, with `WARDEN_API_URL` or the default); then the saved login, but only for the api it
- * was issued by, so pointing `WARDEN_API_URL` at staging never sends a production token.
- */
-export function resolveAuth(env: Env): Result<ResolvedAuth> {
-	const override = env.WARDEN_API_URL?.replace(/\/+$/, "") || undefined;
-	if (env.WARDEN_TOKEN) return ok({ kind: "env", apiUrl: override ?? DEFAULT_API_URL, token: env.WARDEN_TOKEN });
-	const saved = readCredentials(env);
-	if (!saved.success) return saved;
-	const credentials = saved.data;
-	if (credentials && (override === undefined || override === credentials.apiUrl)) {
-		return ok({ kind: "saved", apiUrl: credentials.apiUrl, credentials });
-	}
-	return ok({ kind: "none", apiUrl: override ?? DEFAULT_API_URL });
+/** The default account's login, `undefined` when there is none. */
+export function readCredentials(env: Env): Result<Credentials | undefined> {
+	const accounts = readAccounts(env);
+	if (!accounts.success) return accounts;
+	return ok(accounts.data?.accounts[accounts.data.default]);
+}
+
+/** Save into the default account (named `default` when nothing is saved yet). */
+export function writeCredentials(env: Env, credentials: Credentials): Result<void> {
+	const current = readAccounts(env);
+	if (!current.success) return current;
+	const written = writeAccount(env, current.data?.default ?? DEFAULT_ACCOUNT, credentials);
+	return written.success ? ok(undefined) : written;
+}
+
+/** Forget the default account's login; `true` when there was one. */
+export function clearCredentials(env: Env): boolean {
+	const current = readAccounts(env);
+	if (!current.success || !current.data) return false;
+	const removed = removeAccount(env, current.data.default);
+	return removed.success && removed.data.removed;
+}
+
+/** True when two saved logins are the same warden-api session (org profiles saved by one `warden login` share it). */
+export function sameSession(a: Credentials, b: Credentials): boolean {
+	return a.apiUrl === b.apiUrl && a.token === b.token;
 }

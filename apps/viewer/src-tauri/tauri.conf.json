@@ -11,20 +11,7 @@
 	},
 	"app": {
 		"macOSPrivateApi": true,
-		"windows": [
-			{
-				"label": "main",
-				"title": "warden viewer",
-				"width": 420,
-				"height": 900,
-				"minWidth": 260,
-				"minHeight": 420,
-				"decorations": false,
-				"transparent": true,
-				"shadow": true,
-				"maximizable": false
-			}
-		],
+		"windows": [],
 		"security": {
 			"csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:",
 			"devCsp": "default-src 'self' http://localhost:3231; connect-src ipc: http://ipc.localhost ws://localhost:3231 http://localhost:3231; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; script-src 'self' 'unsafe-inline' 'unsafe-eval' http://localhost:3231"

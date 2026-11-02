@@ -14,6 +14,7 @@ import type {
 	RemoteConnectionState,
 	RemoteDevice,
 	RevylApproval,
+	SlugAvailability,
 	StopReason,
 	Topup,
 	TrialState,
@@ -36,6 +37,10 @@ export type WardenApi = {
 	signOut: () => AsyncResult<void, ApiError>;
 	listOrganizations: () => AsyncResult<Organization[], ApiError>;
 	setActiveOrganization: (organizationId: string) => AsyncResult<void, ApiError>;
+	/** better-auth `check-slug`: `taken` is its `ORGANIZATION_SLUG_ALREADY_TAKEN`; any other failure is an error. */
+	checkOrganizationSlug: (slug: string) => AsyncResult<SlugAvailability, ApiError>;
+	/** Create an organization you own; better-auth makes it the session's active one. */
+	createOrganization: (input: { name: string; slug: string }) => AsyncResult<Organization, ApiError>;
 	/** `machine` = the hashed machine id, sent as `X-Warden-Machine` (it activates the free trial) */
 	createDevice: (request: CreateRemoteDevice, opts?: { machine?: string }) => AsyncResult<RemoteDevice, ApiError>;
 	getDevice: (id: string) => AsyncResult<RemoteDevice, ApiError>;
@@ -54,7 +59,8 @@ export type WardenApi = {
 	createTopup: (amountUsd: number) => AsyncResult<Topup, ApiError>;
 };
 
-export type WardenApiOptions = { baseUrl: string; token?: string; fetch?: Fetch };
+/** `organization` (id or slug) is sent as `X-Warden-Organization` with a token: the org this call acts for. */
+export type WardenApiOptions = { baseUrl: string; token?: string; organization?: string; fetch?: Fetch };
 
 function fail<E>(error: E): { success: false; error: E } {
 	return { success: false, error };
@@ -80,6 +86,9 @@ function httpError(status: number, body: unknown): ApiError {
 	}
 	return { kind: "http", status, ...(code ? { code } : {}), message };
 }
+
+/** better-auth's error code for a slug another organization has. */
+export const SLUG_TAKEN = "ORGANIZATION_SLUG_ALREADY_TAKEN";
 
 const STOP_REASONS: readonly StopReason[] = ["user", "idle", "credits_exhausted", "error"];
 const TRIAL_STATES: readonly TrialState[] = ["none", "held", "active", "revoked"];
@@ -280,6 +289,7 @@ export function createWardenApi(options: WardenApiOptions): WardenApi {
 		const headers: Record<string, string> = { accept: "application/json", ...extraHeaders };
 		if (body !== undefined) headers["content-type"] = "application/json";
 		if (options.token) headers.authorization = `Bearer ${options.token}`;
+		if (options.token && options.organization) headers["x-warden-organization"] = options.organization;
 		let response: Response;
 		try {
 			response = await doFetch(`${baseUrl}${path}`, {
@@ -358,6 +368,12 @@ export function createWardenApi(options: WardenApiOptions): WardenApi {
 			}),
 		setActiveOrganization: async (organizationId) =>
 			asVoid(await call("POST", "/api/auth/organization/set-active", done, { organizationId })),
+		checkOrganizationSlug: async (slug) => {
+			const checked = await call("POST", "/api/auth/organization/check-slug", done, { slug });
+			if (checked.success) return ok("available");
+			return "code" in checked.error && checked.error.code === SLUG_TAKEN ? ok("taken") : checked;
+		},
+		createOrganization: (input) => call("POST", "/api/auth/organization/create", parseOrganization, input),
 		createDevice: (request, opts) =>
 			call("POST", "/v1/devices", parseDevice, request, opts?.machine ? { "x-warden-machine": opts.machine } : {}),
 		getDevice: (id) => call("GET", `/v1/devices/${encodeURIComponent(id)}`, parseDevice),

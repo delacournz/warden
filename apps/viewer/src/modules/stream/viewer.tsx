@@ -6,6 +6,8 @@ import { actionAvailability } from "../toolbar/availability.ts";
 import { CHROME_HEIGHT, CHROME_WIDTH, SCREEN_INSET } from "../toolbar/layout.ts";
 import { Titlebar } from "../toolbar/titlebar.tsx";
 import { overlayFor } from "./billing-state.ts";
+import { asksOnClose } from "./close-intent.ts";
+import { ClosePrompt } from "./close-prompt.tsx";
 import { StoppedState } from "./stopped-state.tsx";
 import { StreamState } from "./stream-state.tsx";
 import { type Ripple, TapRipples } from "./tap-ripples.tsx";
@@ -57,7 +59,8 @@ function message(e: unknown): string {
  * resizes the window to the device aspect and tells the CLI the stream is up. With a view-scope
  * session, or the toggle on watch, the screen is inert; in drive mode it gets a ring, a pointer
  * cursor and a ripple where you press. Non-streaming states are a calm overlay on the screen, and
- * Cmd/Ctrl+W closes while Cmd/Ctrl+M minimizes, since there is no native menu.
+ * Cmd/Ctrl+W closes while Cmd/Ctrl+M minimizes, since there is no native menu. Closing an attached
+ * viewer on a live device asks first: keep the device running, or shut it down and release the lease.
  */
 export function Viewer({ info, expired }: { info: device.ViewerInfo; expired: boolean }) {
 	const videoRef = useRef<HTMLVideoElement>(null);
@@ -88,7 +91,20 @@ export function Viewer({ info, expired }: { info: device.ViewerInfo; expired: bo
 		device.viewerStreaming().catch(() => undefined);
 	}, [size]);
 
-	const close = useCallback(() => void getCurrentWindow().close(), []);
+	const [closing, setClosing] = useState<"asking" | "busy" | null>(null);
+	const asks = asksOnClose(info.detached, overlay);
+	const close = useCallback(() => {
+		if (asks) setClosing((current) => current ?? "asking");
+		else void getCurrentWindow().close();
+	}, [asks]);
+	const finishClose = (release: boolean) => {
+		setClosing("busy");
+		device.closeViewer(release).catch((e: unknown) => {
+			setClosing(null);
+			showNotice(message(e));
+		});
+	};
+	const cancelClose = useCallback(() => setClosing(null), []);
 	const minimize = useCallback(() => void getCurrentWindow().minimize(), []);
 
 	useWindowShortcuts(close, minimize);
@@ -148,6 +164,14 @@ export function Viewer({ info, expired }: { info: device.ViewerInfo; expired: bo
 					<StreamState status={status} unreachable={unreachable} />
 					{(overlay === "out-of-credits" || overlay === "stopped") && (
 						<StoppedState overlay={overlay} hasBillingUrl={info.hasBillingUrl} onTopUp={topUp} />
+					)}
+					{closing && (
+						<ClosePrompt
+							busy={closing === "busy"}
+							onKeep={() => finishClose(false)}
+							onShutDown={() => finishClose(true)}
+							onCancel={cancelClose}
+						/>
 					)}
 					{notice && (
 						<p

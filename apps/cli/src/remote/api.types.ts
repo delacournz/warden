@@ -87,6 +87,9 @@ export type RevylApproval = { userCode: string; uri: string; expiresAt: string }
 
 export type Organization = { id: string; name: string; slug: string };
 
+/** `POST /api/auth/organization/check-slug`, read as whether another organization already has the slug. */
+export type SlugAvailability = "available" | "taken";
+
 /** better-auth device authorization (`POST /api/auth/device/code`, RFC 8628). */
 export type DeviceCode = {
 	deviceCode: string;

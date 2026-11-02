@@ -4,14 +4,16 @@ import type { Billing, DeviceTokenPoll, Me, RemoteDevice } from "./api.types";
 
 type Call = { method: string; url: string; headers: Record<string, string>; body?: unknown };
 
-function fakeFetch(routes: Record<string, () => Response>, calls: Call[] = []): Fetch {
+type Body = Record<string, unknown> | undefined;
+
+function fakeFetch(routes: Record<string, (body: Body) => Response>, calls: Call[] = []): Fetch {
 	return async (input, init) => {
 		const method = init?.method ?? "GET";
 		const headers = Object.fromEntries(new Headers(init?.headers).entries());
-		const body = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
+		const body: Body = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
 		calls.push({ method, url: input, headers, body });
 		const route = routes[`${method} ${new URL(input).pathname}`];
-		return route ? route() : new Response("nope", { status: 404 });
+		return route ? route(body) : new Response("nope", { status: 404 });
 	};
 }
 
@@ -166,6 +168,35 @@ describe("warden api client", () => {
 		expect(calls[1]?.body).toEqual({ organizationId: "o1" });
 	});
 
+	test("organizations: check a slug and create one", async () => {
+		const calls: Call[] = [];
+		const api = createWardenApi({
+			baseUrl: "https://api.test",
+			token: "tok",
+			fetch: fakeFetch(
+				{
+					"POST /api/auth/organization/check-slug": (body) =>
+						body?.slug === "taken"
+							? json({ code: "ORGANIZATION_SLUG_ALREADY_TAKEN", message: "Slug is taken" }, 400)
+							: body?.slug === "boom"
+								? json({ message: "nope" }, 500)
+								: json({ status: true }),
+					"POST /api/auth/organization/create": () =>
+						json({ id: "o9", name: "Acme Mobile", slug: "acme-mobile", members: [] }),
+				},
+				calls
+			),
+		});
+		expect(await api.checkOrganizationSlug("acme")).toEqual({ success: true, data: "available" });
+		expect(await api.checkOrganizationSlug("taken")).toEqual({ success: true, data: "taken" });
+		expect((await api.checkOrganizationSlug("boom")).success).toBe(false);
+		expect(await api.createOrganization({ name: "Acme Mobile", slug: "acme-mobile" })).toEqual({
+			success: true,
+			data: { id: "o9", name: "Acme Mobile", slug: "acme-mobile" },
+		});
+		expect(calls.at(-1)?.body).toEqual({ name: "Acme Mobile", slug: "acme-mobile" });
+	});
+
 	test("viewer token: scope and ttl in the body, 404 and bad bodies are errors", async () => {
 		const calls: Call[] = [];
 		const api = createWardenApi({
@@ -216,6 +247,32 @@ describe("warden cloud billing", () => {
 		await api.createDevice({ platform: "ios" });
 		expect(calls[0]?.headers["x-warden-machine"]).toBe("b".repeat(64));
 		expect(calls[1]?.headers["x-warden-machine"]).toBeUndefined();
+	});
+
+	test("X-Warden-Organization rides on every authed call when an organization is set", async () => {
+		const calls: Call[] = [];
+		const routes = { "GET /v1/billing": () => json({}), "POST /v1/devices": () => json(device, 202) };
+		const withOrg = createWardenApi({
+			baseUrl: "https://api.test",
+			token: "tok",
+			organization: "org-1",
+			fetch: fakeFetch(routes, calls),
+		});
+		await withOrg.getBilling();
+		await withOrg.createDevice({ platform: "ios" });
+		await authed(routes, calls).getBilling();
+		expect(calls.map((c) => c.headers["x-warden-organization"] ?? "none")).toEqual(["org-1", "org-1", "none"]);
+	});
+
+	test("no X-Warden-Organization without a token (login endpoints)", async () => {
+		const calls: Call[] = [];
+		const anon = createWardenApi({
+			baseUrl: "https://api.test",
+			organization: "org-1",
+			fetch: fakeFetch({ "POST /api/auth/device/code": () => json({}) }, calls),
+		});
+		await anon.deviceCode();
+		expect(calls[0]?.headers["x-warden-organization"]).toBeUndefined();
 	});
 
 	test("402 CREDITS_EXHAUSTED keeps the billing url", async () => {

@@ -136,9 +136,31 @@ describe("openViewer", () => {
 				exitCode: 1,
 				pid: 4242,
 				detached: false,
+				release: false,
 				events: [{ event: "ready" }, { event: "streaming" }, { event: "error", message: "ice failed" }],
 			},
 		});
+	});
+
+	test("a close event with release: true asks the caller to end the lease", async () => {
+		const { ctx: c, viewer, lease } = setup(() => new Promise(() => undefined));
+		const opened = openViewer(c, { binary: "v", lease, scope: "drive", detach: false });
+		await Bun.sleep(5);
+		viewer.say({ event: "close", release: true });
+		viewer.exit(0);
+		const result = await opened;
+		expect(result.success && result.data.release).toBe(true);
+		expect(result.success && result.data.events).toEqual([{ event: "close", release: true }]);
+	});
+
+	test("a close event with release: false keeps the lease", async () => {
+		const { ctx: c, viewer, lease } = setup(() => new Promise(() => undefined));
+		const opened = openViewer(c, { binary: "v", lease, scope: "drive", detach: false });
+		await Bun.sleep(5);
+		viewer.say({ event: "close", release: false });
+		viewer.exit(0);
+		const result = await opened;
+		expect(result.success && result.data.release).toBe(false);
 	});
 
 	test("--watch mints a view-scope token", async () => {
@@ -154,7 +176,10 @@ describe("openViewer", () => {
 	test("--detach: one 1800 s token, stdin closed, released, no timers", async () => {
 		const { ctx: c, server, viewer, lease } = setup();
 		const result = await openViewer(c, { binary: "v", lease, scope: "drive", detach: true });
-		expect(result).toEqual({ success: true, data: { exitCode: 0, events: [], pid: 4242, detached: true } });
+		expect(result).toEqual({
+			success: true,
+			data: { exitCode: 0, events: [], pid: 4242, detached: true, release: false },
+		});
 		expect(server.viewerTokens).toEqual([{ deviceId: "rd1", scope: "drive", ttlS: DETACHED_TTL_S, token: "wvt_1" }]);
 		expect(viewer.stdin).toHaveLength(1);
 		expect(viewer.stdin[0]?.detached).toBe(true);

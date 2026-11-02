@@ -42,11 +42,12 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
 
 export const viewerInfo = () => call<ViewerInfo>("viewer_info");
 export const viewerStreaming = () => call<void>("viewer_streaming");
+/** Exit the window; attached, `release` tells the CLI to stop the device and end the lease. */
+export const closeViewer = (release: boolean) => call<void>("close_viewer", { release });
 export const fitWindow = (aspect: number, chromeHeight: number, padX: number) =>
 	call<void>("fit_window", { aspect, chromeHeight, padX });
 
 export const whepOffer = (sdp: string) => call<{ sdp: string }>("whep_offer", { sdp });
-export const whepCandidate = (fragment: string) => call<void>("whep_candidate", { fragment });
 export const whepClose = () => call<void>("whep_close");
 
 export const tap = (x: number, y: number) => call<void>("tap", { x, y });

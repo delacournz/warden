@@ -6,13 +6,24 @@ Hosted iOS / Android devices you lease like a local sim. Local sims and emulator
 
 | Need | Command |
 |---|---|
-| log in (a person, once per machine) | `warden login` (`--no-browser` prints the code; `--api-url <url>` for staging; `--json` → `{ apiUrl, user, organization, machine }`) |
+| log in (a person, once per machine) | `warden login` (`--no-browser` prints the code; `--api-url <url>` for staging; `--org <slug\|id>` = default org, no prompt; `--json` → `{ account, apiUrl, user, organization, profiles: [{ account, organization }], machine }`) |
+| login's orgs | none → at a terminal, creates one there (same prompts as `warden org create`; Esc skips, still logged in); else notes `warden org create <name>`. One org → used. Several → a terminal asks which is the default; no terminal / `--json` → the session's active org, else the first. That org is made active and saved on the account; every other org is saved as a profile: account named by its slug, same session (`--account <slug>` or `warden org link <slug> --account <slug>`). An existing account of another user / api is never overwritten (warning). Unknown `--org` → exit 1, nothing saved |
 | who am I, balance | `warden whoami [--json]` → account, org, remote status, `billing: { balanceUsd, ratePerMinuteUsd, estMinutesLeft, lowBalance, trial: { state, amountUsd }, billingUrl }` (`null` when billing can't be read) |
 | Revyl approval | `remote.state: awaiting_approval` = the org owner already has a Revyl account; `warden whoami` prints `approve in Revyl with code <code>  <uri>` (`--json`: `remote.approval: { userCode, uri, expiresAt }`, owner only). Devices can't start until a person approves it in Revyl |
 | Revyl dashboard | warden-web's **Open in Revyl** (`remote.dashboard: true`). A person signs in to Revyl themselves; agents never need it |
-| organizations | `warden org list` · `warden org use <org>` |
-| log out | `warden logout` |
-| CI | `WARDEN_TOKEN` (+ `WARDEN_API_URL`); no login, no machine id |
+| organizations | `warden org list` (`*` = the org this directory uses) · `warden org use <org> [--account <name>]` (that account's fallback org) · `warden org create [name] [--slug <slug>] [--account <name>] [--json]` → `{ organization, account, saved }` |
+| create an org | slug = the name lower-cased in dashes (≤40, like warden-web), else it + 6 hex when taken / under 3 chars; checked for availability first. No `[name]` = asks name then slug (prefilled; a taken slug re-asks) at a terminal, else exit 1 `pass a name: warden org create <name>`. `--slug` taken or not 3–48 `[a-z0-9]` dash-runs → exit 1. An account with no org takes it (`saved: true`); one with an org keeps it (`warden org use <slug>`) |
+| more accounts | `warden login --account <name>` (name: `[a-z0-9-]`, ≤32; first login = `default`, and becomes the default) · `warden account [list] [--json]` (`*` default, `>` this directory) · `warden account default <name>` · `warden account rm <name>` |
+| bind a directory to an org | `warden org link [org] [--account <name>] [--path <dir>] [--remote] [--json]`: default target = git top-level of cwd (else cwd); `--path` for a parent dir (every worktree under it matches); `--remote` = any checkout of `origin`. Longest path wins; path beats remote. No `<org>` = picker at a terminal (agents must pass one) |
+| list / remove links | `warden org links [--json]` (`*` = the link matching cwd) · `warden org unlink [--path <dir>\|--remote]` |
+| log out | `warden logout` (the account this directory uses) · `--account <name>` · `--all` → `--json` `{ loggedOut, revoked, kept, accounts }`; `kept: true` = another account (an org profile from the same login) still uses the session, so it was not revoked |
+| CI | `WARDEN_TOKEN` (+ `WARDEN_API_URL`, `WARDEN_ORG`); no login, no machine id |
+
+### Which account and org a command uses
+
+Account: lease (release / heartbeat / view of a remote lease use what it was claimed under) > `WARDEN_ACCOUNT=<name>` > `warden org link` match > default account.
+Org (sent as `X-Warden-Organization`): lease > `WARDEN_ORG=<slug|id>` > link > the account's `org use` org > the session's active org.
+`warden whoami` prints `account <name>  via <path|remote|WARDEN_ACCOUNT|default>`; `--json` adds `account`, `accountVia`, `orgVia` (`lease` `env` `link` `account` `session`), `link`. Links live in `$WARDEN_HOME/links.json`, accounts in `$WARDEN_HOME/auth.json` (an old single-login file reads as account `default`).
 
 `warden login` also registers this machine: the CLI hashes the OS machine id (`HMAC-SHA256("warden-machine-v1", id)`; macOS IOPlatformUUID, Windows MachineGuid, Linux `/etc/machine-id`) and sends only the hash. `machine` in the `--json` output: `registered` · `none` (no id, e.g. `CI` set) · `failed` (warning; paid use still works).
 
@@ -34,6 +45,7 @@ Hosted iOS / Android devices you lease like a local sim. Local sims and emulator
 - `release` / `heartbeat` stop / extend it like any lease. `heartbeat` warns `low balance ($0.30 left)` and `stopped: out of credits`.
 - A device warden cloud stopped: `warden ls` shows `stop_reason: <reason>` in STATE (`--json`: `stopReason` on the lease); `warden release --json` → `remoteStopReasons: { <remoteId>: <reason> }`. Reasons: `user` `idle` `credits_exhausted` `error`.
 - A person watches or drives it: `warden view [leaseId|remoteId] [--watch] [--detach] [--json]` or `claim --remote --view` (macOS, Windows). `WARDEN_VIEWER_PATH` = a local build, `WARDEN_VIEWER_URL` = release mirror. Agents never need it.
+- Attached viewer: closing the window asks **Keep running** (device and lease stay, lease TTL applies; reopen with `warden view`) or **Shut down device** (stops it, releases the lease). Ctrl+C in the terminal = shut down + release. `--json` then adds `released: true, remoteStopped`. `--detach` never asks or releases: `warden release <leaseId>`.
 
 ## Errors (`--json` failure `error.code`)
 
@@ -42,3 +54,5 @@ Hosted iOS / Android devices you lease like a local sim. Local sims and emulator
 | `credits_exhausted` | claim with no balance (HTTP 402); `error.billingUrl` = top-up page | A person runs `warden billing --top-up <amount>` (or opens `billingUrl`), then claim again |
 | `machine_required_for_trial` | balance 0, trial waiting for a machine check (e.g. from CI) | `warden login` on your own machine and claim from there, or top up |
 | `billing_role` | `--top-up` by a member | Ask an owner or admin |
+| — `<dir> is linked to account <a>; run warden login --account <a>` | a link (or `WARDEN_ACCOUNT`, or a lease) names an account not logged in here | A person runs `warden login --account <a>`, or `warden org unlink` |
+| — `not a member of <org>` / HTTP 403 `NOT_A_MEMBER` | the linked / `WARDEN_ORG` org isn't one of the account's | `warden org list --account <a>`, then relink |

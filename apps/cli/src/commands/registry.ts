@@ -293,6 +293,12 @@ export const COMMANDS: readonly CommandEntry[] = [
 		load: async () => (await import("./logout")).logoutCommand,
 	},
 	{
+		name: "account",
+		group: "Account",
+		summary: "list warden cloud accounts, pick the default, or remove one",
+		load: async () => (await import("./account")).accountCommand,
+	},
+	{
 		name: "whoami",
 		group: "Account",
 		summary: "show the warden cloud account, organization, balance and remote-device status",
@@ -307,7 +313,7 @@ export const COMMANDS: readonly CommandEntry[] = [
 	{
 		name: "org",
 		group: "Account",
-		summary: "list warden cloud organizations or switch the active one",
+		summary: "list, create or switch warden cloud organizations, or link directories to one",
 		load: async () => (await import("./org")).orgCommand,
 	},
 ];

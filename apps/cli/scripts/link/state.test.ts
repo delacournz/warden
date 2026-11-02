@@ -42,6 +42,39 @@ describe("linkPaths", () => {
 	});
 });
 
+describe("writeShim with env", () => {
+	const VIEWER = "/repo/apps/viewer/src-tauri/target/debug/bundle/macos/warden viewer.app/Contents/MacOS/warden-viewer";
+
+	test("exports each key unless the caller's env already sets it, then runs the checkout", () => {
+		writeShim(paths, TREE, { WARDEN_VIEWER_PATH: VIEWER });
+		expect(readFileSync(paths.bin, "utf8")).toBe(
+			`#!/bin/sh\n: "\${WARDEN_VIEWER_PATH:=${VIEWER}}"\nexport WARDEN_VIEWER_PATH\nexec bun "${TREE}" "$@"\n`
+		);
+	});
+
+	test("is still recognised as this checkout's shim", () => {
+		writeShim(paths, TREE, { WARDEN_VIEWER_PATH: VIEWER });
+		expect(shimTarget(paths.bin)).toBe(TREE);
+	});
+
+	test("unlink restores what was there before", () => {
+		writeFileSync(paths.bin, "release binary");
+		snapshotLink(paths);
+		writeShim(paths, TREE, { WARDEN_VIEWER_PATH: VIEWER });
+		expect(restoreLink(paths, TREE)).toEqual({ kind: "restored", was: "moved" });
+		expect(readFileSync(paths.bin, "utf8")).toBe("release binary");
+	});
+
+	test("refuses a value the shell would expand", () => {
+		expect(() => writeShim(paths, TREE, { WARDEN_VIEWER_PATH: '/a/$(rm -rf ~)"' })).toThrow();
+	});
+
+	test("an empty env writes the plain shim", () => {
+		writeShim(paths, TREE, {});
+		expect(readFileSync(paths.bin, "utf8")).toBe(devShim(TREE));
+	});
+});
+
 describe("writeShim", () => {
 	test("writes the shim `warden install --shim` writes, executable", () => {
 		writeShim(paths, TREE);
