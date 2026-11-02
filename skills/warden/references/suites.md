@@ -243,6 +243,26 @@ A failed run leaves sims booted (so does a passed one with `shutdown: "idle"`, u
 - Biometrics: `biometrics: true` (top level, suite or preset) or `--biometrics` makes devices profile `<profile>+bio`. Android: the golden snapshot enrolls a fingerprint (screen-lock PIN `1111`), is saved past the lock screen with the screen kept on, and the AVD gets `hw.fingerprint=yes`; a claim builds a missing snapshot inline (~80 s); prebuild with `warden golden ensure --platform android --profile pixel-10+bio`. iOS: no golden; the provider enrolls on every boot of a `+bio` sim, and the e2e session enrolls again at start (`WARDEN_BIOMETRICS=1`), before app install.
 - `@delacour/warden-e2e` must equal the warden version. After upgrading warden: `bun add -d @delacour/warden-e2e@<version>`.
 
+## Lease drift: `warden doctor --leases`
+
+`warden doctor --leases [--fix] [--json]` compares the lease registry with what the providers list. Exit 0 = no drift left, 1 = drift remains (`--fix` that resolves everything exits 0; `--fix` without `--leases` exits 2). `--json`: `{ ok, findings[], fixed, skipped[] }`, each finding `{ kind, severity (drift|info), fixable, fixed, message, ... }`. A platform whose inventory cannot be read (no Xcode / adb) is listed in `skipped` and its device checks are not run.
+
+| Finding | Severity | Meaning | `--fix` |
+|---|---|---|---|
+| `lease_missing_device` | drift | a live device lease on a device the provider no longer lists (physical phones are never flagged) | deletes the lease (logs `expired` if it was granted) |
+| `untracked_booted` | drift | a booted warden-created device with no lease and no `devices` record, so `warden gc`'s idle pass cannot see it (a recorded device is idle-tracked; the warm pool is always recorded) | report only |
+| `stale_placeholder` | drift | a `pending:` create placeholder older than the ready timeout (5 min) whose holder pid is dead or whose heartbeat ran past its ttl | deletes it |
+| `dead_queue_row` | drift | a boot-queue row whose waiter pid is dead | deletes it |
+| `device_missing` | drift | an iOS sim recorded in the store that is neither listed nor on disk (Android records follow running emulators and are `gc`'s to forget) | forgets the record unless a lease holds it |
+| `marker_mismatch` | drift | the sim's ownership marker names another warden instance, or is unreadable | report only |
+| `marker_missing` | info | a recorded sim made before markers existed | report only |
+| `stale_claim_key` | info | an idempotency key whose claim holds no lease or queue row, older than the ready timeout | deletes the key |
+| `orphan_reclaim_state` | info | reclaim retry state for a device no longer in a reclaim quarantine | deletes it |
+
+`--fix` only deletes registry rows, each re-checked inside one store transaction. It never shuts down, erases or deletes a device and never touches a leased or foreign one.
+
+**Ownership marker.** Every iOS sim warden creates (fresh or cloned from a golden) gets `.warden-owned.json` `{instanceId, name, createdAt}` in its `~/Library/Developer/CoreSimulator/Devices/<udid>/` dir; `instanceId` is this `WARDEN_HOME`'s random id (store `meta` `instance_id`, created once). Shutdown on release, health-monitor reboots, reclaim `erase` / `uninstall`, `sims prune` and `sims delete` refuse a sim whose marker names a different instance (treated as foreign). A sim with no or an unreadable marker keeps the old rules. Android emulators carry no marker (AVDs are shared definitions, not created per claim).
+
 ## Lease history: `warden events` and `warden stats`
 
 Every device lease leaves a trail in an append-only log in the store, written in the same transaction as the change it records. Kept 7 days; `warden gc` prunes older rows (`WARDEN_EVENTS_DAYS=<n>`, a positive integer; a bad value prunes at 7 and gc notes it).

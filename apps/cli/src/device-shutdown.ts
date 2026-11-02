@@ -7,6 +7,7 @@ import { closeSimWindowsAfter, type ShutDownSim } from "./close-sim-windows-afte
 import type { CommandContext } from "./context";
 import { errorMessage } from "./hooks/json";
 import { undoLeaseConditions } from "./lease-conditions";
+import { ownedElsewhere } from "./marker-guard";
 import { providerFor } from "./providers";
 
 /**
@@ -54,7 +55,7 @@ export async function shutdownReleasedDevices(
 		if (r.kind !== "device") return { kind: "skipped" };
 		if (r.physical)
 			return { kind: "foreign", note: `left ${r.name} (${r.id}) alone: physical device: never shut down` };
-		if (!shouldShutdown(lease, wardenDevices)) {
+		if (!shouldShutdown(lease, wardenDevices, ownedElsewhere(ctx))) {
 			return { kind: "foreign", note: `left ${r.name} (${r.id}) running: it was already running when leased` };
 		}
 		try {

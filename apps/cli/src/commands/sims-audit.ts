@@ -22,6 +22,7 @@ import type { ChalkInstance } from "chalk";
 import { resolveOwner } from "../claim-flags";
 import type { Register } from "../command";
 import type { CommandContext } from "../context";
+import { simMarkerBlock } from "../marker-guard";
 import { emit, heading, reportError, table, warn } from "../output";
 import { withSpinner } from "../spinner-context";
 
@@ -71,6 +72,7 @@ export function simsDeps(ctx: CommandContext): SimsDeps {
 		pid: process.pid,
 		now: ctx.now,
 		pidAlive: processAlive,
+		markerBlock: (udid) => simMarkerBlock(ctx, udid),
 	};
 }
 

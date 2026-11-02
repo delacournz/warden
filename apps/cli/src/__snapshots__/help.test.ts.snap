@@ -96,6 +96,7 @@ Setup:
   doctor                        check warden's setup: home, db, device tools,
                                 simulator helper, install method, PATH,
                                 Claude/Codex hooks + skill, stale leases
+                                (--leases: registry drift)
   update                        update warden: rebuild from source (dev/local
                                 builds) or install the latest release
   version                       print warden's version and build channel (dev /
@@ -4330,11 +4331,15 @@ exports[`help output warden doctor --help (and nested subcommands) 1`] = `
 Usage: warden doctor [options]
 
 check warden's setup: home, db, device tools, simulator helper, install method,
-PATH, Claude/Codex hooks + skill, stale leases
+PATH, Claude/Codex hooks + skill, stale leases (--leases: registry drift)
 
 Options:
   --fetch-helper  download warden-simd for this version into
                   $WARDEN_HOME/simd/<version>/ first
+  --leases        check the lease registry against the machine for drift instead
+                  (exit 1 when drift remains)
+  --fix           with --leases: delete the registry rows that are safe to
+                  (never touches a device)
   --json          machine-readable output
   -h, --help      display help for command"
 `;
