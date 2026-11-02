@@ -630,6 +630,7 @@ async function runPlan(
 		...(suite.slim !== undefined ? { slimConfig: suite.slim } : {}),
 		...phoneOpts(leg),
 		...(suite.biometrics === true ? { biometrics: true } : {}),
+		...(suite.reclaim !== undefined ? { reclaimConfig: suite.reclaim } : {}),
 	});
 	const [first] = picked.data ?? [];
 	const args = parseBatchArgs(platform, first ? legOpts(first) : { ...batchOpts, ...phoneOpts() }, ctx.cwd, {

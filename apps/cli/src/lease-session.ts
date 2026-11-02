@@ -616,8 +616,9 @@ export async function claimAll(
 	const lost = runs.flatMap((r) => r.lost ?? []);
 	// a release leaves each iOS device's `warden-simd` resident: the next run on the device reuses it (no spawn, no
 	// handshake) and its idle timeout reaps it otherwise; `--shutdown` / a device shutdown / a new lease owner stop it
+	const reclaim = (args.legFlags ?? [args.flags]).find((f) => f.reclaim !== undefined)?.reclaim;
 	const release = async () => {
-		await releaseDevices(ctx, leaseIds);
+		await releaseDevices(ctx, leaseIds, { reclaim });
 	};
 	const claimMore = async (o: MoreClaimOptions): AsyncResult<MoreClaim> => {
 		const more: LeaseArgs = { ...args, aborted: o.aborted };
@@ -649,7 +650,7 @@ export async function claimAll(
 					const at = leaseIds.indexOf(id);
 					if (at >= 0) leaseIds.splice(at, 1);
 				}
-				await releaseDevices(ctx, ids);
+				await releaseDevices(ctx, ids, { reclaim: o.flags.reclaim ?? reclaim });
 			},
 		});
 	};

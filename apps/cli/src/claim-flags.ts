@@ -12,6 +12,7 @@ import { detectOwner, type OwnerContext, readGitInfo } from "@delacour/warden-co
 import { limitFor, parseOwnerLimit } from "@delacour/warden-core/owner-limit";
 import { listAvds } from "@delacour/warden-core/providers/android";
 import { PRIORITY, parsePriority } from "@delacour/warden-core/queue";
+import type { ReclaimMode } from "@delacour/warden-core/reclaim";
 import { slimSimulator } from "@delacour/warden-core/sims/slim";
 import type { SlimProfile } from "@delacour/warden-core/sims/slim.profile";
 import { resolveSlim, type SlimSetting } from "@delacour/warden-core/slim-policy";
@@ -115,6 +116,8 @@ export type ClaimFlagValues = {
 	slimTopLevel?: SlimSetting | undefined;
 	/** `--biometrics`, or the suite / preset / top-level config `biometrics` already picked by the caller */
 	biometrics?: boolean | undefined;
+	/** `e2e.<suite>.reclaim` / preset `reclaim` / top-level `reclaim`, already picked by the caller (`WARDEN_RECLAIM` applies below it, at release) */
+	reclaimConfig?: ReclaimMode | undefined;
 };
 
 /** Does the claim ask for physical devices (`--physical`, or naming one with `--serial` / `--udid`)? */
@@ -158,6 +161,8 @@ export type ClaimFlags = {
 	headless?: true;
 	/** iOS daemon slimming layers (flag > suite / preset > top-level config > `WARDEN_SLIM` > on); android ignores them */
 	slim?: SlimLayers;
+	/** reclaim mode from config; released with `releaseDevices({ reclaim })` (absent: `WARDEN_RECLAIM`, then none) */
+	reclaim?: ReclaimMode;
 };
 
 /** Claim queue wait when `--wait` is not given. */
@@ -313,6 +318,7 @@ function withOptionalFlags(flags: ClaimFlags, values: ClaimFlagValues): ClaimFla
 	if (values.max === undefined) flags.maxDefaulted = true;
 	if (values.label !== undefined) flags.label = values.label;
 	if (values.headless) flags.headless = true;
+	if (values.reclaimConfig !== undefined) flags.reclaim = values.reclaimConfig;
 	const slim: SlimLayers = {};
 	if (values.slim !== undefined) slim.flag = values.slim;
 	if (values.slimConfig !== undefined) slim.config = values.slimConfig;

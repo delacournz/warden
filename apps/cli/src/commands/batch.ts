@@ -2127,6 +2127,7 @@ async function batch(
 			headless,
 			...(preset?.slim !== undefined ? { slimConfig: preset.slim } : {}),
 			...(preset?.biometrics === true ? { biometrics: true } : {}),
+			...(preset?.reclaim !== undefined ? { reclaimConfig: preset.reclaim } : {}),
 		},
 		ctx.cwd,
 		merged.base
