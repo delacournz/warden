@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import { CLAIM_ABORTED, type ClaimInput, claimDevices, PENDING_PREFIX, QUARANTINE_TTL_MS } from "./claim";
+import { parseClaimError } from "./claim-errors";
 import { recordCondition } from "./conditions/conditions";
 import type { Exec, ExecResult } from "./exec";
 import type { MemoryPressure } from "./host";
@@ -210,7 +211,8 @@ describe("claimDevices", () => {
 		const result = await claimDevices(input(provider));
 		expect(result.success).toBe(false);
 		if (!result.success) {
-			expect(result.error).toBe("all 2 warden-iphone-17 devices leased; max 2 — use --wait or --max");
+			expect(result.error).toBe("NO_DEVICE: all 2 warden-iphone-17 devices leased; max 2 — use --wait or --max");
+			expect(parseClaimError(result.error)?.exit).toBe(5);
 		}
 	});
 
@@ -272,6 +274,13 @@ describe("claimDevices", () => {
 		const result = await claimDevices(input(provider, { request: request({ count: 2 }) }));
 		expect(result.success).toBe(false);
 		if (!result.success) expect(result.error).toContain("boot 2 failed");
+		expect(store.listLeases()).toEqual([]);
+	});
+
+	test("a missing runtime fails RUNTIME_MISSING", async () => {
+		const provider = fakeProvider([], { create: 'no available iOS runtime matching "iOS-99" (available: none)' });
+		const result = await claimDevices(input(provider));
+		expect(!result.success && parseClaimError(result.error)?.code).toBe("RUNTIME_MISSING");
 		expect(store.listLeases()).toEqual([]);
 	});
 
@@ -382,6 +391,7 @@ describe("claim health probe", () => {
 		const result = await claimDevices(input(provider, { request: request({ max: 9 }) }));
 		expect(result.success).toBe(false);
 		if (!result.success) expect(result.error).toContain("failed the health probe");
+		expect(!result.success && parseClaimError(result.error)?.code).toBe("HEALTH_FAILED");
 		expect(store.listLeases()).toEqual([]);
 		expect(provider.calls.filter((c) => c.startsWith("probe")).length).toBe(3);
 	});
@@ -721,6 +731,7 @@ describe("claim under host load: pool of one (ios-claim-path-R1, R2)", () => {
 		if (result.success) return;
 		expect(result.error).toContain("host overloaded (load 30.0 ≥ 8 cores); retry later");
 		expect(result.error).not.toContain("leased");
+		expect(parseClaimError(result.error)).toMatchObject({ code: "NO_CAPACITY", capacityReason: "host-load", exit: 7 });
 		expect(store.listLeases()).toEqual([]);
 		expect(store.listDevices().find((d) => d.id === "1")?.quarantinedAt).toBeUndefined();
 	});
@@ -974,6 +985,10 @@ describe("claim capacity queue", () => {
 		const result = await claimDevices(capInput(provider));
 		expect(result.success).toBe(false);
 		if (!result.success) expect(result.error).toMatch(/#1 of 1.*cpu binds/);
+		expect(!result.success && parseClaimError(result.error)).toMatchObject({
+			code: "NO_CAPACITY",
+			capacityReason: "cpu-budget",
+		});
 		expect(store.listQueue()).toEqual([]);
 	});
 
@@ -983,6 +998,7 @@ describe("claim capacity queue", () => {
 		const result = await claimDevices(capInput(provider, { cpu: 4 }));
 		expect(result.success).toBe(false);
 		if (!result.success) expect(result.error).toContain("#2 of 2");
+		expect(!result.success && parseClaimError(result.error)).toMatchObject({ code: "QUEUE_TIMEOUT", exit: 6 });
 		expect(store.listQueue().map((e) => e.id)).toEqual(["rival"]);
 	});
 
@@ -1045,6 +1061,10 @@ describe("claim capacity queue", () => {
 		const held = await claimDevices(capInput(provider, { cpu: 4, pressure: "warn" }));
 		expect(held.success).toBe(false);
 		if (!held.success) expect(held.error).toContain("memory pressure warn");
+		expect(!held.success && parseClaimError(held.error)).toMatchObject({
+			code: "NO_CAPACITY",
+			capacityReason: "memory-pressure",
+		});
 		const admitted = await claimDevices(capInput(provider, { cpu: 4, pressure: "normal" }));
 		expect(admitted.success).toBe(true);
 	});

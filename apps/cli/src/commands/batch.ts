@@ -11,6 +11,7 @@ import {
 	runBatch,
 } from "@delacour/warden-core/batch/schedule";
 import type { ClaimedDevice, ClaimOutcome } from "@delacour/warden-core/claim";
+import { parseClaimError } from "@delacour/warden-core/claim-errors";
 import { formatDuration, parseDuration } from "@delacour/warden-core/duration";
 import { bunExec, execError } from "@delacour/warden-core/exec";
 import { readGitFacts, readGitFactsSync } from "@delacour/warden-core/git-facts";
@@ -2252,7 +2253,7 @@ async function abortClaim(
 	const claimError = claimed.success || claimed.error === INTERRUPTED ? undefined : claimed.error;
 	const metroError = launch && metro && !metro.success ? `${metro.error} (log: ${launch.log})` : undefined;
 	const reason = claimError ?? (interrupted ? INTERRUPTED : (metroError ?? INTERRUPTED));
-	if (!interrupted && claimError !== undefined && isLockedClaimError(claimError)) {
+	if (!interrupted && claimError !== undefined && (isLockedClaimError(claimError) || parseClaimError(claimError))) {
 		return { code: reportClaimFailure(ctx, name, claimError) };
 	}
 	reportError(ctx, name, reason);

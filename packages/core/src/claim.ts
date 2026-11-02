@@ -2,7 +2,18 @@ import { randomUUID } from "node:crypto";
 import { availableParallelism, loadavg } from "node:os";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { allocate } from "./allocate";
-import { addCost, type Budget, type CapacityConfig, type Cost, deviceCost, explain, fits, totalCost } from "./capacity";
+import {
+	addCost,
+	type Budget,
+	type CapacityConfig,
+	type Cost,
+	deviceCost,
+	explain,
+	type FitResult,
+	fits,
+	totalCost,
+} from "./capacity";
+import { type CapacityReason, type ClaimErrorKind, claimError, isRuntimeMissing } from "./claim-errors";
 import type { OrphanHost } from "./conditions/orphans";
 import { DEFAULT_READY_TIMEOUT_MS } from "./config.defaults";
 import { formatDuration } from "./duration";
@@ -122,7 +133,10 @@ type Reserved =
 type Reservation =
 	| { kind: "assign"; items: Reserved[] }
 	| { kind: "wait"; poolSize: number; notReady: string[] }
-	| { kind: "queued"; position: number; total: number; reason: string; evict: Eviction[] };
+	| { kind: "queued"; position: number; total: number; reason: string; blocked: QueueBlocked; evict: Eviction[] };
+
+/** What holds a queued claim: rows ahead of it, or (at the head) a resource the host is out of. */
+type QueueBlocked = "behind-earlier" | CapacityReason;
 
 const DEFAULT_POLL_MS = 2_000;
 const MAX_CONFLICT_RETRIES = 5;
@@ -308,8 +322,23 @@ function admit(
 		: held
 			? `memory pressure ${cap.pressure}`
 			: "waiting behind higher-priority claims";
+	const blocked = queueBlocked(fit, held);
 	const evict = head && !fit.fits ? pickEvictions(input, cap, steps, leases, usage, need, now) : [];
-	return { kind: "queued", position, total: entries.length, reason, evict };
+	return { kind: "queued", position, total: entries.length, reason, blocked, evict };
+}
+
+/** The typed reason behind a queued claim's `reason` line. */
+function queueBlocked(fit: FitResult, held: boolean): QueueBlocked {
+	if (!fit.fits) return fit.binding === "mem" ? "ram-budget" : "cpu-budget";
+	return held ? "memory-pressure" : "behind-earlier";
+}
+
+/** The coded error of a claim whose `--wait` ran out in the boot queue. */
+function queueTimeout(reservation: Extract<Reservation, { kind: "queued" }>): string {
+	const { position, total, reason, blocked } = reservation;
+	const kind: ClaimErrorKind =
+		blocked === "behind-earlier" ? { code: "QUEUE_TIMEOUT" } : { code: "NO_CAPACITY", capacityReason: blocked };
+	return claimError(kind, `timed out in the boot queue at #${position} of ${total}: ${reason}`);
 }
 
 /**
@@ -600,9 +629,15 @@ function waitMessage(request: DeviceRequest, poolSize: number, notReady: string[
 			allow !== undefined
 				? ` in the allowlist (${allow.join(", ") || "empty"}; WARDEN_PHYSICAL_IDS / physical.allow)`
 				: "";
-		return `no free ready physical ${request.platform} device${named}${list}: connect and authorize it, or release the lease holding it (see warden devices / warden ls)${skipped}`;
+		return claimError(
+			{ code: "NO_DEVICE" },
+			`no free ready physical ${request.platform} device${named}${list}: connect and authorize it, or release the lease holding it (see warden devices / warden ls)${skipped}`
+		);
 	}
-	return `all ${poolSize} warden-${request.profile} devices leased; max ${request.max} — use --wait or --max`;
+	return claimError(
+		{ code: "NO_DEVICE" },
+		`all ${poolSize} warden-${request.profile} devices leased; max ${request.max} — use --wait or --max`
+	);
 }
 
 /**
@@ -621,7 +656,10 @@ type HealthLog = {
 
 function overloadMessage(load: HostLoad, reasons: string[]): string {
 	const last = reasons.slice(-(MAX_HEALTH_RETRIES + 1));
-	return `host overloaded (load ${load.load1.toFixed(1)} ≥ ${load.cores} cores); retry later — ${last.join("; ")}`;
+	return claimError(
+		{ code: "NO_CAPACITY", capacityReason: "host-load" },
+		`host overloaded (load ${load.load1.toFixed(1)} ≥ ${load.cores} cores); retry later — ${last.join("; ")}`
+	);
 }
 
 /**
@@ -638,7 +676,10 @@ function noteUnhealthy(log: HealthLog, bad: UnhealthyDevice[], waiting: boolean)
 	}
 	if (log.spent <= MAX_HEALTH_RETRIES) return undefined;
 	if (log.overload) return overloadMessage(log.overload, log.reasons);
-	return `${log.reasons.length} device(s) failed the health probe, giving up: ${log.reasons.join("; ")}`;
+	return claimError(
+		{ code: "HEALTH_FAILED" },
+		`${log.reasons.length} device(s) failed the health probe, giving up: ${log.reasons.join("; ")}`
+	);
 }
 
 async function pause(input: ClaimInput, remainingMs: number): Promise<void> {
@@ -795,11 +836,7 @@ async function settle(
 	const remaining = round.deadline - input.now();
 	if (remaining <= 0) {
 		if (skippedOnce && health.overload) return err(overloadMessage(health.overload, health.reasons));
-		if (reservation.kind === "queued") {
-			return err(
-				`timed out in the boot queue at #${reservation.position} of ${reservation.total}: ${reservation.reason}`
-			);
-		}
+		if (reservation.kind === "queued") return err(queueTimeout(reservation));
 		return err(waitMessage(input.request, reservation.poolSize, reservation.notReady));
 	}
 	if (reservation.kind === "wait") logWaiting(input, round, reservation, remaining);
@@ -915,7 +952,10 @@ async function complete(
 		} finally {
 			input.store.deleteLeases(results.filter(held).map((r) => r.leaseId));
 		}
-		if (failures.length > 0) return err(failures.join("; "));
+		if (failures.length > 0) {
+			const message = failures.join("; ");
+			return err(failures.every(isRuntimeMissing) ? claimError({ code: "RUNTIME_MISSING" }, message) : message);
+		}
 		return { retry: bad };
 	}
 	const claimed = results.flatMap((r) => (r.ok.success ? [r.ok.data] : []));
