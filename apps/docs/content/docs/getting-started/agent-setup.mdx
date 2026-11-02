@@ -14,7 +14,7 @@ warden install    # skill + rule + SessionEnd hook for every detected agent; sho
 
 ````text
 Set up warden for mobile device work in this repo.
-1. Run `npm i -g @delacour/warden && warden install` (or `bunx @delacour/warden install`). Approve the diff.
+1. Run `bunx @delacour/warden install` if bun is installed (check with `command -v bun`), otherwise `npx @delacour/warden install`. Approve the diff. If `warden` is not found afterwards, add `~/.local/bin` to `PATH`.
 2. Run `warden doctor` and fix anything it reports.
 3. Run `warden skill show` and read it. Follow its rules from now on:
    claim a device with `warden claim ios --json`, pass the returned udid on every call,

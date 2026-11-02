@@ -4,6 +4,25 @@ description: Take an Expo app with no warden setup to a passing spec, run by han
 icon: FlaskConical
 ---
 
+## Set up with your agent
+
+Paste this into your coding agent. It sets up warden e2e, writes a real spec for one flow and runs it in parallel.
+
+<CopyBlock
+  label="prompt"
+  text={`Set up warden e2e tests for this Expo app and write the first real spec.
+1. If warden is missing: install it with bunx @delacour/warden install if bun is installed (check with command -v bun), otherwise npx @delacour/warden install. Show me the diff before you approve it. If warden is not found afterwards, add ~/.local/bin to PATH. Then run warden doctor and fix what it reports.
+2. Run warden skill show and read it, including the specs and suites references. Follow its rules.
+3. Run warden init (add --bundle-id <id> if the app has none) and install every package it names.
+4. Add @delacour/warden-e2e as a dev dependency, at the version warden --version prints.
+5. Pick the app's main flow. Add testID and accessible to every element the flow touches.
+6. Write e2e/<flow>.e2e.ts with test and expect from @delacour/warden-e2e: open the app, act with screen.getByTestId(...), assert with expect(...).toBeVisible().
+7. Run warden e2e --count 3. If a spec fails, read screen-at-failure.txt and e2e-report.json in the batch dir and fix the cause, never weaken an assertion.
+Report the spec you wrote, the testIDs you added and the result.`}
+/>
+
+## Or set up manually
+
 An e2e test here is a `*.e2e.ts` file that drives your app on a real simulator and asserts on what is on screen. `@delacour/warden-e2e` is the spec API (`test` and `expect` over `bun test`); `warden e2e` leases the devices, installs your app and runs the specs on all of them at once.
 
 This page goes from nothing to one meaningful spec running on several simulators. You need:

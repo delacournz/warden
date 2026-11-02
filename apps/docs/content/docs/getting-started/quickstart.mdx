@@ -4,6 +4,26 @@ description: Install warden, set up an Expo app, let your agent verify a screen 
 icon: Rocket
 ---
 
+## Set up with your agent
+
+Paste this into your coding agent. It installs warden, sets up the app, verifies a screen and runs the first test.
+
+<CopyBlock
+  label="prompt"
+  text={`Set up warden in this repo so you can drive the app on a simulator and keep what you check as e2e tests.
+1. Install it with bunx @delacour/warden install if bun is installed (check with command -v bun), otherwise npx @delacour/warden install. Show me the diff before you approve it. If warden is not found afterwards, add ~/.local/bin to PATH.
+2. Run warden doctor and fix anything it reports.
+3. Run warden skill show, read it, and follow its rules from now on.
+4. In the Expo app, run warden init (add --bundle-id <id> if the app has none) and install every package it names.
+5. Add @delacour/warden-e2e as a dev dependency, at the version warden --version prints.
+6. Run warden dev ios --json in the background and take the udid from its first line. Pass it on every call.
+7. Run warden ui snapshot -i and tell me what is on the first screen.
+8. Stop warden dev, then run warden e2e. If a spec fails, read screen-at-failure.txt in the batch dir and fix the cause (a missing testID goes in the component with accessible), never the timeout.
+Report what you installed, what you verified and the e2e result.`}
+/>
+
+## Or set up manually
+
 This takes an Expo app from nothing to an agent-verified screen and a passing e2e run. You need macOS with Xcode and an iOS runtime installed.
 
 <Steps>

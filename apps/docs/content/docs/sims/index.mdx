@@ -4,16 +4,33 @@ description: Claim a simulator, let an agent drive your app on it and verify a s
 icon: Smartphone
 ---
 
+## Set up with your agent
+
+Paste this into your coding agent. It installs warden if needed, then claims a simulator, drives your app, verifies a screen and hands the device back.
+
+<CopyBlock
+  label="prompt"
+  text={`Use warden to drive this app on an iOS simulator and verify a screen.
+1. If warden is missing: install it with bunx @delacour/warden install if bun is installed (check with command -v bun), otherwise npx @delacour/warden install. Show me the diff before you approve it. If warden is not found afterwards, add ~/.local/bin to PATH. Then run warden doctor and fix what it reports.
+2. Run warden skill show, read it, and follow its rules: never touch a device you did not claim.
+3. Run warden dev ios --json in the background and take the udid from its first line. Pass it on every call.
+4. Run warden ui snapshot -i and find the elements you need. Prefer id= selectors over @e refs.
+5. Act with warden ui press and warden ui fill, then verify with warden ui wait, is or get. A screenshot is not verification.
+6. If an element has no testID, add testID and accessible in the component instead of retrying.
+7. Stop warden dev when done; it releases the simulator and the Metro port.
+Report what you verified and the selectors you used.`}
+/>
+
+The agent claims, looks, acts, verifies and releases. If a step fails it reads the exit code and hint, snapshots again and retries with a selector. Details of the loop: [Agents drive devices](/docs/sims/agent-loop). If the agent does not know warden yet: [Set up your agent](/docs/getting-started/agent-setup).
+
+## Or set up manually
+
 By the end of this page your agent has its own simulator, has opened your app on it, read the screen as text, tapped and typed, checked the result and handed the device back. Nothing else on the Mac could take that simulator in the meantime, so several agents can do the same thing at once.
 
 You need an app to drive and one of:
 
 - macOS with Xcode and an iOS runtime, for simulators.
 - The Android SDK, for emulators.
-
-Install warden first: [Installation](/docs/getting-started/installation).
-
-## Drive a simulator
 
 <Steps>
 <Step>
@@ -126,22 +143,6 @@ This stops the device's helper and frees the lease. Without it the bare claim ex
 
 </Step>
 </Steps>
-
-## Let your agent do it
-
-With the skill installed, you describe the check and the agent follows the loop. Paste this into your agent:
-
-````text
-Use warden to check the home screen of this app on an iOS simulator.
-1. Run `warden claim ios --json` and keep the udid. Pass it on every call.
-2. Run the app with `warden dev ios --json` in the background, or open it with `warden ui open <bundleId> --udid <udid>`.
-3. Run `warden ui snapshot -i` and confirm the todo input is on screen.
-4. Fill it with "Buy milk", press Add, then verify with `warden ui wait text "Buy milk"`.
-5. Release with `warden ui close --release`. Never touch a device you did not claim.
-Report what you verified and the selectors you used.
-````
-
-The agent claims, looks, acts, verifies and releases. If a step fails it reads the exit code and hint, snapshots again and retries with a selector. Details of the loop: [Agents drive devices](/docs/sims/agent-loop). If the agent does not know warden yet: [Set up your agent](/docs/getting-started/agent-setup).
 
 ## Control the device
 
