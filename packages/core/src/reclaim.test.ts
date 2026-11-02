@@ -62,9 +62,13 @@ describe("parsers", () => {
         ApplicationType = User;
         CFBundleIdentifier = "nz.co.delacour.warden.runner.x";
     };
+    "e" = {
+        ApplicationType = User;
+        CFBundleIdentifier = "nz.co.delacour.warden.example";
+    };
 }`;
-		expect(parseListApps(text)).toHaveLength(4);
-		expect(userAppIds(text)).toEqual(["com.example.app"]);
+		expect(parseListApps(text)).toHaveLength(5);
+		expect(userAppIds(text)).toEqual(["com.example.app", "nz.co.delacour.warden.example"]);
 	});
 
 	test("pm list packages", () => {

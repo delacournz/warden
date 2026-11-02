@@ -1,4 +1,5 @@
 import {
+	type Budget,
 	type Cost,
 	capacityBlock,
 	deviceCost,
@@ -8,6 +9,7 @@ import {
 	maxConcurrent,
 	ZERO_COST,
 } from "@delacour/warden-core/capacity";
+import type { CapacityReason } from "@delacour/warden-core/claim-errors";
 import type { InventoryDevice, Platform } from "@delacour/warden-core/types";
 import { warmEnabled } from "@delacour/warden-core/warm-pool";
 import { CAPACITY_PLATFORMS, capacityEnabled, hostInventoryOf, pressureOf, readCapacityBasis } from "../capacity-deps";
@@ -38,6 +40,31 @@ function usageOf(
 		memMb: booted.reduce((sum, d) => sum + (slimmed.has(d.id) ? slimCost : cost).memMb, 0),
 		units: booted.length * cost.cpu,
 	};
+}
+
+/**
+ * Per platform, what booting one more device would run out of now (null = it fits): the claim gate's own
+ * `fits` + `capacityBlock` over the same usage, with a new iOS sim counted slim as claims count it.
+ */
+function nextBootBlock(
+	used: Cost,
+	slimCosts: Record<Platform, Cost>,
+	costs: Record<Platform, Cost>,
+	budget: Budget,
+	held: boolean
+): Record<Platform, CapacityReason | null> {
+	return Object.fromEntries(
+		CAPACITY_PLATFORMS.map((p) => {
+			const need = p === "ios" ? slimCosts.ios : costs[p];
+			return [p, capacityBlock(fits(used, need, budget), held) ?? null];
+		})
+	) as Record<Platform, CapacityReason | null>;
+}
+
+/** `blocked   ios cpu-budget · android cpu-budget` for the platforms whose next boot would not fit. */
+function blockedLine(blocked: Record<Platform, CapacityReason | null>): string[] {
+	const parts = CAPACITY_PLATFORMS.flatMap((p) => (blocked[p] === null ? [] : [`${p} ${blocked[p]}`]));
+	return parts.length === 0 ? [] : [`blocked   ${parts.join(" · ")}`];
 }
 
 /** `warden capacity`: what the machine can run, what is running, and why a claim would queue. */
@@ -103,7 +130,7 @@ async function capacity(ctx: CommandContext, json: boolean): Promise<number> {
 		maxConcurrent: concurrent,
 		pressure: pressure.success ? pressure.data : "unknown",
 		explain: why,
-		blocked: capacityBlock(verdict, pressure.success && pressure.data !== "normal") ?? null,
+		blocked: nextBootBlock(used, slimCosts, costs, budget, pressure.success && pressure.data !== "normal"),
 	};
 
 	const { color } = ctx.ui;
@@ -125,7 +152,7 @@ async function capacity(ctx: CommandContext, json: boolean): Promise<number> {
 						: `warm      on · ${warmRows.map((r) => `${r.platform}/${r.profile} ${r.actual}/${r.target}`).join(", ")} (booted/target)`,
 				]
 			: []),
-		...(data.blocked === null ? [] : [`blocked   ${data.blocked}`]),
+		...blockedLine(data.blocked),
 		"",
 		table(ctx, ["PLATFORM", "BOOTED", "COST/DEVICE", "MAX ALONE"], rows),
 		"",

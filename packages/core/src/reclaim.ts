@@ -125,8 +125,11 @@ export function parseListApps(text: string): InstalledApp[] {
 	return apps;
 }
 
-/** warden's own runner apps are not the run's residue */
-const KEEP_APP_PREFIXES: readonly string[] = ["com.apple.", "nz.co.delacour.warden."];
+/**
+ * Apple's apps and warden's own XCUITest runner are not the run's residue. Only the runner prefix is kept:
+ * an app under test may share warden's namespace (the example app does) and must still be removed.
+ */
+const KEEP_APP_PREFIXES: readonly string[] = ["com.apple.", "nz.co.delacour.warden.runner."];
 
 /** User-installed apps on a sim: `ApplicationType = User`, minus system and warden's own. */
 export const userAppIds = (listapps: string): string[] =>

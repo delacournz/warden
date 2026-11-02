@@ -1,13 +1,13 @@
 import { deleteSim } from "@delacour/warden-core/providers/ios";
 import { deleteAfterShutdown, ephemeralEnabled, shouldShutdown } from "@delacour/warden-core/shutdown-policy";
 import { ownerKey } from "@delacour/warden-core/store";
-import { type Lease, type Owner, resourceKey } from "@delacour/warden-core/types";
+import { type DeviceResource, type Lease, type Owner, resourceKey } from "@delacour/warden-core/types";
 import { stopHelperAfter } from "./agent-ui/stop-helper-after";
 import { closeSimWindowsAfter, type ShutDownSim } from "./close-sim-windows-after";
 import type { CommandContext } from "./context";
 import { errorMessage } from "./hooks/json";
 import { undoLeaseConditions } from "./lease-conditions";
-import { ownedElsewhere } from "./marker-guard";
+import { ownedElsewhere, simMarkerBlock } from "./marker-guard";
 import { providerFor } from "./providers";
 
 /**
@@ -26,6 +26,22 @@ type DeviceShutdown =
 	| { kind: "kept"; id: string; note: string }
 	| { kind: "shutdown"; id: string; sim?: ShutDownSim }
 	| { kind: "failed"; note: string };
+
+/** Why release leaves this device as it is (a phone, a sim another warden instance owns, one already running when leased), else undefined. */
+function keepRunningNote(
+	ctx: CommandContext,
+	lease: Lease,
+	r: DeviceResource,
+	wardenDevices: ReadonlySet<string>
+): string | undefined {
+	if (r.physical) return `left ${r.name} (${r.id}) alone: physical device: never shut down`;
+	const marker = r.platform === "ios" ? simMarkerBlock(ctx, r.id) : undefined;
+	if (marker !== undefined) return `left ${r.name} (${r.id}) running: ${marker}`;
+	if (!shouldShutdown(lease, wardenDevices, ownedElsewhere(ctx))) {
+		return `left ${r.name} (${r.id}) running: it was already running when leased`;
+	}
+	return undefined;
+}
 
 /**
  * Shut down the devices behind `leases` that `shouldShutdown` allows (never a physical device): warden-created ones and ones
@@ -53,11 +69,8 @@ export async function shutdownReleasedDevices(
 	const one = async (lease: Lease): Promise<DeviceShutdown> => {
 		const r = lease.resource;
 		if (r.kind !== "device") return { kind: "skipped" };
-		if (r.physical)
-			return { kind: "foreign", note: `left ${r.name} (${r.id}) alone: physical device: never shut down` };
-		if (!shouldShutdown(lease, wardenDevices, ownedElsewhere(ctx))) {
-			return { kind: "foreign", note: `left ${r.name} (${r.id}) running: it was already running when leased` };
-		}
+		const keep = keepRunningNote(ctx, lease, r, wardenDevices);
+		if (keep !== undefined) return { kind: "foreign", note: keep };
 		try {
 			const veto = await guard?.(lease);
 			if (veto !== undefined) return { kind: "kept", id: r.id, note: `left ${r.name} (${r.id}) running: ${veto}` };

@@ -991,6 +991,16 @@ describe("claim capacity queue", () => {
 			capacityReason: "cpu-budget",
 		});
 		expect(store.listQueue()).toEqual([]);
+		// it never waited, so the history has no `queued` event
+		expect(store.listEvents().map((e) => e.type)).not.toContain("queued");
+	});
+
+	test("a pool-full --no-wait claim logs no `queued` event (it never waited)", async () => {
+		const provider = fakeProvider([sim("1", { state: "booted" })]);
+		await claimDevices(input(provider, { owner: other, request: request({ max: 1 }) }));
+		const result = await claimDevices(capInput(provider, { request: request({ max: 1 }), waitMs: 0 }));
+		expect(!result.success && parseClaimError(result.error)?.code).toBe("NO_DEVICE");
+		expect(store.listEvents().map((e) => e.type)).not.toContain("queued");
 	});
 
 	test("a lower-priority claim waits behind a higher-priority row even when the host has room", async () => {
