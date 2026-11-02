@@ -122,6 +122,18 @@ describe("sweepEphemeralSims", () => {
 		expect(deleted(host)).toEqual([]);
 	});
 
+	test("a sim another warden instance owns (marker) is skipped quietly, not a failed delete", async () => {
+		const host: Host = { sims: [sim("M", "warden-iphone-17-M"), sim("A", "warden-iphone-17-A")], calls: [] };
+		record("M");
+		record("A");
+		const result = await sweepEphemeralSims({
+			...deps(host),
+			markerBlock: (udid) => (udid === "M" ? "M is owned by another warden instance" : undefined),
+		});
+		expect(deleted(host)).toEqual(["A"]);
+		expect(result.success && result.data.failed).toEqual([]);
+	});
+
 	test("a persistent sim (`warden dev`'s) is kept", async () => {
 		const host: Host = { sims: [sim("D", "warden-iphone-17-D")], calls: [] };
 		record("D");

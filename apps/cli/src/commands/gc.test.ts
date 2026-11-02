@@ -591,6 +591,24 @@ describe("warden gc: ephemeral sims", () => {
 		expect(db.listDevices("ios").map((d) => d.id)).toEqual(["U5", "Q"]);
 	});
 
+	test("a sim whose ownership marker names another warden instance is never swept", async () => {
+		const calls: string[][] = [];
+		ctx = testContext(["--json"], {
+			now: () => NOW,
+			exec: sweepSimctl([{ udid: "OTHER", name: "warden-iphone-17-7", state: "Shutdown" }], calls),
+		});
+		const dir = join(ctx.cwd, "Library/Developer/CoreSimulator/Devices/OTHER");
+		mkdirSync(dir, { recursive: true });
+		writeFileSync(
+			join(dir, ".warden-owned.json"),
+			JSON.stringify({ instanceId: "other-host", name: "warden-iphone-17-7", createdAt: 0 })
+		);
+		ctx.env = { ...ctx.env, HOME: ctx.cwd };
+		expect(await gcCommand.run(ctx)).toBe(0);
+		expect(JSON.parse(ctx.stdout.join("\n")).deleted).toEqual([]);
+		expect(calls.filter((x) => x[2] === "delete")).toEqual([]);
+	});
+
 	test("WARDEN_EPHEMERAL=0: nothing is deleted", async () => {
 		const calls: string[][] = [];
 		ctx = testContext(["--json"], {

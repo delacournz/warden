@@ -261,7 +261,7 @@ A failed run leaves sims booted (so does a passed one with `shutdown: "idle"`, u
 
 `--fix` only deletes registry rows, each re-checked inside one store transaction. It never shuts down, erases or deletes a device and never touches a leased or foreign one.
 
-**Ownership marker.** Every iOS sim warden creates (fresh or cloned from a golden) gets `.warden-owned.json` `{instanceId, name, createdAt}` in its `~/Library/Developer/CoreSimulator/Devices/<udid>/` dir; `instanceId` is this `WARDEN_HOME`'s random id (store `meta` `instance_id`, created once). Shutdown on release, health-monitor reboots, reclaim `erase` / `uninstall`, `sims prune` and `sims delete` refuse a sim whose marker names a different instance (treated as foreign). A sim with no or an unreadable marker keeps the old rules. Android emulators carry no marker (AVDs are shared definitions, not created per claim).
+**Ownership marker.** Every iOS sim warden creates (fresh or cloned from a golden) gets `.warden-owned.json` `{instanceId, name, createdAt}` in its `~/Library/Developer/CoreSimulator/Devices/<udid>/` dir; `instanceId` is this `WARDEN_HOME`'s random id (store `meta` `instance_id`, created once). Shutdown on release, health-monitor reboots, reclaim `erase` / `uninstall`, `sims prune`, `sims delete` and gc's ephemeral-sim sweep refuse a sim whose marker names a different instance (treated as foreign). A sim with no or an unreadable marker keeps the old rules. Android emulators carry no marker (AVDs are shared definitions, not created per claim).
 
 ## Lease history: `warden events` and `warden stats`
 
