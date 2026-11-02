@@ -185,4 +185,4 @@ export function eventsRetentionMs(env: Record<string, string | undefined>): Resu
 }
 
 /** Labels of leases warden holds for its own housekeeping: never user-visible grants. */
-export const INTERNAL_LEASE_LABELS: readonly string[] = ["capacity-evict", "gc-shutdown"];
+export const INTERNAL_LEASE_LABELS: readonly string[] = ["capacity-evict", "gc-shutdown", "reclaiming"];

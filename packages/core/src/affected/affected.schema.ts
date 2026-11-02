@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { duration, portSpec, slimConfigSchema } from "../batch/preset.schema";
+import { duration, portSpec, reclaimSchema, slimConfigSchema } from "../batch/preset.schema";
 import { appOptionSchema } from "../builds/app-option.schema";
 import { conditionsConfigSchema } from "../conditions/conditions.config";
 import { DEFAULT_JOB_TIMEOUT_MS, DEFAULT_METRO_PORT_SPEC, DEFAULT_METRO_READY_TIMEOUT } from "../config.defaults";
@@ -241,6 +241,8 @@ export const e2eSuiteSchema = z
 		slim: slimConfigSchema.optional(),
 		/** devices of this suite have a fingerprint / Face ID enrolled (own golden, own pool); overrides the top-level `biometrics` */
 		biometrics: z.boolean().optional(),
+		/** `erase` | `uninstall` | `none`: reclaim the suite's devices when they are released; overrides the top-level `reclaim` */
+		reclaim: reclaimSchema.optional(),
 		/** removed: renamed `warmDrivers` */
 		warmRunners: removedKey("warmRunners", "renamed to warmDrivers"),
 		/** iOS: start every device's automation helper in parallel before the specs (default on; `false` = off) */

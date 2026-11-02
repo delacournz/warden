@@ -6,6 +6,7 @@ import { DEFAULT_IDLE_MS } from "@delacour/warden-core/config.defaults";
 import { formatDuration, parseDuration } from "@delacour/warden-core/duration";
 import { DEFAULT_EVENTS_DAYS, eventsRetentionMs } from "@delacour/warden-core/lease-events";
 import { isLeaseAlive, processAlive } from "@delacour/warden-core/liveness";
+import { RECLAIM_QUARANTINE_PREFIX } from "@delacour/warden-core/reclaim";
 import { ephemeralEnabled, staleShutdownBlock } from "@delacour/warden-core/shutdown-policy";
 import { type DeviceRecord, ownerKey, wardenHome } from "@delacour/warden-core/store";
 import type { DeviceResource, Lease, Owner, Platform } from "@delacour/warden-core/types";
@@ -59,6 +60,16 @@ async function undoUnleasedOrphans(ctx: CommandContext, leased: ReadonlySet<stri
 		notes.push(...report.errors.map((e) => `leftover conditions on ${device.id}: ${e}`));
 	}
 	return notes;
+}
+
+/** Failed reclaims whose backoff elapsed get their next try (nothing loads unless a device is reclaim-quarantined). */
+async function retryReclaims(ctx: CommandContext, owner: Owner): Promise<string[]> {
+	const quarantined = PLATFORMS.flatMap((p) => ctx.store().listDevices(p)).some((d) =>
+		d.quarantineReason?.startsWith(RECLAIM_QUARANTINE_PREFIX)
+	);
+	if (!quarantined) return [];
+	const { retryDueReclaims } = await import("../reclaim");
+	return retryDueReclaims(ctx, owner, stopHelperAfter(ctx));
 }
 
 /** What one platform's pass did. */
@@ -376,6 +387,7 @@ async function gc(ctx: CommandContext, opts: GcOpts): Promise<number> {
 			store.touchDevice(l.resource.platform, l.resource.id, now);
 			leased.add(`${l.resource.platform}:${l.resource.id}`);
 		}
+		const reclaimNotes = await retryReclaims(sctx, owner);
 		const warmPlan = await planWarm(sctx, owner, now);
 		const plan: GcPlan = { now, idleMs: idle.data, leased, warm: new Set(warmPlan?.warm ?? []) };
 		const platforms = await Promise.all(PLATFORMS.map((platform) => gcPlatform(sctx, platform, owner, plan)));
@@ -410,6 +422,7 @@ async function gc(ctx: CommandContext, opts: GcOpts): Promise<number> {
 			notes: [
 				...orphaned.notes,
 				...orphanNotes,
+				...reclaimNotes,
 				...platforms.flatMap((p) => p.notes),
 				...snapshotNotes,
 				...swept.notes,

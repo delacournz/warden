@@ -1,6 +1,7 @@
 import { DEFAULT_TTL_MS } from "@delacour/warden-core/config.defaults";
-import type { Exec } from "@delacour/warden-core/exec";
+import { bunExec, type Exec } from "@delacour/warden-core/exec";
 import { isLeaseAlive, type PidAlive } from "@delacour/warden-core/liveness";
+import { type ReclaimMode, resolveReclaim } from "@delacour/warden-core/reclaim";
 import { ownerKey, type Store } from "@delacour/warden-core/store";
 import {
 	type DeviceResource,
@@ -178,7 +179,41 @@ export type ReleaseOptions = {
 	onNote?: (note: string) => void;
 	/** what the lease history records: `released` (default), or `expired` for leases gc reclaims as stale */
 	end?: "released" | "expired";
+	/**
+	 * `reclaim` from config (suite / preset / top-level); falls back to `WARDEN_RECLAIM`, then `none`. Applies only to
+	 * a normal release of used devices: not with `touch: false` (cleanup paths) or `end: "expired"` (gc's stale leases).
+	 */
+	reclaim?: ReclaimMode | undefined;
 };
+
+/** The reclaim mode this release runs, `none` for the paths that never reclaim. */
+function reclaimModeOf(host: ReleaseHost, opts: ReleaseOptions): ReclaimMode {
+	if (opts.touch === false || opts.end === "expired") return "none";
+	return resolveReclaim({ config: opts.reclaim, env: host.env ?? {} });
+}
+
+/** After the delete: report what reclaim skipped, then reclaim the held devices and drop their `reclaiming` leases. */
+async function runReclaimPhase(
+	host: ReleaseHost,
+	opts: ReleaseOptions,
+	mode: Exclude<ReclaimMode, "none">,
+	reclaim: typeof import("./reclaim"),
+	held: readonly import("./reclaim").ReclaimHold[],
+	skipNotes: readonly string[]
+): Promise<void> {
+	const report = opts.onNote ?? ((n: string) => host.err?.(`warden: ${n}`));
+	for (const note of skipNotes) report(note);
+	if (held.length === 0) return;
+	const { stopHelperAfter } = await import("./agent-ui/stop-helper-after");
+	const env = host.env ?? {};
+	const notes = await reclaim.runReclaims(
+		{ store: host.store, now: host.now, exec: host.exec ?? bunExec, env },
+		held,
+		mode,
+		stopHelperAfter({ env, now: host.now, err: host.err ?? (() => undefined) })
+	);
+	for (const note of notes) report(note);
+}
 
 /**
  * The single CLI choke point for deleting leases (devices, ports …). A device lease with conditions set
@@ -200,6 +235,10 @@ export async function releaseDevices(
 		const notes = await Promise.all(conditioned.map((l) => undoLeaseConditions(host, l)));
 		for (const note of notes.flat()) report(note);
 	}
+	const mode = reclaimModeOf(host, opts);
+	const reclaim = mode === "none" ? undefined : await import("./reclaim");
+	let held: import("./reclaim").ReclaimHold[] = [];
+	const skipNotes: string[] = [];
 	const leases = store.transaction(() => {
 		const found = leaseIds.flatMap((id) => store.getLease(id) ?? []).filter((l) => opts.only?.(l) ?? true);
 		store.deleteLeases(
@@ -210,6 +249,11 @@ export async function releaseDevices(
 			const now = host.now();
 			for (const l of found)
 				if (l.resource.kind === "device") store.touchDevice(l.resource.platform, l.resource.id, now);
+		}
+		if (reclaim !== undefined) {
+			const planned = reclaim.holdForReclaim(store, found, host.now());
+			held = planned.holds;
+			skipNotes.push(...planned.notes);
 		}
 		return found;
 	});
@@ -227,5 +271,6 @@ export async function releaseDevices(
 			)
 		);
 	}
+	if (reclaim !== undefined && mode !== "none") await runReclaimPhase(host, opts, mode, reclaim, held, skipNotes);
 	return leases;
 }

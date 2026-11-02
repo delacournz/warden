@@ -340,6 +340,13 @@ export interface WardenBatchPreset {
 	 * `biometrics`. Default false.
 	 */
 	biometrics?: boolean | undefined;
+	/**
+	 * What happens to the state of the devices of this run when they are released: `"erase"` (iOS: shutdown +
+	 * `simctl erase`; Android: uninstalls the third-party apps), `"uninstall"` (removes the user-installed apps) or
+	 * `"none"`. Only warden-created simulators and emulators are reclaimed, never foreign, golden or physical
+	 * devices. Overrides the top-level `reclaim`; `WARDEN_RECLAIM` is the fallback below it. Default `"none"`.
+	 */
+	reclaim?: "erase" | "uninstall" | "none" | undefined;
 	/** Per-job log dir. */
 	logs?: string | undefined;
 	/**
@@ -707,6 +714,13 @@ export interface WardenE2eSuite {
 	 * `biometrics`. Default false.
 	 */
 	biometrics?: boolean | undefined;
+	/**
+	 * What happens to the state of the devices of this run when they are released: `"erase"` (iOS: shutdown +
+	 * `simctl erase`; Android: uninstalls the third-party apps), `"uninstall"` (removes the user-installed apps) or
+	 * `"none"`. Only warden-created simulators and emulators are reclaimed, never foreign, golden or physical
+	 * devices. Overrides the top-level `reclaim`; `WARDEN_RECLAIM` is the fallback below it. Default `"none"`.
+	 */
+	reclaim?: "erase" | "uninstall" | "none" | undefined;
 	/** Removed: renamed `warmDrivers`. */
 	warmRunners?: undefined;
 	/**
@@ -768,6 +782,13 @@ export interface WardenConfig {
 	 * override it. Default false.
 	 */
 	biometrics?: boolean | undefined;
+	/**
+	 * What happens to the state of the devices of this run when they are released: `"erase"` (iOS: shutdown +
+	 * `simctl erase`; Android: uninstalls the third-party apps), `"uninstall"` (removes the user-installed apps) or
+	 * `"none"`. Only warden-created simulators and emulators are reclaimed, never foreign, golden or physical
+	 * devices. Overrides the top-level `reclaim`; `WARDEN_RECLAIM` is the fallback below it. Default `"none"`.
+	 */
+	reclaim?: "erase" | "uninstall" | "none" | undefined;
 	/** Perf budgets every `e2e` suite starts from (a suite's own `perf.budgets` replace them per key). */
 	perf?: WardenPerfConfig | undefined;
 	/** Device conditions every `e2e` suite starts from (a suite's own `conditions` replace them per area). */
