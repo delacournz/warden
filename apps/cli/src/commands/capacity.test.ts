@@ -25,6 +25,17 @@ describe("warden capacity", () => {
 		expect(typeof out.explain).toBe("string");
 	});
 
+	test("--json: blocked names the same resource a claim would queue on, and total usage is the shared figure", async () => {
+		ctx = testContext(["--json"], {
+			exec: fakeSimctl([wardenSim(1, "Booted"), wardenSim(2, "Booted")]),
+		});
+		ctx.env = { ...ctx.env, WARDEN_CAPACITY_HEADROOM_GB: "8", WARDEN_CAPACITY_MAX: "1" };
+		expect(await capacityCommand.run(ctx)).toBe(0);
+		const out = JSON.parse(ctx.stdout.join("\n"));
+		expect(out.blocked).toBe("cpu-budget");
+		expect(out.usage.total.units).toBe(out.usage.ios.units + out.usage.android.units);
+	});
+
 	test("text output names host, budget and pressure; off is flagged", async () => {
 		ctx = testContext([]);
 		ctx.env = { ...ctx.env, WARDEN_CAPACITY: "off" };

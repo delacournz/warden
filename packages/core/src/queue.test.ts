@@ -1,8 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import {
 	AGING_MS,
+	admissionQueue,
 	effectivePriority,
+	isDeviceWaitReason,
 	isHead,
+	isWaitReason,
 	PRIORITY,
 	PRIORITY_STEP,
 	parsePriority,
@@ -68,5 +71,36 @@ describe("ordering", () => {
 		expect(queuePosition(entries, "a", 3)).toBe(2);
 		expect(queuePosition(entries, "nope", 3)).toBeUndefined();
 		expect(isHead(entries, "nope", 3)).toBe(false);
+	});
+});
+
+describe("wait reasons", () => {
+	test("isWaitReason accepts every reason and nothing else", () => {
+		for (const r of [
+			"behind-earlier",
+			"ram-budget",
+			"cpu-budget",
+			"memory-pressure",
+			"host-load",
+			"device-limit",
+			"requester-limit",
+			"waiting-for-device",
+		]) {
+			expect(isWaitReason(r)).toBe(true);
+		}
+		expect(isWaitReason("nope")).toBe(false);
+	});
+
+	test("device waiters are left out of the admission queue; unreasoned and gated rows stay", () => {
+		const rows: QueueEntry[] = [
+			{ ...entry("polling", 30, 0), reason: "device-limit" },
+			{ ...entry("phys", 30, 0), reason: "waiting-for-device" },
+			{ ...entry("gated", 10, 5), reason: "ram-budget" },
+			entry("legacy", 10, 6),
+		];
+		expect(admissionQueue(rows).map((e) => e.id)).toEqual(["gated", "legacy"]);
+		expect(isDeviceWaitReason("requester-limit")).toBe(true);
+		expect(isDeviceWaitReason("behind-earlier")).toBe(false);
+		expect(isDeviceWaitReason(undefined)).toBe(false);
 	});
 });

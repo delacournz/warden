@@ -17,8 +17,9 @@ Lease:
                                 repo/worktree, age, heartbeat)
   capacity                      machine capacity: budget, booted devices
                                 (foreign too), per-device cost, memory pressure
-  queue                         claims waiting for host capacity, head first
-                                (position, priority, age, owner)
+  queue                         claims waiting for host capacity or a free
+                                device, head first (position, priority, reason,
+                                age, owner)
   check                         exit 0 if a device is free or yours, 2 if
                                 another owner holds it
   heartbeat [leaseIds...]       refresh lease heartbeats so they don't go stale
@@ -1458,7 +1459,8 @@ exports[`help output warden queue --help (and nested subcommands) 1`] = `
 "$ warden queue --help
 Usage: warden queue [options]
 
-claims waiting for host capacity, head first (position, priority, age, owner)
+claims waiting for host capacity or a free device, head first (position,
+priority, reason, age, owner)
 
 Options:
   --json      machine-readable output

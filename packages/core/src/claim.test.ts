@@ -1128,6 +1128,112 @@ describe("claim capacity queue", () => {
 		expect(result.success && result.data.claimed[0]?.action).toBe("boot");
 	});
 
+	test("the queue row stores why: ram/cpu budget at the head, behind-earlier otherwise, kept live each round", async () => {
+		const provider = await fullHost();
+		let seen: unknown[] = [];
+		await claimDevices(
+			capInput(provider, {
+				waitMs: 10 * MIN,
+				queueId: "mine",
+				sleep: async () => {
+					seen.push(store.listQueue().find((e) => e.id === "mine")?.reason);
+					if (seen.length === 1) {
+						store.deleteLeases(store.listLeases().map((l) => l.id));
+						for (const d of provider.devices) d.state = "shutdown";
+						queueRow("rival", PRIORITY.interactive, NOW);
+					} else {
+						store.dequeue("rival");
+						seen = [...seen, "end"];
+						throw new Error("stop");
+					}
+				},
+			})
+		).catch(() => undefined);
+		expect(seen.slice(0, 2)).toEqual(["cpu-budget", "behind-earlier"]);
+	});
+
+	test("memory pressure is stored as memory-pressure and the timeout still maps to NO_CAPACITY", async () => {
+		const provider = fakeProvider([]);
+		const result = await claimDevices(capInput(provider, { cpu: 4, pressure: "critical", queueId: "mp" }));
+		expect(!result.success && parseClaimError(result.error)).toMatchObject({
+			code: "NO_CAPACITY",
+			capacityReason: "memory-pressure",
+		});
+	});
+
+	test("a claim polling a full pool holds a device-limit row that no other claim queues behind", async () => {
+		const provider = fakeProvider([sim("1", { state: "booted" })]);
+		const held = await claimDevices(input(provider, { owner: other, request: request({ max: 1 }) }));
+		expect(held.success).toBe(true);
+		let rowAtPoll: { reason?: string; units: number } | undefined;
+		let polls = 0;
+		const result = await claimDevices(
+			capInput(provider, {
+				request: request({ max: 1 }),
+				waitMs: 10 * MIN,
+				queueId: "poller",
+				sleep: async () => {
+					polls++;
+					rowAtPoll = store.listQueue().find((e) => e.id === "poller");
+					const third = await claimDevices(
+						capInput(provider, { request: request({ max: 5 }), cpu: 4, owner: other, label: "third" })
+					);
+					expect(third.success).toBe(true);
+					throw new Error("stop");
+				},
+			})
+		).catch(() => undefined);
+		expect(result).toBeUndefined();
+		expect(polls).toBe(1);
+		expect(rowAtPoll).toMatchObject({ reason: "device-limit", units: 0 });
+		expect(logs.some((l) => l.includes("[device-limit]"))).toBe(true);
+	});
+
+	test("a physical claim with no free phone stores waiting-for-device and the row goes with the claim", async () => {
+		const provider = fakeProvider([]);
+		let reason: string | undefined;
+		const result = await claimDevices(
+			capInput(provider, {
+				request: request({ platform: "android", physical: {} }),
+				waitMs: 10 * MIN,
+				queueId: "phys",
+				sleep: async () => {
+					reason = store.listQueue().find((e) => e.id === "phys")?.reason;
+					throw new Error("stop");
+				},
+			})
+		).catch(() => undefined);
+		expect(result).toBeUndefined();
+		expect(reason).toBe("waiting-for-device");
+		expect(store.listQueue()).toEqual([]);
+	});
+
+	test("a polling row turns into a gated row when the pool frees but the host is full", async () => {
+		const provider = fakeProvider([sim("1", { state: "booted" })]);
+		await claimDevices(input(provider, { owner: other, request: request({ max: 1 }) }));
+		const reasons: (string | undefined)[] = [];
+		await claimDevices(
+			capInput(provider, {
+				request: request({ max: 1 }),
+				cpu: 1,
+				waitMs: 10 * MIN,
+				queueId: "p",
+				sleep: async () => {
+					reasons.push(store.listQueue().find((e) => e.id === "p")?.reason);
+					if (reasons.length === 1) {
+						store.deleteLeases(store.listLeases().map((l) => l.id));
+						for (const d of provider.devices) d.state = "shutdown";
+						provider.devices.push(
+							sim("9", { state: "booted", name: "foreign", wardenCreated: false, profile: "other" })
+						);
+					} else throw new Error("stop");
+				},
+			})
+		).catch(() => undefined);
+		expect(reasons[0]).toBe("device-limit");
+		expect(reasons[1]).toBe("cpu-budget");
+	});
+
 	test("without capacity a full host never queues", async () => {
 		const provider = fakeProvider([]);
 		const result = await claimDevices(input(provider));

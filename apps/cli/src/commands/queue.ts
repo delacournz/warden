@@ -1,13 +1,22 @@
 import { formatDuration } from "@delacour/warden-core/duration";
 import { processAlive } from "@delacour/warden-core/liveness";
-import { effectivePriority, priorityName, queueOrder } from "@delacour/warden-core/queue";
+import {
+	effectivePriority,
+	isDeviceWaitReason,
+	priorityName,
+	queueOrder,
+	type WaitReason,
+} from "@delacour/warden-core/queue";
 import { describeOwner, ownerLocation, type Platform } from "@delacour/warden-core/types";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { emit, plural, table } from "../output";
 
 export type QueueRow = {
-	position: number;
+	/** place in the boot queue; absent for a claim polling for a device (it holds no boot slot) */
+	position?: number;
+	/** why the claim waits (absent on a row an older binary wrote) */
+	reason?: WaitReason;
 	id: string;
 	priority: string;
 	effectivePriority: number;
@@ -28,8 +37,12 @@ export type QueueRow = {
 /** `warden queue`: claims waiting for host capacity, head first. */
 function queue(ctx: CommandContext, json: boolean): number {
 	const now = ctx.now();
-	const rows: QueueRow[] = queueOrder(ctx.store().listQueue(), now).map((e, i) => ({
-		position: i + 1,
+	const ordered = queueOrder(ctx.store().listQueue(), now);
+	const gated = ordered.filter((e) => !isDeviceWaitReason(e.reason));
+	const waiting = ordered.filter((e) => isDeviceWaitReason(e.reason));
+	const rows: QueueRow[] = [...gated, ...waiting].map((e) => ({
+		...(isDeviceWaitReason(e.reason) ? {} : { position: gated.indexOf(e) + 1 }),
+		...(e.reason !== undefined ? { reason: e.reason } : {}),
 		id: e.id,
 		priority: priorityName(e.priority),
 		effectivePriority: effectivePriority(e, now),
@@ -50,10 +63,11 @@ function queue(ctx: CommandContext, json: boolean): number {
 			? color.dim("queue empty")
 			: table(
 					ctx,
-					["#", "PRIORITY", "AGE", "PLATFORM", "PROFILE", "UNITS", "OWNER", "REPO/WORKTREE", "LABEL", "PID"],
+					["#", "PRIORITY", "REASON", "AGE", "PLATFORM", "PROFILE", "UNITS", "OWNER", "REPO/WORKTREE", "LABEL", "PID"],
 					rows.map((r) => [
-						String(r.position),
+						r.position === undefined ? "-" : String(r.position),
 						r.aged > 0 ? `${r.priority} +${r.aged}` : r.priority,
+						r.reason ?? "",
 						formatDuration(r.ageMs),
 						r.platform,
 						r.profile,
@@ -71,7 +85,7 @@ function queue(ctx: CommandContext, json: boolean): number {
 export const queueCommand = defineCommand({
 	name: "queue",
 	group: "Lease",
-	summary: "claims waiting for host capacity, head first (position, priority, age, owner)",
+	summary: "claims waiting for host capacity or a free device, head first (position, priority, reason, age, owner)",
 	register: (cmd, ctx, done) => {
 		cmd.option("--json", "machine-readable output").action((opts) => done(queue(ctx, opts.json === true)));
 	},

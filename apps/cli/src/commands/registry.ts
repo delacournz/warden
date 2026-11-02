@@ -71,7 +71,7 @@ export const COMMANDS: readonly CommandEntry[] = [
 	{
 		name: "queue",
 		group: "Lease",
-		summary: "claims waiting for host capacity, head first (position, priority, age, owner)",
+		summary: "claims waiting for host capacity or a free device, head first (position, priority, reason, age, owner)",
 		load: async () => (await import("./queue")).queueCommand,
 	},
 	{

@@ -1,3 +1,5 @@
+import type { WaitReason } from "./queue";
+
 export type Platform = "ios" | "android";
 
 /** Facts about a real phone/tablet, from its provider. Only physical devices carry one. */
@@ -159,6 +161,8 @@ export type QueueEntry = {
 	owner: Owner;
 	label?: string;
 	pid?: number;
+	/** why the claim waits, rewritten every round (absent on rows an older binary wrote) */
+	reason?: WaitReason;
 };
 
 /** The one constructor of a device lease resource: carries `physical` for real devices. */
