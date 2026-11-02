@@ -40,9 +40,10 @@ export type LeaseEventPayloads = {
 	unquarantined: { platform: Platform; deviceId: string };
 	/** warden shut a device down: `idle` (gc idle pass) or `release` (a lease ended with the device) */
 	shutdown: { platform: Platform; deviceId: string; deviceName?: string; cause: "idle" | "release" };
-	/** reserved: written by the health monitor under a lease */
-	device_unhealthy: { platform: Platform; deviceId: string; reason?: string };
-	device_recovered: { platform: Platform; deviceId: string };
+	/** the health monitor under a lease read a device bad `consecutive` times in a row (once per episode) */
+	device_unhealthy: { platform: Platform; deviceId: string; reason?: string; consecutive?: number };
+	/** the monitor rebooted the device under the same lease after `attempts` tries, `durationMs` in all */
+	device_recovered: { platform: Platform; deviceId: string; attempts?: number; durationMs?: number };
 };
 
 export type LeaseEventType = keyof LeaseEventPayloads;

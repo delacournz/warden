@@ -40,6 +40,7 @@ import { releaseDevices } from "../device-lease";
 import { shutdownReleasedDevices } from "../device-shutdown";
 import { missingPackages } from "../expo-app";
 import { installModeOption, legacyCleanOption, parseInstallFlags } from "../install-flags";
+import { defaultLeaseHealthDeps } from "../lease-health";
 import {
 	childEnv,
 	claimAll,
@@ -1301,6 +1302,7 @@ export const defaultDevDeps: DevDeps = {
 	},
 	onSignal: processOnSignal,
 	every: intervalEvery,
+	health: defaultLeaseHealthDeps,
 	probe: (port, projectRoot) => metroOwner(bunExec, port, projectRoot),
 	sleep: (ms) => Bun.sleep(ms),
 	ensureApp: (ctx, owner, platform, deviceId, opts) =>

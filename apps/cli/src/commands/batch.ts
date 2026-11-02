@@ -76,6 +76,7 @@ import { helperDir } from "../e2e/bun-runner";
 import { readE2ePackageVersion, stageBundledRuntime } from "../e2e/e2e-runtime";
 import { residentSocket, warmConnect } from "../e2e/warm-connect";
 import { claimLateWorkers, type ElasticPlan, type LateWorker, planElastic } from "../elastic";
+import { defaultLeaseHealthDeps } from "../lease-health";
 import {
 	type AppFlagValues,
 	appPhaseProgress,
@@ -2518,6 +2519,7 @@ export const defaultBatchDeps: BatchDeps = {
 	},
 	onSignal: processOnSignal,
 	every: intervalEvery,
+	health: defaultLeaseHealthDeps,
 	after: (ms, fn) => {
 		const timer = setTimeout(fn, ms);
 		return () => clearTimeout(timer);
