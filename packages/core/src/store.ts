@@ -134,6 +134,8 @@ export const MIGRATIONS: readonly string[] = [
 	END;`,
 	`ALTER TABLE devices ADD COLUMN persistent_at INTEGER;`,
 	`ALTER TABLE boot_queue ADD COLUMN reason TEXT;`,
+	`ALTER TABLE leases ADD COLUMN claim_id TEXT;
+	ALTER TABLE boot_queue ADD COLUMN claim_id TEXT;`,
 ];
 
 /** A queued claim that has not refreshed within this long is dead (its waiter polls every few seconds). */
@@ -158,6 +160,7 @@ export type NewLease = {
 	pid?: number;
 	bootedByOwner?: boolean;
 	shared?: boolean;
+	claimId?: string;
 };
 
 /** A device warden created (sim) or launched (emulator). */
@@ -190,6 +193,7 @@ type LeaseRow = {
 	booted_by_owner: number | null;
 	heartbeat_ms: number | null;
 	shared: number | null;
+	claim_id: string | null;
 };
 
 type QueueRow = {
@@ -204,6 +208,7 @@ type QueueRow = {
 	label: string | null;
 	pid: number | null;
 	reason: string | null;
+	claim_id: string | null;
 };
 
 function toQueueEntry(row: QueueRow): QueueEntry {
@@ -220,6 +225,7 @@ function toQueueEntry(row: QueueRow): QueueEntry {
 	if (row.label !== null) entry.label = row.label;
 	if (row.pid !== null) entry.pid = row.pid;
 	if (row.reason !== null && isWaitReason(row.reason)) entry.reason = row.reason;
+	if (row.claim_id !== null) entry.claimId = row.claim_id;
 	return entry;
 }
 
@@ -251,6 +257,7 @@ function toLease(row: LeaseRow): Lease {
 	if (row.booted_by_owner) lease.bootedByOwner = true;
 	if (row.heartbeat_ms !== null) lease.heartbeatMs = row.heartbeat_ms;
 	if (row.shared) lease.shared = true;
+	if (row.claim_id !== null) lease.claimId = row.claim_id;
 	return lease;
 }
 
@@ -309,10 +316,11 @@ export class Store {
 		if (input.pid !== undefined) lease.pid = input.pid;
 		if (input.bootedByOwner) lease.bootedByOwner = true;
 		if (input.shared) lease.shared = true;
+		if (input.claimId !== undefined) lease.claimId = input.claimId;
 		this.db
 			.query(
-				`INSERT INTO leases (id, resource_key, resource, owner_key, owner, label, acquired_at, heartbeat_at, ttl_ms, pid, booted_by_owner, shared)
-				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+				`INSERT INTO leases (id, resource_key, resource, owner_key, owner, label, acquired_at, heartbeat_at, ttl_ms, pid, booted_by_owner, shared, claim_id)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 			)
 			.run(
 				lease.id,
@@ -326,7 +334,8 @@ export class Store {
 				lease.ttlMs,
 				lease.pid ?? null,
 				lease.bootedByOwner ? 1 : null,
-				lease.shared ? 1 : null
+				lease.shared ? 1 : null,
+				lease.claimId ?? null
 			);
 		return lease;
 	}
@@ -422,10 +431,10 @@ export class Store {
 		return this.transaction(() => {
 			this.db
 				.query(
-					`INSERT INTO boot_queue (id, platform, profile, units, priority, enqueued_at, heartbeat_at, owner_key, owner, label, pid, reason)
-					 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+					`INSERT INTO boot_queue (id, platform, profile, units, priority, enqueued_at, heartbeat_at, owner_key, owner, label, pid, reason, claim_id)
+					 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 					 ON CONFLICT (id) DO UPDATE SET platform = excluded.platform, profile = excluded.profile, units = excluded.units,
-					   heartbeat_at = excluded.heartbeat_at, label = excluded.label, pid = excluded.pid, reason = excluded.reason`
+					   heartbeat_at = excluded.heartbeat_at, label = excluded.label, pid = excluded.pid, reason = excluded.reason, claim_id = excluded.claim_id`
 				)
 				.run(
 					entry.id,
@@ -439,7 +448,8 @@ export class Store {
 					JSON.stringify(entry.owner),
 					entry.label ?? null,
 					entry.pid ?? null,
-					entry.reason ?? null
+					entry.reason ?? null,
+					entry.claimId ?? null
 				);
 			const row = this.db.query<QueueRow, [string]>("SELECT * FROM boot_queue WHERE id = ?").get(entry.id);
 			if (!row) throw new Error(`boot_queue row ${entry.id} vanished`);

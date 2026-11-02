@@ -61,6 +61,11 @@ export type Lease = {
 	 * attaches to it instead of refusing with `device_busy`, and never releases it. Other owners still see it as foreign.
 	 */
 	shared?: boolean;
+	/**
+	 * The `claimDevices` call(s) that took this lease: a wrapper's legs share one id, so the per-owner limit counts
+	 * claims, not devices. Absent on leases an older binary wrote (each counts as its own claim).
+	 */
+	claimId?: string;
 };
 
 export type DeviceState = "booted" | "shutdown" | "booting";
@@ -163,6 +168,8 @@ export type QueueEntry = {
 	pid?: number;
 	/** why the claim waits, rewritten every round (absent on rows an older binary wrote) */
 	reason?: WaitReason;
+	/** the claim this row belongs to (absent on rows an older binary wrote) */
+	claimId?: string;
 };
 
 /** The one constructor of a device lease resource: carries `physical` for real devices. */

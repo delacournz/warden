@@ -21,6 +21,7 @@ import { formatDuration } from "./duration";
 import type { MemoryPressure } from "./host";
 import { markWardenDevices } from "./inventory";
 import { isLeaseAlive, type PidAlive } from "./liveness";
+import { countOtherClaims } from "./owner-limit";
 import { isProbeTimeout } from "./providers/health";
 import type { DeviceProvider } from "./providers/provider.types";
 import { admissionQueue, type DeviceWaitReason, PRIORITY, priorityName, queuePosition, type WaitReason } from "./queue";
@@ -75,6 +76,10 @@ export type ClaimInput = {
 	queueId?: string;
 	/** new iOS sims count as slim for capacity (default true); `--no-slim` / `slim: false` sets false */
 	slim?: boolean;
+	/** most separate claims this owner may hold on the platform (live device leases + its other queued claims); absent = unlimited */
+	ownerLimit?: number;
+	/** groups the leases of one command's claims (a wrapper's legs share it); default: one per `claimDevices` call */
+	claimId?: string;
 	/** polled once per round: true ends the claim with `CLAIM_ABORTED` (nothing stays leased or queued) */
 	abort?: () => boolean;
 	/** conditions a deleted lease left on a claimed device are undone before the claim returns; absent = left for gc */
@@ -133,6 +138,7 @@ type Reserved =
 
 type Reservation =
 	| { kind: "assign"; items: Reserved[] }
+	| { kind: "limited"; message: string }
 	| { kind: "wait"; poolSize: number; notReady: string[]; blocked: DeviceWaitReason }
 	| { kind: "queued"; position: number; total: number; reason: string; blocked: QueueBlocked; evict: Eviction[] };
 
@@ -197,7 +203,9 @@ function reserve(
 		withPending,
 		liftExpiredQuarantines(input, withPending, store.listDevices(request.platform), now)
 	);
-	if (cap) store.reclaimStaleQueue(now, input.pidAlive);
+	if (cap || input.ownerLimit !== undefined) store.reclaimStaleQueue(now, input.pidAlive);
+	const limited = ownerLimitHit(input, leases, cap, now);
+	if (limited) return limited;
 	const plan = allocate({ inventory, leases, request, now, pidAlive: input.pidAlive, skip });
 	if (cap && plan.kind === "assign") {
 		const gate = admit(input, cap, plan.steps, leases, now);
@@ -212,7 +220,7 @@ function reserve(
 		return { kind: "wait", poolSize, notReady: notReadyPhysical(inventory, request), blocked };
 	}
 	if (cap) store.dequeue(cap.queueId);
-	const common = { owner, ...(input.label !== undefined ? { label: input.label } : {}) };
+	const common = { owner, ...(input.label !== undefined ? { label: input.label } : {}), ...claimField(input) };
 	const items = plan.steps.map((step): Reserved => {
 		if (step.action === "create") {
 			const placeholder = { platform: request.platform, id: `${PENDING_PREFIX}${step.name}`, name: step.name };
@@ -241,6 +249,39 @@ function reserve(
 	return { kind: "assign", items };
 }
 
+const claimField = (input: ClaimInput): { claimId?: string } =>
+	input.claimId !== undefined ? { claimId: input.claimId } : {};
+
+/**
+ * The per-owner limit (caller holds the store lock): undefined to go on, else the `limited` reservation.
+ * It counts the owner's other claims on the platform, so a wrapper's legs (one claim id) never block each other.
+ */
+function ownerLimitHit(
+	input: ClaimInput,
+	leases: Lease[],
+	cap: CapacityRound | undefined,
+	now: number
+): Extract<Reservation, { kind: "limited" }> | undefined {
+	const limit = input.ownerLimit;
+	if (limit === undefined) return undefined;
+	const { platform } = input.request;
+	const others = countOtherClaims({
+		leases,
+		queue: input.store.listQueue(),
+		owner: input.owner,
+		platform,
+		claimId: input.claimId ?? "",
+		queueId: cap?.queueId ?? "",
+	});
+	if (others.count < limit) return undefined;
+	if (cap) holdWaitRow(input, cap, "requester-limit", now);
+	const holding = `this owner already holds ${others.count} separate ${platform} claim(s) (limit ${limit}, WARDEN_MAX_PER_OWNER)`;
+	const fix = others.oldest
+		? `release the oldest, ${others.oldest.id}${others.oldest.label ? ` (${others.oldest.label})` : ""}, with: warden release ${others.oldest.id}`
+		: "wait for its queued claims to finish";
+	return { kind: "limited", message: `${holding}: ${fix}` };
+}
+
 /**
  * A claim polling for a device keeps a queue row carrying why (`warden queue` shows it). It needs no boot
  * slot, so `admissionQueue` leaves it out of positions and heads: it never delays a claim that does.
@@ -258,6 +299,7 @@ function holdWaitRow(input: ClaimInput, cap: CapacityRound, reason: DeviceWaitRe
 		...(input.label !== undefined ? { label: input.label } : {}),
 		pid: input.selfPid ?? process.pid,
 		reason,
+		...claimField(input),
 	});
 }
 
@@ -326,6 +368,7 @@ function admit(
 		owner: input.owner,
 		...(input.label !== undefined ? { label: input.label } : {}),
 		pid: input.selfPid ?? process.pid,
+		...claimField(input),
 	});
 	const entries = admissionQueue(store.listQueue());
 	const position = queuePosition(entries, cap.queueId, now) ?? 1;
@@ -402,6 +445,7 @@ function pickEvictions(
 						resource: deviceResourceOf(device),
 						owner: input.owner,
 						label: "capacity-evict",
+						...claimField(input),
 						ttlMs: input.ttlMs,
 						pid: input.selfPid ?? process.pid,
 					},
@@ -548,6 +592,7 @@ async function realise(input: ClaimInput, item: Reserved): Promise<Realised> {
 						resource: deviceResourceOf(device),
 						owner: input.owner,
 						ttlMs: input.ttlMs,
+						...claimField(input),
 						...(input.label !== undefined ? { label: input.label } : {}),
 						...(input.pid !== undefined ? { pid: input.pid } : {}),
 					},
@@ -722,7 +767,7 @@ async function completeRound(
 export async function claimDevices(input: ClaimInput): AsyncResult<ClaimOutcome> {
 	const queueId = input.queueId ?? `q_${randomUUID().replaceAll("-", "").slice(0, 12)}`;
 	try {
-		return await claimRounds(input, queueId);
+		return await claimRounds({ ...input, claimId: input.claimId ?? queueId }, queueId);
 	} finally {
 		if (input.capacity) input.store.dequeue(queueId);
 	}
@@ -803,12 +848,7 @@ function waitingFor(request: DeviceRequest, reservation: Extract<Reservation, { 
 }
 
 /** Log that the claim is polling: right away, then about every `WAIT_PROGRESS_MS`, so a wait is never silent. */
-function logWaiting(
-	input: ClaimInput,
-	round: Round,
-	reservation: Extract<Reservation, { kind: "wait" }>,
-	remainingMs: number
-): void {
+function logWaiting(input: ClaimInput, round: Round, what: string, blocked: WaitReason, remainingMs: number): void {
 	const now = input.now();
 	if (round.waitLoggedAt !== undefined && now - round.waitLoggedAt < WAIT_PROGRESS_MS) return;
 	const first = round.waitLoggedAt === undefined;
@@ -816,8 +856,8 @@ function logWaiting(
 	const left = formatDuration(remainingMs);
 	input.log?.(
 		first
-			? `waiting for ${waitingFor(input.request, reservation)} [${reservation.blocked}] (up to ${left}; --no-wait fails at once)`
-			: `still waiting for ${waitingFor(input.request, reservation)} [${reservation.blocked}] (${left} left)`
+			? `waiting for ${what} [${blocked}] (up to ${left}; --no-wait fails at once)`
+			: `still waiting for ${what} [${blocked}] (${left} left)`
 	);
 }
 
@@ -830,6 +870,7 @@ async function settle(
 	const { health } = round;
 	const skippedOnce = health.skipOnce.size > 0;
 	health.skipOnce.clear();
+	if (reservation.kind === "limited") return settleLimited(input, reservation.message, round);
 	if (reservation.kind === "assign")
 		return completeRound(input, reservation.items, round.reclaimed, health, round.deadline);
 	if (reservation.kind === "queued") {
@@ -853,7 +894,22 @@ async function settle(
 		if (reservation.kind === "queued") return err(queueTimeout(reservation));
 		return err(waitMessage(input.request, reservation.poolSize, reservation.notReady));
 	}
-	if (reservation.kind === "wait") logWaiting(input, round, reservation, remaining);
+	if (reservation.kind === "wait") {
+		logWaiting(input, round, waitingFor(input.request, reservation), reservation.blocked, remaining);
+	}
+	await pause(input, remaining);
+	return undefined;
+}
+
+/** A claim over its owner's limit: fail `REQUESTER_LIMIT` when no wait is left, else poll until a claim of the owner ends. */
+async function settleLimited(
+	input: ClaimInput,
+	message: string,
+	round: Round
+): Promise<Result<ClaimOutcome> | undefined> {
+	const remaining = round.deadline - input.now();
+	if (remaining <= 0) return err(claimError({ code: "REQUESTER_LIMIT" }, message));
+	logWaiting(input, round, "one of this owner's other claims to end", "requester-limit", remaining);
 	await pause(input, remaining);
 	return undefined;
 }

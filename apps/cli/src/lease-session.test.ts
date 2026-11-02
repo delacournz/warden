@@ -131,6 +131,31 @@ describe("claimAll with device legs", () => {
 	});
 	const twoShutdown = () => [sim("U1", "warden-iphone-17-1", "Shutdown"), sim("P1", "warden-ipad-1", "Shutdown")];
 
+	test("WARDEN_MAX_PER_OWNER=1: a two-leg wrapper is one claim, a second claim of the owner is refused", async () => {
+		const s = legSetup([sim("U1", "warden-iphone-17-1", "Booted"), sim("P1", "warden-ipad-1", "Booted")]);
+		s.ctx.env = { ...s.ctx.env, WARDEN_MAX_PER_OWNER: "1" };
+		const session = await claimAll(
+			s.ctx,
+			deps(),
+			agent,
+			args({ flags: flagsOf("iphone-17"), legFlags: [flagsOf("iphone-17"), flagsOf("ipad")] }),
+			"e2e"
+		);
+		if (!session.success) throw new Error(session.error);
+		const ids = new Set(s.ctx.db.listLeases().map((l) => l.claimId));
+		expect(ids.size).toBe(1);
+		expect([...ids][0]).toBeDefined();
+		const second = await claimAll(
+			s.ctx,
+			deps(),
+			agent,
+			args({ flags: { ...flagsOf("iphone-17"), waitMs: 0 }, legFlags: [{ ...flagsOf("iphone-17"), waitMs: 0 }] }),
+			"e2e"
+		);
+		expect(second.success).toBe(false);
+		if (!second.success) expect(second.error).toContain("REQUESTER_LIMIT");
+	});
+
 	test("every leg is claimed at once: the second boot starts before the first has finished", async () => {
 		const s = legSetup(twoShutdown(), { gated: ["U1", "P1"] });
 		const running = claimAll(s.ctx, deps(), agent, args(), "e2e");
