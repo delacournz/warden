@@ -1,7 +1,7 @@
 import { DEFAULT_TTL_MS } from "@delacour/warden-core/config.defaults";
 import type { Exec } from "@delacour/warden-core/exec";
 import { isLeaseAlive, type PidAlive } from "@delacour/warden-core/liveness";
-import type { Store } from "@delacour/warden-core/store";
+import { ownerKey, type Store } from "@delacour/warden-core/store";
 import {
 	type DeviceResource,
 	describeOwner,
@@ -9,6 +9,7 @@ import {
 	type Owner,
 	ownerLocation,
 	type Platform,
+	resourceKey,
 	sameOwner,
 } from "@delacour/warden-core/types";
 import { ok, type Result } from "@delacour/warden-types/result";
@@ -100,7 +101,7 @@ export function ensureCallerLease(
 				},
 			};
 		}
-		if (existing) store.deleteLeases([existing.id]);
+		if (existing) store.deleteLeases([existing.id], { type: "expired", now: opts.now });
 		return ok({ lease: insertCallerLease(store, owner, probe, opts), action: existing ? "reclaimed" : "leased" });
 	});
 }
@@ -121,7 +122,7 @@ function ownLease(store: Store, existing: Lease, opts: EnsureLeaseOptions): Resu
 
 function insertCallerLease(store: Store, owner: Owner, probe: DeviceResource, opts: EnsureLeaseOptions): Lease {
 	const known = store.listDevices(probe.platform).find((d) => d.id === probe.id);
-	return store.insertLease(
+	const lease = store.insertLease(
 		{
 			resource: {
 				...probe,
@@ -136,6 +137,23 @@ function insertCallerLease(store: Store, owner: Owner, probe: DeviceResource, op
 		},
 		opts.now
 	);
+	store.recordEvent({
+		at: opts.now,
+		type: "granted",
+		data: {
+			platform: probe.platform,
+			...(known?.profile !== undefined ? { profile: known.profile } : {}),
+			deviceId: probe.id,
+			deviceName: opts.name ?? known?.name ?? probe.id,
+			action: "leased",
+			waitMs: 0,
+		},
+		leaseId: lease.id,
+		resourceKey: resourceKey(lease.resource),
+		ownerKey: ownerKey(owner),
+		...(opts.label !== undefined ? { label: opts.label } : {}),
+	});
+	return lease;
 }
 
 /** What `releaseDevices` needs from a command/hook context. */
@@ -158,6 +176,8 @@ export type ReleaseOptions = {
 	only?: (lease: Lease) => boolean;
 	/** a condition reset that failed (the release still goes ahead) */
 	onNote?: (note: string) => void;
+	/** what the lease history records: `released` (default), or `expired` for leases gc reclaims as stale */
+	end?: "released" | "expired";
 };
 
 /**
@@ -182,7 +202,10 @@ export async function releaseDevices(
 	}
 	const leases = store.transaction(() => {
 		const found = leaseIds.flatMap((id) => store.getLease(id) ?? []).filter((l) => opts.only?.(l) ?? true);
-		store.deleteLeases(found.map((l) => l.id));
+		store.deleteLeases(
+			found.map((l) => l.id),
+			{ type: opts.end ?? "released", now: host.now() }
+		);
 		if (opts.touch !== false) {
 			const now = host.now();
 			for (const l of found)

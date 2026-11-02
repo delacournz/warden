@@ -724,6 +724,11 @@ export function holdLeases(
 		const updated = store.heartbeat([...leaseIds], ctx.now(), HEARTBEAT_INTERVAL_MS);
 		if (updated >= leaseIds.length) return;
 		lost = true;
+		try {
+			store.recordHeartbeatLost(leaseIds, ctx.now());
+		} catch {
+			// the history is best-effort here: the run still stops
+		}
 		reportError(ctx, "lease", LEASES_LOST, { code: "LEASE_LOST", hint: CLAIM_ERRORS.LEASE_LOST.hint });
 		onSignal("SIGTERM");
 	};

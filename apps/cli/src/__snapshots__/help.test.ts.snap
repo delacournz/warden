@@ -20,6 +20,12 @@ Lease:
   queue                         claims waiting for host capacity or a free
                                 device, head first (position, priority, reason,
                                 age, owner)
+  events                        lease history: requested, queued, granted,
+                                released, expired, evicted, quarantined …
+                                (--follow to tail)
+  stats                         claim wait (median, p95), lease durations and
+                                peak concurrency per profile, from the lease
+                                history
   check                         exit 0 if a device is free or yours, 2 if
                                 another owner holds it
   heartbeat [leaseIds...]       refresh lease heartbeats so they don't go stale
@@ -1465,6 +1471,40 @@ priority, reason, age, owner)
 Options:
   --json      machine-readable output
   -h, --help  display help for command"
+`;
+
+exports[`help output warden events --help (and nested subcommands) 1`] = `
+"$ warden events --help
+Usage: warden events [options]
+
+lease history: requested, queued, granted, released, expired, evicted,
+quarantined … (--follow to tail)
+
+Options:
+  --since <duration>  only events from the last duration, e.g. 1h (default: all
+                      kept; with --follow: new only)
+  --lease <id>        only this lease's events
+  --owner <owner>     only events whose owner key (agent:<session>, user:<pid>,
+                      ci:<run>) contains this
+  --follow            keep printing new events (polls every 1 s) until Ctrl-C;
+                      with --json, NDJSON
+  --json              machine-readable output
+  -h, --help          display help for command"
+`;
+
+exports[`help output warden stats --help (and nested subcommands) 1`] = `
+"$ warden stats --help
+Usage: warden stats [options]
+
+claim wait (median, p95), lease durations and peak concurrency per profile, from
+the lease history
+
+Options:
+  --since <duration>  window, e.g. 24h (default 7d)
+  --json              machine-readable output
+  --csv               CSV rows (scope,platform,profile,metric,value); not with
+                      --json
+  -h, --help          display help for command"
 `;
 
 exports[`help output warden devices --help (and nested subcommands) 1`] = `

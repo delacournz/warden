@@ -1,6 +1,7 @@
 import { deleteSim } from "@delacour/warden-core/providers/ios";
 import { deleteAfterShutdown, ephemeralEnabled, shouldShutdown } from "@delacour/warden-core/shutdown-policy";
-import type { Lease, Owner } from "@delacour/warden-core/types";
+import { ownerKey } from "@delacour/warden-core/store";
+import { type Lease, type Owner, resourceKey } from "@delacour/warden-core/types";
 import { stopHelperAfter } from "./agent-ui/stop-helper-after";
 import { closeSimWindowsAfter, type ShutDownSim } from "./close-sim-windows-after";
 import type { CommandContext } from "./context";
@@ -65,6 +66,14 @@ export async function shutdownReleasedDevices(
 			if (result.success) {
 				// a resident `warden-simd` is bound to the boot that just ended
 				await stopHelperAfter(ctx)(r.id);
+				ctx.store().recordEvent({
+					at: ctx.now(),
+					type: "shutdown",
+					data: { platform: r.platform, deviceId: r.id, deviceName: r.name, cause: "release" },
+					leaseId: lease.id,
+					resourceKey: resourceKey(r),
+					ownerKey: ownerKey(lease.owner),
+				});
 				return { kind: "shutdown", id: r.id, ...(r.platform === "ios" ? { sim: { udid: r.id, name: r.name } } : {}) };
 			}
 			return { kind: "failed", note: `shutdown ${r.id} failed: ${result.error}` };
