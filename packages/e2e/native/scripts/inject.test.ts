@@ -309,6 +309,38 @@ run("libwarden-inject camera (macOS build, real dyld insertion)", () => {
 		rmSync(stateDir, { recursive: true, force: true });
 	}, 60_000);
 
+	test("recordings stopped while frames are arriving all finish cleanly", async () => {
+		const stateDir = mkdtempSync(join(tmpdir(), "warden-inject-cam-"));
+		const channel = createInjectChannel({
+			statePath: join(stateDir, "state.json"),
+			now: Date.now,
+			sleep: (ms) => Bun.sleep(ms),
+		});
+		const h = startHarness(
+			injectLaunchEnv({ dylib: join(dir, INJECT_DYLIB), statePath: channel.statePath, camera: true })
+		);
+		const clip = join(stateDir, "clip.mov");
+		h.send(`cam-make-video ${clip} 2`);
+		await h.next();
+		const video = channel.write({ camera: { back: { kind: "video", path: clip, loop: true } } });
+		expect(await channel.acked(video.seq, 5_000)).toBe(true);
+		h.send("cam-open back");
+		expect((await h.next<CamOpen>()).frames).toBeGreaterThan(0);
+		// short takes stop while the 30 fps pump is mid-append: the writer must never see both at once
+		const errors: string[] = [];
+		for (let i = 0; i < 100; i++) {
+			h.send(`cam-movie ${join(stateDir, `take-${i}.mov`)} 0.05`);
+			const movie = await h.next<CamMovie>();
+			if (movie.error !== null) errors.push(`take ${i}: ${movie.error}`);
+		}
+		expect(errors).toEqual([]);
+		h.send("cam-close");
+		await h.next();
+		await h.stop();
+		expect(await h.proc.exited).toBe(0);
+		rmSync(stateDir, { recursive: true, force: true });
+	}, 120_000);
+
 	test("a QR image is decoded by the metadata output, and a video feed records a movie", async () => {
 		const stateDir = mkdtempSync(join(tmpdir(), "warden-inject-cam-"));
 		const channel = createInjectChannel({

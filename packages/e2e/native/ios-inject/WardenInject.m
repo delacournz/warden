@@ -890,11 +890,22 @@ static char kWCConnection, kWCDiscovery, kWCMetaTypes, kWCMetaRoi, kWCRecorderKe
   NSURL *_url;
   CFTimeInterval _t0;
   CMTime _last;
-  BOOL _started, _ready;
+  BOOL _started, _ready, _finishing;
+  /** samples the writer took; a session that ends with none fails the file (-11800 <- -16364) */
+  long _samples;
+  /** the newest frame dropped while the encoder was not ready yet, kept until one sample landed */
+  CVPixelBufferRef _held;
+  /** AVAssetWriter is not thread-safe: the pump queue appends, `startRecording` appends its first frame and
+      `stopRecording` finishes on the main thread. Every writer call goes through this one serial queue. */
+  dispatch_queue_t _q;
 }
 @synthesize writer = _writer, url = _url, ready = _ready;
+- (void)dealloc {
+  if (_held) CVPixelBufferRelease(_held);
+}
 - (instancetype)initWithURL:(NSURL *)url width:(size_t)w height:(size_t)h {
   if (!(self = [super init])) return nil;
+  _q = dispatch_queue_create("nz.co.delacour.warden.camera.recorder", DISPATCH_QUEUE_SERIAL);
   _url = url;
   [[NSFileManager defaultManager] removeItemAtURL:url error:nil];
   NSError *err = nil;
@@ -913,30 +924,65 @@ static char kWCConnection, kWCDiscovery, kWCMetaTypes, kWCMetaRoi, kWCRecorderKe
   return self;
 }
 - (void)append:(CVPixelBufferRef)pb {
-  if (!_ready || _writer.status != AVAssetWriterStatusWriting) return;
   CFTimeInterval now = CACurrentMediaTime();
-  if (!_started) {
-    _started = YES;
-    _t0 = now;
-    [_writer startSessionAtSourceTime:kCMTimeZero];
-  }
-  CMTime t = CMTimeMakeWithSeconds(now - _t0, 600);
-  if (_last.value != 0 && CMTimeCompare(t, _last) <= 0) t = CMTimeAdd(_last, CMTimeMake(1, 600));
-  if (!_input.isReadyForMoreMediaData) return;
-  if ([_adaptor appendPixelBuffer:pb withPresentationTime:t]) _last = t;
+  dispatch_sync(_q, ^{
+    if (!self->_ready || self->_finishing || self->_writer.status != AVAssetWriterStatusWriting) return;
+    if (!self->_started) {
+      self->_started = YES;
+      self->_t0 = now;
+      [self->_writer startSessionAtSourceTime:kCMTimeZero];
+    }
+    CMTime t = CMTimeMakeWithSeconds(now - self->_t0, 600);
+    if (self->_samples > 0 && CMTimeCompare(t, self->_last) <= 0) t = CMTimeAdd(self->_last, CMTimeMake(1, 600));
+    if (!self->_input.isReadyForMoreMediaData) {
+      if (self->_samples == 0) {
+        if (self->_held) CVPixelBufferRelease(self->_held);
+        self->_held = CVPixelBufferRetain(pb);
+      }
+      return;
+    }
+    [self appendOnQueue:pb at:t];
+  });
 }
-- (CMTime)duration { return _last; }
+/** On `_q` only. */
+- (void)appendOnQueue:(CVPixelBufferRef)pb at:(CMTime)t {
+  if (![_adaptor appendPixelBuffer:pb withPresentationTime:t]) return;
+  _last = t;
+  _samples += 1;
+  if (_held) { CVPixelBufferRelease(_held); _held = NULL; }
+}
+- (CMTime)duration {
+  __block CMTime d;
+  dispatch_sync(_q, ^{ d = self->_last; });
+  return d;
+}
 - (void)finish:(void (^)(NSError *))done {
-  if (!_ready || !_started) {
-    NSError *e = _writer.error ?: [NSError errorWithDomain:@"warden.camera" code:1 userInfo:@{ NSLocalizedDescriptionKey: @"no frames were recorded" }];
-    if (_writer.status == AVAssetWriterStatusWriting) [_writer cancelWriting];
-    done(e);
-    return;
-  }
-  [_input markAsFinished];
-  AVAssetWriter *w = _writer;
-  [w endSessionAtSourceTime:CMTimeAdd(_last, CMTimeMake(1, 30))];
-  [w finishWritingWithCompletionHandler:^{ done(w.status == AVAssetWriterStatusCompleted ? nil : w.error); }];
+  dispatch_async(_q, ^{
+    if (self->_finishing) return;
+    self->_finishing = YES;
+    if (!self->_ready || !self->_started) {
+      NSError *e = self->_writer.error ?: [NSError errorWithDomain:@"warden.camera" code:1 userInfo:@{ NSLocalizedDescriptionKey: @"no frames were recorded" }];
+      if (self->_writer.status == AVAssetWriterStatusWriting) [self->_writer cancelWriting];
+      done(e);
+      return;
+    }
+    // a take stopped before the encoder took a frame still holds the frame it started on: wait for the encoder
+    // (a fresh or busy VideoToolbox session) rather than end a session with no samples, which fails the file
+    if (self->_samples == 0 && self->_held) {
+      for (int i = 0; i < 400 && !self->_input.isReadyForMoreMediaData && self->_writer.status == AVAssetWriterStatusWriting; i++) usleep(5000);
+      if (self->_input.isReadyForMoreMediaData) [self appendOnQueue:self->_held at:kCMTimeZero];
+    }
+    if (self->_samples == 0) {
+      NSError *e = self->_writer.error ?: [NSError errorWithDomain:@"warden.camera" code:1 userInfo:@{ NSLocalizedDescriptionKey: @"no frames were recorded" }];
+      if (self->_writer.status == AVAssetWriterStatusWriting) [self->_writer cancelWriting];
+      done(e);
+      return;
+    }
+    [self->_input markAsFinished];
+    AVAssetWriter *w = self->_writer;
+    [w endSessionAtSourceTime:CMTimeAdd(self->_last, CMTimeMake(1, 30))];
+    [w finishWritingWithCompletionHandler:^{ done(w.status == AVAssetWriterStatusCompleted ? nil : w.error); }];
+  });
 }
 @end
 
