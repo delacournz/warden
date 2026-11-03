@@ -1,5 +1,82 @@
 # @delacour/warden
 
+## 0.8.0
+
+### Minor Changes
+
+- [#145](https://github.com/delacournz/warden/pull/145) [`e632b3e`](https://github.com/delacournz/warden/commit/e632b3e46f035c7d8ca0e0d81dfdf4f4d04bc36c) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - Simulated camera for iOS simulators and Android emulators: feed a png, jpg, heic, mp4 or mov into the app's real camera for preview, photo capture, video recording and QR / barcode scanning.
+  - `warden claim android --camera` / `warden dev android --camera`: an emulator whose back and front cameras are fed from files.
+  - `device.camera.set(path, { facing, loop })`, `clear(facing)` and `status()` in specs: the path is relative to the spec file, the camera is taken off when the test ends, and the result says whether the feed applies on the app's next launch, its next camera open, or after the emulator rebooted. Missing or unsupported files fail with `E_CAMERA_NOT_FOUND` / `E_CAMERA_MEDIA`, an Android emulator without `--camera` with `E_CAMERA_DEVICE`.
+  - Suite `camera: { back?, front? }` in `warden.config.ts` (a path or `{ path, loop }`, relative to the config file): fed before each spec's first `app.open()`, and the suite's Android devices are claimed with `--camera`.
+  - `warden ui camera set <path> [--facing back|front|both] [--no-loop]`, `camera status` and `camera clear [--facing …]`: drive the same camera by hand, undone when the lease is released.
+
+- [#133](https://github.com/delacournz/warden/pull/133) [`63948a7`](https://github.com/delacournz/warden/commit/63948a72a764c64260eff05ee857e1868d2194d4) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - A failed device claim now says why with a code and its own exit code: `NO_DEVICE` (5, every matching device leased at `--max`), `QUEUE_TIMEOUT` (6, `--wait` ran out behind other claims), `NO_CAPACITY` (7, no room to boot, with `capacityReason` `ram-budget`, `cpu-budget`, `memory-pressure` or `host-load`), `RUNTIME_MISSING` (9), `HEALTH_FAILED` (10) and `LEASE_LOST` (11); `REQUESTER_LIMIT` (8) is reserved. Exit 1 stays the generic failure.
+  - `warden claim`, `run`, `batch` and `e2e` with `--json` print `{ok:false, command, error:{code, message, hint}}` for these, and `warden ui --claim` returns the same codes in its envelope.
+  - The human error line drops the code and adds a one-line hint naming the fix.
+
+- [#149](https://github.com/delacournz/warden/pull/149) [`9dfc77b`](https://github.com/delacournz/warden/commit/9dfc77bb8302ab9f5b1c0a906ba79f99933a30ab) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - `warden dev restart-metro [--clear] [--udid <udid>] [--json]` restarts a running `warden dev` session's Metro on the same leased port from another shell or an agent, keeping the device, leases, installed app and dev client. `--clear` resets Metro's cache; prints the new Metro URL (`--json`: `{ udid, metroUrl, clear }`).
+  - The `warden dev` dashboard gains `M` to restart Metro without clearing its cache (`c` still restarts with `--clear`); a restart requested from the CLI shows in the same row and waits for any running restart, reinstall or simulator restart.
+
+- [#142](https://github.com/delacournz/warden/pull/142) [`21f63eb`](https://github.com/delacournz/warden/commit/21f63eba7e1ac033522c5bfd5dd050f6ff604521) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - `warden doctor --leases [--fix] [--json]` checks the lease registry against the machine: a lease on a device that is gone, a booted warden sim nothing tracks, a stale `pending:` placeholder, a queue row with a dead pid, a recorded sim missing from disk, an ownership-marker mismatch, plus stale idempotency keys and orphaned reclaim retry state. Exit 0 when clean, 1 when drift remains; `--fix` deletes only registry rows and never shuts down, erases or deletes a device.
+  - Every iOS simulator warden creates now carries a `.warden-owned.json` ownership marker with this warden home's instance id. Shutdown on release, health-monitor reboots, reclaim `erase` / `uninstall`, `warden sims prune`, `warden sims delete` and the ephemeral-sim sweep in `warden gc` leave a sim whose marker names another warden instance alone; sims without a marker behave as before.
+
+- [#128](https://github.com/delacournz/warden/pull/128) [`11084f7`](https://github.com/delacournz/warden/commit/11084f77bd6fc1883b908d1735c44fe6e69a2cac) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - iOS sims are ephemeral: once a warden sim shuts down (`warden release --shutdown`, SessionEnd, `warden gc`, a passed `warden e2e`) it is deleted, and the next claim clones a fresh one from the golden, so old `warden-<profile>-N` sims no longer pile up. Quarantined (`--bad`), foreign and physical devices are kept.
+  - `warden gc` (and auto-gc, once per machine for sims an older warden left) deletes every shut-down, unleased warden sim; `release --json` and `gc --json` list them under `deleted`.
+  - `warden release --bad --shutdown` quarantines before the shutdown, so the bad sim is kept for `warden sim unquarantine`.
+  - `warden dev` keeps its sim: it is shut down but never deleted, so installs and logins survive between sessions. `WARDEN_EPHEMERAL_DEV=1` makes it ephemeral too.
+  - `WARDEN_EPHEMERAL=0` (or `WARDEN_GOLDEN=0`) keeps the persistent pool.
+
+- [#128](https://github.com/delacournz/warden/pull/128) [`11084f7`](https://github.com/delacournz/warden/commit/11084f77bd6fc1883b908d1735c44fe6e69a2cac) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - `warden gc` (and auto-gc) prunes stale goldens once a day: iOS golden sims and Android quick-boot snapshots an older Xcode runtime, golden recipe or system image left behind, GBs each. The current golden, an AVD with a running emulator and a profile whose key can't be read are kept, and a golden being built or cloned is skipped, never waited on. `gc --json` lists them under `goldens`.
+  - `WARDEN_GOLDEN_PRUNE=0` turns it off; `warden golden prune` still prunes by hand.
+
+- [#139](https://github.com/delacournz/warden/pull/139) [`df471da`](https://github.com/delacournz/warden/commit/df471da5cf5292b33aaa6cfa87b39819886853a6) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - `warden claim --idempotency-key <key>` (or `WARDEN_IDEMPOTENCY_KEY`) makes a claim safe to repeat: the same owner repeating the key while the leases are alive gets the same lease JSON back instead of a new device. A different request under a live key fails with a usage error; the key is free again once the leases are released.
+
+- [#137](https://github.com/delacournz/warden/pull/137) [`b58f440`](https://github.com/delacournz/warden/commit/b58f440e1c47c1e9dd7bca1e8fc2c590d21abe09) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - `WARDEN_WARM=1` (off by default) keeps a learned warm pool: `warden gc` boots existing slim, idle warden devices up to the 24 h peak of concurrent leases per platform and profile, queue head's profile first. It acts only at memory pressure `normal`, stays inside the capacity budget, and never creates, or touches foreign, golden, quarantined or physical devices.
+  - Warm devices skip the 20 min idle shutdown, and a queued claim evicts them only after every other idle device.
+  - `warden capacity` shows the warm pool (`warm.enabled`, `warm.rows` with target, actual and peak per platform and profile in `--json`).
+  - Background gc now runs every interval while `WARDEN_WARM=1`.
+
+- [#136](https://github.com/delacournz/warden/pull/136) [`a5c81d4`](https://github.com/delacournz/warden/commit/a5c81d412f20b61c8a4aaf964f38ebfed3cdec1d) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - Every device lease now leaves a trail in an append-only event log: `requested`, `queued`, `granted` (with the wait), `released`, `expired`, `heartbeat_lost`, `evicted`, `quarantined`, `unquarantined` and `shutdown`. Each row is written in the same transaction as the change it records.
+  - New `warden events [--since 1h] [--lease <id>] [--owner <owner>] [--follow] [--json]` prints the history. `--follow` polls every second and, with `--json`, prints one event per line.
+  - New `warden stats [--since 7d] [--json|--csv]` reports claims, median and p95 wait, lease durations and peak concurrency per platform and profile.
+  - `warden gc` prunes events older than 7 days; `WARDEN_EVENTS_DAYS=<n>` changes the retention.
+
+- [#141](https://github.com/delacournz/warden/pull/141) [`563b2f8`](https://github.com/delacournz/warden/commit/563b2f8018d60616421e8e929aed1d1ec4273dfd) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - `warden run`, `dev`, `batch` and `e2e` now watch the devices they lease: on each 30 s heartbeat a simulator must be Booted in `simctl` and an emulator must answer `adb get-state` with `device`. After two bad reads in a row the device is rebooted under the same lease (waits 5 s, 10 s, 20 s before attempts 1-3, one device at a time) and `warden events` logs `device_unhealthy` and `device_recovered`.
+  - When all three reboots fail the run stops with exit 11 `LEASE_LOST` naming the dead device.
+  - Physical devices and devices warden did not create are never rebooted: they only log `device_unhealthy` and warn on stderr, and the run goes on.
+  - `WARDEN_HEALTH_MONITOR=0` turns the monitor off.
+
+- [#135](https://github.com/delacournz/warden/pull/135) [`c16f8f0`](https://github.com/delacournz/warden/commit/c16f8f09e6f88bfe56c5e3d1a95eb87caf4a22cb) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - New opt-in `WARDEN_MAX_PER_OWNER=<n>` (or per platform, `ios=2,android=1`) caps how many separate device claims one owner holds at a time; unset stays unlimited. A claim over the cap waits (shown as `requester-limit` in `warden queue`) while `--wait` time remains, then fails with exit 8 `REQUESTER_LIMIT`, naming the owner's oldest lease and its `warden release <leaseId>`.
+  - `warden run`, `dev`, `batch` and `e2e` count as one claim however many devices (`--count`, device legs, extra workers) they take, so the cap never splits a single command.
+  - A malformed `WARDEN_MAX_PER_OWNER` (`lots`, `0`, `ios=`) fails the claim with a usage line before anything is leased.
+
+- [#138](https://github.com/delacournz/warden/pull/138) [`ea8b1d7`](https://github.com/delacournz/warden/commit/ea8b1d759ed7376bee5ad388b3beac103657f4d2) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - New opt-in `reclaim: erase | uninstall | none` (default `none`) in `e2e` suites, `batches` presets and the top level of `warden.config.ts`, with `WARDEN_RECLAIM` as the fallback below config: when a run releases its devices, warden cleans them. `erase` shuts a simulator down and runs `simctl erase`; `uninstall` removes the user-installed apps. On Android, `erase` uninstalls the third-party apps.
+  - A `reclaiming` lease holds the device while it is cleaned, so no claim takes it mid-way. Only warden-created simulators and emulators are reclaimed: foreign, golden and physical devices are skipped.
+  - A failed reclaim quarantines the device with a `reclaim: ` reason and `warden gc` retries it after 30 s, then 60 s (capped at 5 min), 3 tries in all. After that it stays quarantined until `warden sim unquarantine <udid>`.
+
+- [#126](https://github.com/delacournz/warden/pull/126) [`f1cc0e6`](https://github.com/delacournz/warden/commit/f1cc0e6dd90e94c4abe408d202d007938845cb11) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - Add `warden ui a11y audit|order|speak|announcements|spoken|focus`: audit the screen (`--rule`, `--ignore <rule[:identifier]>`, `--min-severity error|warning`, `--no-native`, `--text-size`; exits 1 when an issue is at or above the severity), print the simulated reading order and the phrase for one element, read announcements and live-region changes (`--since <cursor>`), and read or move real TalkBack focus and speech on Android.
+  - Add `warden ui a11y set` flags `--screen-reader`, `--reduce-transparency`, `--button-shapes`, `--differentiate-without-color`, `--on-off-labels`, `--high-contrast-text` and `--color-inversion` (each also `--no-…`). A setting the platform has no mechanism for is reported `skipped`; only skipped settings fail with `E_UNSUPPORTED`.
+  - Add `snapshot --a11y` (hint, custom actions, `a11y-focused`, `not-important`, live region per element), `open --a11y`, `warden e2e --a11y`, the `WARDEN_A11Y=1` env var, and the `a11y` suite and top-level config key (`rules`, `ignore`, `minSeverity`, passed to specs as `WARDEN_A11Y_AUDIT`) that launch iOS apps with the injected accessibility library.
+  - Add `device.a11yAudit()`, `device.screenReader.*` (`order`, `state`, `next`, `prev`, `activate`, `focused`, `spoken`), `device.announcements()` and `snapshot({ a11y: true })` to `@delacour/warden-e2e` specs, with the matchers `toHaveAccessibleName`, `toHaveRole`, `toHaveHint`, `toAnnounce`, `toBeA11yFocused`, `toPassA11yAudit` and `toHaveAnnounced`.
+  - iOS simulators now apply bold text, reduce motion, reduce transparency, button shapes, differentiate without colour and on/off labels live, and a simulated screen reader that makes `AccessibilityInfo.isScreenReaderEnabled()` true.
+  - Android emulators gain high contrast text, colour inversion and real TalkBack mode (`a11y set --screen-reader`, needs a Google Play image and `warden-uiad`); release puts the accessibility services back exactly as the device had them. With TalkBack on, `press` and `scroll` use accessibility actions.
+  - Audits also run the platform's own engine: XCUITest `performAccessibilityAudit` on iOS simulators and the Accessibility Test Framework on Android emulators. An engine that cannot run is reported `skipped` instead of failing the audit.
+  - Android apps now see reduce motion off by default under warden; `reduceMotion: true` (`--reduce-motion`) turns it on.
+  - Android emulators are unlocked at boot, which fixes `START_CLASS_NOT_FOUND` when launching an app on a locked emulator.
+
+- [#134](https://github.com/delacournz/warden/pull/134) [`60544c6`](https://github.com/delacournz/warden/commit/60544c6815369445bbaead50fface30dfd56fdc8) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - `warden queue` and `warden queue --json` show a `reason` for every waiting claim: `behind-earlier`, `ram-budget`, `cpu-budget`, `memory-pressure`, `host-load`, `device-limit` (every matching device leased at `--max`) or `waiting-for-device` (no free ready physical device). The reason is stored on the queue row and rewritten every poll.
+  - Claims polling for a device now appear in `warden queue` without a position; they hold no boot slot and never delay other claims.
+  - The "queued" and "waiting for" progress lines end with the reason in brackets.
+  - `warden capacity` uses the same usage and budget check as claims, and `--json` gains `blocked` per platform (`{ ios, android }`: the resource booting one more device would run out of now, or `null`, the same answer a claim gets).
+
+### Patch Changes
+
+- [#126](https://github.com/delacournz/warden/pull/126) [`f1cc0e6`](https://github.com/delacournz/warden/commit/f1cc0e6dd90e94c4abe408d202d007938845cb11) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - `warden e2e --dev` on Android points the dev client at warden's Metro on every `app.open()`, with the onboarding sheet and dev menu off, instead of launching it on its default url
+
+- [#126](https://github.com/delacournz/warden/pull/126) [`f1cc0e6`](https://github.com/delacournz/warden/commit/f1cc0e6dd90e94c4abe408d202d007938845cb11) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - `warden e2e` / `warden batch` no longer fail a passing spec because another spec in the same shard failed or because a skipped spec had no result; only the spec with the failed test (or a spec the process never reached after a crash) fails.
+- Updated dependencies []:
+  - @delacour/warden-e2e@0.8.0
+
 ## 0.7.0
 
 ### Minor Changes
