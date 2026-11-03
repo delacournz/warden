@@ -105,6 +105,7 @@ Line: `@eN [role] "name" id=<testID> value="..." <states> (x,y w×h)`. States: `
 | `eval` `tree` `logs` `network log` `reload` | see Devtools | dev client only (`network log` = the request log) |
 | `network set\|flap\|fault\|status\|reset` `location` `clock` | see Network and location | change the device's network / GPS; recorded on your lease, undone on release |
 | `permission` `timezone` `locale` `a11y` `battery` `memory-warning` `push` | see Device settings | permissions, timezone, locale, text size, battery, memory warning, push; recorded on your lease, undone on release |
+| `camera set\|status\|clear` | see Camera | feed an image or video into the app's camera; recorded on your lease, undone on release |
 
 ## Biometrics
 
@@ -177,6 +178,21 @@ Each is its own verb (like `location` / `clock`) so its flags show in `--help`. 
 - Permissions apply before the first launch (iOS terminates a running app whose permission changes): `permission set` then `open`. iOS `camera` and `notifications` have no `simctl privacy` service and are skipped.
 - Android permissions are the ones the app's manifest declares; a name the app does not declare is skipped with a warning.
 - `--json`: `result.action` is `permission-set`, `-reset`, `-status`, `timezone-set`, `-reset`, `-status`, `locale-*`, `a11y-*`, `battery-*`, `memory-warning`, `push`.
+
+## Camera (`camera`)
+
+Feeds a file into the app's real camera (preview, photo capture, QR scan), no app-side bypass. Accepted: png, jpg, heic (image), mp4, mov (video); anything else is `E_CAMERA_MEDIA`, a missing file `E_CAMERA_NOT_FOUND`. The state is the lease's `camera` condition, shared with `device.camera` in specs, and **release / gc undo it**.
+
+| Command | Args / flags | Notes |
+|---|---|---|
+| `camera set` | `<path> [--facing back\|front\|both] [--no-loop]` | `--facing` default `back`; the other facing keeps its feed. `--no-loop`: a video stops on its last frame (default loops). Default `--timeout` 120000 (a video can reboot the emulator) |
+| `camera status` | | feeds the lease has (`result.camera`, null when none); reads only |
+| `camera clear` | `[--facing back\|front\|both]` | default both; nothing set = `changed: false` |
+
+- iOS: live in an app launched with warden's dylib; an app started without it gets the feed from its next launch (`appliesOnLaunch`: `warden ui open` again). QR is the only code type the iOS fake decodes.
+- Android emulator: needs a `--camera` device (`claim android --camera`, profile `<p>+cam`), else `E_CAMERA_DEVICE`. An image swap shows on the app's next camera open (`appliesOnCameraOpen`); a video feed (or image to video) reboots the emulator (`rebooted`).
+- Text output ends with the lines saying when the change applies. `--json`: `result.action` is `camera-set`, `camera-clear`, `camera-status`; `result.camera` the feeds, plus `appliesOnLaunch` / `appliesOnCameraOpen` / `rebooted` when the driver reported them.
+- Physical devices: `E_UNSUPPORTED`.
 
 ## Selector grammar
 

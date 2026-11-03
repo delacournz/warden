@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { conditionSpawners } from "./conditions-real";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { Exec } from "@delacour/warden-core/exec";
+import { androidUiCamera, conditionSpawners } from "./conditions-real";
 
 const scheduler = {
 	platform: "android",
@@ -36,5 +40,24 @@ describe("conditionSpawners", () => {
 		expect(argvs[0]?.[0]).toBe(process.execPath);
 		expect(argvs[0]?.[1]).toMatch(/conditions\/scheduler\.main\.ts$/);
 		expect(argvs[1]?.[1]).toMatch(/conditions\/route-ticker\.main\.ts$/);
+	});
+});
+
+describe("androidUiCamera", () => {
+	test("drives the emulator camera like the full driver: a device warden did not claim with --camera is E_CAMERA_DEVICE", async () => {
+		const home = mkdtempSync(join(tmpdir(), "warden-ui-cam-"));
+		const img = join(home, "a.png");
+		writeFileSync(img, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+		const calls: string[][] = [];
+		const exec: Exec = async (argv) => {
+			calls.push([...argv]);
+			return { exitCode: 0, stdout: "", stderr: "" };
+		};
+		const camera = await androidUiCamera({ serial: "emulator-5554", env: { WARDEN_HOME: home }, exec });
+		const res = await camera({ back: { kind: "image", path: img } });
+		expect(res.success).toBe(false);
+		if (!res.success) expect(res.error.code).toBe("E_CAMERA_DEVICE");
+		expect(calls).toEqual([]);
+		rmSync(home, { recursive: true, force: true });
 	});
 });

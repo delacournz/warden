@@ -29,7 +29,7 @@ warden e2e example --specs todos,settings  # exactly these ids / globs
 | `--no-warm` | skip the iOS driver warm-up (never skipped for an iPhone: its jobs reach the runner host through it) |
 | `--physical` / `--serial <serial...>` / `--udid <udid...>` | run on physical phones/tablets, see "Physical devices". `--serial` is Android, `--udid` is iOS (CoreDevice UDID); naming devices implies `--physical`. Win over the suite's `physical` |
 | `--perf [captures]` | profile every attempt: bare = metrics, frames, logs; or `--perf=react,js`, `all` (names: `all js react native metrics frames logs`). Reports land in the attempt's `perf/` dir; suite/top-level `perf.budgets` make a breach fail the test (`PERF_BUDGET`) |
-| claim flags | `--profile --runtime --count --max --wait --no-wait --priority --ttl --label --adopt --headless --no-headless --slim --no-slim --biometrics --json` (`--json` prints the e2e report) |
+| claim flags | `--profile --runtime --count --max --wait --no-wait --priority --ttl --label --adopt --headless --no-headless --slim --no-slim --biometrics --camera --json` (`--json` prints the e2e report) |
 | lease flags | `--port <from:span>` (repeatable), `--app --install-mode clean\|reinstall --reset-keychain --project --bundle-id --variant --kind --no-eas --no-build` |
 | batch flags | `--retry --passes --serve --serve-ready --serve-timeout --job-timeout --record <dir> --logs <dir> --no-tui` |
 
@@ -91,6 +91,11 @@ Paths and globs are relative to `warden.config.ts`. Unknown keys are errors.
 | Key | Default | Meaning |
 |---|---|---|
 | `conditions` | none | `{ network?, location?, clock?, permissions?, locale?, timezone?, a11y? }` at the top level or per suite (a suite's key replaces the top-level one per area): the device state every spec starts from, applied before the app launches and put back after each spec. `network`: `"online" \| "offline"`, a preset (`edge 3g 4g lte wifi slow lossy`) or `{ latencyMs, jitterMs, downKbps, upKbps, lossPct }`. `location`: `{ lat, lon, altM? }` or `"city-run" \| "city-bike" \| "freeway"`. `clock`: an ISO instant (keeps running), `{ at, frozen? }` or `{ offset: "2d" }`. On iOS a declared `network` / `clock` launches the app with the network dylib, so specs can change it later. `permissions`: `{ location: "denied", camera: "granted", … }` (names as `device.permissions.set`, applied before the app launches). `locale`: a BCP 47 tag. `timezone`: an IANA name. `a11y`: `{ textSize?, boldText?, contrast?, reduceMotion? }`. A bad value fails config load |
+
+### Camera
+| Key | Default | Meaning |
+|---|---|---|
+| `camera` | none | per suite: `{ back?, front? }`, each a path or `{ path, loop? }` (video loop, default true), relative to the config file; png jpg heic mp4 mov. Applied before each spec's first `app.open()` (exported to the spec as `WARDEN_CAMERA_FEEDS`), put back after each spec. Android legs of the suite claim `--camera` (profile `<p>+cam`, cold boot); iOS needs no special device. A missing or unsupported file fails the spec `INVALID_ARGUMENT` (`E_CAMERA_NOT_FOUND` / `E_CAMERA_MEDIA`). Refused with `physical`. Specs change it with `device.camera` |
 
 ### App, ports, serve, setup
 | Key | Default | Meaning |

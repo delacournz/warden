@@ -64,6 +64,7 @@ A demo app for dogfooding warden end to end: Expo SDK 57 + Expo Router + Uniwind
 | `/network` | probes a 1 KB HTTPS download every ~1.5 s: signal glyph, latency strip (24 requests), `Online` / `Slow link` (median > 300 ms) / `Requests failing` / `Offline`, Pause probes. Deep link `warden-example://network` | `net-*` |
 | `/location` | live `expo-location` track, 150 m geofence around the first fix, speed / distance / fixes readout, fix log. Deep link `warden-example://location` | `loc-*` |
 | `/clock` | 14-day trial dial driven by `Date.now()`, clock-jump log. Deep link `warden-example://clock` | `clk-*` |
+| `/camera` | expo-camera preview with QR scan, photo through the preview, back/front flip, the image picker's camera; readouts `ready` / `facing` / `qr` / `photo` / `picked` / `error` (`none` when empty). Deep link `warden-example://camera`. No sign-in gate. Run by the `camera` suite (`warden e2e camera`: suite feed `qr-hello.png`, Android claimed with `--camera`; iOS asks for camera access for real, the spec uses `systemAlerts: "accept"`) | `camera-*` |
 
 ### e2e
 

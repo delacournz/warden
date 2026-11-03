@@ -1,7 +1,10 @@
 export type { OpenOptions, OpenWaitUntil } from "./app";
 export type {
+	CameraFacingChoice,
+	CameraSetOptions,
 	ClockInput,
 	ConditionRun,
+	DeviceCamera,
 	DeviceClock,
 	DeviceLocation,
 	DeviceNetwork,
@@ -15,6 +18,7 @@ export type {
 	TimelineStepInput,
 } from "./conditions/device-conditions";
 export type { BiometricState, DeviceBiometrics } from "./device";
+export type { CameraState } from "./driver/driver.types";
 export { E2eError } from "./errors";
 export { expect } from "./expect/expect";
 export type { PerfBreach, PerfBudgets } from "./perf/budgets";

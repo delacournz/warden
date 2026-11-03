@@ -1,5 +1,5 @@
 import { dirname, join } from "node:path";
-import type { ConditionsConfig } from "@delacour/warden-core/conditions/conditions.config";
+import type { CameraSuiteFeeds, ConditionsConfig } from "@delacour/warden-core/conditions/conditions.config";
 import type { Platform } from "@delacour/warden-core/types";
 import { ENV_NAMES } from "@delacour/warden-e2e/env";
 import { err, ok, type Result } from "@delacour/warden-types/result";
@@ -90,6 +90,8 @@ export type SpecEnvOptions = {
 	netproxyCommand?: readonly string[] | undefined;
 	/** the suite's devices are biometrics devices (`WARDEN_BIOMETRICS=1`) */
 	biometrics?: boolean | undefined;
+	/** the suite's `camera` with absolute paths (`WARDEN_CAMERA_FEEDS`): fed before each spec's first `app.open()` */
+	cameraFeeds?: CameraSuiteFeeds | undefined;
 };
 
 /**
@@ -119,6 +121,9 @@ export function specEnv(o: SpecEnvOptions): Record<string, string> {
 			: { [ENV_NAMES.conditions]: JSON.stringify(o.conditions) }),
 		...(o.netproxyCommand === undefined ? {} : { [ENV_NAMES.netproxyCommand]: JSON.stringify(o.netproxyCommand) }),
 		...(o.biometrics === true ? { [ENV_NAMES.biometrics]: "1" } : {}),
+		...(o.cameraFeeds === undefined || Object.keys(o.cameraFeeds).length === 0
+			? {}
+			: { [ENV_NAMES.cameraFeeds]: JSON.stringify(o.cameraFeeds) }),
 		BUN_BE_BUN: "1",
 	};
 }

@@ -220,6 +220,7 @@ export async function connectRemoteDriver(options: ConnectRemoteOptions): Promis
 			memoryWarning: (opts) => call("memoryWarning", opts),
 			push: (payload, opts) => call("push", payload, opts),
 			biometrics: (op) => call("biometrics", op),
+			camera: (op, opts) => call("camera", op, opts),
 			app,
 			close,
 		};

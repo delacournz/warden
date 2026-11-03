@@ -125,3 +125,13 @@ export async function signedIn(app: Pick<App, "open">, screen: Screen, email = "
 	await submitSignIn(screen, email, "password1");
 	await expectTodosAfterSignIn(screen);
 }
+
+/** Fresh launch, then the camera screen through its deep link (it has no sign-in gate). */
+export async function openCamera(
+	app: Pick<App, "open">,
+	device: Pick<Device, "openLink">,
+	screen: Screen
+): Promise<void> {
+	await launch(app, screen);
+	await openDeepLink(device, screen, "warden-example://camera", ids.camera.screen);
+}

@@ -1,6 +1,7 @@
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { profileSlug } from "../allocate";
 import { splitBiometricProfile } from "../biometrics";
+import { splitCameraProfile } from "../camera-profile";
 import { type Exec, type ExecResult, execError } from "../exec";
 import { isGoldenName } from "../golden/golden";
 import { realMarkerFs, writeMarker } from "../ownership";
@@ -499,7 +500,7 @@ export function createIosProvider(deps: ProviderDeps, options: IosProviderOption
 
 		async create(name, profile, runtime) {
 			// `<profile>+bio` is the same device type; only the pool identity (and the enrollment after boot) differs
-			const typeProfile = splitBiometricProfile(profile).profile;
+			const typeProfile = splitBiometricProfile(splitCameraProfile(profile).profile).profile;
 			if (options.clone) {
 				const cloned = await options.clone(name, typeProfile, runtime);
 				if (cloned.success) {

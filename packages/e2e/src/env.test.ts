@@ -171,6 +171,17 @@ describe("perf env", () => {
 		expect(readEnv(base)).toMatchObject({ success: true });
 	});
 
+	test("WARDEN_CAMERA_FEEDS", () => {
+		const feeds = { back: { path: "/fx/qr.png", loop: true } };
+		expect(readEnv({ ...base, WARDEN_CAMERA_FEEDS: JSON.stringify(feeds) })).toMatchObject({
+			data: { cameraFeeds: feeds },
+		});
+		const bad = readEnv({ ...base, WARDEN_CAMERA_FEEDS: "{" });
+		expect(bad.success).toBe(false);
+		const none = readEnv(base);
+		expect(none.success && none.data && "cameraFeeds" in none.data).toBe(false);
+	});
+
 	test("WARDEN_BIN, WARDEN_PERF and WARDEN_PERF_BUDGETS", () => {
 		const r = readEnv({
 			...base,

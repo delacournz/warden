@@ -1,4 +1,5 @@
 import type {
+	CameraCondition,
 	ClockCondition,
 	HostFault,
 	LocationCondition,
@@ -43,7 +44,9 @@ export type DriverErrorCode =
 	// the request would change something on a physical device that warden did not put there
 	| "E_REFUSED"
 	// a network / clock condition needs the app launched with the warden dylib and the app is running without it
-	| "E_NETWORK_RELAUNCH";
+	| "E_NETWORK_RELAUNCH"
+	// the camera op needs an Android emulator launched with a camera source (`--camera`) and this one was not
+	| "E_CAMERA_DEVICE";
 
 export type DriverError = { code: DriverErrorCode; message: string; retryable: boolean; detail?: unknown };
 
@@ -327,6 +330,13 @@ export interface Driver {
 	push(payload: PushPayload, opts?: SettingOptions): DriverResult<void>;
 	/** Simulated biometrics (simulators / emulators only, else `E_UNSUPPORTED`); answers the state after the op. */
 	biometrics(op: BiometricOp): DriverResult<BiometricState>;
+	/**
+	 * The simulated camera: `op` is the whole next state (a facing left out has no feed), `null` takes every feed off.
+	 * Feeds are staged copies (`stageCameraFeed`). iOS: the injected dylib fakes the AVFoundation capture stack of the
+	 * injected app (live; an app launched without the dylib gets it from the next launch, `appliesOnLaunch`). Android
+	 * emulator: the emulator's `imagefile:` / `videofile:` camera. Physical devices: `E_UNSUPPORTED`.
+	 */
+	camera(op: CameraCondition | null, opts?: SettingOptions): DriverResult<CameraState>;
 	readonly app: AppCommands;
 	close(): Promise<void>;
 }
@@ -394,6 +404,18 @@ export type A11yState = {
 export type BatteryOp = { level?: number; charging?: boolean };
 
 export type BatteryState = { level?: number; charging?: boolean; cosmetic: boolean };
+
+/**
+ * The feeds now playing. `appliesOnLaunch`: no running app has the camera yet, the next launch picks it up (iOS);
+ * `appliesOnCameraOpen`: an open camera keeps the old frames until the app opens the camera again (Android emulator,
+ * which reads the file per camera open); `rebooted`: the emulator restarted to switch its camera source (image ↔ video).
+ */
+export type CameraState = {
+	feeds: CameraCondition;
+	appliesOnLaunch?: boolean;
+	appliesOnCameraOpen?: boolean;
+	rebooted?: boolean;
+};
 
 /** An APNs payload: an object with an `aps` key (4096 bytes at most). */
 export type PushPayload = { aps: Record<string, unknown> } & Record<string, unknown>;

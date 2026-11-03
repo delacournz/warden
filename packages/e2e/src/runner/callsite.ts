@@ -11,12 +11,16 @@ const OWN_FILES: ReadonlySet<string> = new Set(
 const FRAME = /(?:\(|\s)((?:file:\/\/)?\/[^\s()]+?):\d+(?::\d+)?\)?\s*$/;
 
 /** The absolute path of the first stack frame outside the e2e runner: the spec file calling `test()`. */
-export function callerFile(stack: string | undefined = new Error().stack): string {
+export function callerFile(
+	stack: string | undefined = new Error().stack,
+	/** more files that never count as the caller (an API that resolves paths against the spec) */
+	extraOwn: (path: string) => boolean = () => false
+): string {
 	for (const line of (stack ?? "").split("\n")) {
 		const raw = FRAME.exec(line)?.[1];
 		if (raw === undefined) continue;
 		const path = raw.startsWith("file://") ? raw.slice("file://".length) : raw;
-		if (OWN_FILES.has(path) || path.includes("/node_modules/")) continue;
+		if (OWN_FILES.has(path) || extraOwn(path) || path.includes("/node_modules/")) continue;
 		return path;
 	}
 	return "unknown";

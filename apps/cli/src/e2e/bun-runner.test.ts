@@ -124,6 +124,13 @@ describe("specEnv perf", () => {
 		expect(env.WARDEN_PERF_BUDGETS).toBe('{"jankPct":5}');
 	});
 
+	test("WARDEN_CAMERA_FEEDS only for a suite with a camera", () => {
+		const cameraFeeds = { back: { path: "/fx/qr.png", loop: true } };
+		expect(specEnv({ ...base, cameraFeeds }).WARDEN_CAMERA_FEEDS).toBe(JSON.stringify(cameraFeeds));
+		expect("WARDEN_CAMERA_FEEDS" in specEnv({ ...base, cameraFeeds: {} })).toBe(false);
+		expect("WARDEN_CAMERA_FEEDS" in specEnv(base)).toBe(false);
+	});
+
 	test("WARDEN_BIOMETRICS only for a biometrics suite", () => {
 		expect(specEnv({ ...base, biometrics: true }).WARDEN_BIOMETRICS).toBe("1");
 		expect("WARDEN_BIOMETRICS" in specEnv({ ...base, biometrics: false })).toBe(false);
