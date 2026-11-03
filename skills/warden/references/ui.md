@@ -233,6 +233,7 @@ Values: bare `id=sign-in`, quoted `label="Sign in"`, or regex `text=/^\d+ left$/
 |---|---|
 | `warden dev enable <hud\|perf\|devtools\|all…> [--udid u] [--json]` | turns extras on in the running session; `perf` = `hud`; prints `<udid>: hud on · devtools on`, `--json` `{ udid, features }` |
 | `warden dev disable <…>` · `warden dev status` | off again · read the state. `hud` needs the dashboard (a `--json` run: exit 1 "no dashboard", use `warden perf start`) |
+| `warden dev restart-metro [--clear] [--udid u] [--json]` | stops the session's Metro and starts it on the same leased port; device, lease, app and dev client stay. `--clear` resets Metro's cache (expo `--clear` / RN `--reset-cache`). Waits for the new Metro (up to 5 min), prints `<udid>: Metro restarted at <url>`, `--json` `{ udid, metroUrl, clear }`. Exit 1 while another restart / reinstall / sim restart runs (`busy: …`), or when Metro does not come back (the session then ends as when Metro dies). Reload the app after (`warden ui reload`) if it shows a disconnected red box |
 
 A session started by an older warden has no control socket: restart `warden dev`.
 

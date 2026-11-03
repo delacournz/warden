@@ -339,6 +339,8 @@ Commands:
                               broker of a running \`warden dev\` (both start off)
   status                      which extras (perf HUD, devtools broker) a running
                               \`warden dev\` has on
+  restart-metro               stop and start Metro of a running \`warden dev\` on
+                              the same port; the device, lease and app stay
 
 Examples:
   warden dev
@@ -399,6 +401,18 @@ which extras (perf HUD, devtools broker) a running \`warden dev\` has on
 Options:
   --udid <udid>  the session on this device (default: the only running one)
   --json         print { udid, features } as JSON
+  -h, --help     display help for command
+
+$ warden dev restart-metro --help
+Usage: warden dev restart-metro [options]
+
+stop and start Metro of a running \`warden dev\` on the same port; the device,
+lease and app stay
+
+Options:
+  --clear        reset Metro's cache (expo --clear / react-native --reset-cache)
+  --udid <udid>  the session on this device (default: the only running one)
+  --json         print { udid, metroUrl, clear } as JSON
   -h, --help     display help for command"
 `;
 

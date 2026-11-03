@@ -14,15 +14,22 @@ export const DEV_FEATURES = ["hud", "devtools"] as const;
 export type DevFeature = (typeof DEV_FEATURES)[number];
 export type DevFeatures = Record<DevFeature, boolean>;
 
-export type DevControlRequest = { op: "set"; feature: DevFeature; on: boolean } | { op: "status" };
+/** `restart-metro` (`warden dev restart-metro [--clear]`) stops Metro and starts it again on the session's port. */
+export type DevControlRequest =
+	| { op: "set"; feature: DevFeature; on: boolean }
+	| { op: "status" }
+	| { op: "restart-metro"; clear: boolean };
+/** `metroUrl` is set on a `restart-metro` that came back up. */
 export type DevControlResponse =
-	| { ok: true; features: DevFeatures }
+	| { ok: true; features: DevFeatures; metroUrl?: string }
 	| { ok: false; error: string; features: DevFeatures };
 
 /** sun_path is 104 bytes on macOS (108 on Linux), one of them the NUL. */
 const MAX_SOCKET_PATH_BYTES = 100;
 const MAX_LINE_BYTES = 64 * 1024;
 const DEFAULT_CALL_TIMEOUT_MS = 30_000;
+/** A Metro restart waits for the old one to stop and the new one to answer (`--ready-timeout`, 2m by default). */
+export const RESTART_METRO_TIMEOUT_MS = 5 * 60_000;
 
 const FEATURE_ALIASES: Record<string, readonly DevFeature[]> = {
 	hud: ["hud"],
@@ -50,6 +57,7 @@ export function parseDevControlRequest(value: unknown): DevControlRequest | unde
 	if (typeof value !== "object" || value === null) return undefined;
 	const r = value as Record<string, unknown>;
 	if (r.op === "status") return { op: "status" };
+	if (r.op === "restart-metro" && typeof r.clear === "boolean") return { op: "restart-metro", clear: r.clear };
 	if (r.op === "set" && isFeature(r.feature) && typeof r.on === "boolean")
 		return { op: "set", feature: r.feature, on: r.on };
 	return undefined;
@@ -68,7 +76,8 @@ export function parseDevControlResponse(value: unknown): DevControlResponse | un
 	const r = value as Record<string, unknown>;
 	const features = parseFeatureState(r.features);
 	if (features === undefined) return undefined;
-	if (r.ok === true) return { ok: true, features };
+	if (r.ok === true)
+		return typeof r.metroUrl === "string" ? { ok: true, features, metroUrl: r.metroUrl } : { ok: true, features };
 	if (r.ok === false && typeof r.error === "string") return { ok: false, error: r.error, features };
 	return undefined;
 }
