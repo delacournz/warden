@@ -8,6 +8,7 @@ import {
 	controlSocketPath,
 	type DevFeatures,
 	parseDevControlRequest,
+	parseDevControlResponse,
 	parseDevFeatures,
 	serveDevControl,
 } from "./dev-control";
@@ -45,6 +46,15 @@ describe("parseDevControlRequest", () => {
 			on: true,
 		});
 		expect(parseDevControlRequest({ op: "status" })).toEqual({ op: "status" });
+	});
+
+	test("restart-metro, with or without --clear", () => {
+		expect(parseDevControlRequest({ op: "restart-metro", clear: true })).toEqual({ op: "restart-metro", clear: true });
+		expect(parseDevControlRequest({ op: "restart-metro", clear: false })).toEqual({
+			op: "restart-metro",
+			clear: false,
+		});
+		expect(parseDevControlRequest({ op: "restart-metro" })).toBeUndefined();
 	});
 
 	test("anything else is undefined", () => {
@@ -109,5 +119,22 @@ describe("serveDevControl + callDevControl", () => {
 	test("nothing listening is an error", async () => {
 		const called = await callDevControl(join(tempDir(), "none.sock"), { op: "status" }, 500);
 		expect(called.success).toBe(false);
+	});
+});
+
+describe("parseDevControlResponse", () => {
+	const features: DevFeatures = { hud: false, devtools: false };
+
+	test("carries the Metro URL a restart answers with", () => {
+		expect(parseDevControlResponse({ ok: true, features, metroUrl: "http://127.0.0.1:8101" })).toEqual({
+			ok: true,
+			features,
+			metroUrl: "http://127.0.0.1:8101",
+		});
+		expect(parseDevControlResponse({ ok: true, features })).toEqual({ ok: true, features });
+	});
+
+	test("a non-string metroUrl is dropped", () => {
+		expect(parseDevControlResponse({ ok: true, features, metroUrl: 1 })).toEqual({ ok: true, features });
 	});
 });

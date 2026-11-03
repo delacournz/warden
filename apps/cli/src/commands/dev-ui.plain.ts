@@ -30,6 +30,7 @@ export function plainDevUi(ctx: CommandContext): DevUi {
 		setHud: (on) =>
 			on ? err("no dashboard to show a HUD (--no-tui / --json): use `warden perf start`") : ok(undefined),
 		hudOn: () => false,
+		restartMetro: (clear, host) => host.restartMetro((line) => ctx.err(line), clear),
 		close: () => Promise.resolve(),
 	};
 }

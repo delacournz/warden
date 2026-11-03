@@ -75,6 +75,7 @@ List mode:
 | `s` | screenshot, saved under the session's `shots/` directory |
 | `R` | reinstall the dev build, then reopen the client. Metro keeps running |
 | `x` | restart the simulator and reopen the client (iOS only) |
+| `M` | restart Metro on the same port (cache kept) |
 | `c` | restart Metro with `--clear` on the same port |
 | `l` | start or stop streaming device logs into a row |
 | `p` | start a perf session on this device, or stop the one recording |
@@ -92,11 +93,22 @@ Log pane (after `Tab`): `↑` `↓` scroll a line, `PgUp` `PgDn` a page, `g` `G`
 Guard rails:
 
 - Keys wait for the dev client: before it opens they report `not ready` in their row.
-- `R`, `x` and `c` run one at a time, and a key already running reports `still running`.
+- `R`, `x`, `M` and `c` run one at a time (with `warden dev restart-metro` too), and a key already running reports `still running`.
 - One perf session records per device. `R` and `x` are refused while one records, so the app is not killed under the recording; `p` stops it first. `p` while another process holds a session on the device reports that and names `warden perf stop`.
 - `g` is refused while the session still records. A session that reaches its cap stops itself and `g` shows its report.
 - `m` is refused when nothing records.
 - `x` is iOS only.
+
+## Restart Metro from another shell
+
+A wedged or stale Metro does not need the whole session torn down. From any other terminal (or an agent):
+
+```bash
+warden dev restart-metro           # stop Metro, start it again on the same leased port
+warden dev restart-metro --clear   # same, resetting Metro's cache (expo --clear / react-native --reset-cache)
+```
+
+The simulator, the leases, the installed app and the dev client all stay. The command waits for the new Metro to answer and prints its URL (`--json`: `{ udid, metroUrl, clear }`). With several sessions running, pick one with `--udid`. In the dashboard it runs as the `M` / `c` row, so it is refused while another restart, a reinstall or a simulator restart is running. If the new Metro does not come up, the session ends as it would when Metro dies.
 
 ### HUD
 
