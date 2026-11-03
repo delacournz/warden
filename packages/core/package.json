@@ -12,7 +12,8 @@
 		"lint": "biome lint --write ./src",
 		"check": "biome check ./src",
 		"typecheck": "tsc --noEmit",
-		"test": "bun test"
+		"test": "bun test --parallel --timings=test-timings.json",
+		"test:timings": "bun test --parallel --timings=test-timings.json --update-timings"
 	},
 	"dependencies": {
 		"@delacour/warden-types": "workspace:*",
