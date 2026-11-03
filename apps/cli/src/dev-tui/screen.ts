@@ -2,10 +2,16 @@ import type { Size } from "./model";
 
 const ESC = "\x1b";
 
-/** Alt screen on, autowrap off, cursor hidden, cleared. */
-export const ENTER = `${ESC}[?1049h${ESC}[?7l${ESC}[?25l${ESC}[2J${ESC}[H`;
-/** Back to the user's terminal: reset SGR, autowrap on, end any synchronized update, cursor shown, alt screen off. */
-export const RESTORE = `${ESC}[0m${ESC}[?7h${ESC}[?2026l${ESC}[?25h${ESC}[?1049l`;
+/**
+ * Alt screen on, alternate scroll off, autowrap off, cursor hidden, cleared. Alternate scroll (`?1007`, on by default in
+ * most terminals) turns the mouse wheel into ↑/↓ inside the alt screen, which would move the task selection.
+ */
+export const ENTER = `${ESC}[?1049h${ESC}[?1007l${ESC}[?7l${ESC}[?25l${ESC}[2J${ESC}[H`;
+/**
+ * Back to the user's terminal: reset SGR, autowrap on, alternate scroll back on (the terminals' default), end any
+ * synchronized update, cursor shown, alt screen off.
+ */
+export const RESTORE = `${ESC}[0m${ESC}[?7h${ESC}[?1007h${ESC}[?2026l${ESC}[?25h${ESC}[?1049l`;
 const BEGIN_SYNC = `${ESC}[?2026h`;
 const END_SYNC = `${ESC}[?2026l`;
 

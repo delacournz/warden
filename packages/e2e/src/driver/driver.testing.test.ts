@@ -111,6 +111,28 @@ describe("fakeDriver", () => {
 		expect(unwrap(await d.elementAtPoint({ x: 9999, y: 9999 }))).toBeNull();
 	});
 
+	test("location is recorded and succeeds by default", async () => {
+		const d = fakeDriver({ screens: [home] });
+		expect((await d.location({ kind: "point", lat: 1, lon: 2 })).success).toBe(true);
+		expect(d.calls.at(-1)).toEqual({ method: "location", op: { kind: "point", lat: 1, lon: 2 } });
+	});
+
+	test("clock reports offset, fixed and frozen states from the injected wall time", async () => {
+		const d = fakeDriver({ screens: [home], wallNow: () => 1_000_000 });
+		expect(unwrap(await d.clock({ kind: "offset", ms: 500 }))).toMatchObject({ offsetMs: 500, nowMs: 1_000_500 });
+		expect(unwrap(await d.clock({ kind: "fixed", at: new Date(2_000_000).toISOString() }))).toMatchObject({
+			offsetMs: 1_000_000,
+			frozen: false,
+		});
+		expect(unwrap(await d.clock({ kind: "frozen", at: new Date(3_000_000).toISOString() }))).toMatchObject({
+			frozen: true,
+			nowMs: 3_000_000,
+		});
+		expect(unwrap(await d.clock({ kind: "real" }))).toMatchObject({ offsetMs: 0, frozen: false, nowMs: 1_000_000 });
+		const bad = await d.clock({ kind: "fixed", at: "soon" });
+		expect(!bad.success && bad.error.code).toBe("E_BAD_REQUEST");
+	});
+
 	test("stateful defaults: orientation, appearance, clipboard, app lifecycle", async () => {
 		const d = fakeDriver({ screens: [home] });
 		expect(unwrap(await d.orientation())).toBe("portrait");
@@ -119,12 +141,27 @@ describe("fakeDriver", () => {
 		expect(unwrap(await d.appearance("dark"))).toBe("dark");
 		expect(unwrap(await d.clipboard("copied"))).toBe("copied");
 		expect(unwrap(await d.clipboard())).toBe("copied");
+		expect(unwrap(await d.network({ kind: "offline" }))).toEqual({
+			online: false,
+			condition: { kind: "offline" },
+			needsProxy: [],
+		});
+		expect(unwrap(await d.network({ kind: "preset", preset: "3g" })).online).toBe(true);
 		expect(unwrap(await d.app.isRunning("com.x"))).toBe(false);
 		await d.app.launch("com.x");
 		expect(unwrap(await d.app.isRunning("com.x"))).toBe(true);
 		expect(unwrap(await d.app.isInstalled("com.x"))).toBe(true);
 		await d.app.terminate("com.x");
 		expect(unwrap(await d.app.isRunning("com.x"))).toBe(false);
+	});
+
+	test("biometrics: enrollment is stateful, match and fail leave it alone", async () => {
+		const d = fakeDriver({ screens: [home] });
+		expect(unwrap(await d.biometrics("status"))).toEqual({ enrolled: false, modality: "face" });
+		expect(unwrap(await d.biometrics("enroll")).enrolled).toBe(true);
+		expect(unwrap(await d.biometrics("match")).enrolled).toBe(true);
+		expect(unwrap(await d.biometrics("unenroll")).enrolled).toBe(false);
+		expect(d.calls.filter((c) => c.method === "biometrics")).toHaveLength(4);
 	});
 
 	test("health, settle, screenshot and alert defaults", async () => {

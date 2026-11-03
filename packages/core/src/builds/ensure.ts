@@ -1,3 +1,4 @@
+import { realpathSync } from "node:fs";
 import { join } from "node:path";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import type { Exec } from "../exec";
@@ -10,22 +11,29 @@ import type { InstallMode } from "./app-option.schema";
 import {
 	aliasBuild,
 	type BuildSource,
+	buildKindOfKey,
 	buildsRoot,
 	cachedBuild,
 	findLegacyArtifact,
 	getBuild,
 	getInstall,
+	type KindKey,
+	kindDir,
+	kindHash,
 	recordInstall,
 	storeArtifact,
 } from "./cache";
 import { appStart, bundleIdFor, dynamicAppConfigDir, type EasSettings, loadProject, type Project } from "./config";
 import { type Download, resolveFromEas } from "./eas";
+import { computeCacheKey } from "./fingerprint";
 import {
 	appMatchesArtifact,
 	executableStamp,
+	type FileDigest,
 	type FileSize,
 	type FileStamp,
 	installAndProbe,
+	isPhoneIos,
 	nodeResetFs,
 	probeApp,
 	type ResetFs,
@@ -33,11 +41,14 @@ import {
 	resetSimKeychain,
 	uninstallApp,
 } from "./install";
+import { type DeviceIo, phoneAppMatches } from "./install-device";
+import { type DeviceTarget, projectForKind } from "./kinds";
+import { liveLogTail, openLiveLog } from "./live-log";
 import { type PrebuildStamp, runLocalBuild } from "./local";
-import { buildLockKey, withBuildLock } from "./lock";
+import { type BuildLockDeps, buildLockKey, buildTreeLockKey, withBuildLock } from "./lock";
 import { overlayDirUnlessRepoConfig } from "./overlay";
 import { readProjectKey } from "./project-key";
-import { type EnsureResult, type ResolveSteps, resolveApp } from "./resolve";
+import { type AppPhase, type BuildStepOutcome, type EnsureResult, type ResolveSteps, resolveApp } from "./resolve";
 
 /** Cache `profile` for builds with no EAS profile (local / imported only). */
 export const LOCAL_PROFILE = "local";
@@ -125,6 +136,8 @@ export type EnsureInput = ProjectContext & {
 	native?: string;
 	/** udid / serial to install onto; absent = resolve the artifact only */
 	deviceId?: string;
+	/** the device is a real phone: Android installs check the APK's ABIs against it first */
+	physical?: boolean;
 	/** false = `--no-eas` */
 	eas: boolean;
 	/** false = `--no-build` */
@@ -135,16 +148,27 @@ export type EnsureInput = ProjectContext & {
 	resetKeychain?: boolean;
 	/** filesystem for `installMode: "clean"`'s data wipe (default node:fs) */
 	resetFs?: ResetFs;
+	/** the temp files of `devicectl` calls on a physical iPhone (default node:fs) */
+	deviceIo?: DeviceIo;
 	/** file sizes for the installed-app identity check (default node:fs) */
 	fileSize?: FileSize;
 	/** `ino:mtime` of the installed executable, recorded at install to skip that check (default node:fs) */
 	fileStamp?: FileStamp;
+	/** sha256 of the cached apk for the Android installed-app identity check (default node:fs) */
+	fileDigest?: FileDigest;
 	download?: Download;
 	easPollMs?: number;
 	lockPollMs?: number;
 	/** per-command memo of the git facts, shared with `projectContext` (default: a short-lived shared one) */
 	git?: GitFactsCache;
+	/** progress for a spinner: fetching / waiting / building / installing / ready (`AppPhase`) */
+	onPhase?: (phase: AppPhase) => void;
+	/** set by `ensureKindBuild`: the build goes into its kind dir and a local build is verified against `buildKey` */
+	kind?: { key: KindBuildKey; buildKey: string };
 };
+
+/** The kind builds `ensureKindBuild` makes: a repack is made from a base by the repack engine, never built. */
+export type KindBuildKey = Exclude<KindKey, { kind: "simulator-repack" }>;
 
 /**
  * HEAD's sha when the working tree is clean. A JS-aware key covers JS the EAS fingerprint doesn't, so
@@ -159,10 +183,23 @@ async function cleanHead(exec: Exec, cwd: string): AsyncResult<string> {
 	return head.exitCode === 0 && sha ? ok(sha) : err("EAS skipped: could not read HEAD");
 }
 
-/** Cache `profile`: the EAS profile (or `local`), `:<variant>` when the project was resolved with one. */
+/** Cache `profile`: the EAS profile (or `local`), `:<variant>` / `:<kind>` when the project was resolved with one. */
 function profileOf(project: Project): string {
 	const profile = project.eas?.profile ?? LOCAL_PROFILE;
-	return project.variant === undefined ? profile : `${profile}:${project.variant}`;
+	if (project.variant !== undefined) return `${profile}:${project.variant}`;
+	return project.kind === undefined ? profile : `${profile}:${project.kind}`;
+}
+
+/**
+ * The cache key a prebuild re-key (17-1) gives a kind build. `dev` and the simulator base are keyed by the build key
+ * itself, so the re-keyed build is the same kind of build at `postKey`; a `release` key mixes in the JS and cannot be
+ * rebuilt from `postKey` alone (no alias: the next run misses once and builds again).
+ */
+function postKindHash(key: KindBuildKey, postKey: string): string | undefined {
+	if (key.kind === "release") return undefined;
+	if (key.kind === "dev")
+		return kindHash({ kind: "dev", nativeFp: postKey, ...(key.device ? { device: key.device } : {}) });
+	return kindHash({ kind: key.kind, nativeFp: postKey });
 }
 
 /** The store's record of the native fingerprint `<root>/<platform>` was last prebuilt for (a CNG dir is per checkout). */
@@ -180,6 +217,7 @@ function easStep(input: EnsureInput, eas: EasSettings, cache: CacheFn): NonNulla
 	return async () => {
 		const head = project.jsInputs === undefined ? undefined : await cleanHead(input.exec, project.root);
 		if (head && !head.success) return ok({ kind: "miss", reason: head.error });
+		input.onPhase?.({ phase: "fetching", source: "eas" });
 		const outcome = await resolveFromEas({
 			exec: input.exec,
 			cwd: project.root,
@@ -199,45 +237,164 @@ function easStep(input: EnsureInput, eas: EasSettings, cache: CacheFn): NonNulla
 	};
 }
 
+/** A prebuild re-key (17-1): alias the build under the post-build key and report it, when there is one to alias. */
+function aliasPostKey(
+	input: EnsureInput,
+	stored: Parameters<typeof aliasBuild>[1],
+	postKey: string | undefined,
+	onPostKey: (postKey: string) => void
+): void {
+	if (postKey === undefined) return;
+	const aliasHash = input.kind ? postKindHash(input.kind.key, postKey) : postKey;
+	if (aliasHash === undefined) return;
+	aliasBuild(input.store, stored, aliasHash, input.now());
+	onPostKey(aliasHash);
+}
+
+/** The checkout as one path, so two spellings of it (a symlinked worktree) share its tree lock. */
+function realRoot(root: string): string {
+	try {
+		return realpathSync(root);
+	} catch {
+		return root;
+	}
+}
+
+/**
+ * Hold build lock `key` for `fn`. While another warden holds it: report `waiting` once and mirror its build output
+ * (its live log) into this run's `buildOutput`, then drain the rest once the lock is ours, so a waiter shows the build
+ * as if it ran it.
+ */
+function lockFollowing<T>(
+	input: EnsureInput,
+	key: string,
+	fn: () => AsyncResult<T>,
+	waitLine?: (holder: string) => string
+): AsyncResult<T> {
+	const tail = input.buildOutput ? liveLogTail(input.store, key, input.buildOutput) : undefined;
+	let waited = false;
+	const deps: BuildLockDeps = {
+		store: input.store,
+		owner: input.owner,
+		pid: input.pid,
+		now: input.now,
+		pidAlive: input.pidAlive,
+		sleep: input.sleep,
+		log: input.log,
+		...(input.lockPollMs !== undefined ? { pollMs: input.lockPollMs } : {}),
+		...(waitLine ? { waitLine } : {}),
+		onWait: () => {
+			if (!waited) input.onPhase?.({ phase: "waiting" });
+			waited = true;
+			tail?.poll();
+		},
+	};
+	return withBuildLock(deps, key, () => {
+		if (waited) tail?.drain();
+		return fn();
+	});
+}
+
+/**
+ * Under the checkout's tree lock, before building: the build another warden made here while this one waited. Its own
+ * key may be cached by now; else the checkout is fingerprinted again (this run's key may have been read off a
+ * half-written prebuild), and a build cached under that key is used (installed under it). A checkout that moved to a
+ * key nothing is cached under is an error: building it would be verified against the wrong key.
+ */
+async function builtMeanwhile(
+	input: EnsureInput,
+	onPostKey: (postKey: string) => void
+): AsyncResult<BuildStepOutcome | undefined> {
+	const { store, projectKey, platform, hash } = input;
+	const mine = cachedBuild(store, projectKey, platform, hash, input.now());
+	if (mine) return ok({ kind: "cached", path: mine.path });
+	const verified = input.kind?.buildKey ?? hash;
+	const now = await computeCacheKey(input.exec, input.project, platform, undefined, undefined, input.env);
+	if (!now.success) return now;
+	if (now.data.key === verified) return ok(undefined);
+	const movedHash = input.kind ? postKindHash(input.kind.key, now.data.key) : now.data.key;
+	const theirs = movedHash === undefined ? undefined : cachedBuild(store, projectKey, platform, movedHash, input.now());
+	if (movedHash !== undefined && theirs) {
+		input.log(`the checkout was built meanwhile (now ${now.data.key}): using that build`);
+		onPostKey(movedHash);
+		return ok({ kind: "cached", path: theirs.path });
+	}
+	return err(
+		`the ${platform} checkout changed since it was fingerprinted (${verified} → ${now.data.key}): another build or an edit; run again`
+	);
+}
+
+/** Run the local build (under the tree lock), its output mirrored to a live log under `liveKeys`; cache it, alias a re-key. */
+async function buildHere(
+	input: EnsureInput,
+	cache: CacheFn,
+	onPostKey: (postKey: string) => void,
+	liveKeys: string[]
+): AsyncResult<BuildStepOutcome> {
+	const { project, platform } = input;
+	input.onPhase?.({ phase: "building", platform, hash: input.kind?.buildKey ?? input.hash });
+	const live = openLiveLog(input, liveKeys);
+	const output = (line: string) => {
+		live.write(line);
+		input.buildOutput?.(line);
+	};
+	let built: Awaited<ReturnType<typeof runLocalBuild>>;
+	try {
+		built = await runLocalBuild({
+			exec: input.exec,
+			project,
+			platform,
+			hash: input.kind?.buildKey ?? input.hash,
+			...(input.native !== undefined ? { native: input.native } : {}),
+			env: input.env,
+			log: input.log,
+			output,
+			...(project.compilerCache === false ? { compilerCache: false } : {}),
+			...(input.git ? { git: input.git } : {}),
+			prebuildStamp: prebuildStamp(input.store, project.root, platform),
+		});
+	} finally {
+		live.close();
+	}
+	if (!built.success) return built;
+	const stored = await cache(built.data.artifact, "build", false);
+	if (!stored.success) return stored;
+	aliasPostKey(input, stored.data, built.data.postKey, onPostKey);
+	return ok({ kind: "built", path: stored.data.path });
+}
+
 /**
  * The local build step, cached under the requested key: every fresh checkout (and this session's other
- * devices) computes it. A prebuild re-key (17-1) also aliases the post-build key and reports it.
+ * devices) computes it. A prebuild re-key (17-1) also aliases the post-build key and reports it. One build per
+ * checkout at a time (the tree lock): a second warden waits, mirroring the build's output, then takes its result.
  */
 function buildStep(
 	input: EnsureInput,
 	cache: CacheFn,
 	onPostKey: (postKey: string) => void
 ): NonNullable<ResolveSteps["build"]> {
-	const { project } = input;
-	return async () => {
-		const built = await runLocalBuild({
-			exec: input.exec,
-			project,
-			platform: input.platform,
-			hash: input.hash,
-			...(input.native !== undefined ? { native: input.native } : {}),
-			env: input.env,
-			log: input.log,
-			...(input.buildOutput ? { output: input.buildOutput } : {}),
-			...(project.compilerCache === false ? { compilerCache: false } : {}),
-			...(input.git ? { git: input.git } : {}),
-			prebuildStamp: prebuildStamp(input.store, project.root, input.platform),
-		});
-		if (!built.success) return built;
-		const stored = await cache(built.data.artifact, "build", false);
-		if (!stored.success) return stored;
-		const { postKey } = built.data;
-		if (postKey !== undefined) {
-			aliasBuild(input.store, stored.data, postKey, input.now());
-			onPostKey(postKey);
-		}
-		return ok(stored.data.path);
+	const { project, platform } = input;
+	const treeKey = buildTreeLockKey(realRoot(project.root), platform);
+	const fpKey = buildLockKey(input.projectKey, platform, input.hash);
+	const waitLine = (holder: string) => `another warden (${holder}) is building in ${project.root} — waiting`;
+	const run = async (): AsyncResult<BuildStepOutcome> => {
+		const meanwhile = await builtMeanwhile(input, onPostKey);
+		if (!meanwhile.success) return meanwhile;
+		return meanwhile.data ? ok(meanwhile.data) : buildHere(input, cache, onPostKey, [treeKey, fpKey]);
 	};
+	return () => lockFollowing(input, treeKey, run, waitLine);
 }
 
 /** Wire the real effects (sqlite cache, simctl/adb, eas-cli, local build) into `resolveApp`. */
 export async function ensureApp(input: EnsureInput): AsyncResult<EnsureResult> {
 	const { store, env, project, projectKey, platform, hash } = input;
+	const layout = input.kind && {
+		dir: kindDir(env, projectKey, platform, input.kind.key),
+		kind:
+			input.kind.key.kind === "release"
+				? { kind: "release" as const, jsKey: input.kind.key.jsKey }
+				: input.kind.key.kind,
+	};
 	const cache = (path: string, source: BuildSource, move: boolean) =>
 		storeArtifact({
 			store,
@@ -249,6 +406,7 @@ export async function ensureApp(input: EnsureInput): AsyncResult<EnsureResult> {
 			artifact: path,
 			source,
 			move,
+			...(layout ? { layout } : {}),
 			now: input.now(),
 		});
 
@@ -266,32 +424,23 @@ export async function ensureApp(input: EnsureInput): AsyncResult<EnsureResult> {
 		flightKey: `${buildsRoot(env)}|${buildLockKey(projectKey, platform, hash)}`,
 		...(input.installMode !== undefined ? { installMode: input.installMode } : {}),
 		log: input.log,
+		...(input.onPhase ? { onPhase: input.onPhase } : {}),
 		cached: () => cachedBuild(store, projectKey, platform, hash, input.now())?.path,
 		legacy: async () => {
+			if (input.kind) return ok(undefined);
 			const found = findLegacyArtifact(project.cacheDirs, platform, hash);
 			if (!found) return ok(undefined);
 			const stored = await cache(found, "legacy", false);
 			return stored.success ? ok(stored.data.path) : stored;
 		},
-		lock: (fn) =>
-			withBuildLock(
-				{
-					store,
-					owner: input.owner,
-					pid: input.pid,
-					now: input.now,
-					pidAlive: input.pidAlive,
-					sleep: input.sleep,
-					log: input.log,
-					...(input.lockPollMs !== undefined ? { pollMs: input.lockPollMs } : {}),
-				},
-				buildLockKey(projectKey, platform, hash),
-				fn
-			),
+		lock: (fn) => lockFollowing(input, buildLockKey(projectKey, platform, hash), fn),
 	};
 
 	const easSettings = project.eas;
-	if (input.eas && easSettings) steps.eas = easStep(input, easSettings, cache);
+	// an EAS build is a dev or release build: it can never be the simulator base, whose point is carrying no JS bundle,
+	// nor a build signed for a phone (EAS builds are signed by EAS)
+	const easApplies = input.kind?.key.kind !== "simulator-base" && !deviceOf(input.kind?.key);
+	if (input.eas && easSettings && easApplies) steps.eas = easStep(input, easSettings, cache);
 	if (input.build) {
 		steps.build = buildStep(input, cache, (postKey) => {
 			installKey = postKey;
@@ -302,12 +451,20 @@ export async function ensureApp(input: EnsureInput): AsyncResult<EnsureResult> {
 	if (deviceId !== undefined) {
 		const bundleId = bundleIdFor(project, platform);
 		if (!bundleId.success) return bundleId;
-		const target = { platform, deviceId };
-		const deps = { exec: input.exec, env, ...(input.fileSize ? { fileSize: input.fileSize } : {}) };
+		const target = { platform, deviceId, ...(input.physical === true ? { physical: true } : {}) };
+		const deps = {
+			exec: input.exec,
+			env,
+			...(input.fileSize ? { fileSize: input.fileSize } : {}),
+			...(input.deviceIo ? { deviceIo: input.deviceIo } : {}),
+			...(input.fileDigest ? { fileDigest: input.fileDigest } : {}),
+		};
 		steps.device = {
 			installedHash: () => installedAt(getInstall(store, platform, deviceId, bundleId.data)?.hash),
 			confirm: () => probeApp(deps, target, bundleId.data),
 			matches: async (cachedPath, installed) => {
+				// a phone has no container to stat: the install record named this build, devicectl names its version
+				if (isPhoneIos(target)) return ok(await phoneAppMatches(input.exec, cachedPath, installed));
 				// the container this process recorded at install, executable untouched: that install (17-7, no plutil)
 				const record = getInstall(store, platform, deviceId, bundleId.data);
 				const container = installed.container;
@@ -346,4 +503,33 @@ export async function ensureApp(input: EnsureInput): AsyncResult<EnsureResult> {
 		};
 	}
 	return resolveApp(steps);
+}
+
+/** The device target a kind key was made for, if any (only `dev` / `release` have one). */
+function deviceOf(key: KindBuildKey | undefined): DeviceTarget | undefined {
+	return key?.kind === "dev" || key?.kind === "release" ? key.device : undefined;
+}
+
+export type EnsureKindInput = Omit<EnsureInput, "hash" | "kind" | "project"> & {
+	/** the project as loaded (kind-less); `ensureKindBuild` resolves it as the kind of `key` */
+	project: Project;
+	/** which build: `dev`, the `simulator-base`, or a `release` (a repack is made from a base, not built) */
+	key: KindBuildKey;
+	/** the key `computeCacheKey` gives the kind's project: what a local build is verified against (`computeKindKey().buildKey`) */
+	buildKey: string;
+};
+
+/**
+ * `ensureApp` for one build of a kind, through the same cache / EAS / local-build / install pipeline: cached under
+ * `kindDir`, keyed (cache, build lock, install record) by `kindHash(key)`, built with the kind's command and env
+ * (`projectForKind`). The legacy cache dirs are not consulted, and EAS never supplies the simulator base.
+ */
+export async function ensureKindBuild(input: EnsureKindInput): AsyncResult<EnsureResult> {
+	const { key, buildKey, project, ...rest } = input;
+	return ensureApp({
+		...rest,
+		project: projectForKind(project, buildKindOfKey(key), deviceOf(key)),
+		hash: kindHash(key),
+		kind: { key, buildKey },
+	});
 }

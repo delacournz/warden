@@ -106,6 +106,30 @@ final class KeyboardTests: XCTestCase {
       ])
   }
 
+  /// The lead-in sits between the first key and the second only, before the second key's Shift: the controlled
+  /// input's first change re-renders, and a key landing in it is lost or moved ("Hllo", "Hllo, World 123!e").
+  func testPlanPutsTheLeadInBetweenTheFirstAndSecondKeyOnly() {
+    let plan = KeyboardMap.plan(typing: "aBc", paceMs: 5, holdMs: 20, leadMs: 60)
+    XCTAssertEqual(
+      plan.steps,
+      [
+        .event(.keyboard(direction: .down, keyCode: 0x04)), .pause(20),
+        .event(.keyboard(direction: .up, keyCode: 0x04)), .pause(5),
+        .pause(60),
+        .event(.keyboard(direction: .down, keyCode: KeyboardMap.leftShift)),
+        .event(.keyboard(direction: .down, keyCode: 0x05)), .pause(20),
+        .event(.keyboard(direction: .up, keyCode: 0x05)), .pause(5),
+        .event(.keyboard(direction: .up, keyCode: KeyboardMap.leftShift)),
+        .event(.keyboard(direction: .down, keyCode: 0x06)), .pause(20),
+        .event(.keyboard(direction: .up, keyCode: 0x06)), .pause(5),
+      ])
+  }
+
+  func testPlanOfOneKeyHasNoLeadIn() {
+    let plan = KeyboardMap.plan(typing: "a", leadMs: 60)
+    XCTAssertFalse(plan.steps.contains(.pause(60)))
+  }
+
   func testPlanWithZeroPacingHasNoPauses() {
     let plan = KeyboardMap.plan(typing: "aab")
     XCTAssertFalse(plan.steps.contains { if case .pause = $0 { true } else { false } })

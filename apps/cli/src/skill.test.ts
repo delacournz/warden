@@ -23,11 +23,12 @@ function writeAll(dir: string): void {
 }
 
 describe("embedded skill folder", () => {
-	test("SKILL_PATHS lists the six files, all non-empty; SKILL.md has frontmatter", () => {
+	test("SKILL_PATHS lists the seven files, all non-empty; SKILL.md has frontmatter", () => {
 		expect([...SKILL_PATHS]).toEqual([
 			"SKILL.md",
 			"references/ui.md",
 			"references/perf.md",
+			"references/physical.md",
 			"references/specs.md",
 			"references/authoring.md",
 			"references/suites.md",

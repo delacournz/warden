@@ -4,7 +4,14 @@ import { storeArtifact } from "@delacour/warden-core/builds/cache";
 import { DEFAULT_IDLE_MS } from "@delacour/warden-core/config.defaults";
 import { markAndroidSnapshotPending } from "@delacour/warden-core/golden/android-snapshot-pending";
 import type { Owner } from "@delacour/warden-core/types";
-import { AUTO_GC_INTERVAL_MS, LOW_DISK_GC_INTERVAL_MS, maybeAutoGc, niceCommand } from "./autogc";
+import {
+	AUTO_GC_INTERVAL_MS,
+	EPHEMERAL_SWEPT_META_KEY,
+	LOW_DISK_GC_INTERVAL_MS,
+	maybeAutoGc,
+	niceCommand,
+} from "./autogc";
+import { GOLDEN_PRUNE_INTERVAL_MS, GOLDEN_PRUNED_META_KEY } from "./golden-prune";
 import { type TestContext, testContext } from "./testing";
 
 let ctx: TestContext | undefined;
@@ -19,6 +26,8 @@ const NO_VOLUME = () => undefined;
 function withStaleLease(clock: () => number): TestContext {
 	const c = testContext([], { now: clock });
 	c.env = { ...c.env, WARDEN_BACKGROUND: "1" };
+	c.db.setMeta(EPHEMERAL_SWEPT_META_KEY, "0");
+	c.db.setMeta(GOLDEN_PRUNED_META_KEY, String(Number.MAX_SAFE_INTEGER));
 	c.db.insertLease(
 		{ resource: { kind: "device", platform: "ios", id: "U1", name: "warden-iphone-17-1" }, owner: agent, ttlMs: 1 },
 		0
@@ -27,6 +36,45 @@ function withStaleLease(clock: () => number): TestContext {
 }
 
 describe("maybeAutoGc", () => {
+	test("stale goldens: due 24 h after gc last pruned them; not with WARDEN_GOLDEN_PRUNE=0", () => {
+		let clock = 5 * AUTO_GC_INTERVAL_MS;
+		ctx = testContext([], { now: () => clock });
+		ctx.env = { ...ctx.env, WARDEN_BACKGROUND: "1" };
+		ctx.db.setMeta(EPHEMERAL_SWEPT_META_KEY, "0");
+		ctx.db.setMeta(GOLDEN_PRUNED_META_KEY, String(clock));
+		const spawned: string[][] = [];
+		maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: NICE, volume: NO_VOLUME });
+		expect(spawned).toHaveLength(0);
+		clock += GOLDEN_PRUNE_INTERVAL_MS;
+		maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: NICE, volume: NO_VOLUME });
+		expect(spawned).toHaveLength(1);
+		clock += GOLDEN_PRUNE_INTERVAL_MS;
+		ctx.env = { ...ctx.env, WARDEN_GOLDEN_PRUNE: "0" };
+		maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: NICE, volume: NO_VOLUME });
+		expect(spawned).toHaveLength(1);
+	});
+
+	test("ephemeral sims: a machine never swept (sims an older warden left) is work once; after gc stamps it, it is not", () => {
+		let clock = 5 * AUTO_GC_INTERVAL_MS;
+		ctx = testContext([], { now: () => clock });
+		ctx.env = { ...ctx.env, WARDEN_BACKGROUND: "1" };
+		ctx.db.setMeta(EPHEMERAL_SWEPT_META_KEY, "0");
+		ctx.db.setMeta(GOLDEN_PRUNED_META_KEY, String(Number.MAX_SAFE_INTEGER));
+		ctx.db.deleteMeta(EPHEMERAL_SWEPT_META_KEY);
+		const spawned: string[][] = [];
+		maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: NICE, volume: NO_VOLUME });
+		expect(spawned).toHaveLength(1);
+		clock += AUTO_GC_INTERVAL_MS;
+		ctx.db.setMeta(EPHEMERAL_SWEPT_META_KEY, String(clock));
+		maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: NICE, volume: NO_VOLUME });
+		expect(spawned).toHaveLength(1);
+		clock += AUTO_GC_INTERVAL_MS;
+		ctx.db.deleteMeta(EPHEMERAL_SWEPT_META_KEY);
+		ctx.env = { ...ctx.env, WARDEN_EPHEMERAL: "0" };
+		maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: NICE, volume: NO_VOLUME });
+		expect(spawned).toHaveLength(1);
+	});
+
 	test("spawns `nice -n 10 gc --quiet` when a lease is stale, at most once per interval (shared across processes via the store)", () => {
 		let clock = 5 * AUTO_GC_INTERVAL_MS;
 		ctx = withStaleLease(() => clock);
@@ -46,6 +94,8 @@ describe("maybeAutoGc", () => {
 		let clock = 5 * AUTO_GC_INTERVAL_MS;
 		ctx = testContext([], { now: () => clock });
 		ctx.env = { ...ctx.env, WARDEN_BACKGROUND: "1" };
+		ctx.db.setMeta(EPHEMERAL_SWEPT_META_KEY, "0");
+		ctx.db.setMeta(GOLDEN_PRUNED_META_KEY, String(Number.MAX_SAFE_INTEGER));
 		ctx.db.insertLease(
 			{ resource: { kind: "device", platform: "ios", id: "U1", name: "n" }, owner: agent, ttlMs: 60_000 },
 			clock
@@ -67,6 +117,8 @@ describe("maybeAutoGc", () => {
 		const clock = 5 * AUTO_GC_INTERVAL_MS;
 		ctx = testContext([], { now: () => clock });
 		ctx.env = { ...ctx.env, WARDEN_BACKGROUND: "1" };
+		ctx.db.setMeta(EPHEMERAL_SWEPT_META_KEY, "0");
+		ctx.db.setMeta(GOLDEN_PRUNED_META_KEY, String(Number.MAX_SAFE_INTEGER));
 		ctx.db.insertLease({ resource: { kind: "port", port: 9 }, owner: agent, ttlMs: 1, pid: 4242 }, 0);
 		const spawned: string[][] = [];
 		maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), {
@@ -81,6 +133,8 @@ describe("maybeAutoGc", () => {
 		let clock = 100 * 60_000;
 		ctx = testContext([], { now: () => clock });
 		ctx.env = { ...ctx.env, WARDEN_BACKGROUND: "1" };
+		ctx.db.setMeta(EPHEMERAL_SWEPT_META_KEY, "0");
+		ctx.db.setMeta(GOLDEN_PRUNED_META_KEY, String(Number.MAX_SAFE_INTEGER));
 		ctx.db.recordDevice({ platform: "ios", id: "U1", name: "warden-iphone-17-1" }, clock - DEFAULT_IDLE_MS);
 		const spawned: string[][] = [];
 		const spawn = (cmd: string[]) => spawned.push(cmd);
@@ -121,6 +175,8 @@ describe("maybeAutoGc", () => {
 		let clock = 5 * AUTO_GC_INTERVAL_MS;
 		ctx = testContext([], { now: () => clock });
 		ctx.env = { ...ctx.env, WARDEN_BACKGROUND: "1" };
+		ctx.db.setMeta(EPHEMERAL_SWEPT_META_KEY, "0");
+		ctx.db.setMeta(GOLDEN_PRUNED_META_KEY, String(Number.MAX_SAFE_INTEGER));
 		await storeArtifact({
 			store: ctx.db,
 			env: ctx.env,
@@ -144,12 +200,22 @@ describe("maybeAutoGc", () => {
 		const clock = 5 * AUTO_GC_INTERVAL_MS;
 		ctx = testContext([], { now: () => clock });
 		ctx.env = { ...ctx.env, WARDEN_BACKGROUND: "1", CI: "1" };
+		ctx.db.setMeta(EPHEMERAL_SWEPT_META_KEY, "0");
+		ctx.db.setMeta(GOLDEN_PRUNED_META_KEY, String(Number.MAX_SAFE_INTEGER));
 		markAndroidSnapshotPending(ctx.db, "Pixel_10");
 		const spawned: string[][] = [];
 		maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: NICE, volume: NO_VOLUME });
 		expect(spawned).toEqual([]);
 		ctx.db.deleteMeta("auto_gc_checked_at");
 		ctx.env = { ...ctx.env, CI: undefined };
+		maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: NICE, volume: NO_VOLUME });
+		expect(spawned).toEqual([[...NICE, "warden", "gc", "--quiet"]]);
+	});
+
+	test("WARDEN_WARM=1 makes every interval a pass, since the pool is topped up by gc", () => {
+		ctx = testContext([], { now: () => 5 * AUTO_GC_INTERVAL_MS });
+		ctx.env = { ...ctx.env, WARDEN_BACKGROUND: "1", WARDEN_WARM: "1" };
+		const spawned: string[][] = [];
 		maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: NICE, volume: NO_VOLUME });
 		expect(spawned).toEqual([[...NICE, "warden", "gc", "--quiet"]]);
 	});
@@ -215,6 +281,8 @@ describe("maybeAutoGc on a low disk", () => {
 	test("plenty of free space leaves the normal throttle and checks alone", () => {
 		ctx = testContext([], { now: () => 5 * AUTO_GC_INTERVAL_MS });
 		ctx.env = { ...ctx.env, WARDEN_BACKGROUND: "1" };
+		ctx.db.setMeta(EPHEMERAL_SWEPT_META_KEY, "0");
+		ctx.db.setMeta(GOLDEN_PRUNED_META_KEY, String(Number.MAX_SAFE_INTEGER));
 		const spawned: string[][] = [];
 		maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: NICE, volume: () => roomy });
 		expect(spawned).toEqual([]);
@@ -223,6 +291,8 @@ describe("maybeAutoGc on a low disk", () => {
 	test("WARDEN_DISK=off and an unreadable volume do not trigger", () => {
 		ctx = testContext([], { now: () => 5 * AUTO_GC_INTERVAL_MS });
 		ctx.env = { ...ctx.env, WARDEN_BACKGROUND: "1", WARDEN_DISK: "off" };
+		ctx.db.setMeta(EPHEMERAL_SWEPT_META_KEY, "0");
+		ctx.db.setMeta(GOLDEN_PRUNED_META_KEY, String(Number.MAX_SAFE_INTEGER));
 		const spawned: string[][] = [];
 		maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: NICE, volume: () => low });
 		ctx.env = { ...ctx.env, WARDEN_DISK: undefined };

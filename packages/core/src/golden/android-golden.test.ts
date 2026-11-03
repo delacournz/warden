@@ -1,14 +1,17 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
+import { STAY_AWAKE_COMMAND } from "../android-keyguard";
 import { claimDevices } from "../claim";
+import { sniffCameraMedia } from "../conditions/camera-media";
 import type { Exec, ExecResult } from "../exec";
 import { BOOT_WAIT_SCRIPT, createAndroidProvider, GOLDEN_PORT_LABEL, type SpawnDetached } from "../providers/android";
 import { openStore, type Store } from "../store";
 import type { Owner } from "../types";
 import {
+	ANDROID_BIOMETRICS_RECIPE,
 	type AndroidGoldenDeps,
 	type AndroidSnapshotInputs,
 	androidSnapshotEnabled,
@@ -25,6 +28,7 @@ import {
 	readSnapshotInputs,
 	snapshotForClaim,
 	snapshotName,
+	withFingerprintHardware,
 } from "./android-golden";
 import {
 	ANDROID_SNAPSHOT_RETRY_MS,
@@ -87,7 +91,7 @@ const EMULATOR = () => join(sdk, "emulator", "emulator");
 const env = () => ({ ANDROID_HOME: sdk, ANDROID_AVD_HOME: avdHomeDir, WARDEN_HOME: dir });
 
 /** `command` = what `ps -o command=` prints for its pid (default: an Android Studio launch of `avd`) */
-type Instance = { avd: string; pid: number; writable: boolean; command?: string };
+type Instance = { avd: string; pid: number; writable: boolean; command?: string; touches?: number; unlocked?: boolean };
 
 type HostOptions = {
 	avds?: string[];
@@ -100,6 +104,9 @@ type HostOptions = {
 	buildDies?: boolean;
 	/** also ignore SIGKILL */
 	unkillable?: boolean;
+	/** the fingerprint wizard never enrolls, whatever is touched */
+	enrollNeverFinishes?: boolean;
+	keyguardStuck?: boolean;
 };
 
 /**
@@ -166,6 +173,18 @@ function fakeAndroidHost(opts: HostOptions = {}) {
 			"shell getprop ro.build.version.sdk": () => out("36\n"),
 			"emu kill": () => kill(serial),
 		};
+		if (rest === "emu finger touch 1") {
+			instance.touches = (instance.touches ?? 0) + 1;
+			return out("OK\r\n");
+		}
+		if (rest === "shell dumpsys fingerprint") {
+			const count = (instance.touches ?? 0) >= 2 && !opts.enrollNeverFinishes ? 1 : 0;
+			return out(`{"service":"Fingerprint Manager","prints":[{"id":0,"count":${count},"accept":0,"reject":0}]}`);
+		}
+		if (rest === "shell dumpsys window")
+			return out(`isKeyguardShowing=${instance.unlocked === true && opts.keyguardStuck !== true ? "false" : "true"}`);
+		if (rest.startsWith("shell input keyevent 224")) instance.unlocked = true;
+		if (/^shell (locksettings|am|input|uiautomator|cat|svc|settings) /.test(rest)) return out("");
 		const name = /^emu avd snapshot save (\S+)$/.exec(rest)?.[1];
 		return name !== undefined ? save(instance, name) : fixed[rest]?.();
 	}
@@ -827,6 +846,15 @@ describe("stale snapshots", () => {
 		expect(existsSync(userBoot)).toBe(true);
 	});
 
+	test("cautious (gc's auto prune): an AVD whose key cannot be read keeps every snapshot", async () => {
+		const host = fakeAndroidHost();
+		const stale = plant("warden-0000000000");
+		rmSync(join(avdHomeDir, "Pixel_10.avd", "config.ini"));
+		const pruned = await pruneAndroidSnapshots(goldenDeps(host), { all: false, cautious: true });
+		expect(pruned).toEqual(ok([]));
+		expect(existsSync(stale)).toBe(true);
+	});
+
 	test("prune --all deletes the current one too; a running AVD keeps its snapshots", async () => {
 		const host = fakeAndroidHost();
 		const current = plant(snapshotName(await currentKey(host)));
@@ -846,5 +874,200 @@ describe("stale snapshots", () => {
 		const ensured = await ensureAndroidSnapshot(goldenDeps(host), "Pixel_10");
 		expect(ensured.success && ensured.data?.built).toBe(true);
 		expect(existsSync(stale)).toBe(false);
+	});
+});
+
+describe("biometrics snapshots", () => {
+	const BIO = "Pixel_10+bio";
+	const configPath = () => join(avdHomeDir, "Pixel_10.avd", "config.ini");
+
+	test("the key covers biometrics and hw.fingerprint=yes; a plain key is unchanged", async () => {
+		const host = fakeAndroidHost();
+		const plain = await readSnapshotInputs(goldenDeps(host), "Pixel_10");
+		const bio = await readSnapshotInputs(goldenDeps(host), BIO);
+		if (!plain.success || !plain.data || !bio.success || !bio.data) throw new Error("no inputs");
+		expect(plain.data.inputs.biometrics).toBeUndefined();
+		expect(bio.data.inputs.biometrics).toBe(true);
+		expect(bio.data.inputs.hardware).toContain("hw.fingerprint=yes");
+		expect(androidSnapshotKey(bio.data.inputs)).not.toBe(androidSnapshotKey(plain.data.inputs));
+		expect(androidSnapshotKey({ ...INPUTS })).toBe(androidSnapshotKey({ ...INPUTS, biometrics: false }));
+		expect(readFileSync(configPath(), "utf8")).not.toContain("hw.fingerprint");
+	});
+
+	test("withFingerprintHardware replaces or appends the line", () => {
+		expect(withFingerprintHardware("a=1\nhw.fingerprint = no\nb=2\n")).toBe("a=1\nhw.fingerprint=yes\nb=2\n");
+		expect(withFingerprintHardware("a=1\n")).toBe("a=1\nhw.fingerprint=yes\n");
+	});
+
+	test("ensure builds an enrolled snapshot: hw.fingerprint written, fingerprint enrolled before the save", async () => {
+		const host = fakeAndroidHost();
+		const ensured = await ensureAndroidSnapshot(goldenDeps(host), BIO);
+		expect(ensured.success && ensured.data?.built).toBe(true);
+		expect(readFileSync(configPath(), "utf8")).toContain("hw.fingerprint=yes");
+		const pin = host.calls.findIndex((c) => c.endsWith("shell locksettings set-pin 1111"));
+		const save = host.calls.findIndex((c) => c.includes("snapshot save"));
+		expect(pin).toBeGreaterThan(-1);
+		expect(save).toBeGreaterThan(pin);
+		expect(host.calls.some((c) => c.endsWith("emu finger touch 1"))).toBe(true);
+		const name = ensured.success ? ensured.data?.name : undefined;
+		expect(existsSync(join(avdHomeDir, "Pixel_10.avd", "snapshots", `${name}`, "snapshot.pb"))).toBe(true);
+	});
+
+	test("the enrolled snapshot is saved unlocked and awake, and its key changes with the unlock recipe", async () => {
+		const host = fakeAndroidHost();
+		const ensured = await ensureAndroidSnapshot(goldenDeps(host), BIO);
+		expect(ensured.success && ensured.data?.built).toBe(true);
+		const touch = host.calls
+			.map((c, n) => (c.endsWith("emu finger touch 1") ? n : -1))
+			.reduce((a, b) => Math.max(a, b), -1);
+		const unlock = host.calls.findIndex((c) => c.includes("shell input keyevent 224"));
+		const awake = host.calls.findIndex((c) => c.endsWith(`shell ${STAY_AWAKE_COMMAND}`));
+		const save = host.calls.findIndex((c) => c.includes("snapshot save"));
+		expect(unlock).toBeGreaterThan(touch);
+		expect(awake).toBeGreaterThan(unlock);
+		expect(save).toBeGreaterThan(awake);
+		// recipe 1 saved the snapshot behind the lock screen: those keys must not match any more
+		expect(ANDROID_BIOMETRICS_RECIPE).toBeGreaterThanOrEqual(2);
+	});
+
+	test("a build whose lock screen will not go away saves nothing", async () => {
+		const host = fakeAndroidHost({ keyguardStuck: true });
+		const ensured = await ensureAndroidSnapshot(goldenDeps(host, [], { timing: { settleMs: 0 } }), BIO);
+		expect(ensured.success).toBe(false);
+		const dirOf = join(avdHomeDir, "Pixel_10.avd", "snapshots");
+		expect(existsSync(dirOf) ? readdirSync(dirOf) : []).toEqual([]);
+		expect(host.running.size).toBe(0);
+	});
+
+	test("a plain build does not enroll, and building one variant keeps the other's snapshot", async () => {
+		const host = fakeAndroidHost();
+		const bio = await ensureAndroidSnapshot(goldenDeps(host), BIO);
+		const plain = await ensureAndroidSnapshot(goldenDeps(host), "Pixel_10");
+		expect(bio.success && plain.success).toBe(true);
+		if (!bio.success || !plain.success || !bio.data || !plain.data) return;
+		expect(bio.data.name).not.toBe(plain.data.name);
+		const snaps = join(avdHomeDir, "Pixel_10.avd", "snapshots");
+		expect(existsSync(join(snaps, bio.data.name))).toBe(true);
+		expect(existsSync(join(snaps, plain.data.name))).toBe(true);
+		const listed = await listAndroidSnapshots(goldenDeps(host));
+		expect(listed.success && listed.data.every((e) => e.current)).toBe(true);
+		expect(host.calls.filter((c) => c.endsWith("locksettings set-pin 1111"))).toHaveLength(1);
+	});
+
+	test("an enrollment that never finishes leaves no snapshot and the build emulator stopped", async () => {
+		const host = fakeAndroidHost({ enrollNeverFinishes: true });
+		const ensured = await ensureAndroidSnapshot(goldenDeps(host, [], { timing: { settleMs: 0 } }), BIO);
+		expect(ensured.success).toBe(false);
+		const dirOf = join(avdHomeDir, "Pixel_10.avd", "snapshots");
+		expect(existsSync(dirOf) ? readdirSync(dirOf) : []).toEqual([]);
+		expect(host.running.size).toBe(0);
+	});
+
+	test("a claim of the biometrics profile launches the biometrics snapshot, not the plain one", async () => {
+		const host = fakeAndroidHost();
+		const golden = goldenDeps(host);
+		const bio = await ensureAndroidSnapshot(golden, BIO);
+		const plain = await ensureAndroidSnapshot(golden, "Pixel_10");
+		if (!bio.success || !plain.success || !bio.data || !plain.data) throw new Error("build failed");
+		const forClaim = await snapshotForClaim(golden, BIO);
+		expect(forClaim).toEqual(ok(bio.data.name));
+		expect(await snapshotForClaim(golden, "Pixel_10")).toEqual(ok(plain.data.name));
+	});
+
+	test("provider: a +bio profile launches from the enrolled snapshot, records the +bio profile", async () => {
+		const host = fakeAndroidHost();
+		const bio = await ensureAndroidSnapshot(goldenDeps(host), BIO);
+		if (!bio.success || !bio.data) throw new Error("build failed");
+		const created = await provider(host).create("w", "pixel-10+bio");
+		expect(created.success && created.data.profile).toBe("pixel-10+bio");
+		expect(host.spawned.at(-1)).toEqual(expect.arrayContaining(["-read-only", "-snapshot", bio.data.name]));
+		expect(store.listDevices("android").some((d) => d.profile === "pixel-10+bio")).toBe(true);
+	});
+
+	test("provider: a +bio profile never cold-boots unenrolled when the snapshot is unavailable", async () => {
+		const host = fakeAndroidHost();
+		const created = await provider(host, [], async () => ok(undefined)).create("w", "pixel-10+bio");
+		expect(created.success).toBe(false);
+		if (!created.success)
+			expect(created.error).toContain("warden golden ensure --platform android --profile pixel-10+bio");
+		expect(host.spawned).toHaveLength(0);
+	});
+
+	describe("+cam (camera emulator)", () => {
+		const portOf = (argv: readonly string[] | undefined): string => argv?.[argv.indexOf("-port") + 1] ?? "";
+
+		test("launches cold with file-fed cameras seeded with a grey placeholder, records the +cam profile", async () => {
+			const host = fakeAndroidHost();
+			const plain = await ensureAndroidSnapshot(goldenDeps(host), "Pixel_10");
+			if (!plain.success || !plain.data) throw new Error("build failed");
+			const hooked: string[] = [];
+			const hook = (avd: string) => {
+				hooked.push(avd);
+				return snapshotForClaim(goldenDeps(host), avd);
+			};
+			const created = await provider(host, [], hook).create("w", "pixel-10+cam");
+			expect(created.success && created.data.profile).toBe("pixel-10+cam");
+			const argv = host.spawned.at(-1) ?? [];
+			const feeds = join(dir, "camera", `emulator-${portOf(argv)}`);
+			expect(argv).not.toContain("-snapshot");
+			expect(argv).toContain("-no-snapshot-load");
+			expect(hooked).toEqual([]);
+			expect(argv).toEqual(
+				expect.arrayContaining([
+					"-avd",
+					"Pixel_10",
+					"-camera-back",
+					`imagefile:${join(feeds, "back.png")}`,
+					"-camera-front",
+					`imagefile:${join(feeds, "front.png")}`,
+				])
+			);
+			for (const name of ["back.png", "front.png"]) {
+				const sniffed = sniffCameraMedia(join(feeds, name));
+				expect(sniffed.success && sniffed.data.ext).toBe("png");
+			}
+			expect(store.listDevices("android").some((d) => d.profile === "pixel-10+cam")).toBe(true);
+		});
+
+		test("a camera launch never touches the plain golden", async () => {
+			const host = fakeAndroidHost();
+			const plain = await ensureAndroidSnapshot(goldenDeps(host), "Pixel_10");
+			if (!plain.success || !plain.data) throw new Error("build failed");
+			const failed: string[] = [];
+			const golden = goldenDeps(host);
+			const p = createAndroidProvider(
+				{ exec: host.exec, store, env: env(), now: () => 1_000, owner },
+				{
+					spawnDetached: host.spawnDetached,
+					pidAlive: host.pidAlive,
+					sleep: async () => {},
+					snapshot: (avd) => snapshotForClaim(golden, avd),
+					snapshotFailed: async (avd, name) => {
+						failed.push(`${avd}:${name}`);
+						return ok(undefined);
+					},
+					snapshotLoaded: (avd) => failed.push(`loaded:${avd}`),
+				}
+			);
+			const created = await p.create("w", "pixel-10+cam");
+			if (!created.success) throw new Error(created.error);
+			expect((await p.waitReady(created.data.id, 60_000)).success).toBe(true);
+			expect(failed).toEqual([]);
+			expect(existsSync(join(avdHomeDir, "Pixel_10.avd", "snapshots", plain.data.name))).toBe(true);
+		});
+
+		test("+bio+cam is refused, never a cold-booted unenrolled emulator", async () => {
+			const host = fakeAndroidHost();
+			const created = await provider(host).create("w", "pixel-10+bio+cam");
+			expect(created.success).toBe(false);
+			if (!created.success) expect(created.error).toContain("--camera cannot be combined with --biometrics");
+			expect(host.spawned).toHaveLength(0);
+		});
+
+		test("a plain launch has no camera args", async () => {
+			const host = fakeAndroidHost();
+			await provider(host).create("w", "pixel-10");
+			expect(host.spawned.at(-1)).not.toContain("-camera-back");
+		});
 	});
 });

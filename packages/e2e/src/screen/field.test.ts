@@ -364,10 +364,11 @@ describe("focusClearType with select-all types over the selection", () => {
 
 describe("focusClearType with paste", () => {
 	const OLD = { value: "old text", selectAll: true, pasteText: true } as const;
+	const PASTE = ["auto", {}, "paste"] as const;
 
 	test("pastes over the select-all instead of typing", async () => {
 		const { driver, state } = fieldFixture(OLD);
-		const result = await focusClearType(driver, fakeClock().sleep, POINT, entryOfField(driver), "new");
+		const result = await focusClearType(driver, fakeClock().sleep, POINT, entryOfField(driver), "new", ...PASTE);
 		expect(result.success).toBe(true);
 		expect(methods(driver)).toEqual(["tap", "elementAtPoint", "selectAll", "pasteText"]);
 		expect(driver.callsOf("pasteText")).toEqual([{ method: "pasteText", text: "new" }]);
@@ -376,40 +377,40 @@ describe("focusClearType with paste", () => {
 
 	test("an empty field is pasted into with no select-all", async () => {
 		const { driver, state } = fieldFixture({ pasteText: true, selectAll: true });
-		await focusClearType(driver, fakeClock().sleep, POINT, entryOfField(driver), "new");
+		await focusClearType(driver, fakeClock().sleep, POINT, entryOfField(driver), "new", ...PASTE);
 		expect(methods(driver)).toEqual(["tap", "elementAtPoint", "pasteText"]);
 		expect(state.value).toBe("new");
 	});
 
 	test("a failed paste falls back to typing in the same attempt", async () => {
 		const { driver, state } = fieldFixture({ ...OLD, pasteText: "refused" });
-		const result = await focusClearType(driver, fakeClock().sleep, POINT, entryOfField(driver), "new");
+		const result = await focusClearType(driver, fakeClock().sleep, POINT, entryOfField(driver), "new", ...PASTE);
 		expect(result.success).toBe(true);
 		expect(methods(driver)).toEqual(["tap", "elementAtPoint", "selectAll", "pasteText", "typeText"]);
 		expect(state.value).toBe("new");
 	});
 
-	test("via type types even when the driver can paste", async () => {
+	test("types by default even when the driver can paste: the pasteboard is shared with the Mac and every sim", async () => {
 		const { driver } = fieldFixture(OLD);
-		await focusClearType(driver, fakeClock().sleep, POINT, entryOfField(driver), "new", "auto", {}, "type");
+		await focusClearType(driver, fakeClock().sleep, POINT, entryOfField(driver), "new");
 		expect(methods(driver)).toEqual(["tap", "elementAtPoint", "selectAll", "typeText"]);
 	});
 
 	test("a driver without the capability types", async () => {
 		const { driver } = fieldFixture({ value: "old text", selectAll: true });
-		await focusClearType(driver, fakeClock().sleep, POINT, entryOfField(driver), "new");
+		await focusClearType(driver, fakeClock().sleep, POINT, entryOfField(driver), "new", ...PASTE);
 		expect(methods(driver)).toEqual(["tap", "elementAtPoint", "selectAll", "typeText"]);
 	});
 
 	test("a secure field keeps its Backspace per dot and is then pasted into", async () => {
 		const { driver } = fieldFixture({ secure: true, value: "abc", pasteText: true, selectAll: true });
-		await focusClearType(driver, fakeClock().sleep, POINT, entryOfField(driver), "xy");
+		await focusClearType(driver, fakeClock().sleep, POINT, entryOfField(driver), "xy", ...PASTE);
 		expect(methods(driver)).toEqual(["tap", "elementAtPoint", "key", "key", "key", "key", "pasteText"]);
 	});
 
 	test("empty text only clears and pastes nothing", async () => {
 		const { driver } = fieldFixture(OLD);
-		await focusClearType(driver, fakeClock().sleep, POINT, entryOfField(driver), "");
+		await focusClearType(driver, fakeClock().sleep, POINT, entryOfField(driver), "", ...PASTE);
 		expect(methods(driver)).toEqual(["tap", "elementAtPoint", "selectAll", "key"]);
 	});
 });

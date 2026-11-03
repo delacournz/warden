@@ -20,6 +20,8 @@ import type { Fetch } from "../update/npm-registry";
 import { describePackageInstall, detectPackageInstall, upgradeCommand } from "../update/package-install";
 import { diskChecks } from "./doctor-disk";
 import { type HelperDeps, helperChecks, realHelperDeps } from "./doctor-helper";
+import type { LeaseDoctorDeps } from "./doctor-leases";
+import { physicalChecks } from "./doctor-physical";
 import { xcodeChecks } from "./doctor-xcode";
 
 export type CheckStatus = "ok" | "warn" | "fail";
@@ -205,7 +207,7 @@ export function ccacheProject(cwd: string): Probe {
 export async function runChecks(ctx: CommandContext, helper: HelperDeps = realHelperDeps()): Promise<DoctorCheck[]> {
 	const home = ctx.env.HOME ?? "";
 	const { adb, emulator } = androidTools(ctx.env);
-	const [simctl, adbProbe, emulatorProbe, ccache, simHelper, xcode, disk] = await Promise.all([
+	const [simctl, adbProbe, emulatorProbe, ccache, simHelper, xcode, disk, physical] = await Promise.all([
 		tool(ctx, ["xcrun", "simctl", "help"], "xcrun simctl not available (install Xcode) — iOS disabled"),
 		tool(ctx, [adb, "version"], `${adb} not found (set ANDROID_HOME) — Android disabled`),
 		tool(ctx, [emulator, "-version"], `${emulator} not found (set ANDROID_HOME) — Android disabled`),
@@ -217,6 +219,7 @@ export async function runChecks(ctx: CommandContext, helper: HelperDeps = realHe
 		helperChecks(ctx, helper),
 		xcodeChecks(ctx.exec, ctx.env),
 		diskChecks(ctx),
+		physicalChecks(ctx),
 	]);
 	return [
 		check("home", "core", homeWritable(wardenHome(ctx.env))),
@@ -240,6 +243,7 @@ export async function runChecks(ctx: CommandContext, helper: HelperDeps = realHe
 		check("rule", "optional", ruleProbe(home)),
 		check("stale-leases", "optional", staleLeases(ctx)),
 		...disk,
+		...physical,
 	];
 }
 
@@ -262,6 +266,8 @@ export type DoctorDeps = {
 	helper: HelperDeps;
 	/** `--fetch-helper` downloads from GitHub releases (or `WARDEN_HELPER_URL`) */
 	fetch: Fetch;
+	/** `--leases` inventory / pid / filesystem (default: the real ones) */
+	leases?: LeaseDoctorDeps;
 };
 
 type FetchedHelperReport = { dir: string; url: string; sha256: string };
@@ -314,14 +320,32 @@ export function createDoctorCommand(deps: DoctorDeps): Command {
 		name: "doctor",
 		group: "Setup",
 		summary:
-			"check warden's setup: home, db, device tools, simulator helper, install method, PATH, Claude/Codex hooks + skill, stale leases, disk space + swap + snapshots",
+			"check warden's setup: home, db, device tools, simulator helper, install method, PATH, Claude/Codex hooks + skill, stale leases (--leases: registry drift), disk space + swap + snapshots",
 		register: (cmd, ctx, done) => {
 			cmd
 				.option("--fetch-helper", "download warden-simd for this version into $WARDEN_HOME/simd/<version>/ first")
+				.option(
+					"--leases",
+					"check the lease registry against the machine for drift instead (exit 1 when drift remains)"
+				)
+				.option("--fix", "with --leases: delete the registry rows that are safe to (never touches a device)")
 				.option("--json", "machine-readable output")
-				.action(async (opts) =>
-					done(await doctor(ctx, deps, { json: opts.json === true, fetchHelper: opts.fetchHelper === true }))
-				);
+				.action(async (opts) => {
+					if (opts.fix === true && opts.leases !== true) {
+						ctx.err(ctx.ui.color.red("warden doctor: --fix needs --leases"));
+						return done(2);
+					}
+					if (opts.leases === true) {
+						const leases = await import("./doctor-leases");
+						return done(
+							await leases.doctorLeases(ctx, deps.leases ?? leases.realLeaseDoctorDeps(), {
+								json: opts.json === true,
+								fix: opts.fix === true,
+							})
+						);
+					}
+					return done(await doctor(ctx, deps, { json: opts.json === true, fetchHelper: opts.fetchHelper === true }));
+				});
 		},
 	});
 }

@@ -141,6 +141,20 @@ describe("computeAffected", () => {
 		}
 	});
 
+	test("suite.biometrics: the suite's own, else the top-level default", async () => {
+		const top = await makeSuiteRepo({}, { biometrics: true });
+		const own = await makeSuiteRepo({ biometrics: false }, { biometrics: true });
+		const none = await makeSuiteRepo();
+		try {
+			const [a, b, c] = await Promise.all([top, own, none].map((r) => findSuite(bunExec, r.dir)));
+			expect(a?.success && a.data.biometrics).toBe(true);
+			expect(b?.success && b.data.biometrics).toBe(false);
+			expect(c?.success && c.data.biometrics).toBeUndefined();
+		} finally {
+			for (const r of [top, own, none]) rmSync(r.dir, { recursive: true, force: true });
+		}
+	});
+
 	test("suite.perfBudgets: the top-level budgets, each key replaced by the suite's own", async () => {
 		const merged = await makeSuiteRepo(
 			{ perf: { budgets: { jankPct: 2 } } },
@@ -151,6 +165,21 @@ describe("computeAffected", () => {
 			const [a, b] = await Promise.all([merged, none].map((r) => findSuite(bunExec, r.dir)));
 			expect(a?.success && a.data.perfBudgets).toEqual({ jankPct: 2, startupColdMs: 2000 });
 			expect(b?.success && b.data.perfBudgets).toBeUndefined();
+		} finally {
+			for (const r of [merged, none]) rmSync(r.dir, { recursive: true, force: true });
+		}
+	});
+
+	test("suite.conditions: the top-level conditions, each area replaced by the suite's own", async () => {
+		const merged = await makeSuiteRepo(
+			{ conditions: { network: "offline", timezone: "UTC" } },
+			{ conditions: { network: "3g", locale: "fr" } }
+		);
+		const none = await makeSuiteRepo();
+		try {
+			const [a, b] = await Promise.all([merged, none].map((r) => findSuite(bunExec, r.dir)));
+			expect(a?.success && a.data.conditions).toEqual({ network: "offline", timezone: "UTC", locale: "fr" });
+			expect(b?.success && b.data.conditions).toBeUndefined();
 		} finally {
 			for (const r of [merged, none]) rmSync(r.dir, { recursive: true, force: true });
 		}

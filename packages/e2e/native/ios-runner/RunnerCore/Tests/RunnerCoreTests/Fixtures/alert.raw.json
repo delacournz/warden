@@ -1,0 +1,62 @@
+{
+  "children": [
+    {
+      "frame": {
+        "height": 22,
+        "width": 280,
+        "x": 80,
+        "y": 370
+      },
+      "label": "Allow \u201cMaps\u201d to use your location?",
+      "type": "StaticText"
+    },
+    {
+      "frame": {
+        "height": 60,
+        "width": 280,
+        "x": 80,
+        "y": 396
+      },
+      "label": "Your location is used to show directions.",
+      "type": "StaticText"
+    },
+    {
+      "frame": {
+        "height": 36,
+        "width": 320,
+        "x": 60,
+        "y": 470
+      },
+      "label": "Allow Once",
+      "type": "Button"
+    },
+    {
+      "frame": {
+        "height": 36,
+        "width": 320,
+        "x": 60,
+        "y": 506
+      },
+      "label": "Allow While Using App",
+      "type": "Button"
+    },
+    {
+      "frame": {
+        "height": 36,
+        "width": 320,
+        "x": 60,
+        "y": 542
+      },
+      "label": "Don\u2019t Allow",
+      "type": "Button"
+    }
+  ],
+  "frame": {
+    "height": 230,
+    "width": 320,
+    "x": 60,
+    "y": 350
+  },
+  "label": "Allow \u201cMaps\u201d to use your location?",
+  "type": "Alert"
+}

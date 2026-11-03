@@ -1,7 +1,8 @@
 /**
  * Per-request budget for the helper's `typeText`: it holds, paces and (for a repeated key) waits per character.
  * The helper's defaults (pace 5, hold 20, repeat gap 50) cost ~38 ms per character on a quiet local simulator; the
- * budget allows ~100 ms (the EAS VirtualMac ran ~3.7x the nominal sleeps) and 200 ms per repeated key.
+ * budget allows ~100 ms (the EAS VirtualMac ran ~3.7x the nominal sleeps) and 200 ms per repeated key. The one
+ * lead-in pause after the first key (60 ms) fits in the base.
  */
 export const TYPE_BASE_MS = 10_000;
 export const TYPE_PER_CHAR_MS = 100;
@@ -15,4 +16,12 @@ export function typeTextBudgetMs(text: string): number {
 		if (characters[index] === characters[index - 1]) repeats += 1;
 	}
 	return TYPE_BASE_MS + characters.length * TYPE_PER_CHAR_MS + repeats * TYPE_PER_REPEAT_MS;
+}
+
+/** The XCUITest runner on a real device types one character per `typeText` call, each waiting for the app to go idle. */
+export const DEVICE_TYPE_PER_CHAR_MS = 600;
+
+/** Base + ~600 ms per character: the runner's per-character typing on a real device. */
+export function deviceTypeTextBudgetMs(text: string): number {
+	return TYPE_BASE_MS + Array.from(text).length * DEVICE_TYPE_PER_CHAR_MS;
 }

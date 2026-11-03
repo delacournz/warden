@@ -15,7 +15,7 @@ const withMetro = <
 	cmd: Commander<Args, Opts, Globals>
 ) => cmd.option("--metro <url>", "Metro URL (default: WARDEN_METRO_URL, state.json, then this owner's leased ports)");
 
-const withSince = <
+export const withSince = <
 	Args extends unknown[],
 	Opts extends Record<string, unknown>,
 	Globals extends Record<string, unknown>,
@@ -24,7 +24,7 @@ const withSince = <
 ) => cmd.option("--since <when>", "only entries from the last <dur> (30s, 5m, 2h) or after an ISO time");
 
 /**
- * The devtools subcommands of `warden ui`: eval, tree, logs, exceptions, network, route, reload, devtools. One call from `commands/ui.ts`.
+ * The devtools subcommands of `warden ui`: eval, tree, logs, exceptions, route, reload, devtools. One call from `commands/ui.ts`.
  * Only the commander wiring lives here; `devtools-cli.ts` (Metro, the e2e devtools facet) is imported by the
  * subcommand that runs. `deps.devtools` replaces the real Metro / collector side effects in tests.
  */
@@ -75,22 +75,6 @@ export function registerDevtoolsCommands(
 	).action(async (words, opts) => {
 		const { uiLogs } = await import("./devtools-cli");
 		done(await uiLogs(ctx, deps, words, opts));
-	});
-	withUiOptions(
-		withSince(
-			cmd
-				.command("network")
-				.description("the app's fetch calls recorded by `logs start` or the dev session")
-				.argument("[n]", `entries to show (default ${DEFAULT_TAIL})`)
-		)
-			.option("--include <parts>", "headers,body")
-			.option("--id <id>", "one entry in full")
-			.option("--grep <text>", "only URLs containing text (case-insensitive)")
-			.option("--status <status>", "only this status: 404 | 4xx")
-			.option("--limit <n>", "at most the last n entries")
-	).action(async (n, opts) => {
-		const { uiNetwork } = await import("./devtools-cli");
-		done(await uiNetwork(ctx, deps, n, opts));
 	});
 	withMetro(withUiOptions(cmd.command("reload").description("reload the app's JavaScript"))).action(async (opts) => {
 		const { uiReload } = await import("./devtools-cli");

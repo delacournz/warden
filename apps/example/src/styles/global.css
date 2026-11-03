@@ -10,3 +10,5 @@
 @source "../hooks";
 @source "../lib";
 /* delacour:end */
+
+@import "./app.css";

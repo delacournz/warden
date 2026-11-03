@@ -56,6 +56,18 @@ describe("matchJsInputs", () => {
 		const paths = ["src/a.ts", "src/deep/b.tsx", "app.json", "ios/Podfile", "README.md"];
 		expect(matchJsInputs(paths, ["src/**", "app.json"])).toEqual(["src/a.ts", "src/deep/b.tsx", "app.json"]);
 	});
+
+	test("a `!` glob excludes what the others matched", () => {
+		const paths = ["src/a.ts", "ios/Podfile", "android/app/build.gradle", "node_modules/x/i.js", "app.json"];
+		expect(matchJsInputs(paths, ["**", "!ios/**", "!android/**", "!node_modules/**"])).toEqual([
+			"src/a.ts",
+			"app.json",
+		]);
+	});
+
+	test("only `!` globs match nothing", () => {
+		expect(matchJsInputs(["src/a.ts"], ["!src/**"])).toEqual([]);
+	});
 });
 
 describe("jsInputsHash", () => {

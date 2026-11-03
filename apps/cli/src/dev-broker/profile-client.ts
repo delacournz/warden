@@ -83,7 +83,7 @@ export function brokerSocketFor(
 			error: {
 				code: "broker_unreachable",
 				message: `dev session ${found.data.deviceId} has no devtools broker`,
-				hint: "restart `warden dev`",
+				hint: "`warden dev enable devtools`",
 			},
 		};
 	}

@@ -6,7 +6,7 @@ import type { Driver, DriverResult, KeyName } from "./driver.types";
  * fill`/`type` all go through it).
  *
  * iOS: `warden-simd` holds, paces and spaces repeated keys itself (`WARDEN_SIMD_PACE_MS`, `WARDEN_SIMD_HOLD_MS`,
- * `WARDEN_SIMD_REPEAT_GAP_MS`), so the whole string goes in one request and the client adds no gap. Before that
+ * `WARDEN_SIMD_REPEAT_GAP_MS`, `WARDEN_SIMD_LEAD_MS`), so the whole string goes in one request and the client adds no gap. Before that
  * the client sent one grapheme per request, 25 ms apart (set `KEY_PACE_MS` 25 and `SPLIT_TEXT` true to go back).
  */
 

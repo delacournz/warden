@@ -1,0 +1,315 @@
+{
+  "backend" : "ax",
+  "elements" : [
+    {
+      "children" : [
+        {
+          "children" : [
+            {
+              "children" : [
+                {
+                  "children" : [
+                    {
+                      "children" : [
+
+                      ],
+                      "depth" : 4,
+                      "enabled" : true,
+                      "focused" : false,
+                      "frame" : {
+                        "height" : 44,
+                        "width" : 60,
+                        "x" : 8,
+                        "y" : 62
+                      },
+                      "hittable" : true,
+                      "id" : "0.0.0.0.0",
+                      "identifier" : "sign-in-back",
+                      "label" : "Back",
+                      "normFrame" : {
+                        "height" : 0.04602510460251046,
+                        "width" : 0.13636363636363635,
+                        "x" : 0.01818181818181818,
+                        "y" : 0.06485355648535565
+                      },
+                      "rawType" : "Button",
+                      "role" : "button",
+                      "selected" : false,
+                      "tapPoint" : {
+                        "x" : 38,
+                        "y" : 84
+                      },
+                      "traits" : [
+                        "button"
+                      ]
+                    }
+                  ],
+                  "depth" : 3,
+                  "enabled" : true,
+                  "focused" : false,
+                  "frame" : {
+                    "height" : 44,
+                    "width" : 440,
+                    "x" : 0,
+                    "y" : 62
+                  },
+                  "hittable" : true,
+                  "id" : "0.0.0.0",
+                  "identifier" : "Sign in",
+                  "normFrame" : {
+                    "height" : 0.04602510460251046,
+                    "width" : 1,
+                    "x" : 0,
+                    "y" : 0.06485355648535565
+                  },
+                  "rawType" : "NavigationBar",
+                  "role" : "navbar",
+                  "selected" : false,
+                  "tapPoint" : {
+                    "x" : 220,
+                    "y" : 84
+                  },
+                  "traits" : [
+
+                  ]
+                },
+                {
+                  "children" : [
+
+                  ],
+                  "depth" : 3,
+                  "enabled" : true,
+                  "focused" : true,
+                  "frame" : {
+                    "height" : 48,
+                    "width" : 392,
+                    "x" : 24,
+                    "y" : 200
+                  },
+                  "hittable" : true,
+                  "id" : "0.0.0.2",
+                  "identifier" : "sign-in-email",
+                  "normFrame" : {
+                    "height" : 0.0502092050209205,
+                    "width" : 0.8909090909090909,
+                    "x" : 0.05454545454545454,
+                    "y" : 0.20920502092050208
+                  },
+                  "placeholder" : "Email",
+                  "rawType" : "TextField",
+                  "role" : "textfield",
+                  "selected" : false,
+                  "tapPoint" : {
+                    "x" : 220,
+                    "y" : 224
+                  },
+                  "traits" : [
+                    "is-editing"
+                  ],
+                  "value" : "chris@delacour.co.nz"
+                },
+                {
+                  "children" : [
+
+                  ],
+                  "depth" : 3,
+                  "enabled" : true,
+                  "focused" : false,
+                  "frame" : {
+                    "height" : 48,
+                    "width" : 392,
+                    "x" : 24,
+                    "y" : 264
+                  },
+                  "hittable" : true,
+                  "id" : "0.0.0.3",
+                  "identifier" : "sign-in-password",
+                  "normFrame" : {
+                    "height" : 0.0502092050209205,
+                    "width" : 0.8909090909090909,
+                    "x" : 0.05454545454545454,
+                    "y" : 0.27615062761506276
+                  },
+                  "placeholder" : "Password",
+                  "rawType" : "SecureTextField",
+                  "role" : "securefield",
+                  "selected" : false,
+                  "tapPoint" : {
+                    "x" : 220,
+                    "y" : 288
+                  },
+                  "traits" : [
+
+                  ]
+                },
+                {
+                  "checked" : true,
+                  "children" : [
+
+                  ],
+                  "depth" : 3,
+                  "enabled" : true,
+                  "focused" : false,
+                  "frame" : {
+                    "height" : 31,
+                    "width" : 51,
+                    "x" : 340,
+                    "y" : 330
+                  },
+                  "hittable" : true,
+                  "id" : "0.0.0.4",
+                  "identifier" : "sign-in-remember",
+                  "label" : "Remember me",
+                  "normFrame" : {
+                    "height" : 0.032426778242677826,
+                    "width" : 0.1159090909090909,
+                    "x" : 0.7727272727272727,
+                    "y" : 0.34518828451882844
+                  },
+                  "rawType" : "Switch",
+                  "role" : "switch",
+                  "selected" : false,
+                  "tapPoint" : {
+                    "x" : 365.5,
+                    "y" : 345.5
+                  },
+                  "traits" : [
+
+                  ],
+                  "value" : "1"
+                },
+                {
+                  "children" : [
+
+                  ],
+                  "depth" : 3,
+                  "enabled" : false,
+                  "focused" : false,
+                  "frame" : {
+                    "height" : 52,
+                    "width" : 392,
+                    "x" : 24,
+                    "y" : 380
+                  },
+                  "hittable" : false,
+                  "id" : "0.0.0.5",
+                  "identifier" : "sign-in-submit",
+                  "label" : "Sign in",
+                  "normFrame" : {
+                    "height" : 0.05439330543933055,
+                    "width" : 0.8909090909090909,
+                    "x" : 0.05454545454545454,
+                    "y" : 0.39748953974895396
+                  },
+                  "rawType" : "Button",
+                  "role" : "button",
+                  "selected" : false,
+                  "tapPoint" : {
+                    "x" : 220,
+                    "y" : 406
+                  },
+                  "traits" : [
+                    "button",
+                    "not-enabled"
+                  ]
+                }
+              ],
+              "depth" : 2,
+              "enabled" : true,
+              "focused" : false,
+              "frame" : {
+                "height" : 956,
+                "width" : 440,
+                "x" : 0,
+                "y" : 0
+              },
+              "hittable" : true,
+              "id" : "0.0.0",
+              "identifier" : "sign-in-screen",
+              "normFrame" : {
+                "height" : 1,
+                "width" : 1,
+                "x" : 0,
+                "y" : 0
+              },
+              "rawType" : "Other",
+              "role" : "other",
+              "selected" : false,
+              "tapPoint" : {
+                "x" : 220,
+                "y" : 478
+              },
+              "traits" : [
+
+              ]
+            }
+          ],
+          "depth" : 1,
+          "enabled" : true,
+          "focused" : false,
+          "frame" : {
+            "height" : 956,
+            "width" : 440,
+            "x" : 0,
+            "y" : 0
+          },
+          "hittable" : true,
+          "id" : "0.0",
+          "normFrame" : {
+            "height" : 1,
+            "width" : 1,
+            "x" : 0,
+            "y" : 0
+          },
+          "rawType" : "Window",
+          "role" : "window",
+          "selected" : false,
+          "tapPoint" : {
+            "x" : 220,
+            "y" : 478
+          },
+          "traits" : [
+
+          ]
+        }
+      ],
+      "depth" : 0,
+      "enabled" : true,
+      "focused" : false,
+      "frame" : {
+        "height" : 956,
+        "width" : 440,
+        "x" : 0,
+        "y" : 0
+      },
+      "hittable" : true,
+      "id" : "0",
+      "identifier" : "nz.co.delacour.example",
+      "label" : "Example",
+      "normFrame" : {
+        "height" : 1,
+        "width" : 1,
+        "x" : 0,
+        "y" : 0
+      },
+      "rawType" : "Application",
+      "role" : "application",
+      "selected" : false,
+      "tapPoint" : {
+        "x" : 220,
+        "y" : 478
+      },
+      "traits" : [
+
+      ]
+    }
+  ],
+  "ms" : 0,
+  "nodes" : 15,
+  "screen" : {
+    "height" : 956,
+    "scale" : 3,
+    "width" : 440
+  },
+  "truncated" : false
+}

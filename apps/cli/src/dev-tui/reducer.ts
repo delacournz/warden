@@ -28,6 +28,8 @@ export type TuiEvent =
 	/** a perf session started (or ended: undefined); the HUD shows it */
 	| { type: "hud:perf"; perf: HudPerf | undefined }
 	| { type: "hud:bundle"; bundle: HudBundle }
+	/** `warden dev enable|disable hud`: show (and sample) the HUD or not */
+	| { type: "hud:visible"; on: boolean }
 	| { type: "prompt:open"; label: string }
 	| { type: "prompt:edit"; edit: PromptEdit }
 	| { type: "prompt:close" };
@@ -216,6 +218,8 @@ export function reduce(state: TuiState, event: TuiEvent): TuiState {
 			return { ...state, now: event.at, hud: { ...state.hud, sample: event.sample, fps: event.fps } };
 		case "hud:bundle":
 			return { ...state, hud: { ...state.hud, bundle: event.bundle } };
+		case "hud:visible":
+			return { ...state, hud: { ...state.hud, visible: event.on } };
 		case "metro:exit": {
 			const noted = withLog({ ...state, now: event.at }, "metro", `metro exited (code ${event.code})`);
 			return { ...noted, metroExit: event.code, mode: state.mode === "interact" ? "list" : state.mode };

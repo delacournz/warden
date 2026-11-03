@@ -2,6 +2,7 @@ import type { DriverResult, Logger, Orientation, ScreenInfo } from "../driver.ty
 import { driverErr } from "../errors";
 import type { AdbSession } from "./adb-session";
 import { getpropArgv, type RotationValue, shellCommand, WM_DENSITY_ARGV, WM_SIZE_ARGV } from "./android-argv";
+import { PHONE_PROBE_TAIL, type PhoneFacts, parsePhoneFacts } from "./android-phone";
 
 /** Device facts read once at open: boot flag, screen size/density. Pure parsers + small session helpers. */
 
@@ -40,13 +41,22 @@ const BOOT_PROBE = [
 	.map((argv) => shellCommand(argv))
 	.join("; ");
 
+/**
+ * The probe for `serial`. A console `emulator-N` is an emulator by construction. Anything else (a phone, or a
+ * network emulator) also reads the qemu props, wakefulness and keyguard, in the same round trip.
+ */
+export function bootProbeFor(serial: string): string {
+	return /^emulator-\d+$/.test(serial) ? BOOT_PROBE : `${BOOT_PROBE}; ${PHONE_PROBE_TAIL}`;
+}
+
 /** The sdk level on the probe's second line, if numeric. */
 export function sdkFromProbe(stdout: string): number | undefined {
 	const line = stdout.trimStart().split("\n")[1]?.trim() ?? "";
 	return /^\d+$/.test(line) ? Number(line) : undefined;
 }
 
-export type BootInfo = { screen: ScreenInfo | undefined; sdk: number | undefined };
+/** `physical`: set only for a real phone (its qemu props are empty); an emulator, or an unprobed serial, has none. */
+export type BootInfo = { screen: ScreenInfo | undefined; sdk: number | undefined; physical: PhoneFacts | undefined };
 
 /** The screen out of a boot probe's output, if `wm` answered. */
 export function screenFromProbe(stdout: string): ScreenInfo | undefined {
@@ -66,11 +76,19 @@ export async function waitForBoot(
 	opts: { timeoutMs?: number; log?: Logger } = {}
 ): DriverResult<BootInfo> {
 	const timeoutMs = opts.timeoutMs ?? BOOT_TIMEOUT_MS;
+	const probe = bootProbeFor(serial);
 	const deadline = clock.now() + timeoutMs;
 	for (;;) {
-		const res = await session.run(BOOT_PROBE, { timeoutMs: 5_000 });
+		const res = await session.run(probe, { timeoutMs: 5_000 });
 		if (res.success && res.data.stdout.trimStart().startsWith("1")) {
-			return { success: true, data: { screen: screenFromProbe(res.data.stdout), sdk: sdkFromProbe(res.data.stdout) } };
+			return {
+				success: true,
+				data: {
+					screen: screenFromProbe(res.data.stdout),
+					sdk: sdkFromProbe(res.data.stdout),
+					physical: parsePhoneFacts(res.data.stdout),
+				},
+			};
 		}
 		if (!res.success && isFatal(res.error)) return res;
 		if (clock.now() >= deadline) {

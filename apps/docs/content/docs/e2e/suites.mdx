@@ -11,11 +11,11 @@ import { defineConfig } from "@delacour/warden/config";
 
 export default defineConfig({
   e2e: {
-    "example-dev": {
+    example: {
       project: "example",
       specsDir: "e2e",
       platform: "ios",
-      app: { variant: "dev" },
+      app: true,
       metro: { env: { EXPO_PUBLIC_E2E: "1" } },
       spec: { bundleId: "com.example.app" },
       count: 2,
@@ -26,10 +26,15 @@ export default defineConfig({
 ```
 
 ```bash
-warden e2e example-dev --all
+warden e2e example --all          # the repacked simulator build, no Metro
+warden e2e example --all --dev    # the dev client on a Metro warden starts (the suite's metro block)
 ```
 
-No device to pick, no port to export, no bundler to start first. warden claims the simulators, installs the cached build, starts and verifies its own Metro when the suite has one, runs the specs and releases everything on exit (Ctrl-C included).
+No device to pick, no port to export, no bundler to start first. warden claims the simulators, installs the cached build, starts and verifies its own Metro with `--dev`, runs the specs and releases everything on exit (Ctrl-C included).
+
+## Build kinds
+
+`app: true` installs the `simulator` kind: a Release build with no JS bundle embedded, built once per native fingerprint and shared by every worktree. This worktree's JS is then bundled, Hermes-compiled and ad-hoc re-signed into a clone of it (a **repack**, seconds instead of a native rebuild), once per run before any device installs. Repacks are keyed by the JS content, so two worktrees with identical JS share one. Pass `--dev` (or `--kind dev`) for the dev client, `--kind release` for a build with the JS embedded at build time. A suite can pin one with `app: { kind }`; `app: { variant }` keeps the old variant build (back-compat). `metro` applies only with `--dev` unless the suite pins `app.kind: "dev"` or an `app.variant`. Its `env` still reaches a `simulator` / `release` run: the JS is bundled with it (`EXPO_PUBLIC_*` values are inlined at bundle time), so one suite points at the same fake backend with or without `--dev`.
 
 ## What a suite needs
 
@@ -92,7 +97,7 @@ Exit 0: every required spec passed (or nothing was selected, in which case no de
 
 With no `e2e` suites configured and none named, `warden e2e` runs every `e2e/*.e2e.ts` spec of the Expo app around the current directory on the dev client with warden's Metro (2 sims). `warden init` scaffolds it.
 
-After a pass, devices warden created stay booted locally (the next run skips the 10-30 s boot; `warden gc` shuts them down after 20 min idle) and are shut down under `CI`. A failed run always leaves them booted. `shutdown: "always" | "idle"` on the suite overrides this.
+After a pass, devices warden created are shut down and their windows closed, locally and under `CI`. A failed run always leaves them booted. `shutdown: "idle"` on the suite keeps them booted after a pass instead (the next run skips the 10-30 s boot; `warden gc` shuts them down after 20 min idle).
 
 ## What a run prints
 

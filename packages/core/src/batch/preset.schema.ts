@@ -9,6 +9,9 @@ export const slimConfigSchema = z.union([
 	z.object({ except: z.array(z.string()).optional(), keep: z.array(z.string()).optional() }).strict(),
 ]);
 
+/** `reclaim`: what happens to a device's state when its lease ends (`ReclaimMode`). */
+export const reclaimSchema = z.enum(["erase", "uninstall", "none"]);
+
 export const duration = z
 	.string()
 	.min(1)
@@ -42,6 +45,10 @@ export const batchPresetSchema = z
 		headless: z.boolean().optional(),
 		/** iOS: slim the simulator daemons of this run's devices (default on); `--slim` / `--no-slim` win */
 		slim: slimConfigSchema.optional(),
+		/** devices of this run have a fingerprint / Face ID enrolled (own golden, own pool); `biometrics` of the top-level config is the default */
+		biometrics: z.boolean().optional(),
+		/** `erase` | `uninstall` | `none`: reclaim the run's devices when they are released; `reclaim` of the top-level config is the default */
+		reclaim: reclaimSchema.optional(),
 		retry: z.number().int().min(0).optional(),
 		passes: z.number().int().min(1).optional(),
 		/** added to the serve + job env */

@@ -32,6 +32,20 @@ describe("warden ls", () => {
 		expect(text).toContain("port 8091");
 	});
 
+	test("a lease on a physical phone is tagged", async () => {
+		ctx = testContext([]);
+		ctx.db.insertLease(
+			{
+				resource: { kind: "device", platform: "android", id: "R5CT", name: "Pixel", physical: { transport: "usb" } },
+				owner: agent,
+				ttlMs: 60_000,
+			},
+			ctx.now()
+		);
+		expect(await lsCommand.run(ctx)).toBe(0);
+		expect(ctx.stdout.join("\n")).toContain("android Pixel (R5CT) [physical]");
+	});
+
 	test("--json", async () => {
 		ctx = testContext(["--json"]);
 		ctx.db.insertLease({ resource: { kind: "port", port: 1 }, owner: agent, ttlMs: 60_000 }, ctx.now());

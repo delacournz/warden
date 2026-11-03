@@ -10,6 +10,8 @@ import type { TraceEvent } from "./runner/trace";
 export type FixtureSession = {
 	/** absolute `WARDEN_E2E_OUT` (screenshot fallback when no attempt is running) */
 	readonly out: string;
+	/** the process's `results.jsonl`; `device.network` / `location` / `clock` append condition events to it */
+	readonly results?: { readonly path: string };
 	/** the running attempt's deadline / cancel signal; every driver call honours it */
 	readonly signal?: AbortSignal;
 	/** `<out>/<specId>/<title-slug>-<hash6>` of the running attempt */

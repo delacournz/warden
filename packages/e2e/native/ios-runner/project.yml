@@ -1,0 +1,60 @@
+# Source of WardenRunner.xcodeproj. The project is generated and checked in (SwiftPM cannot build UI-test bundles);
+# regenerate it after changing this file or adding/removing a Swift file:
+#   brew install xcodegen && cd packages/e2e/native/ios-runner && xcodegen generate
+# `scripts/runner-project.test.ts` fails when the checked-in project no longer lists the files this spec names.
+name: WardenRunner
+options:
+  bundleIdPrefix: nz.co.delacour.warden
+  createIntermediateGroups: true
+settings:
+  base:
+    CODE_SIGN_STYLE: Automatic
+    IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+    SWIFT_VERSION: "5.0"
+    # DEVELOPMENT_TEAM is deliberately unset here: xcodebuild takes it from the environment or the command line
+    # (`DEVELOPMENT_TEAM=LN69P7N673 xcodebuild ...`), so no team id is committed.
+    # PHY-4 overrides this one setting to change both bundle ids.
+    WARDEN_RUNNER_BUNDLE_ID: nz.co.delacour.warden.runner.$(DEVELOPMENT_TEAM:lower)
+targets:
+  WardenRunnerHost:
+    type: application
+    platform: iOS
+    sources: [Host]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(WARDEN_RUNNER_BUNDLE_ID)
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
+  WardenRunnerUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - RunnerTests
+      - path: RunnerCore/Sources/RunnerCore
+        excludes: [Shared]
+      - ../ios/Sources/warden-simd/Protocol/Wire.swift
+      - ../ios/Sources/warden-simd/Protocol/NDJSON.swift
+      - ../ios/Sources/warden-simd/Model/Element.swift
+      - ../ios/Sources/warden-simd/Model/RoleMap.swift
+    dependencies:
+      - target: WardenRunnerHost
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(WARDEN_RUNNER_BUNDLE_ID).uitests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: WardenRunnerHost
+        SWIFT_OBJC_BRIDGING_HEADER: RunnerTests/RunnerTests-Bridging-Header.h
+        # The runner listens on TCP; the Mac connects over the CoreDevice tunnel. PHY-0 saw no prompt, but the
+        # key keeps iOS from refusing the listener if one ever appears.
+        INFOPLIST_KEY_NSLocalNetworkUsageDescription: warden drives this device over your local network.
+        INFOPLIST_KEY_NSBonjourServices: ""
+schemes:
+  WardenRunner:
+    build:
+      targets:
+        WardenRunnerHost: all
+        WardenRunnerUITests: all
+    test:
+      targets: [WardenRunnerUITests]

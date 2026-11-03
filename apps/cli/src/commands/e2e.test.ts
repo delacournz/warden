@@ -3,6 +3,8 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { makeSuiteRepo } from "@delacour/warden-core/affected/fixture.testing";
 import { bunExec, type Exec } from "@delacour/warden-core/exec";
+import { PHONE_PROBE_SCRIPT } from "@delacour/warden-core/providers/android";
+import { PHONE_PROPS } from "@delacour/warden-core/providers/android.fixtures";
 import type { TestResult } from "@delacour/warden-e2e/runner/results";
 import { jsonl, result } from "../batch/results.testing";
 import { fakeSimctl, OWNER_ENV, wardenSim } from "../simctl.testing";
@@ -305,6 +307,24 @@ describe("warden e2e", () => {
 		expect(job?.opts.env.WARDEN_AGENT_SESSION).toBeUndefined();
 	});
 
+	test("a count-only suite with biometrics claims the +bio pool (and a plain one never does)", async () => {
+		const bioSim = { udid: "B1", name: "warden-iphone-17+bio-1", state: "Booted" as const };
+		const claimed = async (suite: Record<string, unknown>): Promise<string[]> => {
+			await resuite(suite);
+			write("src/chat/lazy.tsx", "export const x = 2;\n");
+			const sim = fakeSimctl([bioSim, wardenSim(1, "Booted")], []);
+			const exec: Exec = (cmd, opts) => (cmd[0] === "git" ? bunExec(cmd, opts) : sim(cmd, opts));
+			ctx = testContext(["--files", "src/chat/lazy.tsx"], { exec });
+			ctx.env = { ...ctx.env, ...OWNER_ENV };
+			ctx.cwd = dir;
+			const h = harness();
+			expect(await createE2eCommand(h.deps).run(ctx)).toBe(0);
+			return h.jobs().map((j) => j.opts.env.WARDEN_UDID ?? "");
+		};
+		expect(await claimed({ biometrics: true, count: 1 })).toEqual(["B1"]);
+		expect(await claimed({ count: 1 })).toEqual(["U1"]);
+	});
+
 	describe("metro", () => {
 		const projects = { projects: [{ name: "app", root: "packages/ui", bundleId: { ios: "com.x" } }] };
 		const suite = { project: "app", metro: { launchArgs: ["-E2E", "YES"], env: { EXPO_PUBLIC_E2E: "1" } } };
@@ -460,7 +480,7 @@ describe("warden e2e", () => {
 		} as const;
 
 		test("Metro starts and prewarms while the app is still installing; stopped last", async () => {
-			await resuite({ ...suite, app: true }, projects);
+			await resuite({ ...suite, app: { kind: "dev" } }, projects);
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
 			const h = harness();
 			const install = Promise.withResolvers<void>();
@@ -483,7 +503,7 @@ describe("warden e2e", () => {
 		});
 
 		test("the install fails → the early Metro is stopped, no spec runs, nothing stays leased", async () => {
-			await resuite({ ...suite, app: true }, projects);
+			await resuite({ ...suite, app: { kind: "dev" } }, projects);
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
 			const h = harness();
 			h.deps.ensureApp = async () => ({ success: false, error: "no build" });
@@ -495,7 +515,7 @@ describe("warden e2e", () => {
 		});
 
 		test("the device claim fails → the early Metro is stopped and the port lease released", async () => {
-			await resuite({ ...suite, app: true }, projects);
+			await resuite({ ...suite, app: { kind: "dev" } }, projects);
 			// no warden sim exists and none may be created: the device claim fails after the port lease
 			const sim = fakeSimctl([]);
 			const exec: Exec = (cmd, opts) => (cmd[0] === "git" ? bunExec(cmd, opts) : sim(cmd, opts));
@@ -512,7 +532,7 @@ describe("warden e2e", () => {
 		});
 
 		test("Metro turns out foreign while the app installs → exit 1 naming the other checkout, no spec", async () => {
-			await resuite({ ...suite, app: true }, projects);
+			await resuite({ ...suite, app: { kind: "dev" } }, projects);
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
 			const h = harness();
 			const probe = Promise.withResolvers<void>();
@@ -536,7 +556,7 @@ describe("warden e2e", () => {
 		});
 
 		test("SIGINT during the install → exit 130, the early Metro is stopped, nothing stays leased", async () => {
-			await resuite({ ...suite, app: true }, projects);
+			await resuite({ ...suite, app: { kind: "dev" } }, projects);
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
 			const h = harness();
 			const install = Promise.withResolvers<void>();
@@ -555,7 +575,7 @@ describe("warden e2e", () => {
 		});
 
 		test("SIGINT while the bundle still builds → exit 130 without waiting for it; Metro is stopped (12-5)", async () => {
-			await resuite({ ...suite, app: true }, projects);
+			await resuite({ ...suite, app: { kind: "dev" } }, projects);
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
 			const h = harness({ prewarm: "hang" });
 			const install = Promise.withResolvers<void>();
@@ -575,7 +595,7 @@ describe("warden e2e", () => {
 		});
 
 		test("a claim that fails while the bundle still builds is reported without waiting for it (12-5)", async () => {
-			await resuite({ ...suite, app: true }, projects);
+			await resuite({ ...suite, app: { kind: "dev" } }, projects);
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
 			const h = harness({ prewarm: "hang" });
 			h.deps.ensureApp = async () => {
@@ -589,7 +609,7 @@ describe("warden e2e", () => {
 		});
 
 		test("Metro's readiness is announced once, under the claim spinner when it is up before the app", async () => {
-			await resuite({ ...suite, app: true }, projects);
+			await resuite({ ...suite, app: { kind: "dev" } }, projects);
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
 			const ui = scriptedUi();
 			c.ui = ui;
@@ -693,6 +713,21 @@ describe("warden e2e", () => {
 				WARDEN_E2E_ASSERTION_TIMEOUT: "5000",
 				WARDEN_HELPER_DIR: "/mine",
 			});
+		});
+
+		test("the suite's conditions (over the top-level ones, per area) reach the spec process as WARDEN_CONDITIONS", async () => {
+			await resuite({ conditions: { network: "3g" } }, { conditions: { network: "offline", locale: "fr" } });
+			const c = setup(["--files", "src/chat/lazy.tsx"]);
+			const h = harness();
+			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			expect(JSON.parse(h.jobs()[0]?.opts.env.WARDEN_CONDITIONS ?? "null")).toEqual({ network: "3g", locale: "fr" });
+		});
+
+		test("no conditions, no WARDEN_CONDITIONS", async () => {
+			const c = setup(["--files", "src/chat/lazy.tsx"]);
+			const h = harness();
+			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			expect(h.jobs()[0]?.opts.env.WARDEN_CONDITIONS).toBeUndefined();
 		});
 
 		test("the bundle id falls back to the project's for the platform", async () => {
@@ -2045,21 +2080,21 @@ describe("warden e2e", () => {
 			expect(c.db.listLeases()).toEqual([]);
 		});
 
-		test("locally a passed gate leaves the devices booted for the next run, and still releases them", async () => {
+		test("locally a passed gate shuts the devices warden created down too, then releases them", async () => {
+			const calls: string[][] = [];
+			const c = wardenSetup(["--all", "--count", "2"], calls);
+			expect(await createE2eCommand(harness().deps).run(c)).toBe(0);
+			expect(shutdowns(calls).sort()).toEqual(["U1", "U2"]);
+			expect(c.db.listLeases()).toEqual([]);
+		});
+
+		test("shutdown: idle keeps the devices booted locally", async () => {
+			await resuite({ shutdown: "idle" });
 			const calls: string[][] = [];
 			const c = wardenSetup(["--all", "--count", "2"], calls);
 			expect(await createE2eCommand(harness().deps).run(c)).toBe(0);
 			expect(shutdowns(calls)).toEqual([]);
 			expect(c.db.listLeases()).toEqual([]);
-		});
-
-		test("CI set to 0, false or empty is a local shell", async () => {
-			for (const ci of ["0", "false", ""]) {
-				const calls: string[][] = [];
-				const c = wardenSetup(["--all", "--count", "2"], calls, ci);
-				expect(await createE2eCommand(harness().deps).run(c)).toBe(0);
-				expect(shutdowns(calls)).toEqual([]);
-			}
 		});
 
 		test("shutdown: always shuts down locally too", async () => {
@@ -2108,6 +2143,289 @@ describe("warden e2e", () => {
 			c.env = { ...c.env, CI: "true" };
 			expect(await createE2eCommand(harness().deps).run(c)).toBe(0);
 			expect(shutdowns(calls)).toEqual([]);
+		});
+	});
+	describe("build kind", () => {
+		const projects = { projects: [{ name: "app", root: "packages/ui", bundleId: { ios: "com.x" } }] };
+		const withVariant = { projects: [{ ...projects.projects[0], variants: { dev: {} } }] };
+		const metro = { launchArgs: ["-E2E", "YES"] };
+
+		/** run the suite, return the kind / variant every device's ensure was asked for, and whether Metro started */
+		async function run(
+			suite: Record<string, unknown>,
+			argv: string[] = []
+		): Promise<{
+			code: number;
+			asked: string[];
+			bundleEnv: Array<Record<string, string> | undefined>;
+			metro: boolean;
+			stderr: string;
+		}> {
+			await resuite({ project: "app", ...suite }, withVariant);
+			const c = setup(["--files", "src/chat/lazy.tsx", ...argv]);
+			const h = harness();
+			const asked: string[] = [];
+			const bundleEnv: Array<Record<string, string> | undefined> = [];
+			h.deps.ensureApp = async (_ctx, _owner, _platform, _deviceId, opts) => {
+				asked.push(`${opts.kind ?? "-"}/${opts.variant ?? "-"}`);
+				bundleEnv.push(opts.bundleEnv);
+				return { success: true, data: { appPath: "/c/A.app", hash: "H", source: "cache", installed: true } };
+			};
+			const code = await createE2eCommand(h.deps).run(c);
+			return { code, asked, bundleEnv, metro: h.metro() !== undefined, stderr: c.stderr.join("\n") };
+		}
+
+		const envMetro = { ...metro, env: { EXPO_PUBLIC_API: "http://127.0.0.1:4599" } };
+
+		test("a repacked run bundles the suite's metro env into the JS (EXPO_PUBLIC_* are inlined at bundle time)", async () => {
+			const r = await run({ app: true, metro: envMetro });
+			expect(r.asked).toEqual(["simulator/-"]);
+			expect(r.bundleEnv).toEqual([{ EXPO_PUBLIC_API: "http://127.0.0.1:4599" }]);
+			expect(r.metro).toBe(false);
+		});
+
+		test("--kind release bundles the suite's metro env too", async () => {
+			const r = await run({ app: true, metro: envMetro }, ["--kind", "release"]);
+			expect(r.bundleEnv).toEqual([{ EXPO_PUBLIC_API: "http://127.0.0.1:4599" }]);
+		});
+
+		test("--dev leaves the env to Metro: no bundle env", async () => {
+			const r = await run({ app: true, metro: envMetro }, ["--dev"]);
+			expect(r.bundleEnv).toEqual([undefined]);
+			expect(r.metro).toBe(true);
+		});
+
+		test("a pinned app.variant keeps its Metro and gets no bundle env", async () => {
+			const r = await run({ app: { variant: "dev" }, metro: envMetro });
+			expect(r.bundleEnv).toEqual([undefined]);
+		});
+
+		test("an app suite installs the repacked simulator build and ignores its metro block", async () => {
+			const r = await run({ app: true, metro });
+			expect(r.code).toBe(0);
+			expect(r.asked).toEqual(["simulator/-"]);
+			expect(r.metro).toBe(false);
+		});
+
+		test("the suite's app.kind picks the kind", async () => {
+			const r = await run({ app: { kind: "release" } });
+			expect(r.asked).toEqual(["release/-"]);
+		});
+
+		test("--dev installs the dev kind and starts Metro from the suite's block", async () => {
+			const r = await run({ app: true, metro }, ["--dev"]);
+			expect(r.asked).toEqual(["dev/-"]);
+			expect(r.metro).toBe(true);
+		});
+
+		test("--dev on a suite with no metro block starts Metro with the defaults", async () => {
+			const r = await run({ app: true }, ["--dev"]);
+			expect(r.asked).toEqual(["dev/-"]);
+			expect(r.metro).toBe(true);
+		});
+
+		test("--kind simulator beats the suite's app.kind dev and drops its Metro", async () => {
+			const r = await run({ app: { kind: "dev" }, metro }, ["--kind", "simulator"]);
+			expect(r.asked).toEqual(["simulator/-"]);
+			expect(r.metro).toBe(false);
+		});
+
+		test("a suite pinning app.kind dev keeps its Metro without --dev", async () => {
+			const r = await run({ app: { kind: "dev" }, metro });
+			expect(r.asked).toEqual(["dev/-"]);
+			expect(r.metro).toBe(true);
+		});
+
+		test("a suite pinning app.variant keeps the variant build and its Metro (no kind)", async () => {
+			const r = await run({ app: { variant: "dev" }, metro });
+			expect(r.asked).toEqual(["-/dev"]);
+			expect(r.metro).toBe(true);
+		});
+
+		test("--dev and --kind together are refused before any device is claimed", async () => {
+			const r = await run({ app: true }, ["--dev", "--kind", "release"]);
+			expect(r.code).toBe(1);
+			expect(r.asked).toEqual([]);
+			expect(r.stderr).toContain("--dev and --kind can't be combined");
+		});
+
+		test("a suite with no app to install keeps its metro block as written", async () => {
+			const r = await run({ app: false, metro });
+			expect(r.asked).toEqual([]);
+			expect(r.metro).toBe(true);
+		});
+	});
+});
+
+describe("warden e2e on physical devices", () => {
+	const PHONE = "R5CT1234ABC";
+	const ADB_PHONE = `List of devices attached\n${PHONE}            device usb:1-1 product:a54xnaeea model:SM_A546E device:a54x transport_id:2\n\n`;
+
+	/** What adb and the host answer: one phone, boot completed, no simulators; anything else is refused */
+	function androidPhoneReply(cmd: readonly string[]): Awaited<ReturnType<Exec>> {
+		const line = cmd.slice(1).join(" ");
+		const reply = (stdout: string) => ({ exitCode: 0, stdout, stderr: "" });
+		if (line === "devices -l") return reply(ADB_PHONE);
+		if (cmd.at(-1) === PHONE_PROBE_SCRIPT) return reply(PHONE_PROPS);
+		if (line.endsWith("getprop sys.boot_completed")) return reply("1\n");
+		// host reads that are not device actions: the simulator list, memory pressure
+		if (cmd[0] === "xcrun" && line === "simctl list devices available -j") return reply('{"devices":{}}');
+		if (cmd[0] === "sysctl" || cmd[0] === "memory_pressure") return reply("1\n");
+		return { exitCode: 1, stdout: "", stderr: "unexpected" };
+	}
+
+	/** adb sees one Android phone; every other command is recorded and refused, so a stray `emu` / `reboot` / `kill` shows up */
+	function phoneSetup(argv: string[], calls: string[][]): TestContext {
+		const exec: Exec = async (cmd, opts) => {
+			if (cmd[0] === "git" || cmd.some((arg) => arg.endsWith("graph-worker.ts"))) return bunExec(cmd, opts);
+			calls.push([...cmd]);
+			return androidPhoneReply(cmd);
+		};
+		ctx = testContext(argv, { exec });
+		ctx.env = { ...ctx.env, ...OWNER_ENV, WARDEN_HEADLESS: "1" };
+		ctx.cwd = dir;
+		return ctx;
+	}
+
+	const argvs = (calls: string[][]) => calls.map((call) => call.slice(1).join(" "));
+
+	test("--physical --platform android: the phone is the only device, with no reboot / emu / kill / shutdown argv", async () => {
+		const calls: string[][] = [];
+		const c = phoneSetup(["--files", "src/chat/lazy.tsx", "--platform", "android", "--physical"], calls);
+		const h = harness();
+		expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+		const [job] = h.jobs();
+		expect(job?.opts.env.WARDEN_UDIDS).toBe(PHONE);
+		expect(job?.opts.env.WARDEN_UDID).toBe(PHONE);
+		expect(job?.opts.env.WARDEN_DEVICE_KIND).toBe("physical");
+		expect(job?.opts.env.WARDEN_HEADLESS).toBeUndefined();
+		expect(job?.opts.env.WARDEN_AFTER_REBOOT).toBeUndefined();
+		const FORBIDDEN = new Set(["emu", "reboot", "kill", "shutdown", "boot", "-avd", "erase", "put", "disable"]);
+		const forbidden = calls.filter(
+			(call) =>
+				call[0] === "emulator" ||
+				call.slice(1).some((arg) => FORBIDDEN.has(arg)) ||
+				(call[1] === "simctl" && call[2] !== "list")
+		);
+		expect(forbidden).toEqual([]);
+		expect(h.slimmed).toEqual([]);
+		expect(c.db.listLeases()).toEqual([]);
+	});
+
+	test("--serial names the phone and implies --physical; the suite's headless setting does not conflict", async () => {
+		const calls: string[][] = [];
+		const c = phoneSetup(["--files", "src/chat/lazy.tsx", "--platform", "android", "--serial", PHONE], calls);
+		const h = harness();
+		expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+		expect(h.jobs()[0]?.opts.env.WARDEN_UDIDS).toBe(PHONE);
+	});
+
+	test("the suite's `physical: { ids }` is honoured with no flag at all", async () => {
+		await resuite({ platform: "android", physical: { ids: [PHONE] } });
+		const calls: string[][] = [];
+		const c = phoneSetup(["--files", "src/chat/lazy.tsx"], calls);
+		const h = harness();
+		expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+		expect(h.jobs()[0]?.opts.env.WARDEN_UDIDS).toBe(PHONE);
+		expect(h.jobs()[0]?.opts.env.WARDEN_DEVICE_KIND).toBe("physical");
+	});
+
+	test("a leg with `physical: true` runs on the phone and boots no emulator", async () => {
+		await resuite({ platform: "android", devices: [{ profile: "pixel-8", physical: true }] });
+		const calls: string[][] = [];
+		const c = phoneSetup(["--files", "src/chat/lazy.tsx"], calls);
+		const h = harness();
+		expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+		expect(h.jobs()[0]?.opts.env.WARDEN_UDIDS).toBe(PHONE);
+		expect(argvs(calls).some((line) => /emulator|-avd/.test(line))).toBe(false);
+	});
+
+	test("a physical leg installs the release kind by default, flagged physical; an explicit --kind still wins", async () => {
+		const seen: Array<{ kind?: string; physical?: boolean }> = [];
+		const withEnsure = (h: Harness): Harness["deps"] => ({
+			...h.deps,
+			ensureApp: async (_c, _o, _p, _id, o) => {
+				seen.push({ ...(o.kind ? { kind: o.kind } : {}), ...(o.physical ? { physical: true } : {}) });
+				return { success: true, data: { appPath: "/c/a.apk", hash: "H", source: "cache", installed: true } };
+			},
+		});
+		const run = async (argv: string[]) => {
+			const c = phoneSetup(["--files", "src/chat/lazy.tsx", "--platform", "android", ...argv], []);
+			const code = await createE2eCommand(withEnsure(harness())).run(c);
+			expect(code).toBe(0);
+		};
+		await run(["--physical", "--app"]);
+		await run(["--physical", "--app", "--kind", "simulator"]);
+		expect(seen).toEqual([
+			{ kind: "release", physical: true },
+			{ kind: "simulator", physical: true },
+		]);
+	});
+
+	test("--serial wins over the suite's `count`: a suite sized for simulators still runs on one phone", async () => {
+		await resuite({ platform: "android", count: 2 });
+		const calls: string[][] = [];
+		const c = phoneSetup(["--files", "src/chat/lazy.tsx", "--serial", PHONE], calls);
+		const h = harness();
+		expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+		expect(h.jobs()[0]?.opts.env.WARDEN_UDIDS).toBe(PHONE);
+	});
+
+	test("--physical with --count / --headless is refused like a physical claim", async () => {
+		const calls: string[][] = [];
+		const c = phoneSetup(["--files", "src/chat/lazy.tsx", "--platform", "android", "--physical", "--headless"], calls);
+		expect(await createE2eCommand(harness().deps).run(c)).toBe(1);
+		expect(c.stderr.join("\n")).toContain("--headless cannot be used with --physical");
+	});
+
+	describe("with two phones connected", () => {
+		const SECOND = "192.168.1.20:5555";
+		const ADB_TWO = `List of devices attached\n${PHONE}            device usb:1-1 product:a54xnaeea model:SM_A546E device:a54x transport_id:2\n${SECOND}      device product:husky model:Pixel_8_Pro device:husky transport_id:5\n\n`;
+
+		function twoPhones(argv: string[], calls: string[][]): TestContext {
+			const exec: Exec = async (cmd, opts) => {
+				if (cmd[0] === "git" || cmd.some((arg) => arg.endsWith("graph-worker.ts"))) return bunExec(cmd, opts);
+				calls.push([...cmd]);
+				if (cmd.slice(1).join(" ") === "devices -l") return { exitCode: 0, stdout: ADB_TWO, stderr: "" };
+				if (cmd.at(-1) === PHONE_PROBE_SCRIPT)
+					return { exitCode: 0, stdout: cmd.includes(SECOND) ? "\n\nHW2\nPixel 8 Pro\n35\n" : PHONE_PROPS, stderr: "" };
+				return androidPhoneReply(cmd);
+			};
+			ctx = testContext(argv, { exec });
+			ctx.env = { ...ctx.env, ...OWNER_ENV, WARDEN_HEADLESS: "1" };
+			ctx.cwd = dir;
+			return ctx;
+		}
+
+		test("--physical --json fails ambiguous_device (exit 2) before any lease, build or job", async () => {
+			let ensured = 0;
+			const h = harness();
+			const deps: Harness["deps"] = {
+				...h.deps,
+				ensureApp: async () => {
+					ensured++;
+					return { success: true, data: { appPath: "/c/a.apk", hash: "H", source: "cache", installed: true } };
+				},
+			};
+			const c = twoPhones(
+				["--files", "src/chat/lazy.tsx", "--platform", "android", "--physical", "--app", "--json"],
+				[]
+			);
+			expect(await createE2eCommand(deps).run(c)).toBe(2);
+			const doc = JSON.parse(c.stdout.join("\n"));
+			expect(doc).toMatchObject({ ok: false, command: "e2e", error: { code: "ambiguous_device" } });
+			expect(doc.error.details.candidates.map((x: { id: string }) => x.id)).toEqual([PHONE, SECOND]);
+			expect(ensured).toBe(0);
+			expect(h.jobs()).toEqual([]);
+			expect(c.db.listLeases()).toEqual([]);
+		});
+
+		test("in a terminal the picker chooses the device the run uses", async () => {
+			const c = twoPhones(["--files", "src/chat/lazy.tsx", "--platform", "android", "--physical"], []);
+			c.ui = scriptedUi({ interactive: true, select: [SECOND] });
+			const h = harness();
+			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			expect(h.jobs()[0]?.opts.env.WARDEN_UDIDS).toBe(SECOND);
 		});
 	});
 });

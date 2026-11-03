@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { activeConditions, recordCondition } from "@delacour/warden-core/conditions/conditions";
 import { DEFAULT_TTL_MS } from "@delacour/warden-core/config.defaults";
+import { handlePath, writeHandleFile } from "@delacour/warden-core/netproxy/handle-file";
 import { openStore, type Store } from "@delacour/warden-core/store";
 import type { DeviceResource, Owner } from "@delacour/warden-core/types";
 import { blockMessage, busyMessage, ensureCallerLease, releaseDevices } from "./device-lease";
@@ -168,6 +170,30 @@ describe("ensureCallerLease", () => {
 	});
 });
 
+describe("lease history", () => {
+	test("a caller lease logs granted; releasing it logs released, a gc release logs expired", async () => {
+		const res = ensureCallerLease(store, me, "ios", UDID, opts(true));
+		expect(res.success).toBe(true);
+		const id = res.success ? res.data.lease.id : "";
+		now += 4_000;
+		await releaseDevices({ store: () => store, now: () => now }, [id]);
+		const second = ensureCallerLease(store, me, "ios", UDID, opts(true));
+		await releaseDevices({ store: () => store, now: () => now }, [second.success ? second.data.lease.id : ""], {
+			end: "expired",
+		});
+		const events = store.listEvents();
+		expect(events.map((e) => e.type)).toEqual(["granted", "released", "granted", "expired"]);
+		expect(events[0]).toMatchObject({ leaseId: id, data: { action: "leased", waitMs: 0, deviceId: UDID } });
+		expect(events[1]).toMatchObject({ leaseId: id, data: { heldMs: 4_000 } });
+	});
+
+	test("releasing a port lease logs nothing", async () => {
+		const port = store.insertLease({ resource: { kind: "port", port: 8081 }, owner: me, ttlMs: DEFAULT_TTL_MS }, now);
+		await releaseDevices({ store: () => store, now: () => now }, [port.id]);
+		expect(store.listEvents()).toEqual([]);
+	});
+});
+
 describe("releaseDevices", () => {
 	test("deletes leases, touches devices, runs `after` per device lease only", async () => {
 		store.recordDevice({ platform: "ios", id: UDID, name: "sim" }, 1);
@@ -197,5 +223,87 @@ describe("releaseDevices", () => {
 		expect(store.listLeases()).toHaveLength(0);
 		await pending;
 		expect(store.listDevices()[0]?.lastUsedAt).toBe(1);
+	});
+
+	test("undoes a device lease's conditions before deleting it, and releases anyway when a reset fails", async () => {
+		const dev = store.insertLease({ resource, owner: me, ttlMs: DEFAULT_TTL_MS }, now);
+		const port = store.insertLease({ resource: { kind: "port", port: 8081 }, owner: me, ttlMs: DEFAULT_TTL_MS }, now);
+		recordCondition(store, dev.id, "location", { kind: "point", lat: 1, lon: 2 }, now);
+		const seen: Array<{ cmd: string[]; leased: boolean }> = [];
+		const notes: string[] = [];
+		const exec = async (cmd: readonly string[]) => {
+			seen.push({ cmd: [...cmd], leased: store.getLease(dev.id) !== undefined });
+			return { exitCode: 1, stdout: "", stderr: "boom" };
+		};
+		const released = await releaseDevices({ store: () => store, now: () => now, exec }, [dev.id, port.id], {
+			onNote: (n) => notes.push(n),
+		});
+		expect(released.map((l) => l.id)).toEqual([dev.id, port.id]);
+		expect(seen).toEqual([{ cmd: ["xcrun", "simctl", "location", UDID, "clear"], leased: true }]);
+		expect(notes).toHaveLength(1);
+		expect(notes[0]).toContain("location");
+		expect(store.listLeases()).toHaveLength(0);
+		expect(activeConditions(store, dev.id)).toEqual([]);
+	});
+
+	test("a network condition's proxy is stopped and its port lease freed on release", async () => {
+		const dev = store.insertLease({ resource, owner: me, ttlMs: DEFAULT_TTL_MS }, now);
+		const port = store.insertLease({ resource: { kind: "port", port: 19_080 }, owner: me, ttlMs: DEFAULT_TTL_MS }, now);
+		recordCondition(store, dev.id, "network", { kind: "offline" }, now);
+		const env = { WARDEN_HOME: dir };
+		const path = handlePath(dev.id, env);
+		writeHandleFile(path, {
+			leaseId: dev.id,
+			portLeaseId: port.id,
+			pid: 999_999_999,
+			host: "127.0.0.1",
+			port: 19_080,
+			controlPort: 1,
+			token: "t",
+		});
+		await releaseDevices(
+			{ store: () => store, now: () => now, env, exec: async () => ({ exitCode: 0, stdout: "", stderr: "" }) },
+			[dev.id]
+		);
+		expect(existsSync(path)).toBe(false);
+		expect(store.getLease(port.id)).toBeUndefined();
+		expect(activeConditions(store, dev.id)).toEqual([]);
+	});
+
+	test("a lease without conditions never runs exec", async () => {
+		const dev = store.insertLease({ resource, owner: me, ttlMs: DEFAULT_TTL_MS }, now);
+		let ran = false;
+		await releaseDevices(
+			{
+				store: () => store,
+				now: () => now,
+				exec: async () => {
+					ran = true;
+					return { exitCode: 0, stdout: "", stderr: "" };
+				},
+			},
+			[dev.id]
+		);
+		expect(ran).toBe(false);
+	});
+
+	test("`only` rejects a lease: its conditions stay set", async () => {
+		const dev = store.insertLease({ resource, owner: me, ttlMs: DEFAULT_TTL_MS }, now);
+		recordCondition(store, dev.id, "location", { kind: "clear" }, now);
+		const calls: string[][] = [];
+		await releaseDevices(
+			{
+				store: () => store,
+				now: () => now,
+				exec: async (cmd) => {
+					calls.push([...cmd]);
+					return { exitCode: 0, stdout: "", stderr: "" };
+				},
+			},
+			[dev.id],
+			{ only: () => false }
+		);
+		expect(calls).toEqual([]);
+		expect(activeConditions(store, dev.id)).toHaveLength(1);
 	});
 });

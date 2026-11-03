@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { writeFileSync } from "node:fs";
+import type { KindApp } from "@delacour/warden-core/builds/ensure-kind";
 import { el, failWith, snapshotOf } from "@delacour/warden-e2e/driver/driver.testing";
 import type { Snapshot } from "@delacour/warden-e2e/driver/driver.types";
 import type { UiDeps } from "../agent-ui/driver";
@@ -318,31 +319,31 @@ describe("fill on a driver with pasteText (iOS)", () => {
 	const inputs = (h: ReturnType<typeof pasteHarness>): string[] =>
 		h.driver.calls.map((call) => call.method).filter((m) => m !== "snapshot" && m !== "elementAtPoint");
 
-	test("pastes over the select-all by default and the read-back confirms", async () => {
+	test("--via paste pastes over the select-all, the read-back confirms, and it is recorded", async () => {
 		const h = pasteHarness();
-		expect(await h.run("fill", "id=email", "new@x.co", "--json")).toBe(0);
+		expect(await h.run("fill", "id=email", "new@x.co", "--via", "paste", "--json")).toBe(0);
 		expect(inputs(h)).toEqual(["tap", "selectAll", "pasteText", "close"]);
 		expect(doc(h.c).result).toMatchObject({ action: "fill", verified: true, characters: 8 });
+		expect(h.steps[0]?.args).toEqual({ text: "new@x.co", via: "paste" });
+	});
+
+	test("types by default, even where the driver can paste, and records no via", async () => {
+		const h = pasteHarness();
+		expect(await h.run("fill", "id=email", "new@x.co", "--json")).toBe(0);
+		expect(inputs(h)).toEqual(["tap", "selectAll", "typeText", "close"]);
 		expect(h.steps[0]?.args).toEqual({ text: "new@x.co" });
 	});
 
-	test("--via type types and is recorded", async () => {
+	test("--via type is the default and not recorded", async () => {
 		const h = pasteHarness();
 		expect(await h.run("fill", "id=email", "new@x.co", "--via", "type", "--json")).toBe(0);
-		expect(inputs(h)).toEqual(["tap", "selectAll", "typeText", "close"]);
-		expect(h.steps[0]?.args).toEqual({ text: "new@x.co", via: "type" });
-	});
-
-	test("--via paste is the default and not recorded", async () => {
-		const h = pasteHarness();
-		expect(await h.run("fill", "id=email", "new@x.co", "--via", "paste", "--json")).toBe(0);
-		expect(h.driver.callsOf("pasteText")).toHaveLength(1);
+		expect(h.driver.callsOf("pasteText")).toHaveLength(0);
 		expect(h.steps[0]?.args).toEqual({ text: "new@x.co" });
 	});
 
 	test("a paste that fails is typed in the same attempt", async () => {
 		const h = pasteHarness(() => "fail");
-		expect(await h.run("fill", "id=email", "new@x.co", "--json")).toBe(0);
+		expect(await h.run("fill", "id=email", "new@x.co", "--via", "paste", "--json")).toBe(0);
 		expect(inputs(h)).toEqual(["tap", "selectAll", "pasteText", "typeText", "close"]);
 	});
 
@@ -361,7 +362,7 @@ describe("fill on a driver with pasteText (iOS)", () => {
 				return undefined;
 			},
 		});
-		expect(await h.run("fill", "id=email", "new@x.co", "--json")).toBe(0);
+		expect(await h.run("fill", "id=email", "new@x.co", "--via", "paste", "--json")).toBe(0);
 		expect(pastes).toBe(1);
 		expect(h.driver.callsOf("typeText").map((call) => call.text)).toEqual(["new@x.co"]);
 	});
@@ -373,11 +374,11 @@ describe("fill on a driver with pasteText (iOS)", () => {
 		expect(h.driver.callsOf("tap")).toEqual([]);
 	});
 
-	test("--secure pastes and records no text", async () => {
+	test("--secure --via paste pastes and records no text", async () => {
 		const h = harness([typingScreen("")], { pasteText: true });
-		expect(await h.run("fill", "id=email", "hunter2hunter2", "--secure", "--json")).toBe(0);
+		expect(await h.run("fill", "id=email", "hunter2hunter2", "--secure", "--via", "paste", "--json")).toBe(0);
 		expect(h.driver.callsOf("pasteText").map((call) => call.text)).toEqual(["hunter2hunter2"]);
-		expect(h.steps[0]?.args).toEqual({ secure: true });
+		expect(h.steps[0]?.args).toEqual({ secure: true, via: "paste" });
 		expect(h.c.stdout[0]).not.toContain("hunter2");
 	});
 });
@@ -603,13 +604,12 @@ const ALERT = snapshotOf([
 
 describe("alert", () => {
 	test("accept presses Allow, dismiss presses Don't Allow", async () => {
-		const h = harness([ALERT]);
-		expect(await h.run("alert", "accept")).toBe(0);
-		expect(await h.run("alert", "dismiss")).toBe(0);
-		expect(h.driver.callsOf("tap").map((call) => call.point)).toEqual([
-			{ x: 250, y: 520 },
-			{ x: 100, y: 520 },
-		]);
+		const accept = harness([ALERT], { answerAlertOnTap: true });
+		expect(await accept.run("alert", "accept")).toBe(0);
+		expect(accept.driver.callsOf("tap").map((call) => call.point)).toEqual([{ x: 250, y: 520 }]);
+		const dismiss = harness([ALERT], { answerAlertOnTap: true });
+		expect(await dismiss.run("alert", "dismiss")).toBe(0);
+		expect(dismiss.driver.callsOf("tap").map((call) => call.point)).toEqual([{ x: 100, y: 520 }]);
 	});
 
 	test("get reads the alert", async () => {
@@ -653,6 +653,73 @@ const OPEN_SHEET = snapshotOf([
 	}),
 ]);
 
+describe("open --kind", () => {
+	type Asked = { platform: string; deviceId: string; kind: string | undefined; project: string | undefined };
+
+	/** an ensure that records what it was asked for and answers with `source` */
+	function ensure(asked: Asked[], source: "build" | "installed", kindApp?: KindApp): NonNullable<UiDeps["ensureApp"]> {
+		return async (_ctx, _owner, platform, deviceId, opts) => {
+			asked.push({ platform, deviceId, kind: opts.kind, project: opts.project });
+			return {
+				success: true,
+				data: { appPath: "/c/A.app", hash: "H", source, installed: true, ...(kindApp ? { kindApp } : {}) },
+			};
+		};
+	}
+
+	const built = { requested: "simulator", artifact: "/c/A.app", hash: "H", source: "build", installed: true } as const;
+
+	test("installs the kind on the leased device, then launches (relaunch: a new build must not leave the old process) without Metro", async () => {
+		const asked: Asked[] = [];
+		const h = harness([snapshotOf(LOGIN)], { ensureApp: ensure(asked, "build") });
+		expect(await h.run("open", "com.example.app", "--kind", "simulator", "--project", "app", "--json")).toBe(0);
+		expect(asked).toEqual([{ platform: "ios", deviceId: UDID, kind: "simulator", project: "app" }]);
+		expect(h.driver.callsOf("app.launch")).toEqual([
+			{ method: "app.launch", bundleId: "com.example.app", opts: { relaunch: true } },
+		]);
+		expect(doc(h.c).result).toMatchObject({ bundleId: "com.example.app", relaunch: true, kind: "simulator" });
+	});
+
+	test("a device that already runs the build is attached to, not relaunched", async () => {
+		const h = harness([snapshotOf(LOGIN)], { ensureApp: ensure([], "installed") });
+		expect(await h.run("open", "com.example.app", "--kind", "release", "--json")).toBe(0);
+		expect(h.driver.callsOf("app.launch")).toEqual([
+			{ method: "app.launch", bundleId: "com.example.app", opts: { relaunch: false } },
+		]);
+	});
+
+	test("the repack's jsKey and a fallback's reason are reported", async () => {
+		const repack: KindApp = {
+			...built,
+			kind: "simulator",
+			repack: { jsKey: "abcdef0123456789", baseHash: "b", reused: false },
+		};
+		const h = harness([snapshotOf(LOGIN)], { ensureApp: ensure([], "build", repack) });
+		expect(await h.run("open", "com.example.app", "--kind", "simulator", "--json")).toBe(0);
+		expect(doc(h.c).result).toMatchObject({ kind: "simulator", jsKey: "abcdef0123456789" });
+		const fell: KindApp = { ...built, kind: "release", fallbackReason: "images changed" };
+		const g = harness([snapshotOf(LOGIN)], { ensureApp: ensure([], "build", fell) });
+		expect(await g.run("open", "com.example.app", "--kind", "simulator", "--json")).toBe(0);
+		expect(doc(g.c).result).toMatchObject({ kind: "release", fallbackReason: "images changed" });
+	});
+
+	test("an install failure is the command's error and nothing is launched", async () => {
+		const h = harness([snapshotOf(LOGIN)], {
+			ensureApp: async () => ({ success: false, error: "repack: metro exploded" }),
+		});
+		expect(await h.run("open", "com.example.app", "--kind", "simulator", "--json")).toBe(1);
+		expect(h.driver.callsOf("app.launch")).toEqual([]);
+		expect(h.c.stdout.join("\n")).toContain("--kind simulator: repack: metro exploded");
+	});
+
+	test("--metro with a build that has no dev client is a usage error; --kind with a URL too", async () => {
+		const h = harness([snapshotOf(LOGIN)], { ensureApp: ensure([], "build") });
+		expect(await h.run("open", "com.example.app", "--kind", "simulator", "--metro", "http://localhost:8081")).toBe(1);
+		expect(await h.run("open", "myapp://x", "--kind", "simulator")).toBe(1);
+		expect(h.driver.callsOf("app.launch")).toEqual([]);
+	});
+});
+
 describe("open", () => {
 	test("a bundle id launches the app and is remembered for `close --app`", async () => {
 		const h = harness([snapshotOf(LOGIN)]);
@@ -664,7 +731,7 @@ describe("open", () => {
 		expect(doc(h.c).result).toMatchObject({ action: "open", bundleId: "com.example.app", relaunch: false });
 	});
 
-	test("--relaunch terminates first (driver relaunch); --metro launches the dev client with --initialUrl and stores the url", async () => {
+	test("--relaunch terminates first (driver relaunch); --metro launches the dev client with --initialUrl, no dev menu onboarding, and stores the url", async () => {
 		const h = harness([snapshotOf(LOGIN)]);
 		expect(
 			await h.run("open", "com.example.app", "--relaunch", "--metro", "http://localhost:8081", "--args", "--foo", "bar")
@@ -673,7 +740,19 @@ describe("open", () => {
 			{
 				method: "app.launch",
 				bundleId: "com.example.app",
-				opts: { args: ["--initialUrl", "http://localhost:8081", "--foo", "bar"], relaunch: true },
+				opts: {
+					args: [
+						"--initialUrl",
+						"http://localhost:8081",
+						"-EXDevMenuIsOnboardingFinished",
+						"YES",
+						"-EXDevMenuShowsAtLaunch",
+						"NO",
+						"--foo",
+						"bar",
+					],
+					relaunch: true,
+				},
 			},
 		]);
 		expect(readState(h.c, UDID)).toMatchObject({ app: "com.example.app", metroUrl: "http://localhost:8081" });
@@ -762,6 +841,39 @@ describe("device controls", () => {
 		expect(await h.run("screen", "appearance", "--json")).toBe(0);
 		expect(doc(h.c).result.appearance).toBe("dark");
 		expect(await h.run("screen", "appearance", "blue", "--json")).toBe(1);
+	});
+
+	test("biometrics reads (default) and runs enroll / match / fail / unenroll", async () => {
+		const h = harness([snapshotOf(LOGIN)]);
+		expect(await h.run("biometrics", "--json")).toBe(0);
+		expect(doc(h.c).result.biometrics).toEqual({ enrolled: false, modality: "face" });
+		expect(await h.run("biometrics", "enroll", "--json")).toBe(0);
+		expect(doc(h.c).result.biometrics).toEqual({ enrolled: true, modality: "face" });
+		expect(await h.run("biometrics", "match", "--json")).toBe(0);
+		expect(await h.run("biometrics", "fail", "--json")).toBe(0);
+		expect(await h.run("biometrics", "unenroll", "--json")).toBe(0);
+		expect(doc(h.c).result.biometrics.enrolled).toBe(false);
+		expect(h.driver.callsOf("biometrics").map((c) => c.op)).toEqual(["status", "enroll", "match", "fail", "unenroll"]);
+	});
+
+	for (const platform of ["ios", "android"] as const) {
+		test(`biometrics on a physical ${platform} device: E_UNSUPPORTED before the device is opened`, async () => {
+			const h = harness([snapshotOf(LOGIN)], { platform, lease: { physical: { transport: "usb" } } });
+			for (const op of ["status", "enroll", "match"]) {
+				expect(await h.run("biometrics", op, "--json")).not.toBe(0);
+				const out = JSON.stringify(doc(h.c));
+				expect(out).toContain("E_UNSUPPORTED");
+				expect(out).toContain("real Face ID / fingerprint sensor");
+			}
+			expect(h.driver.calls).toEqual([]);
+		});
+	}
+
+	test("biometrics: an unknown op is a usage error", async () => {
+		const h = harness([snapshotOf(LOGIN)]);
+		expect(await h.run("biometrics", "scan", "--json")).toBe(1);
+		expect(doc(h.c).error.code).toBe("usage");
+		expect(h.driver.callsOf("biometrics")).toHaveLength(0);
 	});
 
 	test("screenshot numbers its files under $WARDEN_HOME/ui/<udid>/shots, or goes where told", async () => {

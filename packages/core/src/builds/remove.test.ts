@@ -8,7 +8,7 @@ import { aliasBuild, type BuildRecord, getInstall, listBuilds, recordInstall, st
 import { buildLockKey, buildResource } from "./lock";
 import { planRemove, removeBuilds } from "./remove";
 
-function rec(hash: string, over: Partial<BuildRecord> = {}): BuildRecord {
+function rec(hash: string, over: Partial<Pick<BuildRecord, "platform" | "path" | "size">> = {}): BuildRecord {
 	return {
 		projectKey: "k",
 		platform: "ios",

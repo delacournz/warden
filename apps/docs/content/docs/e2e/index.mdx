@@ -14,10 +14,10 @@ warden e2e example-dev --all
 
 | Piece | What it is | Where it lives |
 |---|---|---|
-| Spec | One file of tests for a user flow: `test("…", async ({ app, device, screen }) => { … })`, written with `@delacour/warden-e2e` | `e2e/*.e2e.ts` ([Write specs](/docs/e2e/specs)) |
-| Suite | A named set of specs plus how to run them: devices, build, Metro, timeouts | `e2e.<name>` in `warden.config.ts` ([Suites](/docs/e2e/suites)) |
-| Run | `warden e2e <suite>`: leases devices, installs, starts Metro, runs, reports | one command |
-| Evidence | `results.jsonl` per worker, `e2e-report.json` per run, artifacts per failed test | the batch dir ([Debugging](/docs/e2e/debugging)) |
+| **Spec** | One file of tests for a user flow: `test("…", async ({ app, device, screen }) => { … })`, written with `@delacour/warden-e2e` | `e2e/*.e2e.ts` ([Write specs](/docs/e2e/specs)) |
+| **Suite** | A named set of specs plus how to run them: devices, build, Metro, timeouts | `e2e.<name>` in `warden.config.ts` ([Suites](/docs/e2e/suites)) |
+| **Run** | `warden e2e <suite>`: leases devices, installs, starts Metro, runs, reports | one command |
+| **Evidence** | `results.jsonl` per worker, `e2e-report.json` per run, artifacts per failed test | the batch dir ([Debugging](/docs/e2e/debugging)) |
 
 A spec's id is its path under `specsDir` without the extension (`e2e/todos.e2e.ts` is `todos`).
 

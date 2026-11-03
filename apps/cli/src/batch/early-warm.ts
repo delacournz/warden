@@ -14,7 +14,7 @@ export type EarlyWarmDeps = Pick<WarmRun, "logDir" | "now" | "after" | "writeFil
 export type EarlyWarmOutcome = WarmOutcome & { warnings: string[] };
 
 /** One device's warm-up once it settled: its socket and helper when warm, its (held back) warning when not; `{}` for a device never warmed. */
-export type DeviceWarm = { socketPath?: string; helper?: WarmHelper; warning?: string };
+export type DeviceWarm = { socketPath?: string; helper?: WarmHelper; warning?: string; error?: string };
 
 /**
  * The iOS driver warm-up started while the run is still claiming: a leg's helpers are spawned and
@@ -65,6 +65,7 @@ export function startEarlyWarm(deps: EarlyWarmDeps): EarlyWarm {
 								...(warmed.socketPath !== undefined ? { socketPath: warmed.socketPath } : {}),
 								...(helper ? { helper } : {}),
 								...(warning !== undefined ? { warning } : {}),
+								...(warmed.error !== undefined ? { error: warmed.error } : {}),
 							};
 							done.set(warmed.udid, outcome);
 							byDevice.get(warmed.udid)?.resolve(outcome);

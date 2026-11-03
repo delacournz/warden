@@ -4,6 +4,7 @@ import { err, ok, type Result } from "@delacour/warden-types/result";
 import {
 	HELPER_BINARY,
 	HELPER_GUEST,
+	HELPER_INJECT,
 	HELPER_MANIFEST,
 	HELPER_RESOURCES,
 	parseHelperManifest,
@@ -21,7 +22,7 @@ function frameworkNames(dir: string): string[] {
 /**
  * Copy the built helper (`packages/e2e/native/dist`: `warden-simd`, `Resources/`, `*.framework`, `manifest.json`)
  * into a platform package's `bin/`. No `warden-simd` in `distDir` → `undefined`, or an error with `required`
- * (the release build). A dist that has a binary but is incomplete is always an error: never ship half a helper.
+ * (the release build; there the injected dylib is required too). A dist that has a binary but is incomplete is always an error: never ship half a helper.
  * Symlinks inside the frameworks are copied as symlinks (`verbatimSymlinks`). `npm pack` drops them, which is fine:
  * `warden-simd` links `@rpath/<Name>.framework/Versions/A/<Name>`, a real file, and the helper runs from an
  * extracted tarball (checked on the 0.1.0 release build, `doctor` sim-helper-health ok).
@@ -47,6 +48,13 @@ export function stageHelper(input: {
 	const frameworks = frameworkNames(distDir);
 	if (frameworks.length === 0) return err(`${distDir} has ${HELPER_BINARY} but no stub *.framework`);
 
+	const inject = existsSync(join(distDir, HELPER_INJECT));
+	if (required && !inject) {
+		return err(
+			`--require-helper: no ${HELPER_INJECT} in ${distDir} — run \`bun run --cwd packages/e2e native:build\` (it builds the injected dylib after the helper)`
+		);
+	}
+
 	mkdirSync(binDir, { recursive: true });
 	const copy = (name: string) =>
 		cpSync(join(distDir, name), join(binDir, name), { recursive: true, verbatimSymlinks: true });
@@ -54,6 +62,7 @@ export function stageHelper(input: {
 	copy(HELPER_RESOURCES);
 	copy(HELPER_MANIFEST);
 	for (const framework of frameworks) copy(framework);
+	if (inject) copy(HELPER_INJECT);
 	chmodSync(join(binDir, HELPER_BINARY), 0o755);
-	return ok({ ...info.data, frameworks });
+	return ok({ ...info.data, frameworks, inject });
 }

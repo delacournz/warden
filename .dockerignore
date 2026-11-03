@@ -1,0 +1,30 @@
+# Railway Docker build context for `warden-docs` (apps/docs/Dockerfile; the service lives in
+# delacour-monorepo's apps/warden/infra/railway.ts). The build stage runs its own `bun install`, so
+# a host node_modules (macOS-native addons) would only bloat the context and could shadow it.
+#
+# Every workspace package.json must stay in the context — `bun install --frozen-lockfile` refuses a
+# workspace set that does not match bun.lock — so only generated output is excluded, never a
+# workspace directory. `.changeset/` and apps/cli/CHANGELOG.md stay too: the docs build renders the
+# release-notes page from them.
+**/node_modules
+**/.output
+**/.nitro
+**/.tanstack
+**/.vinxi
+**/.turbo
+**/.expo
+**/.source
+**/dist
+**/coverage
+**/*.tsbuildinfo
+**/test-results
+**/playwright-report
+.bench
+packages/e2e/native/idb-libraries
+packages/e2e/native/ios/.build
+.git
+**/.env
+**/.env.*
+!**/.env.example
+**/*.log
+**/.DS_Store

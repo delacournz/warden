@@ -28,5 +28,6 @@ describe("helper layout", () => {
 			"bin/A.framework",
 			"bin/B.framework",
 		]);
+		expect(helperFiles("bin", ["A.framework"], true).at(-1)).toBe("bin/libwarden-inject.dylib");
 	});
 });

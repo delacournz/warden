@@ -11,6 +11,7 @@ import {
 	runBatch,
 } from "@delacour/warden-core/batch/schedule";
 import type { ClaimedDevice, ClaimOutcome } from "@delacour/warden-core/claim";
+import { parseClaimError } from "@delacour/warden-core/claim-errors";
 import { formatDuration, parseDuration } from "@delacour/warden-core/duration";
 import { bunExec, execError } from "@delacour/warden-core/exec";
 import { readGitFacts, readGitFactsSync } from "@delacour/warden-core/git-facts";
@@ -20,9 +21,11 @@ import { PRIORITY } from "@delacour/warden-core/queue";
 import { slimSimulator } from "@delacour/warden-core/sims/slim";
 import type { SlimProfile } from "@delacour/warden-core/sims/slim.profile";
 import { wardenHome } from "@delacour/warden-core/store";
-import type { Owner, Platform } from "@delacour/warden-core/types";
+import { isPhysicalDevice, isPhysicalIosId, type Owner, type Platform } from "@delacour/warden-core/types";
 import { ENV_NAMES } from "@delacour/warden-e2e/env";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
+import { stopAndroidHostsLazily } from "../agent-ui/helper-sweep";
+import { UI_ERROR_EXIT, type UiErrorCode } from "../agent-ui/output";
 import { stopHelperAfter } from "../agent-ui/stop-helper-after";
 import { maybeAutoGc } from "../autogc";
 import { type Cast, createCast } from "../batch/cast";
@@ -50,16 +53,21 @@ import {
 	withRunners,
 } from "../batch/tui";
 import type { WarmConnect, WarmHelper } from "../batch/warm-drivers";
+import { warmGate } from "../batch/warm-gate";
 import { buildCapacityDeps } from "../capacity-deps";
 import {
 	bootedByClaim,
 	type ClaimFlags,
 	type ClaimFlagValues,
 	detachLockFor,
+	isPhysicalClaim,
+	type PhysicalOptionValues,
 	parseClaimFlags,
 	resolveOwner,
 	resolvePlatform,
 	withClaimOptions,
+	withNamedPhysical,
+	withPhysicalOptions,
 } from "../claim-flags";
 import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
@@ -68,8 +76,10 @@ import { helperDir } from "../e2e/bun-runner";
 import { readE2ePackageVersion, stageBundledRuntime } from "../e2e/e2e-runtime";
 import { residentSocket, warmConnect } from "../e2e/warm-connect";
 import { claimLateWorkers, type ElasticPlan, type LateWorker, planElastic } from "../elastic";
+import { defaultLeaseHealthDeps } from "../lease-health";
 import {
 	type AppFlagValues,
+	appPhaseProgress,
 	claimAll,
 	exitCodeOf,
 	type ForwardedSignal,
@@ -98,6 +108,8 @@ import {
 	startMetro,
 } from "../metro";
 import { emit, note, reportError, warn } from "../output";
+import { isLockedClaimError, reportClaimFailure } from "../physical-lock";
+import { canPrompt, pickPhysicalArgs, reportPick } from "../physical-pick";
 import { hideSimWindows } from "../sim-windows";
 import { withSpinner } from "../spinner-context";
 import type { Spinner } from "../ui";
@@ -182,7 +194,8 @@ export type BatchDeps = LeaseSessionDeps & {
 
 /** Commander option values of `warden batch`. */
 export type BatchOpts = ClaimFlagValues &
-	AppFlagValues & {
+	AppFlagValues &
+	PhysicalOptionValues & {
 		json?: true;
 		port: string[];
 		jobs?: string;
@@ -304,7 +317,7 @@ export function parseBatchArgs(
 	cwd: string,
 	base: BatchBase = {}
 ): Result<BatchArgs> {
-	const flags = parseClaimFlags(platform, opts, undefined, undefined, PRIORITY.low);
+	const flags = parseClaimFlags(platform, withNamedPhysical(opts), undefined, undefined, PRIORITY.low);
 	if (!flags.success) return flags;
 	const app = parseAppFlags(opts);
 	if (!app.success) return app;
@@ -389,6 +402,10 @@ async function waitReady(
 
 type Device = BatchWorker & {
 	name: string;
+	/** a real phone/tablet: never rebooted, slimmed, arranged or shut down (`WARDEN_DEVICE_KIND=physical`) */
+	physical?: true;
+	/** the device's lease (`WARDEN_LEASE_ID` for its jobs) */
+	leaseId?: string;
 	video?: string;
 	videoStartedAt?: number;
 	leg?: string;
@@ -766,9 +783,22 @@ function watchdog(deps: BatchDeps, timeoutMs: number | undefined, proc: ProcHand
 const deviceNameEnv = (name: string | undefined): Record<string, string> =>
 	name === undefined ? {} : { [ENV_NAMES.deviceName]: name };
 
-/** `WARDEN_SIMD_SOCKET` for a job on a device whose helper is warm. */
-const socketEnv = (socketPath: string | undefined): Record<string, string> =>
-	socketPath === undefined ? {} : { [ENV_NAMES.simdSocket]: socketPath };
+/**
+ * The socket env for a job on a device whose helper is warm: `WARDEN_SIMD_SOCKET` (a simulator's `warden-simd`), or
+ * `WARDEN_IOS_RUNNER_SOCKET` for a physical iPhone's runner host.
+ */
+export const socketEnv = (udid: string, socketPath: string | undefined): Record<string, string> => {
+	if (socketPath === undefined) return {};
+	return { [isPhysicalIosId(udid) ? ENV_NAMES.iosRunnerSocket : ENV_NAMES.simdSocket]: socketPath };
+};
+
+/** `WARDEN_DEVICE_KIND=physical` for a job on a real phone (a mixed run's other jobs get none: `childEnv` leaves it out). */
+const deviceKindEnv = (physical: boolean): Record<string, string> =>
+	physical ? { [ENV_NAMES.deviceKind]: "physical" } : {};
+
+/** `WARDEN_LEASE_ID`: the lease a job's device is held under, so a spec can record its conditions on it. */
+const leaseIdEnv = (leaseId: string | undefined): Record<string, string> =>
+	leaseId === undefined ? {} : { [ENV_NAMES.leaseId]: leaseId };
 
 /**
  * The per-job `run` for `runBatch`: expand the argv, spawn with the job env + log, track it for
@@ -818,9 +848,11 @@ function jobRunner(deps: BatchDeps, o: JobRunnerOptions) {
 		const env: Record<string, string | undefined> = {
 			...o.env,
 			...o.hooks.jobEnv?.(input),
-			...socketEnv(await o.socketFor(w.udid)),
+			...socketEnv(w.udid, await o.socketFor(w.udid)),
+			...deviceKindEnv(o.live.find((d) => d.udid === w.udid)?.physical === true),
 			WARDEN_UDID: w.udid,
 			...deviceNameEnv(o.live.find((d) => d.udid === w.udid)?.name),
+			...leaseIdEnv(o.live.find((d) => d.udid === w.udid)?.leaseId),
 			WARDEN_WORKER: String(w.worker),
 			WARDEN_JOB: job,
 			WARDEN_JOB_SEQ: String(seq),
@@ -934,6 +966,8 @@ export type SessionResult = {
 	devices?: Array<{ worker: number; udid: string; name: string; leg?: string }>;
 	/** per-device setup outcomes, when the session ran a setup */
 	setups?: DeviceSetup[] | undefined;
+	/** why the run stopped before any job: a phone whose runner would not start (`device_locked`, ...) */
+	error?: { code: string; message: string; udid: string };
 };
 
 /** Extras for callers building on batch (`warden e2e`). */
@@ -1038,6 +1072,8 @@ async function prepareDevices(
 const recordedSlim =
 	(ctx: CommandContext, deps: BatchDeps, fixed?: SlimProfile) =>
 	async (udid: string, profile?: SlimProfile): AsyncResult<string[]> => {
+		// a physical iPhone has no simulator daemons to switch off
+		if (isPhysicalIosId(udid)) return ok([]);
 		const res = await deps.slim(udid, profile ?? fixed);
 		if (res.success) ctx.store().setSlimmed("ios", udid, ctx.now());
 		return res;
@@ -1071,6 +1107,8 @@ function buildPools(session: LeaseSession, args: BatchArgs): Pool[] {
 				worker: worker++,
 				udid: c.device.id,
 				name: c.device.name,
+				...(isPhysicalDevice(c.device) ? { physical: true as const } : {}),
+				leaseId: c.lease.id,
 				...(leg ? { leg: leg.name } : {}),
 			})),
 		};
@@ -1423,6 +1461,12 @@ async function startServe(
 
 type PreparedPool = { pool: Pool; live: Device[]; setups?: DeviceSetup[] };
 
+/** A resident `warden ui` host would fight the jobs' own drivers for an emulator's one `warden-uiad` slot: stop it. */
+async function stopResidentHosts(ctx: CommandContext, name: string, devices: readonly Device[]): Promise<void> {
+	const serials = devices.map((d) => d.udid);
+	for (const warning of await stopAndroidHostsLazily(ctx, serials)) warn(ctx, `warden ${name}: ${warning}`);
+}
+
 /**
  * One pool from its claim to its first job, on its own devices only (12-3): setup (slim, then the
  * command), then Metro's open beside the late-window hide. A device whose setup fails, or that cannot
@@ -1449,6 +1493,7 @@ async function preparePool(
 	for (const d of pool.devices)
 		if (lost.has(d.udid)) reportError(ctx, r.name, `${d.udid} ${lost.get(d.udid)}, dropped`);
 	const setupEnv = poolEnv(o.env, pool, devices);
+	if (r.platform === "android") await stopResidentHosts(ctx, r.name, devices);
 	const setup = await prepareDevices(
 		ctx,
 		deps,
@@ -1698,7 +1743,7 @@ async function claimLateWorker(
 		await drop();
 		return err(`${c?.device.id ?? "device"} did not come back after the headless hide`);
 	}
-	const device: Device = { worker: o.worker, udid: c.device.id, name: c.device.name };
+	const device: Device = { worker: o.worker, udid: c.device.id, name: c.device.name, leaseId: c.lease.id };
 	const prepared = await preparePool(
 		ctx,
 		deps,
@@ -1871,6 +1916,13 @@ async function supervise(
 			const setups = setupsOf(r, await Promise.all(preparing));
 			const failedLogs = (setups ?? []).filter((d) => !d.ok).map((d) => d.log ?? d.error);
 			return fail(`setup failed on every device (logs: ${failedLogs.join(", ")})`, { batchDir, setups });
+		}
+		// a phone's jobs reach its runner only through the warm socket: no runner, no specs
+		const phones = run.warm ? r.devices.map((d) => d.udid).filter(isPhysicalIosId) : [];
+		const stopped = run.warm && phones.length > 0 ? await warmGate(phones, run.warm) : undefined;
+		if (stopped) {
+			const failed = fail(`${stopped.udid}: ${stopped.code}: ${stopped.message}`, { batchDir, error: stopped });
+			return failed.code === 130 ? failed : { ...failed, code: warmStopExit(stopped.code) };
 		}
 		const socketFor = deviceSockets(ctx, r, run.warm, run.warm ? undefined : hooks.residentSocket, say);
 		const toQueue = queueMaker(ctx, deps, args, r, {
@@ -2064,21 +2116,37 @@ async function batch(
 	const cmd = split.data.cmd.length > 0 ? split.data.cmd : (preset?.cmd ?? []);
 	if (cmd.length === 0) return fail("missing command after -- (warden batch ios -- <cmd…>)");
 	const merged = preset ? mergePreset(preset, opts, passed) : { opts, base: {} };
-	const headless = resolveHeadless({
-		flag: passed.has("headless") ? opts.headless : undefined,
-		config: preset?.headless,
-		env: ctx.env,
-	});
+	const explicit = passed.has("headless") ? opts.headless : undefined;
+	// a physical device is never headless-hidden: only an explicit --headless reaches the claim (which refuses it)
+	const headless = isPhysicalClaim(withNamedPhysical(merged.opts))
+		? explicit
+		: resolveHeadless({ flag: explicit, config: preset?.headless, env: ctx.env });
 	const args = parseBatchArgs(
 		platform,
-		{ ...merged.opts, headless, ...(preset?.slim !== undefined ? { slimConfig: preset.slim } : {}) },
+		{
+			...merged.opts,
+			headless,
+			...(preset?.slim !== undefined ? { slimConfig: preset.slim } : {}),
+			...(preset?.biometrics === true ? { biometrics: true } : {}),
+			...(preset?.reclaim !== undefined ? { reclaimConfig: preset.reclaim } : {}),
+		},
 		ctx.cwd,
 		merged.base
 	);
 	if (!args.success) return fail(args.error);
 	const jobs = await loadJobs(ctx, deps, args.data);
 	if (!jobs.success) return fail(jobs.error);
-	return (await runSession(ctx, deps, args.data, jobs.data, cmd)).code;
+	// before any lease or build: several usable phones are asked about, or refused (ambiguous_device, exit 2)
+	const picked = await pickPhysicalArgs(ctx, resolveOwner(ctx), args.data, {
+		prompt: canPrompt(ctx, { json: args.data.json }),
+	});
+	if (picked.kind !== "ok") return reportPick(ctx, "batch", picked);
+	return (await runSession(ctx, deps, picked.args, jobs.data, cmd)).code;
+}
+
+/** The exit code of a run stopped by a phone's failed warm-up: the `warden ui` code's (a locked phone exits 2), else 1. */
+function warmStopExit(code: string): number {
+	return code in UI_ERROR_EXIT ? UI_ERROR_EXIT[code as UiErrorCode] : 1;
 }
 
 /** A warm-up the run never collected (the claim failed, a signal): stop waiting for it and close what came up. */
@@ -2187,6 +2255,9 @@ async function abortClaim(
 	const claimError = claimed.success || claimed.error === INTERRUPTED ? undefined : claimed.error;
 	const metroError = launch && metro && !metro.success ? `${metro.error} (log: ${launch.log})` : undefined;
 	const reason = claimError ?? (interrupted ? INTERRUPTED : (metroError ?? INTERRUPTED));
+	if (!interrupted && claimError !== undefined && (isLockedClaimError(claimError) || parseClaimError(claimError))) {
+		return { code: reportClaimFailure(ctx, name, claimError) };
+	}
 	reportError(ctx, name, reason);
 	return { code: interrupted ? 130 : 1 };
 }
@@ -2228,7 +2299,7 @@ export async function runSession(
 		hooks.setup?.slim && platform === "ios"
 			? startEarlySlim<ClaimedDevice>({
 					slim: recordedSlim(ctx, deps, typeof hooks.setup.slim === "object" ? hooks.setup.slim : undefined),
-					skip: (c) => alreadySlimmed(ctx, c),
+					skip: (c) => isPhysicalDevice(c.device) || alreadySlimmed(ctx, c),
 				})
 			: undefined;
 	// the early warm-up closed and the early slim done, once (before a failed claim releases the devices)
@@ -2247,11 +2318,13 @@ export async function runSession(
 		const legFlags = lease.legs?.map((leg) => leg.flags);
 		const progress = leasedProgress(spinner, ctx.ui.color, lease.app !== undefined);
 		const onLeased = sessionOnLeased(progress, warm, slim);
+		const onAppPhase = appPhaseProgress(spinner, lease.app !== undefined);
 		const onPorts = sessionOnPorts(ctx, sctx, deps, lease, run, batchDir, controller);
 		const claimArgs = {
 			...lease,
 			...(legFlags ? { legFlags } : {}),
 			...(onLeased ? { onLeased } : {}),
+			...(onAppPhase ? { onAppPhase } : {}),
 			...(onPorts ? { onPorts } : {}),
 			aborted: () => interrupted() || run.launch?.state === "failed",
 			// a device the headless hide could not boot again is dropped, as one that cannot reach Metro is (12-7, R5)
@@ -2304,7 +2377,8 @@ async function elasticSplit(
 ): Promise<{ lease: BatchArgs; extra: number; setup: RunSetup["elastic"] }> {
 	const { request } = args.flags;
 	const whole = { lease: args, extra: 0, setup: undefined };
-	if (args.legs || request.count < 2) return whole;
+	// phones are not created: a physical request claims exactly the devices it names
+	if (args.legs || request.count < 2 || request.physical !== undefined) return whole;
 	const plan = await planElastic(await buildCapacityDeps(ctx, owner), request.platform, request.count);
 	if (!plan) return whole;
 	note(
@@ -2349,13 +2423,15 @@ export function createBatchCommand(deps: BatchDeps): Command {
 		register: (cmd, ctx, done) => {
 			withBatchOptions(
 				withLeaseOptions(
-					withClaimOptions(
-						cmd
-							.argument(
-								"[platform]",
-								"ios | android (asked for when omitted in a terminal), or a warden.config.ts batches preset"
-							)
-							.argument("[cmd...]", "per-job command after --; {job} {udid} {worker} {seq} are substituted")
+					withPhysicalOptions(
+						withClaimOptions(
+							cmd
+								.argument(
+									"[platform]",
+									"ios | android (asked for when omitted in a terminal), or a warden.config.ts batches preset"
+								)
+								.argument("[cmd...]", "per-job command after --; {job} {udid} {worker} {seq} are substituted")
+						)
 					)
 				)
 			)
@@ -2443,6 +2519,7 @@ export const defaultBatchDeps: BatchDeps = {
 	},
 	onSignal: processOnSignal,
 	every: intervalEvery,
+	health: defaultLeaseHealthDeps,
 	after: (ms, fn) => {
 		const timer = setTimeout(fn, ms);
 		return () => clearTimeout(timer);

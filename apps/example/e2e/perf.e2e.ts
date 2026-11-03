@@ -7,7 +7,7 @@ test.use(SPEC_OPTIONS);
 /**
  * `device.perf`: profile the todos spec and hold the report to budgets. The suite's budgets come from
  * `perf.budgets` in `warden.config.ts`; the `budgets` passed to `stop` replace them per key for this spec. The
- * `react` capture needs the dev client (`example-dev`), so it is only asked for when Metro is up; a capture that did
+ * `react` capture needs the dev client (`warden e2e example --dev`), so it is only asked for when Metro is up; a capture that did
  * not run has no number and cannot breach. The report lands in the attempt's `perf/` dir.
  */
 test("adding todos stays inside the perf budgets", async ({ app, device, screen }) => {

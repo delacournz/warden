@@ -26,6 +26,10 @@ export type AppDeps = {
 	log?: Logger;
 	/** the app under test: `openUrl` is addressed to it (`am start -p`) so no other handler or chooser can take the link */
 	appPackage?: string;
+	/** a real phone: `uninstall` and `clearData` only touch `appPackage` and `ownedPackages` (`E_REFUSED` otherwise) */
+	physical?: boolean;
+	/** packages warden installed on this device besides `appPackage` */
+	ownedPackages?: readonly string[];
 	/** how long `am start -W` may wait for the first frame (default `START_WAIT_TIMEOUT_MS`); tests shorten it */
 	startWaitTimeoutMs?: number;
 	/** how long the `pidof` after a timed-out start may take (default `START_PROBE_TIMEOUT_MS`); tests shorten it */
@@ -202,7 +206,19 @@ export function createAppCommands(deps: AppDeps): AppCommands {
 			: driverErr("E_IO", `adb install failed: ${res.text.slice(-200)}`);
 	};
 
+	/** On a phone, a package warden did not install is not ours to remove or wipe (invariant: allowlist). */
+	const protectedPackage = (bundleId: string, action: string): ReturnType<typeof driverErr> | undefined => {
+		if (!deps.physical || bundleId === deps.appPackage || deps.ownedPackages?.includes(bundleId)) return undefined;
+		return driverErr(
+			"E_REFUSED",
+			`physical_protected: ${bundleId} was not installed by warden; refusing to ${action} it on physical device ${serial}`,
+			{ detail: { reason: "physical_protected", bundleId } }
+		);
+	};
+
 	const uninstall: AppCommands["uninstall"] = async (bundleId) => {
+		const refused = protectedPackage(bundleId, "uninstall");
+		if (refused) return refused;
 		launchers.delete(bundleId);
 		const installed = await isInstalled(bundleId);
 		if (!installed.success) return installed;
@@ -214,6 +230,8 @@ export function createAppCommands(deps: AppDeps): AppCommands {
 	};
 
 	const clearData: AppCommands["clearData"] = async (bundleId) => {
+		const refused = protectedPackage(bundleId, "clear the data of");
+		if (refused) return refused;
 		const res = await runChecked(session, shellCommand(pmClearArgv(bundleId)), "E_APP_UNAVAILABLE");
 		if (!res.success) return res;
 		return res.data.includes("Success")

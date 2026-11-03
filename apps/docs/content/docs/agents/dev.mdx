@@ -108,7 +108,7 @@ The HUD box samples the dev client every second:
 | Memory | RSS | PSS |
 | Frames per second and jank % | no frame API | yes |
 
-It also shows Metro's last bundle time and module count, and a recording clock with the mark count while a perf session records. `h` toggles it, `--no-hud` leaves it off, and `--hud-interval <duration>` sets the sampling interval (default `1s`, minimum `200ms`; a smaller value is an error). The box is hidden below 100 columns.
+It also shows Metro's last bundle time and module count, and a recording clock with the mark count while a perf session records. It is off by default and samples nothing until turned on: `h` toggles it (the sampler starts and stops with the box), `--hud` starts with it on, `warden dev enable perf` / `disable perf` flips it from another shell, and `--hud-interval <duration>` sets the sampling interval (default `1s`, minimum `200ms`; a smaller value is an error). The box is hidden below 100 columns.
 
 ### Session logs
 
@@ -154,7 +154,8 @@ A terminal under 60 columns or 16 rows shows `terminal too small` until it is re
 | `--install-mode clean\|reinstall` | `clean`: fresh app data each run without reinstalling an unchanged build; `reinstall`: uninstall + install each run. `--reset-keychain` also resets the simulator keychain |
 | `--no-open` | start Metro and take the leases only |
 | `--no-tui` | plain output: Metro on this terminal, no dashboard (also `WARDEN_TUI=0`; `--json` and pipes are always plain) |
-| `--no-hud` · `--hud-interval <duration>` | dashboard only: no perf HUD; HUD sampling interval (default `1s`, minimum `200ms`) |
+| `--hud` · `--hud-interval <duration>` | dashboard only: start with the perf HUD on (default off); HUD sampling interval (default `1s`, minimum `200ms`) |
+| `--devtools` | start the CDP devtools broker with the session (default off; `warden dev enable devtools` later) |
 | `--no-shutdown` | leave the simulator booted when dev ends (default: shut down the one dev booted) |
 | `--wait <duration>` · `--no-wait` · `--priority <p>` | boot-queue behaviour (default `--wait 30m`) |
 | `--headless` · `--no-headless` | `--headless`: don't show the simulator and close its Simulator.app windows; the default shows it |

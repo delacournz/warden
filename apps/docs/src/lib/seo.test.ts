@@ -79,6 +79,17 @@ describe("socialImageMeta", () => {
 		expect(property(meta, "twitter:card")).toBe("summary_large_image");
 		expect(property(meta, "twitter:image")).toBe(`${siteUrl}/og/default.png`);
 	});
+
+	test("a built card carries its content version, so X and friends refetch a changed one", () => {
+		const meta = socialImageMeta("/og/default.png", "warden", { "/og/default.png": "abc123" });
+		expect(property(meta, "og:image")).toBe(`${siteUrl}/og/default.png?v=abc123`);
+		expect(property(meta, "twitter:image")).toBe(`${siteUrl}/og/default.png?v=abc123`);
+	});
+
+	test("a card the build never versioned stays bare", () => {
+		const meta = socialImageMeta("/og/docs/index.png", "warden", { "/og/default.png": "abc123" });
+		expect(property(meta, "og:image")).toBe(`${siteUrl}/og/docs/index.png`);
+	});
 });
 
 describe("docsHead", () => {
@@ -110,6 +121,6 @@ describe("docsHead", () => {
 
 	test("the docs root title says what warden is", () => {
 		const { meta } = docsHead({ slugs: [], title: "What is warden" });
-		expect(meta).toContainEqual({ title: "warden docs — mobile testing for coding agents" });
+		expect(meta).toContainEqual({ title: "warden docs — every agent gets its own simulator" });
 	});
 });

@@ -7,7 +7,7 @@ export function baseOptions(): BaseLayoutProps {
 	return {
 		nav: {
 			title: (
-				<span className="inline-flex items-center gap-2 whitespace-nowrap font-semibold">
+				<span className="inline-flex items-center gap-2 whitespace-nowrap font-medium font-mono text-base tracking-[-0.02em]">
 					<WardenIcon size={20} />
 					{appName}
 				</span>

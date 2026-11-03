@@ -39,6 +39,8 @@ export type BrokerClientDeps = {
 };
 
 const START_HINT = "start `warden dev`";
+/** a running session starts without a broker (`warden dev --devtools` or this turns it on) */
+const ENABLE_HINT = "`warden dev enable devtools`";
 /** how long `brokerFor` waits for `status` before treating the session as having no broker */
 const PROBE_TIMEOUT_MS = 500;
 /** a network entry lookup by id reads the whole ring (1 000 by default) */
@@ -138,7 +140,7 @@ export async function resolveBroker(
 		return {
 			success: false,
 			error: uiError("devtools_unavailable", `the dev session on ${found.data.deviceId} has no broker answering`, {
-				hint: START_HINT,
+				hint: ENABLE_HINT,
 				details: { reason: "broker_unreachable" },
 			}),
 		};

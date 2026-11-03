@@ -1,3 +1,4 @@
+import { ANDROID_AUTOFILL_SAVE_IDS } from "../../alert-buttons";
 import type { AlertInfo, Element } from "../driver.types";
 
 export { ANDROID_ALLOW_IDS, ANDROID_DENY_IDS } from "../../alert-buttons";
@@ -6,7 +7,8 @@ export { ANDROID_ALLOW_IDS, ANDROID_DENY_IDS } from "../../alert-buttons";
  * System alerts on Android are ordinary windows in the dump. `AlertDialog` uses `android:id/button1|2|3`
  * (positive / negative / neutral), the runtime-permission dialog (permissioncontroller) its own
  * `permission_*_button` ids, and the system "isn't responding" dialog `aerr_close` / `aerr_wait` (read off a real
- * ANR dialog, `anr.fixture.ts`). The identifier is the resource id without its `pkg:id/` prefix.
+ * ANR dialog, `anr.fixture.ts`) and the autofill "Save password?" sheet `autofill_save_no` / `autofill_save_yes`
+ * (`autofill-save.fixture.ts`). The identifier is the resource id without its `pkg:id/` prefix.
  */
 
 const ALERT_BUTTON_IDS: ReadonlySet<string> = new Set([
@@ -21,6 +23,7 @@ const ALERT_BUTTON_IDS: ReadonlySet<string> = new Set([
 	"permission_no_upgrade_button",
 	"aerr_close",
 	"aerr_wait",
+	...ANDROID_AUTOFILL_SAVE_IDS,
 ]);
 
 function textOf(element: Element | undefined): string | undefined {
@@ -34,7 +37,10 @@ const byIdentifier = (flat: readonly Element[], id: string): Element | undefined
 export function detectAlert(flat: readonly Element[]): AlertInfo | null {
 	const buttons = flat.filter((e) => e.identifier !== undefined && ALERT_BUTTON_IDS.has(e.identifier));
 	if (buttons.length === 0) return null;
-	const title = textOf(byIdentifier(flat, "alertTitle")) ?? textOf(byIdentifier(flat, "permission_message"));
+	const title =
+		textOf(byIdentifier(flat, "alertTitle")) ??
+		textOf(byIdentifier(flat, "permission_message")) ??
+		textOf(byIdentifier(flat, "autofill_save_title"));
 	const message = textOf(byIdentifier(flat, "message"));
 	return { ...(title ? { title } : {}), ...(message ? { message } : {}), buttons };
 }

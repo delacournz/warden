@@ -3,9 +3,23 @@ import type { CommandContext } from "../context";
 
 /**
  * Exit codes of `warden ui`: 0 ok · 1 failed/usage · 2 lease · 3 engine unavailable · 4 stale ref ·
- * 130 interrupted.
+ * 5-11 a `--claim` that failed (the claim error table, `@delacour/warden-core/claim-errors`) · 130 interrupted.
  */
-export const UI_EXIT = { ok: 0, failed: 1, lease: 2, engine: 3, staleRef: 4, interrupted: 130 } as const;
+export const UI_EXIT = {
+	ok: 0,
+	failed: 1,
+	lease: 2,
+	engine: 3,
+	staleRef: 4,
+	noDevice: 5,
+	queueTimeout: 6,
+	noCapacity: 7,
+	requesterLimit: 8,
+	runtimeMissing: 9,
+	healthFailed: 10,
+	leaseLost: 11,
+	interrupted: 130,
+} as const;
 export type UiExitCode = (typeof UI_EXIT)[keyof typeof UI_EXIT];
 
 /** Every machine-readable failure of `warden ui` and the exit code it maps to. Later subcommands add codes here. */
@@ -21,6 +35,9 @@ export const UI_ERROR_EXIT = {
 	no_alert: UI_EXIT.failed,
 	device_foreign: UI_EXIT.lease,
 	device_busy: UI_EXIT.lease,
+	device_unauthorized: UI_EXIT.lease,
+	device_offline: UI_EXIT.lease,
+	device_locked: UI_EXIT.lease,
 	device_not_leased: UI_EXIT.lease,
 	no_device_leased: UI_EXIT.lease,
 	ambiguous_device: UI_EXIT.lease,
@@ -44,6 +61,13 @@ export const UI_ERROR_EXIT = {
 	unsupported: UI_EXIT.failed,
 	not_profileable: UI_EXIT.failed,
 	tool_missing: UI_EXIT.engine,
+	NO_DEVICE: UI_EXIT.noDevice,
+	QUEUE_TIMEOUT: UI_EXIT.queueTimeout,
+	NO_CAPACITY: UI_EXIT.noCapacity,
+	REQUESTER_LIMIT: UI_EXIT.requesterLimit,
+	RUNTIME_MISSING: UI_EXIT.runtimeMissing,
+	HEALTH_FAILED: UI_EXIT.healthFailed,
+	LEASE_LOST: UI_EXIT.leaseLost,
 } as const satisfies Record<string, UiExitCode>;
 
 export type UiErrorCode = keyof typeof UI_ERROR_EXIT;

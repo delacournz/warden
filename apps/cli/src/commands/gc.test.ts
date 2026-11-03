@@ -2,9 +2,12 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { listBuilds, storeArtifact } from "@delacour/warden-core/builds/cache";
+import { recordCondition } from "@delacour/warden-core/conditions/conditions";
 import { bunExec, type Exec } from "@delacour/warden-core/exec";
+import { type FixtureSim, simctlDevicesJson } from "@delacour/warden-core/providers/ios.fixture";
 import type { Owner } from "@delacour/warden-core/types";
 import { execWithFakes, type Fixture, fixtureRepo } from "@delacour/warden-core/worktrees/audit.testing";
+import { GOLDEN_PRUNED_META_KEY } from "../golden-prune";
 import { fakeSimctl, wardenSim } from "../simctl.testing";
 import { fakeExec, scriptedUi, type TestContext, testContext } from "../testing";
 import { gcCommand } from "./gc";
@@ -29,6 +32,8 @@ function setup(argv: string[], calls: string[][]): TestContext {
 			calls
 		),
 	});
+	// the persistent-pool behaviour these tests pin; the ephemeral sweep has its own describe
+	ctx.env = { ...ctx.env, WARDEN_EPHEMERAL: "0" };
 	const db = ctx.db;
 	db.recordDevice({ platform: "ios", id: "U1", name: "warden-iphone-17-1" }, 0);
 	db.recordDevice({ platform: "ios", id: "U2", name: "warden-iphone-17-2" }, 0);
@@ -58,6 +63,88 @@ describe("warden gc", () => {
 		expect(shutdowns).toEqual(["U1"]);
 		expect(calls.some((x) => x.includes("delete") || x.includes("erase"))).toBe(false);
 		expect(c.db.listLeases().map((l) => l.resource)).toMatchObject([{ id: "U2" }]);
+	});
+
+	test("logs shutdown for idle devices and prunes events older than WARDEN_EVENTS_DAYS", async () => {
+		const calls: string[][] = [];
+		const c = setup(["--json"], calls);
+		c.env.WARDEN_EVENTS_DAYS = "2";
+		c.db.recordEvent({ at: NOW - 3 * 86_400_000, type: "released", data: { heldMs: 1 }, leaseId: "l_old" });
+		c.db.recordEvent({ at: NOW - 86_400_000, type: "released", data: { heldMs: 1 }, leaseId: "l_recent" });
+		expect(await gcCommand.run(c)).toBe(0);
+		const events = c.db.listEvents();
+		expect(events.some((e) => e.leaseId === "l_old")).toBe(false);
+		expect(events.some((e) => e.leaseId === "l_recent")).toBe(true);
+		expect(events.find((e) => e.type === "shutdown")).toMatchObject({
+			resourceKey: "device:ios:U1",
+			data: { cause: "idle", deviceId: "U1" },
+		});
+	});
+
+	test("a bad WARDEN_EVENTS_DAYS prunes at 7 days and says so", async () => {
+		const c = setup(["--json"], []);
+		c.env.WARDEN_EVENTS_DAYS = "soon";
+		c.db.recordEvent({ at: NOW - 8 * 86_400_000, type: "released", data: { heldMs: 1 }, leaseId: "l_old" });
+		expect(await gcCommand.run(c)).toBe(0);
+		expect(JSON.parse(c.stdout.join("\n")).notes.join("\n")).toContain("WARDEN_EVENTS_DAYS");
+		expect(c.db.listEvents().some((e) => e.leaseId === "l_old")).toBe(false);
+	});
+
+	test("undoes the orphaned conditions of an unleased device, and leaves a leased device's alone", async () => {
+		const calls: string[][] = [];
+		const c = setup(["--json"], calls);
+		c.exec = fakeSimctl([{ udid: "U1", name: "warden-iphone-17-1", state: "Booted" }], calls, [
+			["xcrun simctl status_bar", {}],
+		]);
+		const l = c.db.insertLease(
+			{ resource: { kind: "device", platform: "ios", id: "U1", name: "U1" }, owner: agent, ttlMs: 1 },
+			0
+		);
+		recordCondition(c.db, l.id, "battery", { level: 5, charging: false, cosmetic: true }, 1);
+		c.db.db.exec(`DELETE FROM leases WHERE id = '${l.id}'`);
+		c.db.db.exec(
+			"INSERT INTO orphan_conditions VALUES ('ios', 'U2', 'battery', 'old', '{\"level\":5,\"charging\":false,\"cosmetic\":true}', '[]', 1, 1)"
+		);
+		expect(await gcCommand.run(c)).toBe(0);
+		const cleared = calls.filter((x) => x[2] === "status_bar" && x[4] === "clear").map((x) => x[3]);
+		expect(cleared).toEqual(["U1"]);
+		expect(c.db.db.query("SELECT device_id FROM orphan_conditions").all()).toEqual([{ device_id: "U2" }]);
+	});
+
+	test("an idle sim it shut down loses its viewer window too (Device Hub keeps a page open)", async () => {
+		const calls: string[][] = [];
+		ctx = testContext(["--json"], {
+			now: () => NOW,
+			exec: fakeSimctl([wardenSim(1, "Booted")], calls, [
+				["pgrep -xq Simulator", { exitCode: 1 }],
+				["pgrep -xq DeviceHub", { exitCode: 0 }],
+				["osascript", {}],
+			]),
+		});
+		ctx.db.recordDevice({ platform: "ios", id: "U1", name: "warden-iphone-17-1" }, 0);
+		expect(await gcCommand.run(ctx)).toBe(0);
+		const closes = calls.filter((x) => x[0] === "osascript" && (x[4] ?? "").includes("AXCloseButton"));
+		expect(closes.map((x) => JSON.parse(x[5] ?? ""))).toEqual([["warden-iphone-17-1"]]);
+		expect(calls.indexOf(closes[0] as string[])).toBeGreaterThan(calls.findIndex((x) => x[2] === "shutdown"));
+	});
+
+	test("a long-stale physical lease is released but its device is never shut down or probed", async () => {
+		const calls: string[][] = [];
+		ctx = testContext(["--json"], { now: () => NOW, exec: fakeSimctl([], calls) });
+		ctx.db.insertLease(
+			{
+				resource: { kind: "device", platform: "android", id: "P1", name: "Pixel", physical: { transport: "usb" } },
+				owner: agent,
+				ttlMs: 1,
+				bootedByOwner: true,
+			},
+			0
+		);
+		expect(await gcCommand.run(ctx)).toBe(0);
+		const out = JSON.parse(ctx.stdout.join("\n"));
+		expect(out.reclaimed).toHaveLength(1);
+		expect(out.shutdown).toEqual([]);
+		expect(calls.filter((x) => x.includes("P1"))).toEqual([]);
 	});
 
 	test("--idle shortens the idle window", async () => {
@@ -289,6 +376,7 @@ describe("warden gc: parallel shutdown", () => {
 		];
 		const c = testContext(["--json"], { now: () => NOW, exec: fakeSimctl(sims, calls, extra) });
 		ctx = c;
+		c.env = { ...c.env, WARDEN_EPHEMERAL: "0" };
 		for (const sim of idle) c.db.recordDevice({ platform: "ios", id: sim.udid, name: sim.name }, 0);
 		c.db.recordDevice({ platform: "ios", id: "U1", name: "warden-iphone-17-1" }, 0);
 		c.db.recordDevice({ platform: "ios", id: "U2", name: "warden-iphone-17-2" }, NOW - 60_000);
@@ -596,5 +684,207 @@ describe("warden gc: merged worktrees (WARDEN_GC_WORKTREES=merged)", () => {
 		expect(await gcCommand.run(c)).toBe(0);
 		expect(existsSync(wt)).toBe(true);
 		expect(JSON.parse(c.stdout.join("\n")).notes.join("\n")).toContain("WARDEN_GC_WORKTREES");
+	});
+});
+
+describe("warden gc: ephemeral sims", () => {
+	/** `fakeSimctl` + the unfiltered `simctl list devices -j` the sweep reads (sims whose runtime is gone included). */
+	const sweepSimctl = (sims: FixtureSim[], calls: string[][]) =>
+		fakeSimctl(sims, calls, [["xcrun simctl list devices -j", { stdout: simctlDevicesJson({ "iOS-26-5": sims }) }]]);
+
+	test("deletes shut-down unleased warden sims (incl. ones it just shut down for idling); keeps leased, foreign, quarantined", async () => {
+		const calls: string[][] = [];
+		ctx = testContext(["--json"], {
+			now: () => NOW,
+			exec: sweepSimctl(
+				[
+					{ udid: "U4", name: "warden-iphone-17-4", state: "Shutdown" },
+					{ udid: "U5", name: "warden-iphone-17-5", state: "Shutdown" },
+					{ udid: "Q", name: "warden-iphone-17-6", state: "Shutdown" },
+					{ udid: "F", name: "iPhone 17", state: "Shutdown" },
+				],
+				calls
+			),
+		});
+		const db = ctx.db;
+		db.recordDevice({ platform: "ios", id: "U4", name: "warden-iphone-17-4" }, NOW);
+		db.recordDevice({ platform: "ios", id: "U5", name: "warden-iphone-17-5" }, NOW);
+		db.recordDevice({ platform: "ios", id: "Q", name: "warden-iphone-17-6" }, NOW);
+		db.quarantineDevice({ platform: "ios", id: "Q", name: "warden-iphone-17-6" }, "bad", NOW);
+		db.insertLease(
+			{
+				resource: { kind: "device", platform: "ios", id: "U5", name: "warden-iphone-17-5" },
+				owner: agent,
+				ttlMs: 60_000,
+			},
+			NOW
+		);
+		expect(await gcCommand.run(ctx)).toBe(0);
+		const out = JSON.parse(ctx.stdout.join("\n"));
+		expect(out.deleted).toEqual([{ platform: "ios", id: "U4", name: "warden-iphone-17-4" }]);
+		expect(calls.filter((x) => x[2] === "delete").map((x) => x[3])).toEqual(["U4"]);
+		expect(db.listDevices("ios").map((d) => d.id)).toEqual(["U5", "Q"]);
+	});
+
+	test("a sim whose ownership marker names another warden instance is never swept", async () => {
+		const calls: string[][] = [];
+		ctx = testContext(["--json"], {
+			now: () => NOW,
+			exec: sweepSimctl([{ udid: "OTHER", name: "warden-iphone-17-7", state: "Shutdown" }], calls),
+		});
+		const dir = join(ctx.cwd, "Library/Developer/CoreSimulator/Devices/OTHER");
+		mkdirSync(dir, { recursive: true });
+		writeFileSync(
+			join(dir, ".warden-owned.json"),
+			JSON.stringify({ instanceId: "other-host", name: "warden-iphone-17-7", createdAt: 0 })
+		);
+		ctx.env = { ...ctx.env, HOME: ctx.cwd };
+		expect(await gcCommand.run(ctx)).toBe(0);
+		expect(JSON.parse(ctx.stdout.join("\n")).deleted).toEqual([]);
+		expect(calls.filter((x) => x[2] === "delete")).toEqual([]);
+	});
+
+	test("WARDEN_EPHEMERAL=0: nothing is deleted", async () => {
+		const calls: string[][] = [];
+		ctx = testContext(["--json"], {
+			now: () => NOW,
+			exec: sweepSimctl([{ udid: "U4", name: "warden-iphone-17-4", state: "Shutdown" }], calls),
+		});
+		ctx.env = { ...ctx.env, WARDEN_EPHEMERAL: "0" };
+		ctx.db.recordDevice({ platform: "ios", id: "U4", name: "warden-iphone-17-4" }, NOW);
+		expect(await gcCommand.run(ctx)).toBe(0);
+		expect(JSON.parse(ctx.stdout.join("\n")).deleted).toEqual([]);
+		expect(calls.filter((x) => x[2] === "delete")).toEqual([]);
+	});
+});
+
+describe("warden gc: stale goldens", () => {
+	test("--json reports `goldens` and stamps the daily throttle, even when no platform can list them", async () => {
+		const calls: string[][] = [];
+		const c = setup(["--json"], calls);
+		expect(await gcCommand.run(c)).toBe(0);
+		expect(JSON.parse(c.stdout.join("\n")).goldens).toEqual([]);
+		expect(c.db.getMeta(GOLDEN_PRUNED_META_KEY)).toBe(String(NOW));
+	});
+
+	test("WARDEN_GOLDEN_PRUNE=0: not attempted, not stamped", async () => {
+		const calls: string[][] = [];
+		const c = setup(["--json"], calls);
+		c.env = { ...c.env, WARDEN_GOLDEN_PRUNE: "0" };
+		expect(await gcCommand.run(c)).toBe(0);
+		expect(c.db.getMeta(GOLDEN_PRUNED_META_KEY)).toBeUndefined();
+	});
+});
+
+describe("warden gc: warm pool", () => {
+	const grant = (c: TestContext, lease: string, n: number) =>
+		c.db.recordEvent({
+			at: NOW - 1000,
+			type: "granted",
+			leaseId: lease,
+			data: {
+				platform: "ios",
+				profile: "iphone-17",
+				deviceId: `U${n}`,
+				deviceName: `n${n}`,
+				action: "reuse",
+				waitMs: 0,
+			},
+		});
+	const bootCalls = (calls: string[][]) =>
+		calls.filter((x) => x[1] === "simctl" && (x[2] === "bootstatus" || x[2] === "boot")).map((x) => x[3]);
+	const slimAll = (c: TestContext) => {
+		for (const id of ["U1", "U2", "U3", "U4"]) c.db.setSlimmed("ios", id, NOW);
+	};
+
+	test("off by default: nothing is booted and no set is saved", async () => {
+		const calls: string[][] = [];
+		const c = setup(["--json"], calls);
+		slimAll(c);
+		grant(c, "l1", 4);
+		expect(await gcCommand.run(c)).toBe(0);
+		expect(bootCalls(calls)).toEqual([]);
+		expect(c.db.getMeta("warm_set")).toBeUndefined();
+	});
+
+	test("WARDEN_WARM=1 boots a shut-down slim pool device under a warm-boot lease and releases it", async () => {
+		const calls: string[][] = [];
+		const c = setup(["--json"], calls);
+		c.env.WARDEN_WARM = "1";
+		slimAll(c);
+		for (const [l, n] of [
+			["l1", 1],
+			["l2", 2],
+			["l3", 3],
+			["l4", 4],
+		] as const)
+			grant(c, l, n);
+		let labelsDuringBoot: (string | undefined)[] = [];
+		const inner = c.exec;
+		c.exec = async (cmd, opts) => {
+			if (cmd.includes("bootstatus")) labelsDuringBoot = c.db.listLeases().map((l) => l.label);
+			return inner(cmd, opts);
+		};
+		expect(await gcCommand.run(c)).toBe(0);
+		const out = JSON.parse(c.stdout.join("\n"));
+		expect(out.warmed).toEqual([{ platform: "ios", id: "U4", name: "warden-iphone-17-4" }]);
+		expect(bootCalls(calls)).toContain("U4");
+		expect(labelsDuringBoot).toContain("warm-boot");
+		expect(c.db.listLeases().some((l) => l.label === "warm-boot")).toBe(false);
+		expect(c.db.getMeta("warm_set")).toContain("ios:U4");
+	});
+
+	test("the idle reaper spares the warm set", async () => {
+		const calls: string[][] = [];
+		const c = setup(["--json"], calls);
+		c.env.WARDEN_WARM = "1";
+		slimAll(c);
+		grant(c, "l1", 1);
+		expect(await gcCommand.run(c)).toBe(0);
+		const out = JSON.parse(c.stdout.join("\n"));
+		expect(out.shutdown).toEqual([]);
+		expect(calls.some((x) => x[2] === "shutdown")).toBe(false);
+	});
+
+	test("memory pressure boots nothing", async () => {
+		const calls: string[][] = [];
+		const c = setup(["--json"], calls);
+		c.env.WARDEN_WARM = "1";
+		slimAll(c);
+		grant(c, "l4", 4);
+		grant(c, "l5", 4);
+		grant(c, "l6", 4);
+		const inner = c.exec;
+		c.exec = async (cmd, opts) => {
+			const line = cmd.join(" ");
+			if (line.includes("kern.memorystatus_vm_pressure_level")) return { exitCode: 0, stdout: "4\n", stderr: "" };
+			if (line.startsWith("cat /proc/meminfo"))
+				return { exitCode: 0, stdout: "MemTotal: 1000\nMemAvailable: 10\n", stderr: "" };
+			return inner(cmd, opts);
+		};
+		expect(await gcCommand.run(c)).toBe(0);
+		expect(bootCalls(calls)).toEqual([]);
+	});
+
+	test("never boots a quarantined or unslimmed shut-down device", async () => {
+		const calls: string[][] = [];
+		const c = setup(["--json"], calls);
+		c.env.WARDEN_WARM = "1";
+		grant(c, "l4", 4);
+		grant(c, "l5", 4);
+		grant(c, "l6", 4);
+		expect(await gcCommand.run(c)).toBe(0);
+		expect(bootCalls(calls)).toEqual([]);
+		c.db.setSlimmed("ios", "U4", NOW);
+		c.db.quarantineDevice({ platform: "ios", id: "U4", name: "warden-iphone-17-4" }, "bad", NOW);
+		expect(await gcCommand.run(c)).toBe(0);
+		expect(bootCalls(calls)).toEqual([]);
+	});
+
+	test("turning WARDEN_WARM off clears the saved set", async () => {
+		const c = setup(["--json"], []);
+		c.db.setMeta("warm_set", JSON.stringify({ at: NOW, warm: ["ios:U1"] }));
+		expect(await gcCommand.run(c)).toBe(0);
+		expect(JSON.parse(c.db.getMeta("warm_set") ?? "{}").warm).toEqual([]);
 	});
 });

@@ -67,6 +67,17 @@ describe("parseWardenConfig", () => {
 		expect(parseWardenConfig({ projects, android: { nope: true } }).success).toBe(false);
 	});
 
+	test("ios.teamId / ios.runnerBundleId are optional and checked (PHY-4)", () => {
+		const projects = [{ name: "app", bundleId: { ios: "com.x.app" } }];
+		const ok = parseWardenConfig({ projects, ios: { teamId: "LN69P7N673", runnerBundleId: "com.x.runner" } });
+		expect(ok.success && ok.data.ios).toEqual({ teamId: "LN69P7N673", runnerBundleId: "com.x.runner" });
+		expect(parseWardenConfig({ projects, ios: {} }).success).toBe(true);
+		expect(parseWardenConfig({ projects, ios: { teamId: "ln69p7n673" } }).success).toBe(false);
+		expect(parseWardenConfig({ projects, ios: { teamId: "SHORT" } }).success).toBe(false);
+		expect(parseWardenConfig({ projects, ios: { runnerBundleId: "bad id" } }).success).toBe(false);
+		expect(parseWardenConfig({ projects, ios: { nope: 1 } }).success).toBe(false);
+	});
+
 	test("e2e suites alone are a valid config, with defaults", () => {
 		const res = parseWardenConfig({
 			e2e: { mobile: { specsDir: "specs", specs: { a: { entries: ["x.tsx"] } } } },
@@ -115,6 +126,20 @@ describe("parseWardenConfig", () => {
 		expect(unknown.success).toBe(false);
 		if (!unknown.success) expect(unknown.error).toContain("nope");
 		expect(withSlim({ bogus: 1 }).success).toBe(false);
+	});
+
+	test("biometrics: a boolean at the top level, on an e2e suite and on a batch preset", () => {
+		const suite = { specsDir: "specs" };
+		expect(parseWardenConfig({ biometrics: true, e2e: { s: suite } }).success).toBe(true);
+		expect(parseWardenConfig({ e2e: { s: { ...suite, biometrics: true } } }).success).toBe(true);
+		expect(
+			parseWardenConfig({ batches: { b: { platform: "android", cmd: ["true"], biometrics: false } } }).success
+		).toBe(true);
+		expect(parseWardenConfig({ biometrics: "enrolled", e2e: { s: suite } }).success).toBe(false);
+		const parsed = parseWardenConfig({ biometrics: true, e2e: { s: { ...suite, biometrics: false } } });
+		if (!parsed.success) throw new Error(parsed.error);
+		expect(parsed.data.biometrics).toBe(true);
+		expect(parsed.data.e2e?.s?.biometrics).toBe(false);
 	});
 
 	test("e2e suite run settings: metro, isolate, jobTimeoutMs and device legs, with defaults", () => {
@@ -201,6 +226,20 @@ describe("parseWardenConfig", () => {
 });
 
 describe("loadProject", () => {
+	test("projects[].ios.device.bundleIdentifier becomes the project's device bundle id; a bad one is refused", () => {
+		write(JSON_CONFIG_FILE, {
+			projects: [{ name: "a", bundleId: { ios: "com.x.app" }, ios: { device: { bundleIdentifier: "com.me.app" } } }],
+		});
+		const res = loadProject({ start: dir, env, stopAt: dir });
+		if (!res.success) throw new Error(res.error);
+		expect(res.data.iosDeviceBundleId).toBe("com.me.app");
+		expect(res.data.bundleId.ios).toBe("com.x.app");
+		const bad = parseWardenConfig({
+			projects: [{ name: "a", bundleId: {}, ios: { device: { bundleIdentifier: "no spaces allowed" } } }],
+		});
+		expect(bad.success).toBe(false);
+	});
+
 	test("config at repo root, project picked by containing dir", () => {
 		write(JSON_CONFIG_FILE, {
 			projects: [

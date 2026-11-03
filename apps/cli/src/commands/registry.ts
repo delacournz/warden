@@ -77,8 +77,20 @@ export const COMMANDS: readonly CommandEntry[] = [
 	{
 		name: "queue",
 		group: "Lease",
-		summary: "claims waiting for host capacity, head first (position, priority, age, owner)",
+		summary: "claims waiting for host capacity or a free device, head first (position, priority, reason, age, owner)",
 		load: async () => (await import("./queue")).queueCommand,
+	},
+	{
+		name: "events",
+		group: "Lease",
+		summary: "lease history: requested, queued, granted, released, expired, evicted, quarantined … (--follow to tail)",
+		load: async () => (await import("./events")).eventsCommand,
+	},
+	{
+		name: "stats",
+		group: "Lease",
+		summary: "claim wait (median, p95), lease durations and peak concurrency per profile, from the lease history",
+		load: async () => (await import("./stats")).statsCommand,
 	},
 	{
 		name: "devices",
@@ -139,7 +151,7 @@ export const COMMANDS: readonly CommandEntry[] = [
 		name: "gc",
 		group: "Lease",
 		summary:
-			"reclaim stale leases; shut down idle warden devices; sweep orphaned Xcode DerivedData (never deletes devices)",
+			"reclaim stale leases; shut down idle warden devices, delete shut-down ephemeral sims; sweep orphaned Xcode DerivedData",
 		load: async () => (await import("./gc")).gcCommand,
 	},
 	{
@@ -155,6 +167,13 @@ export const COMMANDS: readonly CommandEntry[] = [
 		load: async () => (await import("./app")).appCommand,
 	},
 	{
+		name: "repack",
+		group: "Builds",
+		summary:
+			"bundle this worktree's JS into the cached simulator build (seconds; builds the base once per native fingerprint)",
+		load: async () => (await import("./repack")).repackCommand,
+	},
+	{
 		name: "ui",
 		summary: "drive a leased simulator / emulator (agents): status, snapshot, find, open, press, fill, scroll, …",
 		load: async () => (await import("./ui")).uiCommand,
@@ -164,6 +183,42 @@ export const COMMANDS: readonly CommandEntry[] = [
 		summary: "walk the import graph for `warden affected` and print it as JSON (internal)",
 		hidden: true,
 		load: async () => (await import("./affected-graph")).affectedGraphCommand,
+	},
+	{
+		name: "__android-host",
+		summary: "resident Android driver host behind `warden ui` (internal)",
+		hidden: true,
+		load: async () => (await import("./android-host")).androidHostCommand,
+	},
+	{
+		name: "__ios-runner-host",
+		summary: "resident iPhone runner host behind `warden ui` (internal)",
+		hidden: true,
+		load: async () => (await import("./ios-runner-host")).iosRunnerHostCommand,
+	},
+	{
+		name: "__ios-runner-restart",
+		summary: "restart an iPhone's runner host for a running e2e session (internal)",
+		hidden: true,
+		load: async () => (await import("./ios-runner-restart")).iosRunnerRestartCommand,
+	},
+	{
+		name: "__netproxy",
+		summary: "a lease's network shaping proxy, started by `warden ui net` (internal)",
+		hidden: true,
+		load: async () => (await import("./condition-processes")).netproxyCommand,
+	},
+	{
+		name: "__route-ticker",
+		summary: "the detached Android location route ticker (internal)",
+		hidden: true,
+		load: async () => (await import("./condition-processes")).routeTickerCommand,
+	},
+	{
+		name: "__scheduler",
+		summary: "the detached network flap / timeline scheduler (internal)",
+		hidden: true,
+		load: async () => (await import("./condition-processes")).schedulerCommand,
 	},
 	{
 		name: "ui-collect",
@@ -224,7 +279,7 @@ export const COMMANDS: readonly CommandEntry[] = [
 		name: "doctor",
 		group: "Setup",
 		summary:
-			"check warden's setup: home, db, device tools, simulator helper, install method, PATH, Claude/Codex hooks + skill, stale leases, disk space + swap + snapshots",
+			"check warden's setup: home, db, device tools, simulator helper, install method, PATH, Claude/Codex hooks + skill, stale leases (--leases: registry drift), disk space + swap + snapshots",
 		load: async () => (await import("./doctor")).doctorCommand,
 	},
 	{

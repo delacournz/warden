@@ -1,4 +1,5 @@
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
+import type { Platform } from "../types";
 import type { InstallMode } from "./app-option.schema";
 
 /** Where `ensure` found the app. */
@@ -13,10 +14,31 @@ export type EnsureResult = {
 	installed: boolean;
 };
 
+/**
+ * What a resolve is doing right now, for a progress display: `fetching` the EAS build, `waiting` on another device's
+ * (or process's) fetch / build of the same hash, `building` locally, `repacking` JS into the simulator base,
+ * `installing` on a device (only while an install really runs), `ready` when the resolve is done.
+ */
+export type AppPhase =
+	| { phase: "fetching"; source: "eas" }
+	| { phase: "waiting" }
+	| { phase: "building"; platform: Platform; hash: string }
+	| { phase: "repacking"; platform: Platform; jsKey: string }
+	| { phase: "installing" }
+	| { phase: "ready" };
+
 export type EasStepOutcome = { kind: "hit"; path: string } | { kind: "miss"; reason: string };
 
+/** What the local build step produced: its own build, or (after waiting on the checkout) another warden's, from the cache. */
+export type BuildStepOutcome = { kind: "built"; path: string } | { kind: "cached"; path: string };
+
 /** What the device probe found: is the app there, and (iOS) its container so `matches` need not ask again. */
-export type InstalledApp = { present: boolean; container?: string };
+export type InstalledApp = {
+	present: boolean;
+	container?: string;
+	/** a physical iPhone: the `CFBundleVersion` devicectl reports for the installed app */
+	version?: string;
+};
 
 /** Device half of the resolver — absent when only the artifact is wanted. */
 export type DeviceSteps = {
@@ -57,9 +79,11 @@ export type ResolveSteps = {
 	flightKey?: string;
 	/** EAS: download into the cache, or miss */
 	eas?: () => AsyncResult<EasStepOutcome>;
-	/** local build into the cache; path */
-	build?: () => AsyncResult<string>;
+	/** local build into the cache (or the build another warden just made in this checkout) */
+	build?: () => AsyncResult<BuildStepOutcome>;
 	log: (line: string) => void;
+	/** progress: where this resolve is (see `AppPhase`) */
+	onPhase?: (phase: AppPhase) => void;
 };
 
 type Found = { path: string; source: Exclude<ResolveSource, "installed"> };
@@ -80,7 +104,8 @@ async function fetchOrBuild(steps: ResolveSteps): AsyncResult<Found> {
 	}
 	if (steps.build) {
 		const built = await steps.build();
-		return built.success ? ok({ path: built.data, source: "build" }) : built;
+		if (!built.success) return built;
+		return ok({ path: built.data.path, source: built.data.kind === "built" ? "build" : "cache" });
 	}
 	misses.push("local build skipped (--no-build)");
 	return err(`no build for fingerprint ${steps.hash}: ${misses.join("; ")}`);
@@ -107,6 +132,7 @@ function fetchOrBuildOnce(steps: ResolveSteps): AsyncResult<Found> {
 	const running = inFlight.get(key);
 	if (running) {
 		steps.log("this fetch/build is already running for another device — waiting for it");
+		steps.onPhase?.({ phase: "waiting" });
 		return running;
 	}
 	const started = steps.lock(() => fetchOrBuild(steps));
@@ -184,6 +210,12 @@ async function reinstallFound(steps: ResolveSteps, device: DeviceSteps): AsyncRe
  * misses 1–3 by construction, so it never gets a stale binary.
  */
 export async function resolveApp(steps: ResolveSteps): AsyncResult<EnsureResult> {
+	const resolved = await resolveInner(steps);
+	if (resolved.success) steps.onPhase?.({ phase: "ready" });
+	return resolved;
+}
+
+async function resolveInner(steps: ResolveSteps): AsyncResult<EnsureResult> {
 	const { device, hash } = steps;
 	if (device && steps.installMode !== "reinstall") {
 		const installed = await alreadyInstalled(steps, device);
@@ -193,6 +225,7 @@ export async function resolveApp(steps: ResolveSteps): AsyncResult<EnsureResult>
 	const found = await locate(steps);
 	if (!found.success) return found;
 	if (device) {
+		steps.onPhase?.({ phase: "installing" });
 		const done = await installOnDevice(steps, device, found.data.path);
 		if (!done.success) return done;
 	}

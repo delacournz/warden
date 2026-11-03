@@ -12,6 +12,8 @@ coverage
 packages/e2e/native/idb-libraries
 packages/e2e/native/dist
 packages/e2e/native/ios/.build
+packages/e2e/native/ios-runner/RunnerCore/.build
+packages/e2e/native/ios-runner/**/xcuserdata
 
 # bench output
 .bench/

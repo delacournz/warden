@@ -7,7 +7,7 @@ import { simctlDevicesJson } from "@delacour/warden-core/providers/ios.fixture";
 import { allowAutoGc, autoGcConsidered, autoGcOrder } from "../autogc.testing";
 import { fakeSimctl, OWNER_ENV, wardenSim } from "../simctl.testing";
 import { scriptedUi, type TestContext, testContext } from "../testing";
-import { createBatchCommand, defaultBatchDeps, openOnDevices, startRecordings } from "./batch";
+import { createBatchCommand, defaultBatchDeps, openOnDevices, socketEnv, startRecordings } from "./batch";
 import { harness } from "./batch.testing";
 
 let ctx: TestContext | undefined;
@@ -90,6 +90,9 @@ describe("warden batch", () => {
 		const udid = a?.opts.env.WARDEN_UDID;
 		expect(a?.cmd).toEqual(["run", "a", `--on=${udid}`, `w${a?.opts.env.WARDEN_WORKER}s0`]);
 		expect(a?.opts.env.WARDEN_DEVICE_NAME).toBeString();
+		const leaseIds = jobs.map((j) => j.opts.env.WARDEN_LEASE_ID);
+		expect(leaseIds.every((id) => typeof id === "string" && id !== "")).toBe(true);
+		expect(a?.opts.env.WARDEN_LEASE_IDS?.split(",")).toContain(a?.opts.env.WARDEN_LEASE_ID);
 		expect(a?.opts.env.WARDEN_JOB_SEQ).toBe("0");
 		expect(a?.opts.env.WARDEN_UDIDS?.split(",").sort()).toEqual(["U1", "U2"]);
 		expect(a?.opts.env.WARDEN_SESSION_ID).toBe("me");
@@ -584,8 +587,16 @@ describe("warden batch", () => {
 		const ui = scriptedUi();
 		c.ui = ui;
 		const h = harness();
-		h.deps.ensureApp = async (ctx, _owner, _platform, deviceId) => {
+		let asked = 0;
+		h.deps.ensureApp = async (ctx, _owner, _platform, deviceId, opts) => {
+			// the first device builds; the second waits on that build; both install once it is done
+			if (asked++ === 0) {
+				opts.onPhase?.({ phase: "building", platform: "ios", hash: "b1fee19abc" });
+			} else opts.onPhase?.({ phase: "waiting" });
+			await Bun.sleep(5);
+			opts.onPhase?.({ phase: "installing" });
 			ctx.err(`installing on ${deviceId}`);
+			opts.onPhase?.({ phase: "ready" });
 			return { success: true, data: { appPath: "/c/A.app", hash: "H", source: "cache", installed: true } };
 		};
 		expect(await createBatchCommand(h.deps).run(c)).toBe(0);
@@ -593,7 +604,11 @@ describe("warden batch", () => {
 		const install = ui.events.findIndex((e) => e.includes("installing on"));
 		expect(leased).toBeGreaterThan(-1);
 		expect(leased).toBeLessThan(install);
-		expect(ui.events).toContain("spin: installing the app on 2 device(s)…");
+		const building = ui.events.findIndex((e) => e === "spin: building the ios app (fingerprint b1fee19)…");
+		const installing = ui.events.findIndex((e) => e.startsWith("spin: installing the app on"));
+		expect(building).toBeGreaterThan(leased);
+		expect(installing).toBeGreaterThan(building);
+		expect(ui.events).not.toContain("spin: installing the app on 2 device(s)…");
 	});
 
 	test("--install-mode / --reset-keychain are passed to the ensure step; they need --app", async () => {
@@ -659,7 +674,7 @@ describe("warden batch", () => {
 			"x",
 		]);
 		const h = harness();
-		expect(await createBatchCommand(h.deps).run(c)).toBe(1);
+		expect(await createBatchCommand(h.deps).run(c)).toBe(5);
 		expect(h.jobs()).toEqual([]);
 		expect(c.db.listLeases()).toEqual([]);
 	});
@@ -1075,8 +1090,8 @@ describe("warden batch", () => {
 			};
 			const h = harness();
 			expect(await createBatchCommand(h.deps).run(c)).toBe(0);
-			// once for the run (not once per device), plus the one local build's own post-build check
-			expect(fingerprints).toHaveLength(2);
+			// once for the run (not once per device), plus the one local build's check under the checkout lock and its post-build check
+			expect(fingerprints).toHaveLength(3);
 			expect(
 				installs
 					.filter((line) => line.startsWith("xcrun simctl install"))
@@ -1155,5 +1170,16 @@ describe("startRecordings", () => {
 		expect(out.success).toBe(true);
 		expect(h.events).toEqual(["record:U0:/rec/dev-0.mp4", "record:U2:/rec/dev-2.mp4"]);
 		expect(devices.map((d) => d.video)).toEqual(["dev-0.mp4", undefined, "dev-2.mp4"]);
+	});
+});
+
+describe("socketEnv", () => {
+	const IPHONE = "00008140-000A0B0C0D0E0F10";
+	test("a simulator's helper is WARDEN_SIMD_SOCKET; a physical iPhone's runner host is WARDEN_IOS_RUNNER_SOCKET", () => {
+		expect(socketEnv("6A1F5C2E-0000-4000-8000-000000000001", "/s/sim.sock")).toEqual({
+			WARDEN_SIMD_SOCKET: "/s/sim.sock",
+		});
+		expect(socketEnv(IPHONE, "/s/ios-runner/p.sock")).toEqual({ WARDEN_IOS_RUNNER_SOCKET: "/s/ios-runner/p.sock" });
+		expect(socketEnv(IPHONE, undefined)).toEqual({});
 	});
 });

@@ -53,7 +53,7 @@ Xcode 27 removed Simulator.app. Its viewer is **Device Hub** (`Xcode.app/Content
 | `--headless` / `--no-headless` | `claim`, `run`, `batch`, `e2e`; `dev` takes `--headless` only |
 | `e2e.<suite>.headless` | that suite |
 | `batches.<name>.headless` | that preset |
-| top-level `headless` | every suite and preset that doesn't set its own |
+| `headless` (top level) | every suite and preset that doesn't set its own |
 | `WARDEN_HEADLESS=1` | every `claim`, `run`, `batch`, `e2e` that nothing above decides |
 
 The first one that is set wins: CLI flag, then suite / preset, then top-level, then `WARDEN_HEADLESS`. Otherwise headless is off.

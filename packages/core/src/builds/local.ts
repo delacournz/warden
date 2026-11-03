@@ -23,10 +23,11 @@ import { derivedDataWorkspace } from "./derived-data";
 import { formatBuildFailure, parseBuildDiagnostics } from "./diagnostics";
 import { type CacheKey, computeCacheKey } from "./fingerprint";
 import { combineKey, readFileOrUndefined } from "./js-inputs";
+import type { BuildTarget } from "./kinds";
 import { planPrebuiltRn } from "./prebuilt-rn";
 
-const simProducts = (configuration: BuildConfiguration) =>
-	join("Build", "Products", `${configuration}-iphonesimulator`);
+const iosProducts = (configuration: BuildConfiguration, target: BuildTarget) =>
+	join("Build", "Products", `${configuration}-${target === "device" ? "iphoneos" : "iphonesimulator"}`);
 
 function children(dir: string): string[] {
 	try {
@@ -72,7 +73,7 @@ function isTestApk(apk: string, outputs: string): boolean {
 
 /**
  * Candidate build outputs for `configuration`: iOS `.app`s in `<root>/ios/build/…/<Config>-iphonesimulator`
- * and every DerivedData project's `…/<Config>-iphonesimulator`; Android `.apk`s under
+ * and every DerivedData project's `…/<Config>-iphonesimulator` (`-iphoneos` for a `device` target); Android `.apk`s under
  * `<root>/android/app/build/outputs/apk` whose variant directory is that configuration (never an
  * `androidTest` APK).
  */
@@ -80,13 +81,14 @@ export function artifactCandidates(
 	root: string,
 	platform: Platform,
 	derivedData: string,
-	configuration: BuildConfiguration = "Debug"
+	configuration: BuildConfiguration = "Debug",
+	target: BuildTarget = "simulator"
 ): string[] {
 	if (platform === "android") {
 		const outputs = join(root, "android", "app", "build", "outputs", "apk");
 		return findFiles(outputs, ".apk").filter((apk) => isApkOf(apk, outputs, configuration) && !isTestApk(apk, outputs));
 	}
-	const products = simProducts(configuration);
+	const products = iosProducts(configuration, target);
 	const productDirs = [join(root, "ios", "build", products), ...children(derivedData).map((d) => join(d, products))];
 	return productDirs.flatMap((d) => children(d).filter((p) => p.endsWith(".app")));
 }
@@ -98,9 +100,10 @@ export function snapshotArtifacts(
 	root: string,
 	platform: Platform,
 	derivedData: string,
-	configuration: BuildConfiguration = "Debug"
+	configuration: BuildConfiguration = "Debug",
+	target: BuildTarget = "simulator"
 ): ArtifactSnapshot {
-	return new Map(artifactCandidates(root, platform, derivedData, configuration).map((p) => [p, mtime(p)]));
+	return new Map(artifactCandidates(root, platform, derivedData, configuration, target).map((p) => [p, mtime(p)]));
 }
 
 /**
@@ -154,9 +157,10 @@ export function locateArtifact(
 	derivedData: string,
 	before: ArtifactSnapshot,
 	configuration: BuildConfiguration = "Debug",
-	exclude: ReadonlySet<string> = new Set()
+	exclude: ReadonlySet<string> = new Set(),
+	target: BuildTarget = "simulator"
 ): LocatedArtifact | undefined {
-	const candidates = artifactCandidates(root, platform, derivedData, configuration)
+	const candidates = artifactCandidates(root, platform, derivedData, configuration, target)
 		.filter((path) => !exclude.has(path))
 		.map((path) => ({ path, at: mtime(path), owned: ownedBy(path, root, derivedData) }))
 		.filter((c) => c.at > 0)
@@ -270,7 +274,15 @@ async function locateOwnApp(deps: LocalBuildDeps, derivedData: string, before: A
 	const { project, platform } = deps;
 	const exclude = new Set<string>();
 	for (;;) {
-		const located = locateArtifact(project.root, platform, derivedData, before, project.buildConfiguration, exclude);
+		const located = locateArtifact(
+			project.root,
+			platform,
+			derivedData,
+			before,
+			project.buildConfiguration,
+			exclude,
+			project.target
+		);
 		if (located === undefined) return located;
 		const paths = located.kind === "ambiguous" ? located.paths : [located.path];
 		const checks = await Promise.all(paths.map((p) => bundleCheck(deps, p)));
@@ -404,7 +416,7 @@ export async function runLocalBuild(deps: LocalBuildDeps): AsyncResult<LocalBuil
 	const { project, platform } = deps;
 	const command = project.build[platform];
 	const derivedData = derivedDataDir(deps.env);
-	const snapshot = snapshotArtifacts(project.root, platform, derivedData, project.buildConfiguration);
+	const snapshot = snapshotArtifacts(project.root, platform, derivedData, project.buildConfiguration, project.target);
 	await dropStaleNativeDir(deps, deps.native ?? deps.hash);
 	const before = await beforeBuild(deps);
 	deps.log(`building ${platform} locally: ${command} (in ${project.root})`);
@@ -412,7 +424,7 @@ export async function runLocalBuild(deps: LocalBuildDeps): AsyncResult<LocalBuil
 	const caching = await cacheEnv(deps);
 	const res = await deps.exec(argv, {
 		cwd: project.root,
-		env: { ...caching, EXPO_NO_TELEMETRY: "1" },
+		env: { ...caching, ...project.buildEnv, EXPO_NO_TELEMETRY: "1" },
 		timeoutMs: deps.timeoutMs ?? LOCAL_BUILD_TIMEOUT_MS,
 		...(deps.output ? { onLine: deps.output } : {}),
 	});

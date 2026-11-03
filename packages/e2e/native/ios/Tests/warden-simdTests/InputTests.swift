@@ -416,7 +416,7 @@ final class InputTests: XCTestCase {
   func testTypeTextStreamsEveryKeyEventInOrderAndReportsCount() async throws {
     let recorder = Recorder()
     let result = try await call(
-      engine(recorder), "typeText", ["text": "Hello, World 123!", "paceMs": 0, "holdMs": 0, "repeatGapMs": 0])
+      engine(recorder), "typeText", ["text": "Hello, World 123!", "paceMs": 0, "holdMs": 0, "repeatGapMs": 0, "leadMs": 0])
     XCTAssertEqual(result, ["typed": 17])
     XCTAssertEqual(recorder.steps, KeyboardMap.plan(typing: "Hello, World 123!").steps)
     XCTAssertFalse(recorder.events.contains { $0.subEvents != nil }, "events are streamed, not one composite")
@@ -425,7 +425,7 @@ final class InputTests: XCTestCase {
   /// The pauses are slept by the helper between the streamed events, in order, not baked into idb `.delay`s.
   func testTypeTextSleepsBetweenEventsNotInsideThem() async throws {
     let recorder = Recorder()
-    _ = try await call(engine(recorder), "typeText", ["text": "ab", "paceMs": 7, "holdMs": 9, "repeatGapMs": 0])
+    _ = try await call(engine(recorder), "typeText", ["text": "ab", "paceMs": 7, "holdMs": 9, "repeatGapMs": 0, "leadMs": 0])
     XCTAssertEqual(
       recorder.steps,
       [
@@ -501,10 +501,19 @@ final class InputTests: XCTestCase {
     XCTAssertEqual(gaps.count, 1, "only the second l")
   }
 
+  func testTypeTextLeadsInAfterTheFirstKeyByDefaultAndTakesAnOverride() async throws {
+    let lead = Recorder()
+    let custom = Recorder()
+    _ = try await call(engine(lead), "typeText", ["text": "Hi"])
+    _ = try await call(engine(custom), "typeText", ["text": "Hi", "leadMs": 90])
+    XCTAssertEqual(lead.steps.filter { $0 == .pause(KeyboardMap.defaultLeadMs) }.count, 1)
+    XCTAssertEqual(custom.steps.filter { $0 == .pause(90) }.count, 1)
+  }
+
   func testTypeTextPaceHoldAndRepeatGapAreConfigurableAndZeroMeansBackToBack() async throws {
     let unpaced = Recorder()
     let paced = Recorder()
-    _ = try await call(engine(unpaced), "typeText", ["text": "aab", "paceMs": 0, "holdMs": 0, "repeatGapMs": 0])
+    _ = try await call(engine(unpaced), "typeText", ["text": "aab", "paceMs": 0, "holdMs": 0, "repeatGapMs": 0, "leadMs": 0])
     _ = try await call(engine(paced), "typeText", ["text": "aab", "paceMs": 50, "holdMs": 20, "repeatGapMs": 70])
     XCTAssertFalse(unpaced.steps.contains { if case .pause = $0 { true } else { false } })
     XCTAssertEqual(paced.steps.filter { $0 == .pause(50) }.count, 3)

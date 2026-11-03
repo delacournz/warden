@@ -1,0 +1,31 @@
+---
+title: Battery
+description: Set the battery level and charging state, to test low-power banners and charging-only work.
+icon: BatteryMedium
+---
+
+`device.battery` sets the level and charging state. On an Android emulator the app sees it; on an iOS simulator only the status bar changes.
+
+```ts
+await device.battery({ level: 5, charging: false });
+await device.battery(null); // the real battery back
+```
+
+| Option | Takes |
+|---|---|
+| `level` | 0-100 |
+| `charging` | boolean |
+
+| | iOS simulator | Android emulator |
+|---|---|---|
+| What changes | the status bar only: the result has `cosmetic: true` and a warning | the battery the app reads (`dumpsys battery`) |
+
+## By hand
+
+```bash
+warden ui battery set --level 5 --no-charging
+warden ui battery status
+warden ui battery reset
+```
+
+Release puts the real battery back.

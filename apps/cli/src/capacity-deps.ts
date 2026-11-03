@@ -5,6 +5,7 @@ import { markWardenDevices } from "@delacour/warden-core/inventory";
 import type { InventoryDevice, Owner, Platform } from "@delacour/warden-core/types";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import { stopHelperAfter } from "./agent-ui/stop-helper-after";
+import { closeSimWindowsAfter } from "./close-sim-windows-after";
 import type { CommandContext } from "./context";
 import { providerFor } from "./providers";
 
@@ -82,6 +83,8 @@ export async function buildCapacityDeps(ctx: CommandContext, owner: Owner): Prom
 			const result = await providerFor(device.platform, ctx, owner).shutdown(device.id);
 			if (!result.success) return err(result.error);
 			await stopHelperAfter(ctx)(device.id);
+			// a window left open is cosmetic: the device is down, which is what the gate asked for
+			if (device.platform === "ios") await closeSimWindowsAfter(ctx, [{ udid: device.id, name: device.name }]);
 			return ok(undefined);
 		},
 	};

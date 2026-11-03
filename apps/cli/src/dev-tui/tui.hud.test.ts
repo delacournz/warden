@@ -28,11 +28,12 @@ function setup(hud: { enabled: boolean; intervalMs: number } | undefined) {
 	ctx = testContext([]);
 	const stdout = fakeStdout(120, 40);
 	const process = fakeProcess();
+	const stdin = fakeStdin();
 	const targets: string[] = [];
 	let pending: (() => Promise<void>) | undefined;
 	const ui = createDevTui({
 		ctx,
-		stdin: fakeStdin().input,
+		stdin: stdin.input,
 		stdout: stdout.output,
 		proc: process.proc,
 		now: () => 5000,
@@ -54,6 +55,7 @@ function setup(hud: { enabled: boolean; intervalMs: number } | undefined) {
 	});
 	return {
 		ui,
+		stdin,
 		stdout,
 		targets,
 		tick: async () => {
@@ -101,6 +103,37 @@ describe("createDevTui: the HUD", () => {
 		expect(targets).toEqual([]);
 		expect(text).not.toContain("cpu");
 		expect(text).toContain("hud off");
+		await ui.close();
+	});
+
+	test("setHud(true) starts the ticker on a running session, setHud(false) stops it", async () => {
+		const { ui, tick, screen, targets } = setup({ enabled: false, intervalMs: 1000 });
+		ui.ready(READY);
+		expect(ui.hudOn()).toBe(false);
+		expect(ui.setHud(true)).toEqual(ok(undefined));
+		expect(ui.hudOn()).toBe(true);
+		await tick();
+		expect(targets).toEqual(["ios:8F2A-1C3D:nz.example"]);
+		expect((await screen()).join("\n")).toContain("hud on");
+		ui.setHud(false);
+		expect(ui.hudOn()).toBe(false);
+		await tick();
+		expect(targets).toHaveLength(1);
+		expect((await screen()).join("\n")).toContain("hud off");
+		await ui.close();
+	});
+
+	test("the h key starts and stops the ticker", async () => {
+		const { ui, tick, targets, stdin } = setup({ enabled: false, intervalMs: 1000 });
+		ui.ready(READY);
+		stdin.press("h");
+		await settle();
+		expect(ui.hudOn()).toBe(true);
+		await tick();
+		expect(targets).toHaveLength(1);
+		stdin.press("h");
+		await settle();
+		expect(ui.hudOn()).toBe(false);
 		await ui.close();
 	});
 

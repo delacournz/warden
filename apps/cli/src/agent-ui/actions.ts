@@ -278,12 +278,12 @@ function parseFillWords(words: readonly string[]): Result<{ targetWords: string[
 	return ok({ targetWords: words.slice(0, -1), text });
 }
 
-/** `--via paste|type` (default paste). */
+/** `--via paste|type` (default type). */
 function parseFillVia(raw: string | undefined): Result<FillVia, UiError> {
-	if (raw === undefined || raw === "paste" || raw === "type") return ok(raw ?? "paste");
+	if (raw === undefined || raw === "paste" || raw === "type") return ok(raw ?? "type");
 	return {
 		success: false,
-		error: uiError("usage", `unknown --via "${raw}"`, { hint: "paste (default) or type" }),
+		error: uiError("usage", `unknown --via "${raw}"`, { hint: "type (default) or paste" }),
 	};
 }
 
@@ -310,7 +310,7 @@ function fillDone(
 		text: `filled ${targetLabel(where)} with ${shown}${verified === "unconfirmed" ? " (unconfirmed)" : ""}`,
 		target: where,
 		...(verified !== undefined ? { verified } : {}),
-		args: { ...(secure ? { secure: true } : { text }), ...(via === "type" ? { via } : {}) },
+		args: { ...(secure ? { secure: true } : { text }), ...(via === "paste" ? { via } : {}) },
 		...(secure ? { secret: text } : {}),
 		extra: { characters: [...text].length, ...(secure ? { secure: true } : {}) },
 	};
@@ -319,8 +319,9 @@ function fillDone(
 /**
  * `warden ui fill <target> <text>`: focus the field, empty it, type, then read it back (retrying once).
  * `--secure` (and fields the OS marks secure) cannot be read back: reported as `unconfirmed`, and the
- * text is neither echoed nor recorded. `--no-verify` skips the read-back. `--via paste|type` (default paste): on iOS
- * the text is pasted (one Cmd+V) instead of typed per key; the retry always types. Only `--via type` is recorded.
+ * text is neither echoed nor recorded. `--no-verify` skips the read-back. `--via type|paste` (default type): `paste` on iOS
+ * pastes the text (one Cmd+V, through the pasteboard Xcode syncs with the Mac clipboard) instead of typing per key;
+ * the retry always types. Only `--via paste` is recorded.
  */
 export function uiFill(ctx: CommandContext, deps: UiDeps, words: string[], opts: FillOptionValues): Promise<number> {
 	return runUi(ctx, deps, "fill", opts, async (device, env) => {

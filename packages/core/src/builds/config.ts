@@ -11,6 +11,7 @@ import {
 } from "./builds.defaults";
 import type { projectConfigSchema, wardenConfigSchema } from "./config.schema";
 import type { WardenConfigContext } from "./define-config";
+import type { BuildKind, BuildTarget, ProjectKinds } from "./kinds";
 import { type AppFramework, appFramework, nativeBundleIds } from "./native-ids";
 
 /** The preferred config file, named in hints. */
@@ -61,6 +62,16 @@ export type Project = {
 	prebuiltReactNative?: false;
 	/** the `variants.<name>` this project was resolved with; undefined = the project's own settings */
 	variant?: string;
+	/** `projects[].kinds`: per-kind overrides of the built-in dev / simulator / release builds (see `kinds.ts`) */
+	kinds?: ProjectKinds;
+	/** set by `projectForKind`: the kind this project is resolved as; undefined = the kind-less flow */
+	kind?: BuildKind;
+	/** set by `projectForKind` for a build signed for a physical iPhone; undefined = a simulator / emulator build */
+	target?: BuildTarget;
+	/** `projects[].ios.device.bundleIdentifier`: replaces the bundle id of builds for a physical iPhone (and the app's id there) */
+	iosDeviceBundleId?: string;
+	/** set by `projectForKind`: env of the local build (`kinds.<kind>.env`) */
+	buildEnv?: Record<string, string>;
 	cacheDirs: string[];
 	/** `expo` (expo start + a dev client) or bare `react-native` (react-native start, the app itself) */
 	framework: AppFramework;
@@ -114,6 +125,18 @@ function within(dir: string, target: string): boolean {
 	return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 }
 
+/** The settings a project only carries when its config sets them. */
+function applyOptional(project: Project, entry: ParsedProjectConfig): void {
+	if (entry.build?.cache === false) project.compilerCache = false;
+	if (entry.build?.prebuiltReactNative === false) project.prebuiltReactNative = false;
+	if (entry.kinds !== undefined) project.kinds = entry.kinds;
+	if (entry.ios?.device?.bundleIdentifier !== undefined) project.iosDeviceBundleId = entry.ios.device.bundleIdentifier;
+	if (entry.fingerprint?.command !== undefined) project.fingerprintCommand = entry.fingerprint.command;
+	if (entry.fingerprint?.include === "native+js" && entry.fingerprint.jsInputs) {
+		project.jsInputs = entry.fingerprint.jsInputs;
+	}
+}
+
 function fromConfig(entry: ParsedProjectConfig, configDir: string, env: Record<string, string | undefined>): Project {
 	const root = resolve(configDir, entry.root);
 	const configuration = entry.build?.configuration ?? "Debug";
@@ -134,12 +157,7 @@ function fromConfig(entry: ParsedProjectConfig, configDir: string, env: Record<s
 		origin: "config",
 		source: "repo",
 	};
-	if (entry.build?.cache === false) project.compilerCache = false;
-	if (entry.build?.prebuiltReactNative === false) project.prebuiltReactNative = false;
-	if (entry.fingerprint?.command !== undefined) project.fingerprintCommand = entry.fingerprint.command;
-	if (entry.fingerprint?.include === "native+js" && entry.fingerprint.jsInputs) {
-		project.jsInputs = entry.fingerprint.jsInputs;
-	}
+	applyOptional(project, entry);
 	const eas =
 		entry.eas === false
 			? undefined

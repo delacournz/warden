@@ -30,6 +30,7 @@ export type WardenPlatform = "ios" | "android";
  * - `{ installMode, resetKeychain: true }` also resets the iOS simulator's keychain (`--reset-keychain`); needs `installMode`.
  * - `{ clean: true }` is the deprecated spelling of `{ installMode: "reinstall" }`.
  * - `{ variant: "e2e" }` installs that {@link WardenProject.variants} build instead of the project's own.
+ * - `{ kind: "simulator" }` installs that {@link WardenBuildKind} instead (not together with `variant`).
  * - `{}` is the same as `true`.
  */
 export type WardenAppOption =
@@ -40,6 +41,7 @@ export type WardenAppOption =
 			/** @deprecated use `installMode: "reinstall"` */
 			clean?: boolean | undefined;
 			variant?: string | undefined;
+			kind?: WardenBuildKind | undefined;
 	  };
 
 /** A value per platform, e.g. a bundle id or a build command. */
@@ -135,6 +137,49 @@ export interface WardenVariant {
 	build?: WardenBuild | undefined;
 }
 
+/**
+ * What a cached build is for.
+ *
+ * - `"dev"`: Debug, JS from Metro at runtime. The default of `warden ui open` / `warden dev`.
+ * - `"simulator"`: Release for a simulator / emulator whose JS is swapped by a repack (iOS `SKIP_BUNDLING=1`, Android
+ *   plain `assembleRelease`; its embedded bundle is replaced). The app's JS is repacked into a clone of this build, keyed by the content
+ *   of the JS sources, so a JS edit costs seconds, not a native rebuild. The default of `warden e2e`.
+ * - `"release"`: Release with the JS bundle embedded at build time; the key also covers the JS sources.
+ */
+export type WardenBuildKind = "dev" | "simulator" | "release";
+
+/** Overrides of one {@link WardenBuildKind}'s built-in defaults. */
+export interface WardenKind {
+	/**
+	 * Replaces the kind's built-in build command, per platform. The project's own top-level `build` is not read
+	 * for a kind.
+	 *
+	 * @example { ios: "SKIP_BUNDLING=1 bunx expo run:ios --configuration Release --no-install --no-bundler" }
+	 */
+	build?: WardenPerPlatform | undefined;
+	/**
+	 * Env of the build and of the JS bundle step (`EXPO_PUBLIC_*`, `NODE_ENV`…). Part of the repack key: another
+	 * value is another repack.
+	 */
+	env?: Record<string, string> | undefined;
+	/**
+	 * Globs, relative to the project root, of the JS sources the JS key covers (`simulator`: the repack key,
+	 * `release`: the build key). A `!` prefix excludes (`"!docs/**"`); a glob starting with `../` reaches a workspace
+	 * package the bundle embeds. Ignored by `dev`.
+	 *
+	 * @default every file git tracks (or would) under the project root except `ios/`, `android/` and `node_modules`
+	 * @example ["src/**", "assets/**", "app.config.ts", "../../packages/ui/src/**"]
+	 */
+	jsInputs?: string[] | undefined;
+}
+
+/** Per-kind overrides, `projects[].kinds`. */
+export interface WardenKinds {
+	dev?: WardenKind | undefined;
+	simulator?: WardenKind | undefined;
+	release?: WardenKind | undefined;
+}
+
 /** An app warden builds, caches and installs. */
 export interface WardenProject {
 	/** Project name, used in the cache key and referenced by `batches.*.project` / `e2e.*.project`. */
@@ -172,6 +217,13 @@ export interface WardenProject {
 	 * every worktree with the same fingerprint reuses one build per variant.
 	 */
 	variants?: Record<string, WardenVariant> | undefined;
+	/**
+	 * Per-kind overrides of the built-in `dev` / `simulator` / `release` builds, picked with `app: { kind }` or
+	 * `--kind`. Kinds sit on top of {@link WardenProject.variants}: both keep working, but a build is one or the other.
+	 */
+	kinds?: WardenKinds | undefined;
+	/** iOS-only project settings. */
+	ios?: WardenProjectIos | undefined;
 	/** Extra (legacy) cache roots laid out as `<dir>/<hash>/*.app|*.apk`, imported on demand. `~` expands to `$HOME`. */
 	cacheDirs?: string[] | undefined;
 }
@@ -282,6 +334,19 @@ export interface WardenBatchPreset {
 	 * `--slim` / `--no-slim` override both.
 	 */
 	slim?: boolean | { except?: string[] | undefined; keep?: string[] | undefined } | undefined;
+	/**
+	 * Devices of this run have a fingerprint (Android) / Face ID (iOS) enrolled before any app install. Enrolled
+	 * devices are a separate pool and golden from plain ones (profile `<profile>+bio`). Overrides the top-level
+	 * `biometrics`. Default false.
+	 */
+	biometrics?: boolean | undefined;
+	/**
+	 * What happens to the state of the devices of this run when they are released: `"erase"` (iOS: shutdown +
+	 * `simctl erase`; Android: uninstalls the third-party apps), `"uninstall"` (removes the user-installed apps) or
+	 * `"none"`. Only warden-created simulators and emulators are reclaimed, never foreign, golden or physical
+	 * devices. Overrides the top-level `reclaim`; `WARDEN_RECLAIM` is the fallback below it. Default `"none"`.
+	 */
+	reclaim?: "erase" | "uninstall" | "none" | undefined;
 	/** Per-job log dir. */
 	logs?: string | undefined;
 	/**
@@ -381,6 +446,53 @@ export interface WardenPerfConfig {
 	budgets?: WardenPerfBudgets | undefined;
 }
 
+/** `conditions.network` as a custom shape: the fields of a `custom` network condition. */
+export interface WardenCustomNetwork {
+	/** Added round-trip time, ms. */
+	latencyMs?: number | undefined;
+	/** Plus or minus spread on the latency, ms. */
+	jitterMs?: number | undefined;
+	/** Download rate, kilobits per second (0 = unlimited). */
+	downKbps?: number | undefined;
+	/** Upload rate, kilobits per second (0 = unlimited). */
+	upKbps?: number | undefined;
+	/** Share of packets lost, 0-100. */
+	lossPct?: number | undefined;
+}
+
+/**
+ * `conditions` (top level, or `e2e.<suite>.conditions`): the device state every spec of the suite starts from.
+ * `network`, `location` and `clock` are applied before the app launches and put back after each spec;
+ * `permissions`, `locale`, `timezone` and `a11y` are accepted but not applied yet (`warden e2e` says so once).
+ */
+export interface WardenConditionsConfig {
+	/** `online`, `offline`, a preset (`edge`, `3g`, `4g`, `lte`, `wifi`, `slow`, `lossy`) or custom shaping. iOS launches the app with the network dylib so specs can change it later. */
+	network?:
+		| "online"
+		| "offline"
+		| "edge"
+		| "3g"
+		| "4g"
+		| "lte"
+		| "wifi"
+		| "slow"
+		| "lossy"
+		| WardenCustomNetwork
+		| undefined;
+	/** A point, or one of the bundled scenarios (`city-run`, `city-bike`, `freeway`). */
+	location?: "city-run" | "city-bike" | "freeway" | { lat: number; lon: number; altM?: number | undefined } | undefined;
+	/** An ISO instant the clock starts at (and keeps running from), `{ at, frozen }`, or `{ offset }` ("2d") from now. */
+	clock?: string | { at: string; frozen?: boolean | undefined } | { offset: string } | undefined;
+	/** Not applied yet. */
+	permissions?: Record<string, "granted" | "denied" | "unset"> | undefined;
+	/** Not applied yet. */
+	locale?: string | undefined;
+	/** Not applied yet. */
+	timezone?: string | undefined;
+	/** Not applied yet. */
+	a11y?: Record<string, unknown> | undefined;
+}
+
 /** `e2e.<suite>.spec`: how `warden e2e` runs the `*.e2e.ts` specs (`bun test` with `@delacour/warden-e2e`). */
 export interface WardenE2eSpec {
 	/** The app under test. Default: the suite project's `bundleId` for the platform. */
@@ -427,6 +539,12 @@ export interface WardenE2eDeviceLeg {
 	default?: boolean | undefined;
 }
 
+/** One camera asset: a path (relative to the config file), or `{ path, loop }`. */
+export type WardenCameraFeed = string | { path: string; loop?: boolean | undefined };
+
+/** `e2e.<suite>.camera`: the asset each facing plays. At least one of `back` / `front`. */
+export type WardenCameraConfig = { back?: WardenCameraFeed | undefined; front?: WardenCameraFeed | undefined };
+
 /**
  * `e2e.<suite>`: the specs `warden affected` selects and `warden e2e` runs. Every path and glob is
  * relative to the config file.
@@ -439,6 +557,14 @@ export interface WardenE2eSuite {
 	project?: string | undefined;
 	/** Perf budgets for this suite; each key replaces the top-level `perf.budgets` one. */
 	perf?: WardenPerfConfig | undefined;
+	/** Device conditions every spec of this suite starts from; each area replaces the top-level one. */
+	conditions?: WardenConditionsConfig | undefined;
+	/**
+	 * The simulated camera every spec of this suite starts from, applied before the first `app.open()`: a path, or
+	 * `{ path, loop }` (video loop, default true), per facing. Paths are relative to the config file. Android devices of
+	 * the suite are claimed with `--camera` (profile `<profile>+cam`, cold boot). png, jpg, heic, mp4 and mov are accepted.
+	 */
+	camera?: WardenCameraConfig | undefined;
 	/** Directory of specs: `*.e2e.ts(x)` specs whose other `.ts` files are helpers (searched recursively; dot dirs, `node_modules` and `__baselines__` skipped). */
 	specsDir: string;
 	/** How the specs run: the app under test, its launch arguments and the timeouts. */
@@ -458,7 +584,7 @@ export interface WardenE2eSuite {
 	 * `"idle"`: leave them booted, so the next run skips the 10-30 s boot, and let `warden gc` shut
 	 * them down once they have sat idle. A failed run always leaves them up. `--no-shutdown` wins.
 	 *
-	 * @default "idle" locally, "always" when the `CI` environment variable is set
+	 * @default "always"
 	 */
 	shutdown?: "always" | "idle" | undefined;
 	/**
@@ -594,6 +720,19 @@ export interface WardenE2eSuite {
 	 * lists single `com.apple.*` launchd labels. `false` turns it off.
 	 */
 	slim?: boolean | { except?: string[] | undefined; keep?: string[] | undefined } | undefined;
+	/**
+	 * Devices of this run have a fingerprint (Android) / Face ID (iOS) enrolled before any app install. Enrolled
+	 * devices are a separate pool and golden from plain ones (profile `<profile>+bio`). Overrides the top-level
+	 * `biometrics`. Default false.
+	 */
+	biometrics?: boolean | undefined;
+	/**
+	 * What happens to the state of the devices of this run when they are released: `"erase"` (iOS: shutdown +
+	 * `simctl erase`; Android: uninstalls the third-party apps), `"uninstall"` (removes the user-installed apps) or
+	 * `"none"`. Only warden-created simulators and emulators are reclaimed, never foreign, golden or physical
+	 * devices. Overrides the top-level `reclaim`; `WARDEN_RECLAIM` is the fallback below it. Default `"none"`.
+	 */
+	reclaim?: "erase" | "uninstall" | "none" | undefined;
 	/** Removed: renamed `warmDrivers`. */
 	warmRunners?: undefined;
 	/**
@@ -649,10 +788,63 @@ export interface WardenConfig {
 	 * @default true
 	 */
 	slim?: boolean | { except?: string[] | undefined; keep?: string[] | undefined } | undefined;
+	/**
+	 * Devices of this run have a fingerprint (Android) / Face ID (iOS) enrolled before any app install. Enrolled
+	 * devices are a separate pool and golden from plain ones (profile `<profile>+bio`). `e2e` suites and `batches` presets
+	 * override it. Default false.
+	 */
+	biometrics?: boolean | undefined;
+	/**
+	 * What happens to the state of the devices of this run when they are released: `"erase"` (iOS: shutdown +
+	 * `simctl erase`; Android: uninstalls the third-party apps), `"uninstall"` (removes the user-installed apps) or
+	 * `"none"`. Only warden-created simulators and emulators are reclaimed, never foreign, golden or physical
+	 * devices. Overrides the top-level `reclaim`; `WARDEN_RECLAIM` is the fallback below it. Default `"none"`.
+	 */
+	reclaim?: "erase" | "uninstall" | "none" | undefined;
 	/** Perf budgets every `e2e` suite starts from (a suite's own `perf.budgets` replace them per key). */
 	perf?: WardenPerfConfig | undefined;
+	/** Device conditions every `e2e` suite starts from (a suite's own `conditions` replace them per area). */
+	conditions?: WardenConditionsConfig | undefined;
 	/** Android emulator settings. */
 	android?: WardenAndroidSettings | undefined;
+	/** Physical iPhone settings. */
+	ios?: WardenIosSettings | undefined;
+	/** Physical phone and tablet settings. */
+	physical?: WardenPhysicalSettings | undefined;
+}
+
+/** Physical phone and tablet settings (`physical`). */
+export interface WardenPhysicalSettings {
+	/**
+	 * Allowlist for `--physical` claims that name no device: only these adb serials / CoreDevice UDIDs are picked.
+	 * `WARDEN_PHYSICAL_IDS` (comma-separated) wins over it. Naming a device with `--serial` / `--udid` works for
+	 * any device, listed or not.
+	 *
+	 * @example ["00008140-000A0B0C0D0E0F10", "R5CT123ABC"]
+	 */
+	allow?: string[] | undefined;
+}
+
+/** iOS settings of one project (`projects[].ios`). */
+export interface WardenProjectIos {
+	/** Builds for a physical iPhone (`--physical`, `--udid <iPhone>`). */
+	device?: { bundleIdentifier?: string | undefined } | undefined;
+}
+
+/** Physical iPhone settings (`ios`). */
+export interface WardenIosSettings {
+	/**
+	 * Apple developer team id (10 characters, e.g. `LN69P7N673`) that signs warden's on-device runner. Without it
+	 * (and without `WARDEN_IOS_TEAM_ID`, which wins) warden uses the team of the one `Apple Development` identity
+	 * in your keychain and fails `ios_team_ambiguous` when there are several teams.
+	 */
+	teamId?: string | undefined;
+	/**
+	 * Bundle id of the runner app (its UI-test bundle is `<id>.uitests`).
+	 *
+	 * @default "nz.co.delacour.warden.runner.<team id, lower case>"
+	 */
+	runnerBundleId?: string | undefined;
 }
 
 /** Android emulator settings (`android`). */

@@ -2,7 +2,7 @@ export const appName = "warden";
 
 /** One sentence, served as the meta description and the social card body. */
 export const appDescription =
-	"The open-source mobile testing loop for coding agents: warden gives your agent its own iOS simulator or Android emulator, keeps what it verified as an e2e test, and runs the suite across every simulator on your Mac.";
+	"Every agent gets its own simulator: warden leases iOS simulators, Android emulators, ports and app builds across every worktree on your Mac, so parallel coding agents build, run and test your app without colliding.";
 
 export const docsRoute = "/docs";
 

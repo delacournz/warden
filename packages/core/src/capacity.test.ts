@@ -1,16 +1,19 @@
 import { describe, expect, test } from "bun:test";
 import {
+	capacityBlock,
 	DEFAULT_COSTS,
 	deviceCost,
 	explain,
 	fits,
 	hostBudget,
+	hostUsage,
 	maxConcurrent,
 	SLIM_IOS_MEM_MB,
 	totalCost,
 	ZERO_COST,
 } from "./capacity";
 import type { HostFacts } from "./host";
+import type { InventoryDevice } from "./types";
 
 const GB = 1024 ** 3;
 const host = (gb: number, perfCores: number): HostFacts => ({
@@ -179,5 +182,48 @@ describe("slim cost", () => {
 		const total = totalCost(["ios", "ios", "android"], {}, [true, false, true]);
 		expect(total.memMb).toBe(SLIM_IOS_MEM_MB + 4096 + 4096);
 		expect(totalCost(["ios", "ios"], {}).memMb).toBe(8192);
+	});
+});
+
+describe("hostUsage / capacityBlock", () => {
+	const dev = (id: string, o: Partial<InventoryDevice> = {}): InventoryDevice => ({
+		platform: "ios",
+		id,
+		name: id,
+		state: "booted",
+		wardenCreated: true,
+		...o,
+	});
+
+	test("counts booted and booting devices (foreign too), slim by record, pending creates, never phones or shutdown", () => {
+		const devices = [
+			dev("a"),
+			dev("b", { state: "booting", wardenCreated: false }),
+			dev("c", { state: "shutdown" }),
+			dev("d", {
+				physical: {
+					platform: "ios",
+					transport: "wired",
+					deviceType: "iPhone",
+					osVersion: "26",
+					developerMode: true,
+					ddi: true,
+				},
+			}),
+			dev("e", { platform: "android" }),
+		];
+		const usage = hostUsage(devices, {}, new Set(["a"]), { platforms: ["ios"], slim: true });
+		expect(usage).toEqual({ memMb: SLIM_IOS_MEM_MB * 2 + 4096 + 4096, cpu: 1 + 1 + 2 + 1 });
+		expect(hostUsage([], {}, new Set())).toEqual({ memMb: 0, cpu: 0 });
+	});
+
+	test("capacityBlock: mem binds ram-budget, cpu or max bind cpu-budget, pressure holds, else nothing", () => {
+		const budget = { memMb: 8192, cpu: 2, maxUnits: Number.POSITIVE_INFINITY };
+		const one = { memMb: 4096, cpu: 1 };
+		expect(capacityBlock(fits({ memMb: 8000, cpu: 0 }, one, budget), false)).toBe("ram-budget");
+		expect(capacityBlock(fits({ memMb: 0, cpu: 2 }, one, budget), false)).toBe("cpu-budget");
+		expect(capacityBlock(fits({ memMb: 0, cpu: 0 }, one, { ...budget, maxUnits: 0.5 }), false)).toBe("cpu-budget");
+		expect(capacityBlock(fits({ memMb: 0, cpu: 0 }, one, budget), true)).toBe("memory-pressure");
+		expect(capacityBlock(fits({ memMb: 0, cpu: 0 }, one, budget), false)).toBeUndefined();
 	});
 });

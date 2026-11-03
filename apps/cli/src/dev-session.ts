@@ -26,6 +26,8 @@ export type DevSessionRecord = {
 	startedAt: string;
 	/** the CDP broker's Unix socket, once it is listening */
 	brokerSocket?: string;
+	/** where `warden dev enable|disable` reach this session (`dev-control.ts`) */
+	controlSocket?: string;
 };
 
 const nonEmpty = (v: unknown): v is string => typeof v === "string" && v.length > 0;
@@ -39,6 +41,7 @@ export function parseDevSession(value: unknown): DevSessionRecord | undefined {
 	if (r.version !== 1 || !strings.every(nonEmpty) || !positiveInt(r.pid) || !positiveInt(r.port)) return undefined;
 	if (r.platform !== "ios" && r.platform !== "android") return undefined;
 	if (r.brokerSocket !== undefined && !nonEmpty(r.brokerSocket)) return undefined;
+	if (r.controlSocket !== undefined && !nonEmpty(r.controlSocket)) return undefined;
 	return {
 		version: 1,
 		leaseId: r.leaseId as string,
@@ -51,6 +54,7 @@ export function parseDevSession(value: unknown): DevSessionRecord | undefined {
 		projectRoot: r.projectRoot as string,
 		startedAt: r.startedAt as string,
 		...(nonEmpty(r.brokerSocket) ? { brokerSocket: r.brokerSocket } : {}),
+		...(nonEmpty(r.controlSocket) ? { controlSocket: r.controlSocket } : {}),
 	};
 }
 

@@ -9,6 +9,15 @@ export function buildLockKey(projectKey: string, platform: Platform, hash: strin
 	return `${projectKey}|${platform}|${hash}`;
 }
 
+/**
+ * Lease key serialising local builds in one checkout: a build writes the working tree (prebuild, Pods, build/), so two
+ * builds of any fingerprints in one `root` clobber each other, and a fingerprint read while one runs is of a half-written
+ * native dir. `root` should be a realpath, so two spellings of one checkout share it.
+ */
+export function buildTreeLockKey(root: string, platform: Platform): string {
+	return `tree:${root}|${platform}`;
+}
+
 export function buildResource(key: string): BuildResource {
 	return { kind: "build", key };
 }
@@ -22,6 +31,10 @@ export type BuildLockDeps = {
 	pidAlive: PidAlive;
 	sleep: (ms: number) => Promise<void>;
 	log?: (line: string) => void;
+	/** the one line logged when this starts waiting, given the holder (default: "another warden (…) is fetching/building this app — waiting") */
+	waitLine?: (holder: string) => string;
+	/** called with the holder's lease on every poll while another owner holds the lock (progress, log tailing) */
+	onWait?: (held: Lease) => void;
 	pollMs?: number;
 	waitMs?: number;
 	ttlMs?: number;
@@ -52,6 +65,15 @@ function attempt(deps: BuildLockDeps, resource: BuildResource): Attempt | undefi
 	}
 }
 
+/** One poll while another owner holds the lock: the wait line the first time, `onWait` every time. */
+function noticeHolder(deps: BuildLockDeps, held: Lease, first: boolean): void {
+	if (first) {
+		const holder = describeOwner(held.owner);
+		deps.log?.(deps.waitLine?.(holder) ?? `another warden (${holder}) is fetching/building this app — waiting`);
+	}
+	deps.onWait?.(held);
+}
+
 /**
  * Run `fn` holding the build lease for `key`. While another live owner holds it, poll (up to
  * `waitMs`); callers re-check the cache inside `fn`, so a waiter ends up with the holder's result
@@ -74,8 +96,8 @@ export async function withBuildLock<T>(deps: BuildLockDeps, key: string, fn: () 
 		if (deps.now() - started >= waitMs) {
 			return err(`timed out waiting for build lock ${key}${got ? ` (held by ${describeOwner(got.lease.owner)})` : ""}`);
 		}
-		if (got && !announced) {
-			deps.log?.(`another warden (${describeOwner(got.lease.owner)}) is fetching/building this app — waiting`);
+		if (got) {
+			noticeHolder(deps, got.lease, !announced);
 			announced = true;
 		}
 		await deps.sleep(deps.pollMs ?? BUILD_LOCK_POLL_MS);

@@ -426,6 +426,8 @@ const DRIVER_CODES: ReadonlySet<string> = new Set<DriverErrorCode>([
 	"E_IO",
 	"E_BAD_REQUEST",
 	"E_INTERNAL",
+	"E_DEVICE_LOCKED",
+	"E_REFUSED",
 ]);
 
 function isDriverCode(code: string): code is DriverErrorCode {

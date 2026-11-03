@@ -1,5 +1,6 @@
 import type { AsyncResult } from "@delacour/warden-types/result";
 import type { Exec } from "../exec";
+import type { MarkerFs } from "../ownership";
 import type { Store } from "../store";
 import type { InventoryDevice, Owner, Platform } from "../types";
 import type { Timer } from "./health";
@@ -37,6 +38,12 @@ export interface DeviceProvider {
 	 * shutdown reuse), never for an already-booted one. A failure is logged by the provider, never fatal.
 	 */
 	prepareBoot?(id: string): Promise<void>;
+	/**
+	 * Restart a running warden device in place (same id, same console port, device record and port lease kept) so
+	 * launch-time settings apply again; the caller then waits with `waitReady`. Android camera emulators only
+	 * (the camera source is fixed at launch). Absent = the platform cannot.
+	 */
+	relaunch?(id: string): AsyncResult<void>;
 	/** Called once the device is ready, before the health probe. Best effort. */
 	afterReady?(id: string): Promise<void>;
 }
@@ -58,4 +65,6 @@ export type ProviderDeps = {
 	timer?: (ms: number) => Timer;
 	/** progress notes (e.g. "cloning from golden…") — stderr in the CLI */
 	log?: (line: string) => void;
+	/** where the iOS ownership marker is written (default: the real filesystem) */
+	markerFs?: MarkerFs;
 };

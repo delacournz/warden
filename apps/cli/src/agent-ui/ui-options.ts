@@ -31,6 +31,7 @@ function withDeviceFlags<Args extends unknown[], Opts extends OptionValues, Glob
 		.option("--lease <id>", "use the device behind this lease id")
 		.option("--claim", "take over a stale/missing lease, or claim a device when none is held")
 		.option("--platform <platform>", "platform for --claim with no device named: ios (default) | android")
+		.option("--physical", "with --claim and no device named: claim a connected phone, not an emulator")
 		.option("--profile <slug>", "device profile for --claim with no device named")
 		.option("--runtime <runtime>", "runtime for --claim with no device named")
 		.option(

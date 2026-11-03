@@ -50,6 +50,10 @@ export type BatchPreset = {
 	headless?: boolean;
 	/** the preset's `slim`, else the top-level one (undefined: neither sets it) */
 	slim?: NonNullable<BatchPresetConfig["slim"]>;
+	/** the preset's `biometrics`, else the top-level one (undefined: neither sets it) */
+	biometrics?: boolean;
+	/** the preset's `reclaim`, else the top-level one (undefined: neither sets it) */
+	reclaim?: BatchPresetConfig["reclaim"];
 	cmd: string[];
 };
 
@@ -74,7 +78,9 @@ function resolvePreset(
 	cwd: string,
 	projectRoot?: string,
 	defaultHeadless?: boolean,
-	defaultSlim?: BatchPresetConfig["slim"]
+	defaultSlim?: BatchPresetConfig["slim"],
+	defaultBiometrics?: boolean,
+	defaultReclaim?: BatchPresetConfig["reclaim"]
 ): BatchPreset {
 	const {
 		headless: ownHeadless,
@@ -92,6 +98,8 @@ function resolvePreset(
 	const jobs = jobsSource(preset, cwd);
 	const headless = ownHeadless ?? defaultHeadless;
 	const slim = preset.slim ?? defaultSlim;
+	const biometrics = preset.biometrics ?? defaultBiometrics;
+	const reclaim = preset.reclaim ?? defaultReclaim;
 	return {
 		...rest,
 		name,
@@ -108,6 +116,8 @@ function resolvePreset(
 		...(jobs ? { jobs } : {}),
 		...(headless !== undefined ? { headless } : {}),
 		...(slim !== undefined ? { slim } : {}),
+		...(biometrics !== undefined ? { biometrics } : {}),
+		...(reclaim !== undefined ? { reclaim } : {}),
 	};
 }
 
@@ -136,6 +146,15 @@ export function findBatchPreset(input: FindBatchPresetInput): Result<{ preset?: 
 	const projectRoot = project ? resolve(dir, project.root) : undefined;
 	return ok({
 		names,
-		preset: resolvePreset(input.name, preset, projectRoot ?? dir, projectRoot, config.headless, config.slim),
+		preset: resolvePreset(
+			input.name,
+			preset,
+			projectRoot ?? dir,
+			projectRoot,
+			config.headless,
+			config.slim,
+			config.biometrics,
+			config.reclaim
+		),
 	});
 }

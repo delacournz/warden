@@ -5,7 +5,8 @@
 
 import { z } from "zod";
 import { e2eSuiteSchema, perfConfigSchema } from "../affected/affected.schema";
-import { batchPresetSchema, RESERVED_PRESET_NAMES, slimConfigSchema } from "../batch/preset.schema";
+import { batchPresetSchema, RESERVED_PRESET_NAMES, reclaimSchema, slimConfigSchema } from "../batch/preset.schema";
+import { conditionsConfigSchema } from "../conditions/conditions.config";
 import { validateProfile } from "../sims/slim.profile";
 import type { AppOption } from "./app-option.schema";
 import { DEFAULT_EAS_PROFILE } from "./builds.defaults";
@@ -56,6 +57,20 @@ export const variantSchema = z
 	.object({ fingerprint: fingerprintSchema.optional(), eas: easOrOffSchema.optional(), build: buildSchema.optional() })
 	.strict();
 
+/** One kind's overrides (`kinds.<kind>`): see `kinds.ts` for the built-in defaults they replace. */
+const kindSchema = z
+	.object({
+		/** replaces the kind's built-in build command, per platform */
+		build: perPlatform.optional(),
+		/** env of the build and the JS bundle step; part of the JS key */
+		env: z.record(z.string().min(1), z.string()).optional(),
+		/** globs (`!` excludes) of the JS sources the JS key covers; default: every tracked file but ios/ android/ node_modules */
+		jsInputs: z.array(z.string().min(1)).min(1).optional(),
+	})
+	.strict();
+
+const kindsSchema = z.object({ dev: kindSchema, simulator: kindSchema, release: kindSchema }).partial().strict();
+
 export const projectConfigSchema = z
 	.object({
 		name: z.string().min(1),
@@ -69,6 +84,25 @@ export const projectConfigSchema = z
 		build: buildSchema.optional(),
 		/** named builds (`dev`, `e2e`…) picked with `--variant` / `app.variant`; each replaces fingerprint / eas / build wholesale */
 		variants: z.record(z.string().min(1), variantSchema).optional(),
+		/** per-kind overrides of the built-in `dev` / `simulator` / `release` builds (`app.kind`, `--kind`) */
+		kinds: kindsSchema.optional(),
+		/** iOS-only project settings */
+		ios: z
+			.object({
+				/** builds for a physical iPhone (`--physical`, `--udid <iPhone>`) */
+				device: z
+					.object({
+						/** replaces the bundle id on a phone (the project's own may belong to another Apple team); also what specs see as `WARDEN_BUNDLE_ID` there */
+						bundleIdentifier: z
+							.string()
+							.regex(/^[A-Za-z0-9][A-Za-z0-9.-]*$/, "a bundle id is letters, digits, dots and hyphens")
+							.optional(),
+					})
+					.strict()
+					.optional(),
+			})
+			.strict()
+			.optional(),
 		/** extra (legacy) cache roots laid out as `<dir>/<hash>/*.app|*.apk`, imported on demand */
 		cacheDirs: z.array(z.string().min(1)).optional(),
 	})
@@ -130,13 +164,43 @@ export const wardenConfigSchema = z
 		headless: z.boolean().optional(),
 		/** iOS simulator daemon slimming for every device warden creates; `e2e` suites and `batches` presets override it */
 		slim: topLevelSlimSchema.optional(),
+		/** devices warden creates have a fingerprint / Face ID enrolled (own golden, own pool); `e2e` suites and `batches` presets override it */
+		biometrics: z.boolean().optional(),
+		/** what happens to a warden device's state when its lease ends (default `none`); `e2e` suites and `batches` presets override it, `WARDEN_RECLAIM` is the fallback below */
+		reclaim: reclaimSchema.optional(),
 		/** perf budgets every `e2e` suite starts from (a suite's own `perf.budgets` replace them per key) */
 		perf: perfConfigSchema.optional(),
+		/** device conditions every `e2e` suite starts from (a suite's own `conditions` replace them per area) */
+		conditions: conditionsConfigSchema.optional(),
 		/** Android emulator settings */
 		android: z
 			.object({
 				/** false = claims cold-boot the AVD instead of warden's quick-boot snapshot (`WARDEN_ANDROID_SNAPSHOT` overrides) */
 				snapshot: z.boolean().optional(),
+			})
+			.strict()
+			.optional(),
+		/** physical phones/tablets; `allow` limits what an id-less `--physical` claim may pick (`WARDEN_PHYSICAL_IDS` overrides) */
+		physical: z
+			.object({
+				/** adb serials / CoreDevice UDIDs; naming a device with `--serial` / `--udid` still works for any device */
+				allow: z.array(z.string().min(1)).optional(),
+			})
+			.strict()
+			.optional(),
+		/** physical iPhone settings (the signing of warden's on-device runner) */
+		ios: z
+			.object({
+				/** Apple developer team id (10 characters) that signs the runner; `WARDEN_IOS_TEAM_ID` overrides it */
+				teamId: z
+					.string()
+					.regex(/^[A-Z0-9]{10}$/, "a team id is 10 uppercase letters or digits")
+					.optional(),
+				/** bundle id of the runner app; default `nz.co.delacour.warden.runner.<team id, lower case>` */
+				runnerBundleId: z
+					.string()
+					.regex(/^[A-Za-z0-9][A-Za-z0-9.-]*$/, "a bundle id is letters, digits, dots and hyphens")
+					.optional(),
 			})
 			.strict()
 			.optional(),

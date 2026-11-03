@@ -1,19 +1,31 @@
+import { randomUUID } from "node:crypto";
 import { constants } from "node:os";
 import type { Command as Commander, OptionValues } from "@commander-js/extra-typings";
 import type { InstallMode } from "@delacour/warden-core/builds/app-option.schema";
-import type { EnsureResult } from "@delacour/warden-core/builds/resolve";
+import type { KindApp } from "@delacour/warden-core/builds/ensure-kind";
+import type { BuildKind } from "@delacour/warden-core/builds/kinds";
+import type { AppPhase, EnsureResult } from "@delacour/warden-core/builds/resolve";
 import { CLAIM_ABORTED, type ClaimOutcome } from "@delacour/warden-core/claim";
+import { CLAIM_ERRORS } from "@delacour/warden-core/claim-errors";
 import { DEFAULT_TTL_MS, HEARTBEAT_INTERVAL_MS } from "@delacour/warden-core/config.defaults";
 import { processAlive } from "@delacour/warden-core/liveness";
 import { claimPorts, parsePortSpec } from "@delacour/warden-core/ports";
-import type { Owner, Platform } from "@delacour/warden-core/types";
+import { isPhysicalDevice, type Owner, type Platform } from "@delacour/warden-core/types";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
+import { phaseTracker } from "./app-phase";
 import { selfCommand } from "./autogc";
 import { type ClaimFlags, claimWithFlags } from "./claim-flags";
 import { defaultAppDeps, type EnsureOptions, ensurePreparedApp, type PreparedApp, prepareApp } from "./commands/app";
 import type { CommandContext } from "./context";
 import { releaseDevices } from "./device-lease";
-import { installModeOption, legacyCleanOption, parseInstallFlags, RESET_KEYCHAIN_HELP } from "./install-flags";
+import {
+	installModeOption,
+	kindOption,
+	legacyCleanOption,
+	parseInstallFlags,
+	RESET_KEYCHAIN_HELP,
+} from "./install-flags";
+import { createLeaseHealth, healthMonitorDisabled, type LeaseHealthDeps } from "./lease-health";
 import { reportError } from "./output";
 import type { HideStart } from "./sim-windows";
 import type { Spinner } from "./ui";
@@ -32,7 +44,7 @@ export type RunEnsureApp = (
 	platform: Platform,
 	deviceId: string,
 	opts: EnsureOptions
-) => AsyncResult<EnsureResult>;
+) => AsyncResult<EnsureResult & { kindApp?: KindApp }>;
 
 /** Effects a lease session needs (a subset of `RunDeps` / `BatchDeps`). */
 export type LeaseSessionDeps = {
@@ -42,6 +54,8 @@ export type LeaseSessionDeps = {
 	onSignal: (signal: ForwardedSignal, handler: () => void) => () => void;
 	/** run `fn` every `ms`; returns stop */
 	every: (ms: number, fn: () => void) => () => void;
+	/** device health monitor under the held leases (absent = none); the real one is `defaultLeaseHealthDeps` */
+	health?: LeaseHealthDeps;
 	/** bind probe for `--port` ranges */
 	isPortFree: (port: number) => Promise<boolean>;
 	/** `--app`: make sure the project's app is installed on a claimed device (default: `ensureAppFor`) */
@@ -121,6 +135,10 @@ export function childEnv(
 	udids.forEach((udid, i) => {
 		env[`WARDEN_UDID_${i}`] = udid;
 	});
+	// a run on phones only says so; a mixed run is told per device by the jobs' own env (batch / e2e)
+	if (outcome.claimed.length > 0 && outcome.claimed.every((c) => isPhysicalDevice(c.device))) {
+		env.WARDEN_DEVICE_KIND = "physical";
+	} else delete env.WARDEN_DEVICE_KIND;
 	env.WARDEN_LEASE_IDS = [...outcome.claimed.map((c) => c.lease.id), ...ports.map((p) => p.leaseId)].join(",");
 	if (ports.length > 0) {
 		env.WARDEN_PORTS = ports.map((p) => p.port).join(",");
@@ -153,6 +171,14 @@ export function setAfterRebootEnv(
 	else env.WARDEN_AFTER_REBOOT = JSON.stringify([...self, "arrange", "--open", "{udid}"]);
 }
 
+/** The headless and after-reboot env of a run; phones are never rebooted, so a run with only phones has nothing to reopen afterwards. */
+function setRunEnv(env: Record<string, string | undefined>, legs: readonly ClaimFlags[]): void {
+	const headless = legs.some((f) => f.headless === true);
+	setHeadlessEnv(env, headless);
+	setAfterRebootEnv(env, headless);
+	if (legs.every((f) => f.request.physical !== undefined)) delete env.WARDEN_AFTER_REBOOT;
+}
+
 /** `--app` family option values shared by `run` and `batch`. */
 export type AppFlagValues = {
 	app?: true;
@@ -166,6 +192,10 @@ export type AppFlagValues = {
 	bundleId?: string;
 	/** `--variant <name>`: a `projects[].variants` build */
 	variant?: string;
+	/** `--kind <kind>`: a build kind (`simulator` = repacked) instead of the project's kind-less build */
+	kind?: BuildKind;
+	/** not a flag: the env `warden e2e` bundles a `simulator` / `release` build's JS with (the suite's `metro.env`) */
+	bundleEnv?: Record<string, string>;
 	/** false = `--no-eas` */
 	eas: boolean;
 	/** false = `--no-build` */
@@ -190,8 +220,25 @@ export function withLeaseOptions<Args extends unknown[], Opts extends OptionValu
 		.option("--project <dir>", "--app: project directory (default: cwd)")
 		.option("--bundle-id <id>", "--app: override the bundle id / package")
 		.option("--variant <name>", "--app: install this projects[].variants build (dev, e2e…)")
+		.addOption(kindOption("--app: "))
 		.option("--no-eas", "--app: don't download EAS builds")
 		.option("--no-build", "--app: don't build locally on a cache miss");
+}
+
+const kindWithVariant = (opts: Pick<AppFlagValues, "kind" | "variant">): boolean =>
+	opts.kind !== undefined && opts.variant !== undefined;
+
+/** The `--app` sub-flags that pick which app and build, set ones only. */
+function appTarget(
+	opts: AppFlagValues
+): Pick<EnsureOptions, "project" | "bundleId" | "variant" | "kind" | "bundleEnv"> {
+	return {
+		...(opts.project !== undefined ? { project: opts.project } : {}),
+		...(opts.bundleId !== undefined ? { bundleId: opts.bundleId } : {}),
+		...(opts.variant !== undefined ? { variant: opts.variant } : {}),
+		...(opts.kind !== undefined ? { kind: opts.kind } : {}),
+		...(opts.bundleEnv !== undefined ? { bundleEnv: opts.bundleEnv } : {}),
+	};
 }
 
 /** `--app …` → ensure options (undefined without `--app`); the sub-flags need `--app`. */
@@ -199,19 +246,13 @@ export function parseAppFlags(opts: AppFlagValues): Result<EnsureOptions | undef
 	const install = parseInstallFlags(opts);
 	if (!install.success) return install;
 	if (opts.app) {
-		return ok({
-			eas: opts.eas,
-			build: opts.build,
-			...install.data,
-			...(opts.project !== undefined ? { project: opts.project } : {}),
-			...(opts.bundleId !== undefined ? { bundleId: opts.bundleId } : {}),
-			...(opts.variant !== undefined ? { variant: opts.variant } : {}),
-		});
+		if (kindWithVariant(opts)) return err("--kind and --variant can't be combined");
+		return ok({ eas: opts.eas, build: opts.build, ...install.data, ...appTarget(opts) });
 	}
-	const sub = opts.project ?? opts.bundleId ?? opts.variant;
+	const sub = opts.project ?? opts.bundleId ?? opts.variant ?? opts.kind;
 	if (sub !== undefined || !opts.eas || !opts.build || install.data.installMode !== undefined) {
 		return err(
-			"--project / --no-eas / --no-build / --bundle-id / --variant / --install-mode / --reset-keychain / --clean need --app"
+			"--project / --no-eas / --no-build / --bundle-id / --variant / --kind / --install-mode / --reset-keychain / --clean need --app"
 		);
 	}
 	return ok(undefined);
@@ -228,6 +269,8 @@ export type LeaseArgs = {
 	app?: EnsureOptions;
 	/** the ports are leased (before the device claim, which can boot simulators for a while) */
 	onPorts?: (ports: RunPort[]) => void;
+	/** `--app` progress: what each source (`prepare:<platform>`, a device id) is doing, for the claim spinner */
+	onAppPhase?: (source: string, phase: AppPhase) => void;
 	/** a leg's devices are held — once per leg (`leg` is its index in `legFlags`), before its `--app` install, which can take minutes */
 	onLeased?: (outcome: ClaimOutcome, leg: number) => void;
 	/** checked before each device claim and before the installs: true → everything is released, `interrupted` */
@@ -242,6 +285,8 @@ export type LeaseArgs = {
 	 * (still leased) instead of failing the claim, as long as some device is left (`warden batch` / `e2e`)
 	 */
 	dropLost?: boolean;
+	/** one id for every claim this command makes (set by `claimAll`): `WARDEN_MAX_PER_OWNER` counts the command once */
+	claimId?: string;
 };
 
 /** The error of a claim the caller gave up on (`aborted`) — nothing to add to it. */
@@ -254,19 +299,25 @@ type InstalledApp = { deviceId: string; result: EnsureResult };
  * `--app`: ensure the app on every device of one claim in parallel (waits for all, then reports the first
  * failure); each device's install starts once `ready` says the device is up (16-8).
  */
-async function installLegApp(
+export async function installLegApp(
 	ctx: CommandContext,
 	ensure: RunEnsureApp,
 	owner: Owner,
 	claim: ClaimOutcome,
 	opts: EnsureOptions,
-	ready: (udid: string) => Promise<boolean> = async () => true
+	ready: (udid: string) => Promise<boolean> = async () => true,
+	onPhase?: (source: string, phase: AppPhase) => void
 ): AsyncResult<InstalledApp[]> {
 	const results = await Promise.all(
 		claim.claimed.map(async (c) => {
 			// a device the hide could not boot again is not installed on (batch-pipeline R5)
 			if (!(await ready(c.device.id))) return undefined;
-			return ensure(ctx, owner, c.device.platform, c.device.id, opts);
+			const phone = isPhysicalDevice(c.device);
+			// a phone gets a build made for it: Android checks the APK's ABIs first (`-r` over the same bundle id, never an
+			// uninstall of another app); an iPhone gets the signed device build through devicectl
+			const target = phone ? { ...opts, physical: true } : opts;
+			const own = onPhase ? { ...target, onPhase: (phase: AppPhase) => onPhase(c.device.id, phase) } : target;
+			return ensure(ctx, owner, c.device.platform, c.device.id, own);
 		})
 	);
 	const apps: InstalledApp[] = [];
@@ -351,10 +402,12 @@ export type SessionApp = {
  * on each device (N devices used to mean N fingerprint runs).
  */
 export function sessionEnsureApp(deps: SessionAppDeps = defaultSessionAppDeps): SessionApp {
-	const prepared = new Map<Platform, AsyncResult<PreparedApp>>();
+	const prepared = new Map<string, AsyncResult<PreparedApp>>();
+	// phones and simulators of one platform install different builds (an iPhone's is signed for a device)
 	const prepare = (ctx: CommandContext, opts: EnsureOptions, platform: Platform): AsyncResult<PreparedApp> => {
-		const pending = prepared.get(platform) ?? deps.prepare(ctx, opts, platform);
-		prepared.set(platform, pending);
+		const key = `${platform}${opts.physical ? ":physical" : ""}`;
+		const pending = prepared.get(key) ?? deps.prepare(ctx, opts, platform);
+		prepared.set(key, pending);
 		return pending;
 	};
 	return {
@@ -378,8 +431,18 @@ function warmSessionApp(
 ): SessionApp | undefined {
 	if (!args.app || deps.ensureApp !== undefined) return undefined;
 	const app = sessionEnsureApp();
-	for (const platform of new Set((args.legFlags ?? [args.flags]).map((f) => f.request.platform)))
-		app.warm(ctx, args.app, platform);
+	const legs = args.legFlags ?? [args.flags];
+	const warmed = new Set<string>();
+	for (const { request } of legs) {
+		const { platform } = request;
+		const physical = request.physical !== undefined;
+		const key = `${platform}:${physical}`;
+		if (warmed.has(key)) continue;
+		warmed.add(key);
+		const onPhase = args.onAppPhase;
+		const base = physical ? { ...args.app, physical: true } : args.app;
+		app.warm(ctx, onPhase ? { ...base, onPhase: (p) => onPhase(`prepare:${platform}`, p) } : base, platform);
+	}
 	return app;
 }
 
@@ -441,6 +504,7 @@ async function runLeg(
 	try {
 		claim = await claimWithFlags(ctx, owner, flags, pid, {
 			onHide: (start) => hides.push(start),
+			...(args.claimId !== undefined ? { claimId: args.claimId } : {}),
 			...(args.aborted ? { abort: args.aborted } : {}),
 		});
 	} catch (error) {
@@ -455,7 +519,7 @@ async function runLeg(
 			if (!install) return undefined;
 			if (args.aborted?.()) return err(INTERRUPTED);
 			try {
-				return await installLegApp(ctx, install.ensure, owner, outcome, install.opts, ready);
+				return await installLegApp(ctx, install.ensure, owner, outcome, install.opts, ready, args.onAppPhase);
 			} catch (error) {
 				return failure(error);
 			}
@@ -502,6 +566,12 @@ async function runLegs(
 	);
 }
 
+/** `args` with the one claim id every claim of this command shares (`WARDEN_MAX_PER_OWNER` counts the command once). */
+const withClaimId = (args: LeaseArgs): LeaseArgs => ({
+	...args,
+	claimId: args.claimId ?? `c_${randomUUID().replaceAll("-", "").slice(0, 12)}`,
+});
+
 /**
  * Lease the ports, claim the devices and (with `--app`) ensure the app; on any failure nothing stays
  * leased. The ports come first (a bind probe, cheap) so `onPorts` can start the run's Metro while the
@@ -511,9 +581,10 @@ export async function claimAll(
 	ctx: CommandContext,
 	deps: Pick<LeaseSessionDeps, "pid" | "isPortFree" | "ensureApp">,
 	owner: Owner,
-	args: LeaseArgs,
+	input: LeaseArgs,
 	name = "run"
 ): AsyncResult<LeaseSession> {
+	const args = withClaimId(input);
 	const label = args.flags.label ?? `warden ${name}`;
 	const ports = await claimRunPorts(ctx, owner, args.ports, deps.pid, deps.isPortFree, label);
 	if (!ports.success) return ports;
@@ -548,8 +619,9 @@ export async function claimAll(
 	const lost = runs.flatMap((r) => r.lost ?? []);
 	// a release leaves each iOS device's `warden-simd` resident: the next run on the device reuses it (no spawn, no
 	// handshake) and its idle timeout reaps it otherwise; `--shutdown` / a device shutdown / a new lease owner stop it
+	const reclaim = (args.legFlags ?? [args.flags]).find((f) => f.reclaim !== undefined)?.reclaim;
 	const release = async () => {
-		await releaseDevices(ctx, leaseIds);
+		await releaseDevices(ctx, leaseIds, { reclaim });
 	};
 	const claimMore = async (o: MoreClaimOptions): AsyncResult<MoreClaim> => {
 		const more: LeaseArgs = { ...args, aborted: o.aborted };
@@ -581,14 +653,12 @@ export async function claimAll(
 					const at = leaseIds.indexOf(id);
 					if (at >= 0) leaseIds.splice(at, 1);
 				}
-				await releaseDevices(ctx, ids);
+				await releaseDevices(ctx, ids, { reclaim: o.flags.reclaim ?? reclaim });
 			},
 		});
 	};
 	const env = childEnv(ctx.env, outcome, ports.data);
-	const headless = (args.legFlags ?? [args.flags]).some((f) => f.headless === true);
-	setHeadlessEnv(env, headless);
-	setAfterRebootEnv(env, headless);
+	setRunEnv(env, args.legFlags ?? [args.flags]);
 	const failed = legsFailure(runs, outcome, lost);
 	if (failed) {
 		await args.beforeRelease?.();
@@ -616,8 +686,8 @@ export async function claimAll(
 export const leasedText = (outcome: ClaimOutcome) => `leased ${outcome.claimed.map((c) => c.device.name).join(", ")}`;
 
 /**
- * With `--app` the installs run under the claim spinner: report the lease the moment it is held,
- * so the install lines that follow read as happening on leased devices.
+ * With `--app` the app work runs under the claim spinner: report the lease the moment it is held,
+ * so the lines that follow read as happening on leased devices. The spinner text itself comes from `appPhaseProgress`.
  */
 export function leasedProgress(
 	spinner: Spinner,
@@ -627,8 +697,12 @@ export function leasedProgress(
 	if (!app) return undefined;
 	return (outcome) => {
 		spinner.log(`${color.green("✔")} ${leasedText(outcome)}`);
-		spinner.update(`installing the app on ${outcome.claimed.length} device(s)…`);
 	};
+}
+
+/** With `--app`, the claim spinner follows what the app is really doing (see `appPhaseText`): building, fetching, repacking, installing. */
+export function appPhaseProgress(spinner: Spinner, app: boolean): LeaseArgs["onAppPhase"] {
+	return app ? phaseTracker((text) => spinner.update(text)) : undefined;
 }
 
 /** Why a run stops when its heartbeat finds some of its leases gone. */
@@ -643,18 +717,40 @@ export const LEASES_LOST =
  */
 export function holdLeases(
 	ctx: CommandContext,
-	deps: Pick<LeaseSessionDeps, "every" | "onSignal">,
+	deps: Pick<LeaseSessionDeps, "every" | "onSignal" | "health">,
 	leaseIds: readonly string[],
 	onSignal: (signal: ForwardedSignal) => void
 ): () => void {
 	const store = ctx.store();
 	let lost = false;
+	let closed = false;
+	const monitor =
+		deps.health && !healthMonitorDisabled(ctx.env)
+			? createLeaseHealth(ctx, deps.health, leaseIds, {
+					active: () => !lost && !closed,
+					giveUp: (message) => {
+						if (lost) return;
+						lost = true;
+						reportError(ctx, "lease", `${message} — stopping the run`, {
+							code: "LEASE_LOST",
+							hint: CLAIM_ERRORS.LEASE_LOST.hint,
+						});
+						onSignal("SIGTERM");
+					},
+				})
+			: undefined;
 	const beat = () => {
 		if (lost) return;
+		monitor?.tick();
 		const updated = store.heartbeat([...leaseIds], ctx.now(), HEARTBEAT_INTERVAL_MS);
 		if (updated >= leaseIds.length) return;
 		lost = true;
-		reportError(ctx, "lease", LEASES_LOST);
+		try {
+			store.recordHeartbeatLost(leaseIds, ctx.now());
+		} catch {
+			// the history is best-effort here: the run still stops
+		}
+		reportError(ctx, "lease", LEASES_LOST, { code: "LEASE_LOST", hint: CLAIM_ERRORS.LEASE_LOST.hint });
 		onSignal("SIGTERM");
 	};
 	try {
@@ -665,6 +761,7 @@ export function holdLeases(
 	const stopHeartbeat = deps.every(HEARTBEAT_INTERVAL_MS, beat);
 	const unsubscribe = FORWARDED_SIGNALS.map((signal) => deps.onSignal(signal, () => onSignal(signal)));
 	return () => {
+		closed = true;
 		stopHeartbeat();
 		for (const off of unsubscribe) off();
 	};

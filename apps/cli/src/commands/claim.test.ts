@@ -1,9 +1,17 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { PHONE_PROBE_SCRIPT } from "@delacour/warden-core/providers/android";
+import { PHONE_PROPS } from "@delacour/warden-core/providers/android.fixtures";
+import {
+	DEVICECTL_LOCKSTATE_LOCKED,
+	devicectlEntry,
+	devicectlJson,
+	FAKE_IPHONE_UDID,
+} from "@delacour/warden-core/providers/devicectl.fixtures";
 import { simctlDevicesJson } from "@delacour/warden-core/providers/ios.fixture";
 import { DEFAULT_SLIM_PROFILE, desiredLabels } from "@delacour/warden-core/sims/slim.profile";
 import { allowAutoGc, autoGcConsidered, autoGcOrder } from "../autogc.testing";
 import { fakeSimctl, OWNER_ENV, wardenSim } from "../simctl.testing";
-import { type ScriptedUi, scriptedUi, type TestContext, testContext } from "../testing";
+import { fakeExec, type ScriptedUi, scriptedUi, type TestContext, testContext } from "../testing";
 import { claimCommand } from "./claim";
 
 let ctx: TestContext | undefined;
@@ -14,6 +22,41 @@ function setup(argv: string[], exec = fakeSimctl([wardenSim(1), wardenSim(2, "Bo
 	ctx.env = { ...ctx.env, ...OWNER_ENV };
 	return ctx;
 }
+
+describe("warden claim --idempotency-key", () => {
+	async function claimJson(c: TestContext) {
+		c.stdout.length = 0;
+		expect(await claimCommand.run(c)).toBe(0);
+		return JSON.parse(c.stdout.join("\n"));
+	}
+
+	test("a repeat returns the same lease JSON and takes no second device", async () => {
+		const c = setup(["ios", "--json", "--idempotency-key", "run-1"]);
+		const first = await claimJson(c);
+		const second = await claimJson(c);
+		expect(
+			second.leases.map((l: { leaseId: string; udid: string; name: string }) => [l.leaseId, l.udid, l.name])
+		).toEqual(first.leases.map((l: { leaseId: string; udid: string; name: string }) => [l.leaseId, l.udid, l.name]));
+		expect(Object.keys(second.leases[0]).sort()).toEqual(Object.keys(first.leases[0]).sort());
+		expect(c.db.listLeases()).toHaveLength(1);
+	});
+
+	test("WARDEN_IDEMPOTENCY_KEY is the fallback", async () => {
+		const c = setup(["ios", "--json"]);
+		c.env = { ...c.env, WARDEN_IDEMPOTENCY_KEY: "env-key" };
+		const first = await claimJson(c);
+		expect((await claimJson(c)).leases[0].leaseId).toBe(first.leases[0].leaseId);
+		expect(c.db.listLeases()).toHaveLength(1);
+	});
+
+	test("the flag beats the env var", async () => {
+		const c = setup(["ios", "--json", "--idempotency-key", "flag-key"]);
+		c.env = { ...c.env, WARDEN_IDEMPOTENCY_KEY: "env-key" };
+		await claimJson(c);
+		expect(c.db.getClaimKey("agent:me", "flag-key")).toBeDefined();
+		expect(c.db.getClaimKey("agent:me", "env-key")).toBeUndefined();
+	});
+});
 
 describe("warden claim", () => {
 	test("claims a booted warden sim first, --json output", async () => {
@@ -65,7 +108,34 @@ describe("warden claim", () => {
 		expect(ctx.db.listLeases()[0]?.pid).toBe(process.ppid);
 	});
 
-	test("pool exhausted → exit 1 with guidance", async () => {
+	test("WARDEN_MAX_PER_OWNER: a second claim over the limit exits 8 REQUESTER_LIMIT naming the release command", async () => {
+		const c = setup(["ios", "--json", "--no-wait"], fakeSimctl([wardenSim(1, "Booted"), wardenSim(2, "Booted")]));
+		c.env = { ...c.env, WARDEN_MAX_PER_OWNER: "ios=1" };
+		expect(await claimCommand.run(c)).toBe(0);
+		const [held] = c.db.listLeases();
+		c.stdout.length = 0;
+		expect(await claimCommand.run(c)).toBe(8);
+		const out = JSON.parse(c.stdout.join("\n"));
+		expect(out).toMatchObject({ ok: false, error: { code: "REQUESTER_LIMIT" } });
+		expect(out.error.message).toContain(`warden release ${held?.id}`);
+	});
+
+	test("WARDEN_MAX_PER_OWNER for the other platform, or unset, leaves a claim alone", async () => {
+		const c = setup(["ios", "--no-wait"], fakeSimctl([wardenSim(1, "Booted"), wardenSim(2, "Booted")]));
+		c.env = { ...c.env, WARDEN_MAX_PER_OWNER: "android=1" };
+		expect(await claimCommand.run(c)).toBe(0);
+		expect(await claimCommand.run(c)).toBe(0);
+	});
+
+	test("a bad WARDEN_MAX_PER_OWNER is a clear error before anything is leased", async () => {
+		const c = setup(["ios", "--no-wait"]);
+		c.env = { ...c.env, WARDEN_MAX_PER_OWNER: "lots" };
+		expect(await claimCommand.run(c)).toBe(1);
+		expect(c.stderr.join("\n")).toContain("WARDEN_MAX_PER_OWNER=lots");
+		expect(c.db.listLeases()).toEqual([]);
+	});
+
+	test("pool exhausted → exit 5 NO_DEVICE with guidance", async () => {
 		const c = setup(["ios", "--max", "1", "--no-wait"], fakeSimctl([wardenSim(1, "Booted")]));
 		c.db.insertLease(
 			{
@@ -75,11 +145,12 @@ describe("warden claim", () => {
 			},
 			c.now()
 		);
-		expect(await claimCommand.run(c)).toBe(1);
+		expect(await claimCommand.run(c)).toBe(5);
 		expect(c.stderr.join("\n")).toContain("all 1 warden-iphone-17 devices leased; max 1");
+		expect(c.stderr.join("\n")).not.toContain("NO_DEVICE:");
 	});
 
-	test("a full host queues: the progress line is on stderr and --json stdout stays empty on failure", async () => {
+	test("a full host queues: the progress line is on stderr and --json stdout is the failure envelope", async () => {
 		const c = setup(
 			["ios", "--json", "--no-wait", "--priority", "high"],
 			fakeSimctl([wardenSim(1, "Booted"), wardenSim(2)])
@@ -93,8 +164,13 @@ describe("warden claim", () => {
 			},
 			c.now()
 		);
-		expect(await claimCommand.run(c)).toBe(1);
-		expect(c.stdout).toEqual([]);
+		expect(await claimCommand.run(c)).toBe(7);
+		expect(c.stdout).toHaveLength(1);
+		expect(JSON.parse(c.stdout[0] ?? "")).toMatchObject({
+			ok: false,
+			command: "claim",
+			error: { code: "NO_CAPACITY", capacityReason: "cpu-budget", hint: expect.stringContaining("warden capacity") },
+		});
 		// withSpinner routes ctx.err progress through spinner.log, which the real UI writes to stderr
 		expect((c.ui as ScriptedUi).events.join("\n")).toMatch(/log: warden: queued #1 of 1 \(high\) — no room, /);
 		expect(c.db.listQueue()).toEqual([]);
@@ -267,5 +343,180 @@ describe("warden claim auto-gc (16-1)", () => {
 		expect(await claimCommand.run(c)).toBe(0);
 		expect(order.gcBeforeClaim()).toBe(false);
 		expect(autoGcConsidered(c.db)).toBe(true);
+	});
+});
+
+describe("warden claim --physical", () => {
+	test("with no phone present it fails without booting or creating anything", async () => {
+		const calls: string[][] = [];
+		const c = setup(
+			["ios", "--physical", "--no-wait", "--json"],
+			fakeSimctl([wardenSim(1), wardenSim(2, "Booted")], calls)
+		);
+		expect(await claimCommand.run(c)).toBe(5);
+		expect(c.stderr.join("\n")).toContain("no free ready physical ios device");
+		expect(calls.filter((x) => ["boot", "create", "shutdown", "clone"].includes(x[2] ?? ""))).toEqual([]);
+		expect(c.db.listLeases()).toEqual([]);
+	});
+
+	test("incompatible flags exit 1 before touching a device", async () => {
+		const calls: string[][] = [];
+		const c = setup(["android", "--physical", "--count", "2"], fakeSimctl([], calls));
+		expect(await claimCommand.run(c)).toBe(1);
+		expect(c.stderr.join("\n")).toContain("--count cannot be used with --physical");
+		expect(calls).toEqual([]);
+	});
+
+	test("--serial names android devices: on ios it is refused, on android it asks for those ids", async () => {
+		const wrong = setup(["ios", "--serial", "R5CT"], fakeSimctl([]));
+		expect(await claimCommand.run(wrong)).toBe(1);
+		expect(wrong.stderr.join("\n")).toContain("--serial is android-only");
+	});
+
+	test("WARDEN_HEADLESS in the environment does not reject --physical", async () => {
+		const c = setup(["ios", "--physical", "--no-wait"], fakeSimctl([]));
+		c.env = { ...c.env, WARDEN_HEADLESS: "1" };
+		expect(await claimCommand.run(c)).toBe(5);
+		expect(c.stderr.join("\n")).not.toContain("cannot be used");
+	});
+});
+
+describe("warden claim --physical with several phones", () => {
+	const USB = "R5CT1234ABC";
+	const WIFI = "192.168.1.20:5555";
+	const ADB_TWO = `List of devices attached
+${USB}            device usb:1-1 product:a54xnaeea model:SM_A546E device:a54x transport_id:2
+${WIFI}      device product:husky model:Pixel_8_Pro device:husky transport_id:5
+
+`;
+
+	function twoPhones(argv: string[], ui: ScriptedUi = scriptedUi(), calls: string[][] = []): TestContext {
+		ctx = testContext(argv, {
+			ui,
+			exec: fakeExec(
+				[
+					["adb devices -l", { stdout: ADB_TWO }],
+					[`adb -s ${USB} shell ${PHONE_PROBE_SCRIPT}`, { stdout: PHONE_PROPS }],
+					[`adb -s ${WIFI} shell ${PHONE_PROBE_SCRIPT}`, { stdout: "\n\nHW2\nPixel 8 Pro\n35\n" }],
+					["adb -s", { stdout: "1\n" }],
+				],
+				calls
+			),
+		});
+		ctx.env = { ...ctx.env, ...OWNER_ENV };
+		return ctx;
+	}
+
+	test("--json: ambiguous_device, exit 2, candidates in the error, no lease", async () => {
+		const c = twoPhones(["android", "--physical", "--no-wait", "--json"], scriptedUi({ interactive: true }));
+		expect(await claimCommand.run(c)).toBe(2);
+		const doc = JSON.parse(c.stdout.join("\n"));
+		expect(doc).toMatchObject({
+			ok: false,
+			command: "claim",
+			error: {
+				code: "ambiguous_device",
+				hint: "pass --udid <id> (iOS) / --serial <id> (Android), or set WARDEN_PHYSICAL_IDS",
+			},
+		});
+		expect(doc.error.details.candidates).toEqual([
+			{ id: USB, name: "SM-A546E", platform: "android", model: "SM-A546E", osVersion: "API 34", transport: "usb" },
+			{
+				id: WIFI,
+				name: "Pixel 8 Pro",
+				platform: "android",
+				model: "Pixel 8 Pro",
+				osVersion: "API 35",
+				transport: "wifi",
+			},
+		]);
+		expect(c.db.listLeases()).toEqual([]);
+	});
+
+	test("not a terminal: plain text lists the candidates as a table, exit 2", async () => {
+		const c = twoPhones(["android", "--physical", "--no-wait"]);
+		expect(await claimCommand.run(c)).toBe(2);
+		const err = c.stderr.join("\n");
+		expect(err).toContain("several physical android devices are available");
+		expect(err).toMatch(/ID\s+NAME\s+MODEL\s+OS\s+TRANSPORT/);
+		expect(err).toContain(WIFI);
+		expect(err).toContain("WARDEN_PHYSICAL_IDS");
+		expect(c.db.listLeases()).toEqual([]);
+	});
+
+	test("a terminal: the picker's second choice is the one claimed", async () => {
+		const ui = scriptedUi({ interactive: true, select: [WIFI] });
+		const c = twoPhones(["android", "--physical", "--no-wait"], ui);
+		expect(await claimCommand.run(c)).toBe(0);
+		const resource = c.db.listLeases()[0]?.resource;
+		expect(resource?.kind === "device" && resource.id).toBe(WIFI);
+	});
+
+	test("cancelling the picker exits 1 with Aborted. and takes nothing", async () => {
+		const ui = scriptedUi({ interactive: true, select: [undefined] });
+		const c = twoPhones(["android", "--physical", "--no-wait"], ui);
+		expect(await claimCommand.run(c)).toBe(1);
+		expect(ui.events).toContain("cancelled: Aborted.");
+		expect(c.db.listLeases()).toEqual([]);
+	});
+
+	test("--serial names one: no question even with two phones", async () => {
+		const ui = scriptedUi({ interactive: true });
+		const c = twoPhones(["android", "--serial", USB, "--no-wait"], ui);
+		expect(await claimCommand.run(c)).toBe(0);
+		expect(ui.events.filter((e) => e.startsWith("select:"))).toEqual([]);
+	});
+
+	test("WARDEN_PHYSICAL_IDS narrowing to one claims it without asking", async () => {
+		const ui = scriptedUi({ interactive: true });
+		const c = twoPhones(["android", "--physical", "--no-wait"], ui);
+		c.env = { ...c.env, WARDEN_PHYSICAL_IDS: WIFI };
+		expect(await claimCommand.run(c)).toBe(0);
+		const resource = c.db.listLeases()[0]?.resource;
+		expect(resource?.kind === "device" && resource.id).toBe(WIFI);
+		expect(ui.events.filter((e) => e.startsWith("select:"))).toEqual([]);
+	});
+});
+
+describe("warden claim of a locked iPhone", () => {
+	const LIST = devicectlJson([
+		devicectlEntry({
+			udid: FAKE_IPHONE_UDID,
+			name: "Test iPhone",
+			deviceType: "iPhone",
+			osVersion: "27.2",
+			transportType: "wired",
+		}),
+	]);
+	const locked = (argv: string[]): TestContext =>
+		setup(
+			argv,
+			fakeSimctl(
+				[],
+				[],
+				[
+					["xcrun devicectl list devices", { stdout: LIST }],
+					["xcrun devicectl device info lockState", { stdout: DEVICECTL_LOCKSTATE_LOCKED }],
+				]
+			)
+		);
+
+	test("--no-wait --json: device_locked, exit 2, the hint, no lease", async () => {
+		const c = locked(["ios", "--udid", FAKE_IPHONE_UDID, "--no-wait", "--json"]);
+		expect(await claimCommand.run(c)).toBe(2);
+		expect(JSON.parse(c.stdout.join("\n"))).toEqual({
+			ok: false,
+			command: "claim",
+			error: { code: "device_locked", message: "Test iPhone is locked", hint: "unlock the phone, then retry" },
+		});
+		expect(c.db.listLeases()).toEqual([]);
+	});
+
+	test("--no-wait in text mode: exit 2 and the hint on stderr", async () => {
+		const c = locked(["ios", "--udid", FAKE_IPHONE_UDID, "--no-wait"]);
+		expect(await claimCommand.run(c)).toBe(2);
+		expect(c.stderr.join("\n")).toContain("Test iPhone is locked");
+		expect(c.stderr.join("\n")).toContain("unlock the phone, then retry");
+		expect(c.stdout).toEqual([]);
 	});
 });
