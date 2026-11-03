@@ -26,7 +26,7 @@ permissions: {}
 # self-hosted ones, which is what a Namespace profile is to GitHub.
 jobs:
   build:
-    runs-on: namespace-profile-mac-small
+    runs-on: namespace-profile-mac-medium
     permissions:
       contents: read
     steps:

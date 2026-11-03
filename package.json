@@ -14,6 +14,7 @@
 		"lint": "turbo lint",
 		"fmt": "turbo fmt",
 		"test": "turbo test",
+		"test:timings": "bun run --filter @delacour/warden --filter @delacour/warden-core --filter @delacour/warden-e2e test:timings",
 		"release": "bun apps/cli/scripts/release.ts",
 		"changeset": "changeset",
 		"version": "changeset version && bun install --lockfile-only",

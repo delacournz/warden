@@ -395,6 +395,8 @@ export type ClaimHideOptions = {
 	idempotencyKey?: string;
 	/** the wait between two `lockState` reads while a physical iPhone is locked (tests; default: real time) */
 	unlockSleep?: (ms: number) => Promise<void>;
+	/** the wait between two checks while the claim is queued (tests; default: the claim's own 2 s) */
+	pollMs?: number;
 };
 
 /**
@@ -502,6 +504,7 @@ export async function claimWithFlags(
 		waitMs: flags.waitMs,
 		priority: priority.data,
 		...(options.abort ? { abort: options.abort } : {}),
+		...(options.pollMs !== undefined ? { pollMs: options.pollMs } : {}),
 		...(capacity ? { capacity } : {}),
 		orphans: { exec: ctx.exec, env: ctx.env },
 		log: (line) => ctx.err(`warden: ${line}`),

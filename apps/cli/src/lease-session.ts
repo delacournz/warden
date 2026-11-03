@@ -60,6 +60,8 @@ export type LeaseSessionDeps = {
 	isPortFree: (port: number) => Promise<boolean>;
 	/** `--app`: make sure the project's app is installed on a claimed device (default: `ensureAppFor`) */
 	ensureApp?: RunEnsureApp;
+	/** the wait between two checks while a claim is queued (tests; default: the claim's own 2 s) */
+	claimPollMs?: number;
 };
 
 /** A port leased for the child, exported as `WARDEN_PORT_<i>`. */
@@ -287,6 +289,8 @@ export type LeaseArgs = {
 	dropLost?: boolean;
 	/** one id for every claim this command makes (set by `claimAll`): `WARDEN_MAX_PER_OWNER` counts the command once */
 	claimId?: string;
+	/** the wait between two checks while a claim is queued (set from `LeaseSessionDeps.claimPollMs`) */
+	claimPollMs?: number;
 };
 
 /** The error of a claim the caller gave up on (`aborted`) — nothing to add to it. */
@@ -506,6 +510,7 @@ async function runLeg(
 			onHide: (start) => hides.push(start),
 			...(args.claimId !== undefined ? { claimId: args.claimId } : {}),
 			...(args.aborted ? { abort: args.aborted } : {}),
+			...(args.claimPollMs !== undefined ? { pollMs: args.claimPollMs } : {}),
 		});
 	} catch (error) {
 		await hides[0]?.settled;
@@ -567,9 +572,10 @@ async function runLegs(
 }
 
 /** `args` with the one claim id every claim of this command shares (`WARDEN_MAX_PER_OWNER` counts the command once). */
-const withClaimId = (args: LeaseArgs): LeaseArgs => ({
+const withClaimId = (args: LeaseArgs, claimPollMs?: number): LeaseArgs => ({
 	...args,
 	claimId: args.claimId ?? `c_${randomUUID().replaceAll("-", "").slice(0, 12)}`,
+	...(claimPollMs !== undefined ? { claimPollMs } : {}),
 });
 
 /**
@@ -579,12 +585,12 @@ const withClaimId = (args: LeaseArgs): LeaseArgs => ({
  */
 export async function claimAll(
 	ctx: CommandContext,
-	deps: Pick<LeaseSessionDeps, "pid" | "isPortFree" | "ensureApp">,
+	deps: Pick<LeaseSessionDeps, "pid" | "isPortFree" | "ensureApp" | "claimPollMs">,
 	owner: Owner,
 	input: LeaseArgs,
 	name = "run"
 ): AsyncResult<LeaseSession> {
-	const args = withClaimId(input);
+	const args = withClaimId(input, deps.claimPollMs);
 	const label = args.flags.label ?? `warden ${name}`;
 	const ports = await claimRunPorts(ctx, owner, args.ports, deps.pid, deps.isPortFree, label);
 	if (!ports.success) return ports;
