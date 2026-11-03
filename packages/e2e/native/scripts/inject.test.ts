@@ -14,6 +14,11 @@ describe("build argv", () => {
 		expect(argv).toContain("-dynamiclib");
 		expect(argv.slice(-2)).toEqual(["-o", "/o/lib.dylib"]);
 		expect(argv.join(" ")).toContain("-framework Network -framework SystemConfiguration");
+		expect(argv.join(" ")).toContain("-framework UIKit");
+	});
+
+	test("the host (macOS) dylib has no UIKit to link", () => {
+		expect(dylibArgv("macos", "/o/x").join(" ")).not.toContain("UIKit");
 	});
 
 	test("the host dylib and harness use the macOS SDK", () => {

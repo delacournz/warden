@@ -126,6 +126,18 @@ export async function signedIn(app: Pick<App, "open">, screen: Screen, email = "
 	await expectTodosAfterSignIn(screen);
 }
 
+/** Fresh launch, then the accessibility showcase through its deep link; `bad` adds the known failures. */
+export async function openA11y(
+	app: Pick<App, "open">,
+	device: Pick<Device, "openLink">,
+	screen: Screen,
+	options: { bad?: boolean } = {}
+): Promise<void> {
+	await launch(app, screen);
+	const url = `warden-example://a11y${options.bad ? "?bad=1" : ""}`;
+	await openDeepLink(device, screen, url, ids.a11y.screen);
+}
+
 /** Fresh launch, then the camera screen through its deep link (it has no sign-in gate). */
 export async function openCamera(
 	app: Pick<App, "open">,

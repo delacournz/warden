@@ -723,6 +723,34 @@ describe("warden e2e", () => {
 			expect(JSON.parse(h.jobs()[0]?.opts.env.WARDEN_CONDITIONS ?? "null")).toEqual({ network: "3g", locale: "fr" });
 		});
 
+		test("the suite's a11y (over the top-level one, per key) is WARDEN_A11Y_AUDIT, and an iOS suite that sets it launches with the inject (WARDEN_A11Y=1)", async () => {
+			await resuite(
+				{ a11y: { minSeverity: "warning" } },
+				{ a11y: { ignore: [{ rule: "duplicate-name" }], minSeverity: "error" } }
+			);
+			const c = setup(["--files", "src/chat/lazy.tsx"]);
+			const h = harness();
+			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			const env = h.jobs()[0]?.opts.env ?? {};
+			expect(JSON.parse(env.WARDEN_A11Y_AUDIT ?? "null")).toEqual({
+				ignore: [{ rule: "duplicate-name" }],
+				minSeverity: "warning",
+			});
+			expect(env.WARDEN_A11Y).toBe("1");
+		});
+
+		test("--a11y loads the inject for a suite with no a11y key; without either, neither variable is set", async () => {
+			const withFlag = setup(["--files", "src/chat/lazy.tsx", "--a11y"]);
+			const h = harness();
+			expect(await createE2eCommand(h.deps).run(withFlag)).toBe(0);
+			expect(h.jobs()[0]?.opts.env.WARDEN_A11Y).toBe("1");
+			expect(h.jobs()[0]?.opts.env.WARDEN_A11Y_AUDIT).toBeUndefined();
+			const plain = setup(["--files", "src/chat/lazy.tsx"]);
+			const g = harness();
+			expect(await createE2eCommand(g.deps).run(plain)).toBe(0);
+			expect(g.jobs()[0]?.opts.env.WARDEN_A11Y).toBeUndefined();
+		});
+
 		test("no conditions, no WARDEN_CONDITIONS", async () => {
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
 			const h = harness();

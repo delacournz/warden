@@ -7,6 +7,13 @@ import type { PidAlive } from "../liveness";
 import { androidTools, forgetAndroidEmulator } from "../providers/android";
 import { type Store, wardenHome } from "../store";
 import type { Lease, Platform } from "../types";
+import {
+	androidA11yResets,
+	androidScreenReaderResets,
+	iosDefaultsDeleteArgvs,
+	iosDefaultsFields,
+	iosDefaultsMissing,
+} from "./a11y-keys";
 import { cameraFeedDir, clearCameraFeeds } from "./camera-media";
 import { activeConditions, clearCondition } from "./conditions";
 import type { ConditionArea, ConditionRecord } from "./conditions.types";
@@ -45,11 +52,14 @@ function resetCommands(
 				return [["xcrun", "simctl", "location", serial, "clear"]];
 			case "permission":
 				return [["xcrun", "simctl", "privacy", serial, "reset", "all"]];
-			case "a11y":
+			case "a11y": {
+				const written = iosDefaultsFields(record.value);
 				return [
 					["xcrun", "simctl", "ui", serial, "content_size", "large"],
 					["xcrun", "simctl", "ui", serial, "increase_contrast", "disabled"],
+					...iosDefaultsDeleteArgvs(serial, written),
 				];
+			}
 			case "battery":
 				return [["xcrun", "simctl", "status_bar", serial, "clear"]];
 			default:
@@ -77,6 +87,8 @@ function resetCommands(
 			return [
 				[...base, "shell", "settings", "put", "system", "font_scale", "1.0"],
 				[...base, "shell", "settings", "put", "secure", "font_weight_adjustment", "0"],
+				...androidA11yResets(record.value).map((argv) => [...base, "shell", ...argv]),
+				...androidScreenReaderResets(record.value).map((argv) => [...base, "shell", ...argv]),
 			];
 		case "locale":
 			return androidLocaleResets(base, record, deps);
@@ -115,7 +127,8 @@ async function runResets(exec: Exec, cmds: readonly string[][]): Promise<string[
 	for (const cmd of cmds) {
 		try {
 			const result = await exec(cmd);
-			if (result.exitCode !== 0) failures.push(execError(cmd, result));
+			const alreadyGone = cmd[4] === "defaults" && iosDefaultsMissing(`${result.stderr}${result.stdout}`);
+			if (result.exitCode !== 0 && !alreadyGone) failures.push(execError(cmd, result));
 		} catch (error) {
 			failures.push(`${cmd.join(" ")}: ${message(error)}`);
 		}

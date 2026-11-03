@@ -92,6 +92,19 @@ export type A11yCondition = {
 	reduceMotion?: boolean;
 	boldText?: boolean;
 	contrast?: "increased" | "normal";
+	reduceTransparency?: boolean;
+	buttonShapes?: boolean;
+	differentiateWithoutColor?: boolean;
+	onOffLabels?: boolean;
+	highContrastText?: boolean;
+	colorInversion?: boolean;
+	screenReader?: boolean;
+	/**
+	 * Android TalkBack: the `enabled_accessibility_services` and `accessibility_enabled` values (`null` = unset) the
+	 * device had before warden turned TalkBack on, so undo puts back exactly those and never drops a service warden
+	 * did not add. Present only while `screenReader` is true on Android.
+	 */
+	screenReaderPrevious?: { services: string | null; enabled: string | null };
 };
 
 /** `cosmetic`: the status bar says so, the OS and the app still see the real battery (iOS simulators) */

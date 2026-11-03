@@ -12,6 +12,8 @@ export type RenderOptions = {
 	refs: ReadonlyMap<string, string>;
 	/** cap on element lines; a `… N more (use --all)` line follows when cut */
 	maxLines?: number;
+	/** append the screen-reader facts of `Element.a11y` (see {@link a11yWords}) to each line */
+	a11y?: boolean;
 };
 
 export type RenderedSnapshot = {
@@ -62,8 +64,29 @@ export function describeEntry(entry: NodeEntry): string {
 	return head(entry).join(" ");
 }
 
+/**
+ * The `--a11y` tail of an entry line: `hint="…"`, `actions=["…"]`, `a11y-focused`, `not-important`, `live=polite|assertive`.
+ * Only facts the backend read are printed; an element without `a11y` adds nothing.
+ */
+export function a11yWords(entry: NodeEntry): string[] {
+	const a11y = entry.element.a11y;
+	if (!a11y) return [];
+	const words: string[] = [];
+	if (a11y.hint) words.push(`hint=${quote(a11y.hint, MAX_NAME)}`);
+	if (a11y.actions && a11y.actions.length > 0) {
+		words.push(`actions=[${a11y.actions.map((action) => quote(action, MAX_VALUE)).join(",")}]`);
+	}
+	if (a11y.a11yFocused) words.push("a11y-focused");
+	if (a11y.important === false) words.push("not-important");
+	if (a11y.liveRegion) words.push(`live=${a11y.liveRegion}`);
+	return words;
+}
+
 /** `@e3 [button] "Sign in" id=sign-in-submit value="…" enabled hittable (24,332 345×48)`; `indent` is in levels. */
-export function renderEntryLine(entry: NodeEntry, options: { ref?: string; indent?: number } = {}): string {
+export function renderEntryLine(
+	entry: NodeEntry,
+	options: { ref?: string; indent?: number; a11y?: boolean } = {}
+): string {
 	const parts: string[] = [];
 	if (options.ref !== undefined) parts.push(options.ref);
 	parts.push(...head(entry));
@@ -71,6 +94,7 @@ export function renderEntryLine(entry: NodeEntry, options: { ref?: string; inden
 	parts.push(...stateWords(entry));
 	const { x, y, width, height } = entry.element.frame;
 	parts.push(`(${Math.round(x)},${Math.round(y)} ${Math.round(width)}×${Math.round(height)})`);
+	if (options.a11y) parts.push(...a11yWords(entry));
 	return `${"  ".repeat(options.indent ?? 0)}${parts.join(" ")}`;
 }
 
@@ -90,6 +114,7 @@ export function renderSnapshot(snapshot: Snapshot, options: RenderOptions): Rend
 	const lines = visible.map((entry) =>
 		renderEntryLine(entry, {
 			indent: options.interactiveOnly ? 0 : entry.depth,
+			...(options.a11y ? { a11y: true } : {}),
 			...(options.refs.has(entry.element.id) ? { ref: options.refs.get(entry.element.id) } : {}),
 		})
 	);

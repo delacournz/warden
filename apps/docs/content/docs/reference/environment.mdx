@@ -30,6 +30,7 @@ Every environment variable warden reads, and the ones `warden run`, `batch` and 
 | `WARDEN_MAX_CACHE_SIZE` | build cache cap (e.g. `50G`, default `20G`) for `warden gc` (`--max-cache-size`), `warden builds prune` (`--max-size`) and auto-gc, which runs when the cache is over it |
 | `ANDROID_HOME`, `ANDROID_SDK_ROOT` | Android SDK location (`adb`, `emulator`); without them warden falls back to `PATH` and cannot build the Android snapshot |
 | `NO_COLOR`, `FORCE_COLOR` | output colour (a non-empty `NO_COLOR` turns it off) |
+| `WARDEN_A11Y=1` | iOS: launch apps with the injected accessibility library (hint, actions, order, announcements); same as `warden ui open --a11y`, `warden e2e --a11y` or an `a11y` key on the suite ([Accessibility](/docs/e2e/accessibility)) |
 | `WARDEN_ANDROID_UIAD=0` | Android: don't use the resident UiAutomation server (`warden-uiad`); snapshots, settle and input go through `uiautomator dump` and `input` ([Android driver](/docs/reference/e2e-driver#android-driver)) |
 | `WARDEN_ANDROID_SETTEXT=1` | Android: `fill` over a field that already holds text replaces it with one `warden-uiad` `setText` call instead of select-all and typing (specs, `warden ui fill`); off by default until the server re-reads focus before setting ([Android driver](/docs/reference/e2e-driver#android-driver)) |
 | `WARDEN_BACKGROUND=0` | turn off every detached worker (auto-gc, SessionEnd shutdown) |
@@ -97,6 +98,7 @@ export default { name: worktree ? `My App · ${worktree}` : "My App" /* … */ }
 | `WARDEN_LAUNCH_ARGS` | JSON array of the launch arguments `app.open()` passes: `--initialUrl <metro url>`, `metro.launchArgs`, `spec.launchArgs` |
 | `WARDEN_E2E_OUT` | where `results.jsonl` and the per-test artifacts go: `<batchDir>/e2e/<worker>-<seq>` |
 | `WARDEN_BIN` | JSON array (or a bare path) of the `warden` that started the run; `device.perf` shells out to it. Set by `warden e2e`; without it `device.perf` throws `SESSION` ("WARDEN_BIN is not set") |
+| `WARDEN_A11Y_AUDIT` | JSON of the suite's `a11y` key (`rules`, `ignore`, `minSeverity`): defaults for `device.a11yAudit()` and `toPassA11yAudit()`. Set by `warden e2e` for a suite with an `a11y` key |
 | `WARDEN_PERF` | comma list of captures every attempt records (`js`, `react`, `native`, `metrics`, `frames`, `logs`, `all`), from `warden e2e --perf[=…]`; empty means the default set (metrics, frames, logs). Unset: no automatic profiling |
 | `WARDEN_PERF_BUDGETS` | JSON of the suite's `perf.budgets` (`startupColdMs`, `jankPct`, `maxCommitMs`, `p95CpuPct`, `peakMemoryMb`); a breach fails the test with `PERF_BUDGET`. Set by `warden e2e` when the config has budgets |
 | `WARDEN_E2E_TIMEOUT`, `WARDEN_E2E_ACTION_TIMEOUT`, `WARDEN_E2E_ASSERTION_TIMEOUT` | the `spec` timeouts in milliseconds (defaults 120000, 30000, 5000) |

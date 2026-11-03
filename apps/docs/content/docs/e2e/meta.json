@@ -8,6 +8,7 @@
 		"suites",
 		"conditions",
 		"camera",
+		"accessibility",
 		"affected",
 		"debugging",
 		"ci"

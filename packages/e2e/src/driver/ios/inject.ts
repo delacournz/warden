@@ -29,6 +29,8 @@ export type InjectState = {
 	offline?: boolean;
 	clockOffsetMs?: number;
 	clockFrozenMs?: number;
+	/** one-shot request (A11Y-1): walk the accessibility tree and write `<state>.a11y` before acknowledging this `seq` */
+	a11yRead?: boolean;
 	camera?: CameraCondition;
 };
 
@@ -41,6 +43,7 @@ export function encodeInjectState(state: InjectState): string {
 		offline: state.offline === true,
 		clockOffsetMs: Math.trunc(state.clockOffsetMs ?? 0),
 		...(state.clockFrozenMs === undefined ? {} : { clockFrozenMs: Math.trunc(state.clockFrozenMs) }),
+		...(state.a11yRead ? { a11yRead: true } : {}),
 		...(state.camera === undefined ? {} : { camera: state.camera }),
 	});
 }
@@ -73,6 +76,7 @@ export function parseInjectState(text: string): InjectState | undefined {
 			offline: data.offline === true,
 			clockOffsetMs: typeof data.clockOffsetMs === "number" ? data.clockOffsetMs : 0,
 			...(typeof data.clockFrozenMs === "number" ? { clockFrozenMs: data.clockFrozenMs } : {}),
+			...(data.a11yRead === true ? { a11yRead: true } : {}),
 			...("camera" in data ? { camera: parseCamera(data.camera) } : {}),
 		};
 	} catch {
@@ -98,6 +102,12 @@ export function parseInjectAck(text: string): InjectAck | undefined {
 
 /** One directory per device: the dylib watches its directory, so two devices never wake each other's app. Core owns the path (release resets the file). */
 export const injectStatePath: (wardenHome: string, udid: string) => string = coreInjectStatePath;
+
+/** Where the dylib writes an accessibility read (`a11yRead`): next to the state file. */
+export const injectA11yPath = (statePath: string): string => `${statePath}.a11y`;
+
+/** Where the dylib appends accessibility events (A11Y-8): JSON lines next to the state file. */
+export const injectEventsPath = (statePath: string): string => `${statePath}.events`;
 
 export const injectAckPath = (statePath: string): string => `${statePath}.ack`;
 
@@ -297,6 +307,7 @@ export function createInjectChannel(input: {
 		reset() {
 			fs.remove(ackPath);
 			fs.remove(statePath);
+			fs.remove(injectEventsPath(statePath));
 		},
 	};
 }

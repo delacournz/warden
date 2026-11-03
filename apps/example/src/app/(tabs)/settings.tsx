@@ -81,7 +81,12 @@ export default function Settings() {
 					</ListGroup.Item>
 				</ListGroup>
 				<ListGroup>
-					<ListGroup.Item onPress={() => router.push("/gestures")} testID="settings-gestures">
+					<ListGroup.Item
+						accessibilityLabel="Gesture playground"
+						accessible
+						onPress={() => router.push("/gestures")}
+						testID="settings-gestures"
+					>
 						<ListGroup.ItemPrefix>
 							<Icon icon={IconHand5Finger} />
 						</ListGroup.ItemPrefix>
@@ -90,12 +95,31 @@ export default function Settings() {
 						</ListGroup.ItemContent>
 						<ListGroup.ItemSuffix />
 					</ListGroup.Item>
-					<ListGroup.Item onPress={() => router.push("/conditions")} testID="settings-conditions">
+					<ListGroup.Item
+						accessibilityLabel="Device conditions"
+						accessible
+						onPress={() => router.push("/conditions")}
+						testID="settings-conditions"
+					>
 						<ListGroup.ItemPrefix>
 							<Icon icon={IconWifiFull} />
 						</ListGroup.ItemPrefix>
 						<ListGroup.ItemContent>
 							<ListGroup.ItemTitle>Device conditions</ListGroup.ItemTitle>
+						</ListGroup.ItemContent>
+						<ListGroup.ItemSuffix />
+					</ListGroup.Item>
+					<ListGroup.Item
+						accessibilityLabel="Accessibility"
+						accessible
+						onPress={() => router.push("/a11y")}
+						testID="settings-a11y"
+					>
+						<ListGroup.ItemPrefix>
+							<Icon icon={IconBell} />
+						</ListGroup.ItemPrefix>
+						<ListGroup.ItemContent>
+							<ListGroup.ItemTitle>Accessibility</ListGroup.ItemTitle>
 						</ListGroup.ItemContent>
 						<ListGroup.ItemSuffix />
 					</ListGroup.Item>
@@ -172,7 +196,7 @@ export default function Settings() {
 				</ListGroup>
 			</Screen.ScrollArea>
 			<Screen.Footer>
-				<Button onPress={leave} testID="settings-sign-out" variant="destructive-soft">
+				<Button onPress={leave} size="lg" testID="settings-sign-out" variant="destructive-soft">
 					Sign out
 				</Button>
 			</Screen.Footer>
