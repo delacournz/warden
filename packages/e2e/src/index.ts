@@ -15,8 +15,11 @@ export type {
 } from "./a11y/a11y.types";
 export type { OpenOptions, OpenWaitUntil } from "./app";
 export type {
+	CameraFacingChoice,
+	CameraSetOptions,
 	ClockInput,
 	ConditionRun,
+	DeviceCamera,
 	DeviceClock,
 	DeviceLocation,
 	DeviceNetwork,
@@ -39,7 +42,7 @@ export type {
 	DeviceScreenReader,
 	ScreenReaderSpokenOptions,
 } from "./device-a11y";
-export type { A11yOp, A11yState } from "./driver/driver.types";
+export type { A11yOp, A11yState, CameraState } from "./driver/driver.types";
 export { E2eError } from "./errors";
 export type { AnnouncedOptions, PassA11yAuditOptions } from "./expect/a11y-matchers";
 export { expect } from "./expect/expect";

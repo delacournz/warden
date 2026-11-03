@@ -105,9 +105,10 @@ Every action accepts `--settle [ms]`: wait for a quiet screen afterwards (defaul
 | `home` · `back` | the home button; back is Android only |
 | `screen rotate [orientation]` | `portrait`, `portrait-upside-down`, `landscape-left`, `landscape-right`; without an argument it reads the current one |
 | `screen appearance [light\|dark]` | set or read light / dark mode |
-| `biometrics [status\|enroll\|unenroll\|match\|fail]` | simulated Face ID / Touch ID / fingerprint, see [Biometrics](/docs/e2e/biometrics) |
+| `biometrics [status\|enroll\|unenroll\|match\|fail]` | simulated Face ID / Touch ID / fingerprint, see [Biometrics](/docs/e2e/conditions/biometrics) |
 | `a11y set\|reset\|status` | display settings (`--text-size`, `--bold`, `--reduce-motion`, `--screen-reader`, ... each also `--no-`), recorded on your lease and undone on release, see [Accessibility](/docs/e2e/accessibility) |
 | `a11y audit\|order\|speak\|announcements\|spoken\|focus` | audit the screen, the simulated reading order and wording, announcements, real TalkBack output and focus; `audit` exits 1 when an issue is at or above `--min-severity` (default `error`), see [Accessibility](/docs/e2e/accessibility) |
+| `camera [set\|status\|clear]` | feed an image or video into the app's camera, see [Camera](/docs/e2e/camera) |
 
 ### `screen` vs `gesture`
 

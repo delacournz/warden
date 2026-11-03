@@ -1,8 +1,8 @@
 import { z } from "zod";
 import { a11yAuditConfigSchema } from "../a11y/a11y.config";
-import { duration, portSpec, slimConfigSchema } from "../batch/preset.schema";
+import { duration, portSpec, reclaimSchema, slimConfigSchema } from "../batch/preset.schema";
 import { appOptionSchema } from "../builds/app-option.schema";
-import { conditionsConfigSchema } from "../conditions/conditions.config";
+import { cameraConfigSchema, conditionsConfigSchema } from "../conditions/conditions.config";
 import { DEFAULT_JOB_TIMEOUT_MS, DEFAULT_METRO_PORT_SPEC, DEFAULT_METRO_READY_TIMEOUT } from "../config.defaults";
 import { validateProfile } from "../sims/slim.profile";
 
@@ -74,6 +74,7 @@ function physicalIssues(suite: {
 	headless?: boolean | undefined;
 	biometrics?: boolean | undefined;
 	conditions?: unknown;
+	camera?: unknown;
 }): Array<{ message: string; path: string[] }> {
 	if (suite.physical === undefined) return [];
 	const issues: Array<{ message: string; path: string[] }> = [];
@@ -90,6 +91,11 @@ function physicalIssues(suite: {
 		issues.push({
 			message: "conditions cannot be used with physical devices (use a simulator or emulator suite)",
 			path: ["conditions"],
+		});
+	if (suite.camera !== undefined)
+		issues.push({
+			message: "camera cannot be used with physical devices (use a simulator or emulator suite)",
+			path: ["camera"],
 		});
 	return issues;
 }
@@ -242,6 +248,8 @@ export const e2eSuiteSchema = z
 		slim: slimConfigSchema.optional(),
 		/** devices of this suite have a fingerprint / Face ID enrolled (own golden, own pool); overrides the top-level `biometrics` */
 		biometrics: z.boolean().optional(),
+		/** `erase` | `uninstall` | `none`: reclaim the suite's devices when they are released; overrides the top-level `reclaim` */
+		reclaim: reclaimSchema.optional(),
 		/** removed: renamed `warmDrivers` */
 		warmRunners: removedKey("warmRunners", "renamed to warmDrivers"),
 		/** iOS: start every device's automation helper in parallel before the specs (default on; `false` = off) */
@@ -254,6 +262,8 @@ export const e2eSuiteSchema = z
 		conditions: conditionsConfigSchema.optional(),
 		/** accessibility audit settings for this suite; each key replaces the top-level `a11y` one */
 		a11y: a11yAuditConfigSchema.optional(),
+		/** the simulated camera every spec starts from, applied before the first `app.open()`; Android devices of the suite claim `+cam` */
+		camera: cameraConfigSchema.optional(),
 		/** default `required` for specs that don't set it */
 		required: z.boolean().default(true),
 		specs: z.record(z.string().min(1), e2eSpecEntrySchema).default({}),

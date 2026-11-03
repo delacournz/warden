@@ -1,5 +1,10 @@
 import { type A11yAuditConfig, parseA11yAuditEnv } from "@delacour/warden-core/a11y/a11y.config";
-import { type ConditionsConfig, parseConditionsEnv } from "@delacour/warden-core/conditions/conditions.config";
+import {
+	type CameraSuiteFeeds,
+	type ConditionsConfig,
+	parseCameraFeedsEnv,
+	parseConditionsEnv,
+} from "@delacour/warden-core/conditions/conditions.config";
 import type { Result } from "@delacour/warden-types/result";
 import { z } from "zod";
 
@@ -61,6 +66,8 @@ export const ENV_NAMES = {
 	a11yAudit: "WARDEN_A11Y_AUDIT",
 	/** `1`: iOS apps launch with the injected library, so hint, custom actions, reading order and announcements can be read */
 	a11y: "WARDEN_A11Y",
+	/** JSON of the suite's `camera` with absolute paths (`{ back?: { path, loop }, front? }`): staged and fed before the first `app.open()` */
+	cameraFeeds: "WARDEN_CAMERA_FEEDS",
 } as const;
 
 export const DEFAULT_TIMEOUT_MS = 120_000;
@@ -101,6 +108,13 @@ const a11yAudit = z.string().transform((raw, ctx): A11yAuditConfig => {
 	return z.NEVER;
 });
 
+const cameraFeeds = z.string().transform((raw, ctx): CameraSuiteFeeds => {
+	const parsed = parseCameraFeedsEnv(raw);
+	if (parsed.success) return parsed.data;
+	ctx.addIssue({ code: "custom", message: parsed.error });
+	return z.NEVER;
+});
+
 const REQUIRED = "required when WARDEN_UDID is set";
 
 const schema = z.object({
@@ -134,6 +148,7 @@ const schema = z.object({
 	netproxyCommand: launchArgs.pipe(z.array(z.string()).min(1)).optional(),
 	biometrics: toggle.optional(),
 	a11yAudit: a11yAudit.optional(),
+	cameraFeeds: cameraFeeds.optional(),
 });
 
 export type E2eEnv = {
@@ -184,6 +199,8 @@ export type E2eEnv = {
 	biometrics?: boolean;
 	/** `WARDEN_A11Y_AUDIT`: the suite's accessibility audit settings; absent = rules all, ignore none, minSeverity `error` */
 	a11yAudit?: A11yAuditConfig;
+	/** `WARDEN_CAMERA_FEEDS`: the suite's `camera` (absolute paths), applied before the first `app.open()` */
+	cameraFeeds?: CameraSuiteFeeds;
 };
 
 type Parsed = z.infer<typeof schema>;
@@ -235,6 +252,7 @@ function toEnv(v: Parsed, now: () => Date): E2eEnv {
 		...(v.netproxyCommand === undefined ? {} : { netproxyCommand: v.netproxyCommand }),
 		...(v.biometrics === true ? { biometrics: true } : {}),
 		...(v.a11yAudit === undefined ? {} : { a11yAudit: v.a11yAudit }),
+		...(v.cameraFeeds === undefined ? {} : { cameraFeeds: v.cameraFeeds }),
 		...(v.afterReboot === undefined ? {} : { afterReboot: v.afterReboot }),
 		...(v.bin === undefined ? {} : { wardenBin: parseArgv(v.bin) }),
 		...(v.perf === undefined

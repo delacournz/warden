@@ -1,4 +1,16 @@
 {
 	"title": "e2e tests",
-	"pages": ["index", "first-test", "specs", "author-specs", "suites", "conditions", "biometrics", "accessibility", "affected", "debugging", "ci"]
+	"pages": [
+		"index",
+		"first-test",
+		"specs",
+		"author-specs",
+		"suites",
+		"conditions",
+		"camera",
+		"accessibility",
+		"affected",
+		"debugging",
+		"ci"
+	]
 }

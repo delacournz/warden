@@ -6,7 +6,7 @@
 import { z } from "zod";
 import { a11yAuditConfigSchema } from "../a11y/a11y.config";
 import { e2eSuiteSchema, perfConfigSchema } from "../affected/affected.schema";
-import { batchPresetSchema, RESERVED_PRESET_NAMES, slimConfigSchema } from "../batch/preset.schema";
+import { batchPresetSchema, RESERVED_PRESET_NAMES, reclaimSchema, slimConfigSchema } from "../batch/preset.schema";
 import { conditionsConfigSchema } from "../conditions/conditions.config";
 import { validateProfile } from "../sims/slim.profile";
 import type { AppOption } from "./app-option.schema";
@@ -167,6 +167,8 @@ export const wardenConfigSchema = z
 		slim: topLevelSlimSchema.optional(),
 		/** devices warden creates have a fingerprint / Face ID enrolled (own golden, own pool); `e2e` suites and `batches` presets override it */
 		biometrics: z.boolean().optional(),
+		/** what happens to a warden device's state when its lease ends (default `none`); `e2e` suites and `batches` presets override it, `WARDEN_RECLAIM` is the fallback below */
+		reclaim: reclaimSchema.optional(),
 		/** perf budgets every `e2e` suite starts from (a suite's own `perf.budgets` replace them per key) */
 		perf: perfConfigSchema.optional(),
 		/** device conditions every `e2e` suite starts from (a suite's own `conditions` replace them per area) */

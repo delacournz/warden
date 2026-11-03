@@ -105,7 +105,7 @@ function profiles(ctx: CommandContext, opts: { json?: true }): number {
 
 /** `warden sim unquarantine <id>`: let claims hand the device out again. */
 function unquarantine(ctx: CommandContext, id: string): number {
-	if (ctx.store().unquarantineDevice(id) === 0) {
+	if (ctx.store().unquarantineDevice(id, ctx.now()) === 0) {
 		reportError(ctx, "sim unquarantine", `${id} is not quarantined`);
 		return 1;
 	}

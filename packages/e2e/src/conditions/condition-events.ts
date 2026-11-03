@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 import type {
 	A11yCondition,
 	BatteryCondition,
+	CameraCondition,
 	ClockCondition,
 	HostFault,
 	LocaleCondition,
@@ -24,6 +25,7 @@ export type ConditionEvent =
 	| { type: "condition"; area: "locale"; value: LocaleCondition; at: number }
 	| { type: "condition"; area: "a11y"; value: A11yCondition; at: number }
 	| { type: "condition"; area: "battery"; value: BatteryCondition; at: number }
+	| { type: "condition"; area: "camera"; value: CameraCondition; at: number }
 	| { type: "condition"; area: "faults"; value: { kind: "faults"; rules: readonly HostFault[] }; at: number };
 
 export type ConditionSink = (event: ConditionEvent) => void;
@@ -49,6 +51,7 @@ const KNOWN_AREAS: ReadonlySet<string> = new Set([
 	"locale",
 	"a11y",
 	"battery",
+	"camera",
 ]);
 
 function parseEvent(line: string): ConditionEvent | undefined {

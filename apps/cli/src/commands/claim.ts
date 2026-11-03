@@ -22,7 +22,13 @@ import { reportClaimFailure } from "../physical-lock";
 import { canPrompt, pickPhysical, reportPick } from "../physical-pick";
 import { withSpinner } from "../spinner-context";
 
-type ClaimOpts = ClaimFlagValues & { serial?: string[]; udid?: string[]; json?: true };
+type ClaimOpts = ClaimFlagValues & { serial?: string[]; udid?: string[]; json?: true; idempotencyKey?: string };
+
+/** `--idempotency-key` wins over `WARDEN_IDEMPOTENCY_KEY`; blank = none. */
+function idempotencyKeyOf(ctx: CommandContext, opts: ClaimOpts): string | undefined {
+	const key = (opts.idempotencyKey ?? ctx.env.WARDEN_IDEMPOTENCY_KEY ?? "").trim();
+	return key === "" ? undefined : key;
+}
 
 /** Lease, then boot / create as needed; a spinner covers the (possibly minutes-long) boot. */
 async function claim(ctx: CommandContext, platformArg: string | undefined, opts: ClaimOpts): Promise<number> {
@@ -57,11 +63,14 @@ async function claim(ctx: CommandContext, platformArg: string | undefined, opts:
 	const { count, profile, physical } = claimFlags.request;
 	const kind = physical ? "physical" : profile;
 	if (!opts.json) heading(ctx, "claim", `${platform.data} · ${kind} ×${count}`);
+	const idempotencyKey = idempotencyKeyOf(ctx, opts);
 	const outcome = await withSpinner(
 		ctx,
 		`claiming ${count} ${kind} ${platform.data} device(s)…`,
 		async (sctx, spinner) => {
-			const result = await claimWithFlags(sctx, owner, claimFlags, leasePidFor(owner));
+			const result = await claimWithFlags(sctx, owner, claimFlags, leasePidFor(owner), {
+				...(idempotencyKey !== undefined ? { idempotencyKey } : {}),
+			});
 			if (result.success) spinner.succeed(`claimed ${result.data.claimed.map((c) => c.device.name).join(", ")}`);
 			else spinner.fail(`claim failed`);
 			return result;
@@ -98,6 +107,11 @@ export const claimCommand = defineCommand({
 	register: (cmd, ctx, done) => {
 		withPhysicalOptions(
 			withClaimOptions(cmd.argument("[platform]", "ios | android (asked for when omitted in a terminal)"))
-		).action(async (platform, opts) => done(await claim(ctx, platform, opts)));
+		)
+			.option(
+				"--idempotency-key <key>",
+				"a repeat claim with this key (same owner, leases alive) returns the same leases (env WARDEN_IDEMPOTENCY_KEY)"
+			)
+			.action(async (platform, opts) => done(await claim(ctx, platform, opts)));
 	},
 });

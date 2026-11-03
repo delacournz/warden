@@ -170,6 +170,30 @@ describe("ensureCallerLease", () => {
 	});
 });
 
+describe("lease history", () => {
+	test("a caller lease logs granted; releasing it logs released, a gc release logs expired", async () => {
+		const res = ensureCallerLease(store, me, "ios", UDID, opts(true));
+		expect(res.success).toBe(true);
+		const id = res.success ? res.data.lease.id : "";
+		now += 4_000;
+		await releaseDevices({ store: () => store, now: () => now }, [id]);
+		const second = ensureCallerLease(store, me, "ios", UDID, opts(true));
+		await releaseDevices({ store: () => store, now: () => now }, [second.success ? second.data.lease.id : ""], {
+			end: "expired",
+		});
+		const events = store.listEvents();
+		expect(events.map((e) => e.type)).toEqual(["granted", "released", "granted", "expired"]);
+		expect(events[0]).toMatchObject({ leaseId: id, data: { action: "leased", waitMs: 0, deviceId: UDID } });
+		expect(events[1]).toMatchObject({ leaseId: id, data: { heldMs: 4_000 } });
+	});
+
+	test("releasing a port lease logs nothing", async () => {
+		const port = store.insertLease({ resource: { kind: "port", port: 8081 }, owner: me, ttlMs: DEFAULT_TTL_MS }, now);
+		await releaseDevices({ store: () => store, now: () => now }, [port.id]);
+		expect(store.listEvents()).toEqual([]);
+	});
+});
+
 describe("releaseDevices", () => {
 	test("deletes leases, touches devices, runs `after` per device lease only", async () => {
 		store.recordDevice({ platform: "ios", id: UDID, name: "sim" }, 1);

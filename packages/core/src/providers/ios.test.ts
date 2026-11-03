@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Exec, ExecResult } from "../exec";
+import { instanceId } from "../ownership";
 import { DEFAULT_SLIM_PROFILE, desiredLabels } from "../sims/slim.profile";
 import { openStore, type Store } from "../store";
 import {
@@ -192,6 +193,33 @@ describe("createIosProvider", () => {
 				lastUsedAt: 42,
 			},
 		]);
+	});
+
+	test("create writes the ownership marker with the store's instance id into the sim's device dir", async () => {
+		const written = new Map<string, string>();
+		const devDir = "/h/Library/Developer/CoreSimulator/Devices/NEW-UDID-1";
+		const p = createIosProvider({
+			exec: fake([
+				["xcrun simctl list devicetypes -j", { stdout: SIMCTL_DEVICETYPES_JSON }],
+				["xcrun simctl list runtimes -j", { stdout: SIMCTL_RUNTIMES_JSON }],
+				["xcrun simctl create", { stdout: "NEW-UDID-1\n" }],
+			]),
+			store,
+			env: { HOME: "/h", WARDEN_SIM_LAUNCHD_STORE_ROOT: dir },
+			now: () => 42,
+			owner: { kind: "agent", sessionId: "s1", cwd: "/" },
+			markerFs: {
+				readText: () => undefined,
+				writeText: (path, text) => void written.set(path, text),
+				isDir: (d) => d === devDir,
+			},
+		});
+		await p.create("warden-iphone-17-3", "iphone-17");
+		expect(JSON.parse(written.get(`${devDir}/.warden-owned.json`) ?? "{}")).toEqual({
+			instanceId: instanceId(store),
+			name: "warden-iphone-17-3",
+			createdAt: 42,
+		});
 	});
 
 	test("create clones via the clone strategy when given, records the device", async () => {

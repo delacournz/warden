@@ -65,6 +65,7 @@ A demo app for dogfooding warden end to end: Expo SDK 57 + Expo Router + Uniwind
 | `/location` | live `expo-location` track, 150 m geofence around the first fix, speed / distance / fixes readout, fix log. Deep link `warden-example://location` | `loc-*` |
 | `/clock` | 14-day trial dial driven by `Date.now()`, clock-jump log. Deep link `warden-example://clock` | `clk-*` |
 | `/a11y` | accessibility showcase: heading, labelled switch, adjustable slider, labelled + decorative image, polite live-region counter, `Announce` ("Saved"), row with custom actions (Archive / Delete), hinted button, live screen reader / reduce motion / bold text readouts. `?bad=1` (deep link `warden-example://a11y?bad=1`) adds known failures: unnamed icon button, 20x20 target, "Submit button" (role in name), visible text not in the name. No sign-in gate | `a11y-*` |
+| `/camera` | expo-camera preview with QR scan, photo through the preview, back/front flip, the image picker's camera; readouts `ready` / `facing` / `qr` / `photo` / `picked` / `error` (`none` when empty). Deep link `warden-example://camera`. No sign-in gate. Run by the `camera` suite (`warden e2e camera`: suite feed `qr-hello.png`, Android claimed with `--camera`; iOS asks for camera access for real, the spec uses `systemAlerts: "accept"`) | `camera-*` |
 
 ### e2e
 

@@ -13,6 +13,7 @@ import type { SelectedSpec, Selection } from "@delacour/warden-core/affected/sel
 import { readySpec } from "@delacour/warden-core/batch/preset";
 import { appSwitches } from "@delacour/warden-core/builds/app-option.schema";
 import { type BuildKind, DEFAULT_E2E_KIND } from "@delacour/warden-core/builds/kinds";
+import { resolveCameraConfig } from "@delacour/warden-core/conditions/conditions.config";
 import {
 	DEFAULT_SPEC_ACTION_TIMEOUT,
 	DEFAULT_SPEC_ASSERTION_TIMEOUT,
@@ -135,6 +136,7 @@ function suiteOpts(
 		...(suite.count !== undefined ? { count: String(suite.count) } : {}),
 		...(suite.profile !== undefined ? { profile: suite.profile } : {}),
 		...(suite.biometrics === true ? { biometrics: true as const } : {}),
+		...(suite.camera !== undefined ? { camera: true as const } : {}),
 		...(suite.ports ? { port: suite.ports } : {}),
 		...(suite.serve !== undefined ? { serve: suite.serve } : {}),
 		...(suite.serveReady !== undefined ? { serveReady: readySpec(suite.serveReady, cwd) } : {}),
@@ -632,6 +634,8 @@ async function runPlan(
 		...(suite.slim !== undefined ? { slimConfig: suite.slim } : {}),
 		...phoneOpts(leg),
 		...(suite.biometrics === true ? { biometrics: true } : {}),
+		...(config.camera !== undefined ? { camera: true } : {}),
+		...(suite.reclaim !== undefined ? { reclaimConfig: suite.reclaim } : {}),
 	});
 	const [first] = picked.data ?? [];
 	const args = parseBatchArgs(platform, first ? legOpts(first) : { ...batchOpts, ...phoneOpts() }, ctx.cwd, {
@@ -799,6 +803,9 @@ export async function specPlan(
 			...(suite.a11y === undefined ? {} : { a11yAudit: suite.a11y }),
 			// the injected library reads hint / actions / order / announcements on iOS: loaded only for a suite that asks (`a11y` key or `--a11y`)
 			...(platform === "ios" && (suite.a11y !== undefined || opts.a11y === true) ? { a11y: true } : {}),
+			...(suite.config.camera === undefined
+				? {}
+				: { cameraFeeds: resolveCameraConfig(suite.config.camera, suite.configDir) }),
 		},
 	});
 }

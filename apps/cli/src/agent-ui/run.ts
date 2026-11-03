@@ -24,6 +24,7 @@ const READ_ONLY: ReadonlySet<string> = new Set([
 	"a11y spoken",
 	"a11y focus status",
 	"battery status",
+	"camera status",
 ]);
 
 /** Values `withUiOptions` parses to. */

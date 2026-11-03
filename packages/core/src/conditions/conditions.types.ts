@@ -110,6 +110,16 @@ export type A11yCondition = {
 /** `cosmetic`: the status bar says so, the OS and the app still see the real battery (iOS simulators) */
 export type BatteryCondition = { level?: number; charging?: boolean; cosmetic?: boolean };
 
+export type CameraFacing = "back" | "front";
+
+export const CAMERA_FACINGS: readonly CameraFacing[] = ["back", "front"];
+
+/** A staged asset the simulated camera plays; `path` is the staged copy under the device's camera dir. */
+export type CameraFeed = { kind: "image"; path: string } | { kind: "video"; path: string; loop: boolean };
+
+/** The simulated camera per facing; a facing left out has no camera (iOS) or the emulator's default (Android). */
+export type CameraCondition = Partial<Record<CameraFacing, CameraFeed>>;
+
 /** Everything a lease can have set on its device, one slot per area. */
 export type ConditionValues = {
 	network: NetworkCondition;
@@ -119,6 +129,7 @@ export type ConditionValues = {
 	locale: LocaleCondition;
 	a11y: A11yCondition;
 	battery: BatteryCondition;
+	camera: CameraCondition;
 };
 
 export type ConditionArea = keyof ConditionValues;
@@ -132,6 +143,7 @@ export const CONDITION_AREAS: readonly ConditionArea[] = [
 	"locale",
 	"a11y",
 	"battery",
+	"camera",
 ];
 
 /** A process warden spawned to hold a condition (shaping proxy, route ticker); undo kills it. */

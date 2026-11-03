@@ -674,7 +674,7 @@ describe("warden batch", () => {
 			"x",
 		]);
 		const h = harness();
-		expect(await createBatchCommand(h.deps).run(c)).toBe(1);
+		expect(await createBatchCommand(h.deps).run(c)).toBe(5);
 		expect(h.jobs()).toEqual([]);
 		expect(c.db.listLeases()).toEqual([]);
 	});

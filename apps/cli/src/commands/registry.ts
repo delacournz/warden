@@ -71,8 +71,20 @@ export const COMMANDS: readonly CommandEntry[] = [
 	{
 		name: "queue",
 		group: "Lease",
-		summary: "claims waiting for host capacity, head first (position, priority, age, owner)",
+		summary: "claims waiting for host capacity or a free device, head first (position, priority, reason, age, owner)",
 		load: async () => (await import("./queue")).queueCommand,
+	},
+	{
+		name: "events",
+		group: "Lease",
+		summary: "lease history: requested, queued, granted, released, expired, evicted, quarantined … (--follow to tail)",
+		load: async () => (await import("./events")).eventsCommand,
+	},
+	{
+		name: "stats",
+		group: "Lease",
+		summary: "claim wait (median, p95), lease durations and peak concurrency per profile, from the lease history",
+		load: async () => (await import("./stats")).statsCommand,
 	},
 	{
 		name: "devices",
@@ -126,7 +138,7 @@ export const COMMANDS: readonly CommandEntry[] = [
 	{
 		name: "gc",
 		group: "Lease",
-		summary: "reclaim stale leases; shut down idle warden devices (never deletes)",
+		summary: "reclaim stale leases; shut down idle warden devices, delete shut-down ephemeral sims",
 		load: async () => (await import("./gc")).gcCommand,
 	},
 	{
@@ -253,7 +265,7 @@ export const COMMANDS: readonly CommandEntry[] = [
 		name: "doctor",
 		group: "Setup",
 		summary:
-			"check warden's setup: home, db, device tools, simulator helper, install method, PATH, Claude/Codex hooks + skill, stale leases",
+			"check warden's setup: home, db, device tools, simulator helper, install method, PATH, Claude/Codex hooks + skill, stale leases (--leases: registry drift)",
 		load: async () => (await import("./doctor")).doctorCommand,
 	},
 	{

@@ -16,6 +16,7 @@ import { readGitFacts, readGitFactsSync } from "@delacour/warden-core/git-facts"
 import { isPortFree } from "@delacour/warden-core/ports";
 import type { DeviceProvider } from "@delacour/warden-core/providers/provider.types";
 import { PRIORITY } from "@delacour/warden-core/queue";
+import { devKeepsSim } from "@delacour/warden-core/shutdown-policy";
 import { wardenHome } from "@delacour/warden-core/store";
 import type { Lease, Owner, Platform } from "@delacour/warden-core/types";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
@@ -39,6 +40,7 @@ import { releaseDevices } from "../device-lease";
 import { shutdownReleasedDevices } from "../device-shutdown";
 import { missingPackages } from "../expo-app";
 import { installModeOption, legacyCleanOption, parseInstallFlags } from "../install-flags";
+import { defaultLeaseHealthDeps } from "../lease-health";
 import {
 	childEnv,
 	claimAll,
@@ -406,6 +408,9 @@ async function openSession(
 		await showing;
 		if (!session.success) return session;
 		const { outcome, ports, leaseIds } = session.data;
+		// dev's sim keeps its installs and logins across sessions: never deleted as ephemeral (WARDEN_EPHEMERAL_DEV=1 opts in)
+		if (platform === "ios" && devKeepsSim(ctx.env))
+			for (const c of outcome.claimed) ctx.store().markPersistent(platform, c.device.id, ctx.now());
 		// dev's own device goes down with the session (Ctrl-C, a killed terminal, Metro exiting) unless --no-shutdown;
 		// `shutdownReleasedDevices` leaves a sim that was already running when leased alone
 		const release = async () => {
@@ -1297,6 +1302,7 @@ export const defaultDevDeps: DevDeps = {
 	},
 	onSignal: processOnSignal,
 	every: intervalEvery,
+	health: defaultLeaseHealthDeps,
 	probe: (port, projectRoot) => metroOwner(bunExec, port, projectRoot),
 	sleep: (ms) => Bun.sleep(ms),
 	ensureApp: (ctx, owner, platform, deviceId, opts) =>

@@ -23,6 +23,41 @@ function setup(argv: string[], exec = fakeSimctl([wardenSim(1), wardenSim(2, "Bo
 	return ctx;
 }
 
+describe("warden claim --idempotency-key", () => {
+	async function claimJson(c: TestContext) {
+		c.stdout.length = 0;
+		expect(await claimCommand.run(c)).toBe(0);
+		return JSON.parse(c.stdout.join("\n"));
+	}
+
+	test("a repeat returns the same lease JSON and takes no second device", async () => {
+		const c = setup(["ios", "--json", "--idempotency-key", "run-1"]);
+		const first = await claimJson(c);
+		const second = await claimJson(c);
+		expect(
+			second.leases.map((l: { leaseId: string; udid: string; name: string }) => [l.leaseId, l.udid, l.name])
+		).toEqual(first.leases.map((l: { leaseId: string; udid: string; name: string }) => [l.leaseId, l.udid, l.name]));
+		expect(Object.keys(second.leases[0]).sort()).toEqual(Object.keys(first.leases[0]).sort());
+		expect(c.db.listLeases()).toHaveLength(1);
+	});
+
+	test("WARDEN_IDEMPOTENCY_KEY is the fallback", async () => {
+		const c = setup(["ios", "--json"]);
+		c.env = { ...c.env, WARDEN_IDEMPOTENCY_KEY: "env-key" };
+		const first = await claimJson(c);
+		expect((await claimJson(c)).leases[0].leaseId).toBe(first.leases[0].leaseId);
+		expect(c.db.listLeases()).toHaveLength(1);
+	});
+
+	test("the flag beats the env var", async () => {
+		const c = setup(["ios", "--json", "--idempotency-key", "flag-key"]);
+		c.env = { ...c.env, WARDEN_IDEMPOTENCY_KEY: "env-key" };
+		await claimJson(c);
+		expect(c.db.getClaimKey("agent:me", "flag-key")).toBeDefined();
+		expect(c.db.getClaimKey("agent:me", "env-key")).toBeUndefined();
+	});
+});
+
 describe("warden claim", () => {
 	test("claims a booted warden sim first, --json output", async () => {
 		const c = setup(["ios", "--json", "--label", "e2e"]);
@@ -73,7 +108,34 @@ describe("warden claim", () => {
 		expect(ctx.db.listLeases()[0]?.pid).toBe(process.ppid);
 	});
 
-	test("pool exhausted → exit 1 with guidance", async () => {
+	test("WARDEN_MAX_PER_OWNER: a second claim over the limit exits 8 REQUESTER_LIMIT naming the release command", async () => {
+		const c = setup(["ios", "--json", "--no-wait"], fakeSimctl([wardenSim(1, "Booted"), wardenSim(2, "Booted")]));
+		c.env = { ...c.env, WARDEN_MAX_PER_OWNER: "ios=1" };
+		expect(await claimCommand.run(c)).toBe(0);
+		const [held] = c.db.listLeases();
+		c.stdout.length = 0;
+		expect(await claimCommand.run(c)).toBe(8);
+		const out = JSON.parse(c.stdout.join("\n"));
+		expect(out).toMatchObject({ ok: false, error: { code: "REQUESTER_LIMIT" } });
+		expect(out.error.message).toContain(`warden release ${held?.id}`);
+	});
+
+	test("WARDEN_MAX_PER_OWNER for the other platform, or unset, leaves a claim alone", async () => {
+		const c = setup(["ios", "--no-wait"], fakeSimctl([wardenSim(1, "Booted"), wardenSim(2, "Booted")]));
+		c.env = { ...c.env, WARDEN_MAX_PER_OWNER: "android=1" };
+		expect(await claimCommand.run(c)).toBe(0);
+		expect(await claimCommand.run(c)).toBe(0);
+	});
+
+	test("a bad WARDEN_MAX_PER_OWNER is a clear error before anything is leased", async () => {
+		const c = setup(["ios", "--no-wait"]);
+		c.env = { ...c.env, WARDEN_MAX_PER_OWNER: "lots" };
+		expect(await claimCommand.run(c)).toBe(1);
+		expect(c.stderr.join("\n")).toContain("WARDEN_MAX_PER_OWNER=lots");
+		expect(c.db.listLeases()).toEqual([]);
+	});
+
+	test("pool exhausted → exit 5 NO_DEVICE with guidance", async () => {
 		const c = setup(["ios", "--max", "1", "--no-wait"], fakeSimctl([wardenSim(1, "Booted")]));
 		c.db.insertLease(
 			{
@@ -83,8 +145,9 @@ describe("warden claim", () => {
 			},
 			c.now()
 		);
-		expect(await claimCommand.run(c)).toBe(1);
+		expect(await claimCommand.run(c)).toBe(5);
 		expect(c.stderr.join("\n")).toContain("all 1 warden-iphone-17 devices leased; max 1");
+		expect(c.stderr.join("\n")).not.toContain("NO_DEVICE:");
 	});
 
 	test("a full host queues: the progress line is on stderr and --json stdout is the failure envelope", async () => {
@@ -101,9 +164,13 @@ describe("warden claim", () => {
 			},
 			c.now()
 		);
-		expect(await claimCommand.run(c)).toBe(1);
+		expect(await claimCommand.run(c)).toBe(7);
 		expect(c.stdout).toHaveLength(1);
-		expect(JSON.parse(c.stdout[0] ?? "")).toMatchObject({ ok: false, command: "claim", error: { code: "failed" } });
+		expect(JSON.parse(c.stdout[0] ?? "")).toMatchObject({
+			ok: false,
+			command: "claim",
+			error: { code: "NO_CAPACITY", capacityReason: "cpu-budget", hint: expect.stringContaining("warden capacity") },
+		});
 		// withSpinner routes ctx.err progress through spinner.log, which the real UI writes to stderr
 		expect((c.ui as ScriptedUi).events.join("\n")).toMatch(/log: warden: queued #1 of 1 \(high\) — no room, /);
 		expect(c.db.listQueue()).toEqual([]);
@@ -286,7 +353,7 @@ describe("warden claim --physical", () => {
 			["ios", "--physical", "--no-wait", "--json"],
 			fakeSimctl([wardenSim(1), wardenSim(2, "Booted")], calls)
 		);
-		expect(await claimCommand.run(c)).toBe(1);
+		expect(await claimCommand.run(c)).toBe(5);
 		expect(c.stderr.join("\n")).toContain("no free ready physical ios device");
 		expect(calls.filter((x) => ["boot", "create", "shutdown", "clone"].includes(x[2] ?? ""))).toEqual([]);
 		expect(c.db.listLeases()).toEqual([]);
@@ -309,7 +376,7 @@ describe("warden claim --physical", () => {
 	test("WARDEN_HEADLESS in the environment does not reject --physical", async () => {
 		const c = setup(["ios", "--physical", "--no-wait"], fakeSimctl([]));
 		c.env = { ...c.env, WARDEN_HEADLESS: "1" };
-		expect(await claimCommand.run(c)).toBe(1);
+		expect(await claimCommand.run(c)).toBe(5);
 		expect(c.stderr.join("\n")).not.toContain("cannot be used");
 	});
 });

@@ -115,6 +115,22 @@ describe("remote driver", () => {
 		if (!tapped.success) expect(tapped.error.code).toBe("E_NO_ELEMENT");
 	});
 
+	test("camera goes over the wire (feeds, null, E_CAMERA_DEVICE) as it does for the in-process driver", async () => {
+		const driver = fakeDriver({
+			screens: [screen],
+			platform: "android",
+			onCall: (call) =>
+				// `null` crosses the wire as an omitted argument: the served driver sees `undefined`, which means the same
+				call.method === "camera" && call.op == null ? failWith("E_CAMERA_DEVICE", "claim with --camera") : undefined,
+		});
+		const remote = (await connect(await serve(driver))).driver();
+		const feeds = { back: { kind: "image", path: "/c/back-1.png" } } as const;
+		expect(await remote.camera(feeds)).toEqual({ success: true, data: { feeds } });
+		const refused = await remote.camera(null);
+		expect(!refused.success && refused.error.code).toBe("E_CAMERA_DEVICE");
+		expect(driver.callsOf("camera")[0]).toMatchObject({ method: "camera", op: feeds });
+	});
+
 	test("capabilities follow the served driver after each op", async () => {
 		const base = fakeDriver({ screens: [screen], platform: "android" });
 		let caps: DriverCapabilities = { ...base.capabilities, nativeSettle: false };

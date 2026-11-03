@@ -148,6 +148,26 @@ Biometrics practice: set `biometrics: true` on the suite (suites.md) so the devi
 
 On Android with TalkBack on, locator `tap` / `scroll` / `swipe` use accessibility actions (a touch would only move focus); a raw coordinate tap stays a touch. The `a11y` op also takes `reduceTransparency buttonShapes differentiateWithoutColor onOffLabels highContrastText colorInversion screenReader` (table in `a11y.md`).
 
+### `device.camera` (simulated camera)
+
+Feeds a png, jpg, heic, mp4 or mov into the app's real camera. Taken off when the test ends (back to the suite's `camera`, else none), recorded on the lease, each change a `condition` line in `results.jsonl`.
+
+| Member | Does |
+|---|---|
+| `camera.set(path, { facing?, loop? })` | `path` is relative to the spec file (or absolute). `facing`: `"back"` (default) \| `"front"` \| `"both"`; the other facing keeps its feed. `loop` (video, default true). Returns `{ feeds, appliesOnLaunch?, appliesOnCameraOpen?, rebooted? }` |
+| `camera.clear(facing?)` | takes the feed off one facing, or both (default) |
+| `camera.status()` | `{ feeds }` this spec has in place |
+
+- Errors: `E_CAMERA_NOT_FOUND` (no such file), `E_CAMERA_MEDIA` (not a supported type) throw `INVALID_ARGUMENT` before the device is touched; `E_CAMERA_DEVICE` (Android emulator not claimed with `--camera`) throws `ACTION_FAILED`.
+- iOS: live in an app launched with the camera; otherwise `appliesOnLaunch: true` and the next `app.open()` picks it up. Set it before `app.open()`. QR is the only code type the iOS fake decodes.
+- Android emulator: the suite needs `camera` (or `--camera`); an image shows on the app's next camera open (`appliesOnCameraOpen: true`), a video feed reboots the emulator (`rebooted: true`).
+
+```ts
+await device.camera.set("fixtures/qr-hello.png");
+await app.open();
+await device.camera.set("fixtures/qr-bye.png"); // live on iOS
+```
+
 ### `device.devtools` (dev client over Metro)
 
 With `WARDEN_METRO_URL` set, `app.open()` attaches devtools in the background and keeps React Native's LogBox off (no warning/error toasts, no error inspector, fatals included) in every JS context, after relaunches and reloads too. Logs still land in `console.jsonl` and Metro's terminal. Assert on the app's own UI, never on a LogBox toast.

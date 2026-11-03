@@ -19,6 +19,7 @@ import {
 	type ConditionRun,
 	conditionSinkFor,
 	createDeviceConditions,
+	type DeviceCamera,
 	type DeviceClock,
 	type DeviceConditions,
 	type DeviceLocation,
@@ -189,6 +190,12 @@ export type Device = DeviceA11y & {
 	a11y: DeviceConditions["a11y"];
 	/** Battery level and charging: real on Android emulators, status bar only on iOS (`cosmetic: true`). */
 	battery: DeviceConditions["battery"];
+	/**
+	 * Simulated camera: `set("fixtures/qr.png", { facing })`, `clear`, `status`. The asset (png, jpg, heic, mp4, mov; path relative
+	 * to the spec file) plays in the app's real camera. iOS: live in an app launched with the camera, else from the next launch.
+	 * Android: a `--camera` device; an image shows on the next camera open, a video feed reboots the emulator.
+	 */
+	readonly camera: DeviceCamera;
 	/** Android: a critical trim-memory signal to the app. iOS: `E_UNSUPPORTED`. */
 	memoryWarning: DeviceConditions["memoryWarning"];
 	/** iOS: delivers an APNs payload to the app. Android: `E_UNSUPPORTED`. */
@@ -379,6 +386,7 @@ export function createDevice({
 		locale: conditions.locale,
 		a11y: conditions.a11y,
 		battery: conditions.battery,
+		camera: conditions.camera,
 		memoryWarning: conditions.memoryWarning,
 		push: conditions.push,
 		timeline: (steps) => conditions.timeline(steps),

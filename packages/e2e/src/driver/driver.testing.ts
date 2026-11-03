@@ -1,4 +1,5 @@
 import type {
+	CameraCondition,
 	ClockCondition,
 	HostFault,
 	LocationCondition,
@@ -19,6 +20,7 @@ import type {
 	BatteryOp,
 	BatteryState,
 	BiometricOp,
+	CameraState,
 	ClockState,
 	Driver,
 	DriverCapabilities,
@@ -235,6 +237,7 @@ export type DriverCall =
 	| { method: "memoryWarning"; opts?: SettingOptions }
 	| { method: "push"; payload: PushPayload; opts?: SettingOptions }
 	| { method: "biometrics"; op: BiometricOp }
+	| { method: "camera"; op: CameraCondition | null; opts?: SettingOptions }
 	| { method: "app.launch"; bundleId: string; opts?: LaunchOptions }
 	| { method: "app.terminate"; bundleId: string }
 	| { method: "app.openUrl"; url: string }
@@ -629,6 +632,9 @@ export function fakeDriver(options: FakeDriverOptions): FakeDriver {
 					cosmetic: false,
 				})
 			);
+		},
+		async camera(op, opts) {
+			return run({ method: "camera", op, ...(opts ? { opts } : {}) }, (): CameraState => ({ feeds: op ?? {} }));
 		},
 		async memoryWarning(opts) {
 			return run({ method: "memoryWarning", ...(opts ? { opts } : {}) }, () => undefined);

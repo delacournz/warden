@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { CLAIM_ERRORS } from "@delacour/warden-core/claim-errors";
 import type { Exec } from "@delacour/warden-core/exec";
 import {
 	DEVICECTL_LOCKSTATE_LOCKED,
@@ -145,6 +146,32 @@ describe("reportClaimFailure", () => {
 			["Test iPhone is locked", { code: "device_locked", hint: "unlock the phone, then retry" }],
 		]);
 		expect(c.stderr.join("\n")).toContain("unlock the phone, then retry");
+	});
+
+	test("a coded claim error records its code, hint and exit code, without the tag", () => {
+		const c = testContext([]);
+		ctx = c;
+		const recorded: unknown[] = [];
+		c.failure = { record: (message, extra) => recorded.push([message, extra]) };
+		expect(reportClaimFailure(c, "claim", "NO_CAPACITY[ram-budget]: no room")).toBe(7);
+		expect(recorded).toEqual([
+			["no room", { code: "NO_CAPACITY", capacityReason: "ram-budget", hint: CLAIM_ERRORS.NO_CAPACITY.hint }],
+		]);
+		expect(c.stderr.join("\n")).toContain("warden claim: no room");
+		expect(c.stderr.join("\n")).toContain(CLAIM_ERRORS.NO_CAPACITY.hint);
+	});
+
+	test.each([
+		["NO_DEVICE: x", 5],
+		["QUEUE_TIMEOUT: x", 6],
+		["REQUESTER_LIMIT: x", 8],
+		["RUNTIME_MISSING: x", 9],
+		["HEALTH_FAILED: x", 10],
+		["LEASE_LOST: x", 11],
+	])("%s exits %d", (error, exit) => {
+		const c = testContext([]);
+		ctx = c;
+		expect(reportClaimFailure(c, "claim", error)).toBe(exit);
 	});
 
 	test("any other failure is exit 1", () => {

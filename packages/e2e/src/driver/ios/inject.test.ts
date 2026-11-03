@@ -55,7 +55,12 @@ describe("release reset (core)", () => {
 			mkdirSync(dirname(path), { recursive: true });
 			writeFileSync(path, encodeInjectState({ seq: 3, offline: true, clockOffsetMs: 5, clockFrozenMs: 9 }));
 			expect(neutralizeInjectState(path)).toBeUndefined();
-			expect(parseInjectState(readFileSync(path, "utf8"))).toEqual({ seq: 4, offline: false, clockOffsetMs: 0 });
+			expect(parseInjectState(readFileSync(path, "utf8"))).toEqual({
+				seq: 4,
+				offline: false,
+				clockOffsetMs: 0,
+				camera: {},
+			});
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}
@@ -264,5 +269,50 @@ describe("createInjectChannel", () => {
 		ch.reset();
 		expect(files.size).toBe(0);
 		expect(ch.current().seq).toBe(0);
+	});
+});
+
+describe("camera", () => {
+	const feeds = {
+		back: { kind: "image" as const, path: "/w/camera/U1/back-aaa.png" },
+		front: { kind: "video" as const, path: "/w/camera/U1/front-bbb.mp4", loop: false },
+	};
+
+	test("the state carries the feeds and round-trips them; no camera key without feeds", () => {
+		const text = encodeInjectState({ seq: 3, camera: feeds });
+		expect(JSON.parse(text).camera).toEqual(feeds);
+		expect(parseInjectState(text)?.camera).toEqual(feeds);
+		expect(JSON.parse(encodeInjectState({ seq: 4 }))).not.toHaveProperty("camera");
+		expect(parseInjectState(encodeInjectState({ seq: 4 }))?.camera).toBeUndefined();
+	});
+
+	test("junk feeds are dropped, not passed to the dylib", () => {
+		const parsed = parseInjectState(
+			JSON.stringify({ seq: 1, camera: { back: { kind: "gif", path: "/x" }, front: { kind: "image" } } })
+		);
+		expect(parsed?.camera).toEqual({});
+	});
+
+	test("the ack says whether the app was launched with the camera", () => {
+		expect(parseInjectAck(JSON.stringify({ seq: 1, pid: 2, camera: true }))?.camera).toBe(true);
+		expect(parseInjectAck(JSON.stringify({ seq: 1, pid: 2 }))?.camera).toBeUndefined();
+	});
+
+	test("the launch env turns the camera on only when asked", () => {
+		expect(injectLaunchEnv({ dylib: "/d", statePath: "/s", camera: true }).WARDEN_CAMERA).toBe("1");
+		expect(injectLaunchEnv({ dylib: "/d", statePath: "/s" })).not.toHaveProperty("WARDEN_CAMERA");
+	});
+
+	test("a camera feed alone is a reason to inject", () => {
+		expect(shouldInject({ networkActive: false, clockActive: false, cameraActive: true, requested: false })).toBe(true);
+	});
+
+	test("core's neutral state takes every feed off", () => {
+		const dir = mkdtempSync(join(tmpdir(), "warden-inject-cam-"));
+		const path = join(dir, "state.json");
+		writeFileSync(path, encodeInjectState({ seq: 5, camera: feeds }));
+		expect(neutralizeInjectState(path)).toBeUndefined();
+		expect(parseInjectState(readFileSync(path, "utf8"))?.camera).toEqual({});
+		rmSync(dir, { recursive: true, force: true });
 	});
 });

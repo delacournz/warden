@@ -154,6 +154,36 @@ describe("warden dev: showing the simulator", () => {
 describe("warden dev: the simulator when dev ends", () => {
 	const shutdowns = (calls: string[][]) => calls.filter((cmd) => cmd[1] === "simctl" && cmd[2] === "shutdown");
 
+	test("dev's sim is persistent: shut down, never deleted, so installs and logins survive", async () => {
+		const calls: string[][] = [];
+		const c = setup(["ios"], calls, [], "Shutdown");
+		c.db.recordDevice({ platform: "ios", id: "U1", name: "warden-iphone-1" }, 0);
+		const h = harness();
+		const running = createDevCommand(h.deps).run(c);
+		await waitFor(() => h.spawned.length > 0 && calls.some((cmd) => cmd.includes("launch")));
+		h.finish(0);
+		expect(await running).toBe(0);
+		expect(shutdowns(calls)).toEqual([["xcrun", "simctl", "shutdown", "U1"]]);
+		expect(calls.some((cmd) => cmd[1] === "simctl" && cmd[2] === "delete")).toBe(false);
+		expect(c.db.listDevices("ios").find((d) => d.id === "U1")?.persistentAt).toBeDefined();
+	});
+
+	test("WARDEN_EPHEMERAL_DEV=1 → dev's sim is ephemeral like any other: deleted after shutdown", async () => {
+		const calls: string[][] = [];
+		const c = setup(["ios"], calls, [["xcrun simctl delete", {}]], "Shutdown");
+		c.env = { ...c.env, WARDEN_EPHEMERAL_DEV: "1" };
+		c.db.recordDevice({ platform: "ios", id: "U1", name: "warden-iphone-1" }, 0);
+		const h = harness();
+		const running = createDevCommand(h.deps).run(c);
+		await waitFor(() => h.spawned.length > 0 && calls.some((cmd) => cmd.includes("launch")));
+		h.finish(0);
+		expect(await running).toBe(0);
+		expect(calls.filter((cmd) => cmd[1] === "simctl" && cmd[2] === "delete")).toEqual([
+			["xcrun", "simctl", "delete", "U1"],
+		]);
+		expect(c.db.listDevices("ios").find((d) => d.id === "U1")).toBeUndefined();
+	});
+
 	test("Metro exits → the sim dev booted is shut down before its lease goes", async () => {
 		const calls: string[][] = [];
 		const c = setup(["ios"], calls, [], "Shutdown");

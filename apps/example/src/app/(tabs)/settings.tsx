@@ -10,6 +10,7 @@ import { Screen } from "@/components/ui/screen";
 import { Switch } from "@/components/ui/switch";
 import {
 	IconBell,
+	IconCamera1,
 	IconClock,
 	IconFingerPrint1,
 	IconHand5Finger,
@@ -119,6 +120,20 @@ export default function Settings() {
 						</ListGroup.ItemPrefix>
 						<ListGroup.ItemContent>
 							<ListGroup.ItemTitle>Accessibility</ListGroup.ItemTitle>
+						</ListGroup.ItemContent>
+						<ListGroup.ItemSuffix />
+					</ListGroup.Item>
+					<ListGroup.Item
+						accessibilityLabel="Camera"
+						accessible
+						onPress={() => router.push("/camera")}
+						testID="settings-camera"
+					>
+						<ListGroup.ItemPrefix>
+							<Icon icon={IconCamera1} />
+						</ListGroup.ItemPrefix>
+						<ListGroup.ItemContent>
+							<ListGroup.ItemTitle>Camera</ListGroup.ItemTitle>
 						</ListGroup.ItemContent>
 						<ListGroup.ItemSuffix />
 					</ListGroup.Item>

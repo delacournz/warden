@@ -91,6 +91,16 @@ describe("physical", () => {
 		expect(issues({ physical: true, biometrics: false })).toEqual([]);
 	});
 
+	test("camera contradicts physical, and is a valid suite key otherwise", () => {
+		expect(issues({ physical: true, camera: { back: "qr.png" } })).toEqual([
+			"camera: camera cannot be used with physical devices (use a simulator or emulator suite)",
+		]);
+		expect(suite({ camera: { back: "qr.png", front: { path: "c.mp4", loop: false } } }).camera).toEqual({
+			back: "qr.png",
+			front: { path: "c.mp4", loop: false },
+		});
+	});
+
 	test("conditions contradict physical: a phone's network, clock and settings are not warden's to change", () => {
 		expect(issues({ physical: true, conditions: { network: "3g" } })).toEqual([
 			"conditions: conditions cannot be used with physical devices (use a simulator or emulator suite)",

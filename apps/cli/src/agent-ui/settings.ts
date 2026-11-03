@@ -51,7 +51,7 @@ function appOf(ctx: CommandContext, device: UiDevice, app: string | undefined): 
 	return bundleId === undefined ? {} : { bundleId };
 }
 
-function save<A extends keyof ConditionValues>(
+export function save<A extends keyof ConditionValues>(
 	ctx: CommandContext,
 	device: UiDevice,
 	area: A,
@@ -61,11 +61,11 @@ function save<A extends keyof ConditionValues>(
 	return saved.success ? ok(undefined) : fail("failed", `could not record the ${area} condition: ${saved.error}`);
 }
 
-function forget(ctx: CommandContext, device: UiDevice, area: ConditionRecord["area"]): void {
+export function forget(ctx: CommandContext, device: UiDevice, area: ConditionRecord["area"]): void {
 	clearCondition(ctx.store(), device.lease.id, area);
 }
 
-const success = (
+export const success = (
 	device: UiDevice,
 	action: string,
 	text: string,
