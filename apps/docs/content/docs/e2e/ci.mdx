@@ -36,7 +36,7 @@ A private fork in `repo` needs a `token` with Contents: read on that repo.
 
 - macOS for iOS simulators, with Xcode and the iOS runtime installed; Android needs the SDK. There is no Windows support.
 - No bun install: warden runs the specs with the bun built into its own binary, so CI needs no bun install (`WARDEN_BUN` picks a different one).
-- No prior state. The `--profile` is created on claim, cloned from a golden image that is built on first use (about a minute or two); cache `~/Library/Developer/CoreSimulator/Devices` between runs to keep it ([Golden images](/docs/devices/golden-images)). If cloning fails it falls back to `simctl create`.
+- No prior state. The `--profile` is created on claim, cloned from a golden image that is built on first use (about a minute or two); cache `~/Library/Developer/CoreSimulator/Devices` between runs to keep it ([Golden images](/docs/sims/golden-images)). If cloning fails it falls back to `simctl create`.
 
 ## Gate a pull request
 
@@ -56,4 +56,4 @@ Keep the evidence when a run fails:
 
 ## Headless and cleanup
 
-Simulators boot without a window. On a CI runner nothing else is open, so no flag is needed; `--headless` guarantees it when Simulator.app is running ([Headless](/docs/devices/headless)). Under `CI`, a passed gate shuts down the simulators and emulators warden created for the run, and a failed run leaves them booted. `--no-shutdown` keeps them up. A leftover `test.only` fails the run under `CI`.
+Simulators boot without a window. On a CI runner nothing else is open, so no flag is needed; `--headless` guarantees it when Simulator.app is running ([Headless](/docs/sims/headless)). Under `CI`, a passed gate shuts down the simulators and emulators warden created for the run, and a failed run leaves them booted. `--no-shutdown` keeps them up. A leftover `test.only` fails the run under `CI`.

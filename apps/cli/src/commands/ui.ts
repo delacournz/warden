@@ -1,4 +1,5 @@
 import { registerAuthoringCommands } from "../agent-ui/authoring-register";
+import { registerCameraGroup } from "../agent-ui/camera-register";
 import type { CloseOptionValues } from "../agent-ui/close";
 import { registerConditionCommands } from "../agent-ui/conditions-register";
 import { registerDevtoolsCommands } from "../agent-ui/devtools-register";
@@ -52,6 +53,7 @@ export function createUiCommand(deps: UiDeps): Command {
 					.option("--all", "no line cap")
 					.option("--settle [ms]", "wait for a quiet screen (default budget 3000 ms), then print a +/-/= diff")
 					.option("--depth <n>", "only the first n levels of the tree")
+					.option("--a11y", "add hint, actions, a11y-focused and live-region facts (iOS: needs `open --a11y`)")
 			).action(async (opts) => {
 				const { uiSnapshot } = await import("../agent-ui/snapshot-command");
 				done(await uiSnapshot(ctx, deps, opts));
@@ -76,6 +78,10 @@ export function createUiCommand(deps: UiDeps): Command {
 					.option("--relaunch", "terminate a running app first")
 					.option("--metro <url>", "Metro URL: launch with --initialUrl and remember it")
 					.option("--args <args...>", "extra launch arguments")
+					.option(
+						"--a11y",
+						"iOS: launch with the injected library so a11y audit/order/speak/announcements can read hints, actions and announcements (remembered for the device; relaunches the app the first time)"
+					)
 					.addOption(kindOption())
 					.option("--project <dir>", "--kind: the app's project directory (default: cwd)")
 					.option("--settle [ms]", SETTLE)
@@ -331,6 +337,7 @@ export function createUiCommand(deps: UiDeps): Command {
 			registerNetworkGroup(cmd, ctx, done, deps);
 			registerConditionCommands(cmd, ctx, done, deps);
 			registerSettingsCommands(cmd, ctx, done, deps);
+			registerCameraGroup(cmd, ctx, done, deps);
 		},
 	});
 }

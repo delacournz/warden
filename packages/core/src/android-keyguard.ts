@@ -59,6 +59,13 @@ async function keyguardShowing(deps: KeyguardDeps, serial: string): Promise<bool
 	return parseKeyguardShowing(dump.stdout) !== false;
 }
 
+/** Whether `dumpsys window` positively reports the keyguard up; an unreadable dump is not a lock screen. */
+export async function keyguardIsShowing(deps: KeyguardDeps, serial: string): Promise<boolean> {
+	if (!emulatorOnly(serial)) return false;
+	const dump = await shell(deps, serial, "dumpsys window");
+	return parseKeyguardShowing(dump.stdout) === true;
+}
+
 /**
  * Get past the lock screen (idempotent: nothing is typed when it is already gone) and keep the device awake.
  * Up to three unlock attempts; before the last one SystemUI is restarted, which recovers a restored snapshot

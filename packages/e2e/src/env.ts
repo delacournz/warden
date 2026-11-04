@@ -1,4 +1,10 @@
-import { type ConditionsConfig, parseConditionsEnv } from "@delacour/warden-core/conditions/conditions.config";
+import { type A11yAuditConfig, parseA11yAuditEnv } from "@delacour/warden-core/a11y/a11y.config";
+import {
+	type CameraSuiteFeeds,
+	type ConditionsConfig,
+	parseCameraFeedsEnv,
+	parseConditionsEnv,
+} from "@delacour/warden-core/conditions/conditions.config";
 import type { Result } from "@delacour/warden-types/result";
 import { z } from "zod";
 
@@ -15,6 +21,8 @@ export const ENV_NAMES = {
 	appPath: "WARDEN_APP_PATH",
 	metroUrl: "WARDEN_METRO_URL",
 	launchArgs: "WARDEN_LAUNCH_ARGS",
+	/** the dev client's url scheme (`exp+<slug>`): an Android launch has no args, so Metro's `--initialUrl` becomes a deep link on this scheme */
+	devClientScheme: "WARDEN_DEV_CLIENT_SCHEME",
 	out: "WARDEN_E2E_OUT",
 	timeout: "WARDEN_E2E_TIMEOUT",
 	actionTimeout: "WARDEN_E2E_ACTION_TIMEOUT",
@@ -54,6 +62,12 @@ export const ENV_NAMES = {
 	netproxyCommand: "WARDEN_NETPROXY_COMMAND",
 	/** `1` when the suite's devices are biometrics devices: the session enrolls an iOS sim again before the app is installed */
 	biometrics: "WARDEN_BIOMETRICS",
+	/** JSON of the suite's `a11y` (`ignore` / `minSeverity` / `rules`): the defaults `device.a11yAudit()` and `toPassA11yAudit()` use */
+	a11yAudit: "WARDEN_A11Y_AUDIT",
+	/** `1`: iOS apps launch with the injected library, so hint, custom actions, reading order and announcements can be read */
+	a11y: "WARDEN_A11Y",
+	/** JSON of the suite's `camera` with absolute paths (`{ back?: { path, loop }, front? }`): staged and fed before the first `app.open()` */
+	cameraFeeds: "WARDEN_CAMERA_FEEDS",
 } as const;
 
 export const DEFAULT_TIMEOUT_MS = 120_000;
@@ -87,6 +101,20 @@ const conditions = z.string().transform((raw, ctx): ConditionsConfig => {
 	return z.NEVER;
 });
 
+const a11yAudit = z.string().transform((raw, ctx): A11yAuditConfig => {
+	const parsed = parseA11yAuditEnv(raw);
+	if (parsed.success) return parsed.data;
+	ctx.addIssue({ code: "custom", message: parsed.error });
+	return z.NEVER;
+});
+
+const cameraFeeds = z.string().transform((raw, ctx): CameraSuiteFeeds => {
+	const parsed = parseCameraFeedsEnv(raw);
+	if (parsed.success) return parsed.data;
+	ctx.addIssue({ code: "custom", message: parsed.error });
+	return z.NEVER;
+});
+
 const REQUIRED = "required when WARDEN_UDID is set";
 
 const schema = z.object({
@@ -96,6 +124,7 @@ const schema = z.object({
 	bundleId: z.string({ error: REQUIRED }).min(1, REQUIRED),
 	appPath: z.string().optional(),
 	metroUrl: z.string().optional(),
+	devClientScheme: z.string().min(1).optional(),
 	launchArgs: launchArgs.default([]),
 	out: z.string().optional(),
 	timeout: millis.default(DEFAULT_TIMEOUT_MS),
@@ -118,6 +147,8 @@ const schema = z.object({
 	leaseId: z.string().min(1).optional(),
 	netproxyCommand: launchArgs.pipe(z.array(z.string()).min(1)).optional(),
 	biometrics: toggle.optional(),
+	a11yAudit: a11yAudit.optional(),
+	cameraFeeds: cameraFeeds.optional(),
 });
 
 export type E2eEnv = {
@@ -128,6 +159,8 @@ export type E2eEnv = {
 	bundleId: string;
 	appPath?: string;
 	metroUrl?: string;
+	/** `WARDEN_DEV_CLIENT_SCHEME` */
+	devClientScheme?: string;
 	launchArgs: string[];
 	/** where `results.jsonl` and per-attempt artifacts go (may be relative to cwd) */
 	out: string;
@@ -164,6 +197,10 @@ export type E2eEnv = {
 	netproxyCommand?: string[];
 	/** `WARDEN_BIOMETRICS`: this is a biometrics device (profile `<p>+bio`); iOS enrollment does not survive a reboot or a spec's `unenroll` */
 	biometrics?: boolean;
+	/** `WARDEN_A11Y_AUDIT`: the suite's accessibility audit settings; absent = rules all, ignore none, minSeverity `error` */
+	a11yAudit?: A11yAuditConfig;
+	/** `WARDEN_CAMERA_FEEDS`: the suite's `camera` (absolute paths), applied before the first `app.open()` */
+	cameraFeeds?: CameraSuiteFeeds;
 };
 
 type Parsed = z.infer<typeof schema>;
@@ -199,6 +236,7 @@ function toEnv(v: Parsed, now: () => Date): E2eEnv {
 			deviceName: v.deviceName,
 			appPath: v.appPath,
 			metroUrl: v.metroUrl,
+			devClientScheme: v.devClientScheme,
 			specsDir: v.specsDir,
 			helperDir: v.helperDir,
 			simd: v.simd,
@@ -213,6 +251,8 @@ function toEnv(v: Parsed, now: () => Date): E2eEnv {
 		...(v.leaseId === undefined ? {} : { leaseId: v.leaseId }),
 		...(v.netproxyCommand === undefined ? {} : { netproxyCommand: v.netproxyCommand }),
 		...(v.biometrics === true ? { biometrics: true } : {}),
+		...(v.a11yAudit === undefined ? {} : { a11yAudit: v.a11yAudit }),
+		...(v.cameraFeeds === undefined ? {} : { cameraFeeds: v.cameraFeeds }),
 		...(v.afterReboot === undefined ? {} : { afterReboot: v.afterReboot }),
 		...(v.bin === undefined ? {} : { wardenBin: parseArgv(v.bin) }),
 		...(v.perf === undefined

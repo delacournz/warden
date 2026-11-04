@@ -13,23 +13,24 @@ Every environment variable warden reads, and the ones `warden run`, `batch` and 
 | `WARDEN_HOME` | state directory (default `~/.warden`): `warden.db`, `builds`, `batches`, `ccache`, `affected`, `dev`, `logs`, `skill`, `ui`, `simd`, `android`, `perf`, `tools` |
 | `WARDEN_SESSION_ID`, `CLAUDE_CODE_SESSION_ID`, `CLAUDE_SESSION_ID` | treat the caller as this agent session (first one set wins; a CI owner outranks them) |
 | `CI` (`true` / `1`), `GITHUB_ACTIONS=true` | detected as a CI owner; run id from `GITHUB_RUN_ID`, `CI_PIPELINE_ID` or `BUILDKITE_BUILD_ID`. `CI` also flips the e2e `shutdown` default to `always` |
-| `WARDEN_TRACE_PROCESSOR` | path to a `trace_processor_shell` for `warden perf` Android native analysis, instead of the pinned copy in `$WARDEN_HOME/tools/` ([profile an app](/docs/devices/perf)) |
+| `WARDEN_TRACE_PROCESSOR` | path to a `trace_processor_shell` for `warden perf` Android native analysis, instead of the pinned copy in `$WARDEN_HOME/tools/` ([profile an app](/docs/sims/perf)) |
 | `WARDEN_GOLDEN=0` | don't clone new sims from golden images |
-| `WARDEN_ANDROID_SNAPSHOT=0` | Android: cold-boot claimed emulators instead of launching them from warden's quick-boot snapshot of the AVD, and never build one; `=1` turns it on over a config `android.snapshot: false`. Only `0/1/true/false/on/off/yes/no` count; another value is warned about and the config decides ([Golden images](/docs/devices/golden-images#android-wardens-quick-boot-snapshot)) |
+| `WARDEN_ANDROID_SNAPSHOT=0` | Android: cold-boot claimed emulators instead of launching them from warden's quick-boot snapshot of the AVD, and never build one; `=1` turns it on over a config `android.snapshot: false`. Only `0/1/true/false/on/off/yes/no` count; another value is warned about and the config decides ([Golden images](/docs/sims/golden-images#android-wardens-quick-boot-snapshot)) |
 | `WARDEN_IOS_TEAM_ID=<team id>` | physical iPhone: the Apple developer team (10 characters) that signs warden's on-device runner; wins over config `ios.teamId`. Without either, warden uses the keychain's `Apple Development` team when there is exactly one and fails `ios_team_ambiguous` otherwise |
-| `WARDEN_PHYSICAL_IDS=<id>,<id>` | physical devices: an allowlist (adb serials / CoreDevice UDIDs, comma-separated). A `--physical` claim with no `--serial` / `--udid` picks only from it; naming a device still works. Wins over config `physical.allow` ([Physical devices](/docs/devices/physical-devices#restrict-which-devices-warden-may-take)) |
+| `WARDEN_PHYSICAL_IDS=<id>,<id>` | physical devices: an allowlist (adb serials / CoreDevice UDIDs, comma-separated). A `--physical` claim with no `--serial` / `--udid` picks only from it; naming a device still works. Wins over config `physical.allow` ([Physical devices](/docs/sims/physical-devices#restrict-which-devices-warden-may-take)) |
 | `WARDEN_EMULATOR_AUDIO=1` | Android: keep the emulator's audio (claimed emulators run `-no-audio` otherwise) |
 | `WARDEN_ARRANGE=0` | don't tile Simulator.app windows after iOS claims |
-| `WARDEN_HEADLESS=1` (or `true`) | `claim`, `run`, `batch`, `e2e`: close the claimed sims' Simulator.app windows when no flag or config `headless` decides ([Headless e2e](/docs/devices/headless)); `warden dev` ignores it |
-| `WARDEN_PRIORITY` | boot queue priority (`interactive\|high\|normal\|low\|N`) when no `--priority` is given ([Capacity & queue](/docs/devices/capacity)) |
+| `WARDEN_HEADLESS=1` (or `true`) | `claim`, `run`, `batch`, `e2e`: close the claimed sims' Simulator.app windows when no flag or config `headless` decides ([Headless e2e](/docs/sims/headless)); `warden dev` ignores it |
+| `WARDEN_PRIORITY` | boot queue priority (`interactive\|high\|normal\|low\|N`) when no `--priority` is given ([Capacity & queue](/docs/sims/capacity)) |
 | `WARDEN_CAPACITY=off` | skip the capacity gate and boot queue |
 | `WARDEN_CAPACITY_MAX` | hard cap on weighted cpu units booted machine-wide (1 per iOS sim, 2 per Android emulator) |
 | `WARDEN_CAPACITY_HEADROOM_GB` | RAM held back from the budget (default `max(8, 25% of RAM)`) |
-| `WARDEN_TUI=0` | `warden dev`: plain output instead of the dashboard, like `--no-tui` ([dashboard](/docs/agents/dev#dashboard)) |
+| `WARDEN_TUI=0` | `warden dev`: plain output instead of the dashboard, like `--no-tui` ([dashboard](/docs/sims/dev#dashboard)) |
 | `WARDEN_AUTO_GC=0` | turn off background auto-gc |
 | `WARDEN_MAX_CACHE_SIZE` | build cache cap (e.g. `50G`, default `20G`) for `warden gc` (`--max-cache-size`), `warden builds prune` (`--max-size`) and auto-gc, which runs when the cache is over it |
 | `ANDROID_HOME`, `ANDROID_SDK_ROOT` | Android SDK location (`adb`, `emulator`); without them warden falls back to `PATH` and cannot build the Android snapshot |
 | `NO_COLOR`, `FORCE_COLOR` | output colour (a non-empty `NO_COLOR` turns it off) |
+| `WARDEN_A11Y=1` | iOS: launch apps with the injected accessibility library (hint, actions, order, announcements); same as `warden ui open --a11y`, `warden e2e --a11y` or an `a11y` key on the suite ([Accessibility](/docs/e2e/accessibility)) |
 | `WARDEN_ANDROID_UIAD=0` | Android: don't use the resident UiAutomation server (`warden-uiad`); snapshots, settle and input go through `uiautomator dump` and `input` ([Android driver](/docs/reference/e2e-driver#android-driver)) |
 | `WARDEN_ANDROID_SETTEXT=1` | Android: `fill` over a field that already holds text replaces it with one `warden-uiad` `setText` call instead of select-all and typing (specs, `warden ui fill`); off by default until the server re-reads focus before setting ([Android driver](/docs/reference/e2e-driver#android-driver)) |
 | `WARDEN_BACKGROUND=0` | turn off every detached worker (auto-gc, SessionEnd shutdown) |
@@ -71,7 +72,7 @@ export default { name: worktree ? `My App · ${worktree}` : "My App" /* … */ }
 
 ## Set for batch jobs
 
-`warden batch` and `warden e2e` add these to every job, on top of the `warden run` variables above (details in [e2e scripts](/docs/devices/scripts)):
+`warden batch` and `warden e2e` add these to every job, on top of the `warden run` variables above (details in [e2e scripts](/docs/sims/scripts)):
 
 | Variable | Value |
 |---|---|
@@ -97,6 +98,7 @@ export default { name: worktree ? `My App · ${worktree}` : "My App" /* … */ }
 | `WARDEN_LAUNCH_ARGS` | JSON array of the launch arguments `app.open()` passes: `--initialUrl <metro url>`, `metro.launchArgs`, `spec.launchArgs` |
 | `WARDEN_E2E_OUT` | where `results.jsonl` and the per-test artifacts go: `<batchDir>/e2e/<worker>-<seq>` |
 | `WARDEN_BIN` | JSON array (or a bare path) of the `warden` that started the run; `device.perf` shells out to it. Set by `warden e2e`; without it `device.perf` throws `SESSION` ("WARDEN_BIN is not set") |
+| `WARDEN_A11Y_AUDIT` | JSON of the suite's `a11y` key (`rules`, `ignore`, `minSeverity`): defaults for `device.a11yAudit()` and `toPassA11yAudit()`. Set by `warden e2e` for a suite with an `a11y` key |
 | `WARDEN_PERF` | comma list of captures every attempt records (`js`, `react`, `native`, `metrics`, `frames`, `logs`, `all`), from `warden e2e --perf[=…]`; empty means the default set (metrics, frames, logs). Unset: no automatic profiling |
 | `WARDEN_PERF_BUDGETS` | JSON of the suite's `perf.budgets` (`startupColdMs`, `jankPct`, `maxCommitMs`, `p95CpuPct`, `peakMemoryMb`); a breach fails the test with `PERF_BUDGET`. Set by `warden e2e` when the config has budgets |
 | `WARDEN_E2E_TIMEOUT`, `WARDEN_E2E_ACTION_TIMEOUT`, `WARDEN_E2E_ASSERTION_TIMEOUT` | the `spec` timeouts in milliseconds (defaults 120000, 30000, 5000) |

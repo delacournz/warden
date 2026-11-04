@@ -1,0 +1,28 @@
+{
+	"title": "Agents & Simulators",
+	"description": "Lease devices, drive the app, control the simulator",
+	"icon": "Smartphone",
+	"root": true,
+	"pages": [
+		"index",
+		"---Agent control---",
+		"agent-loop",
+		"ui",
+		"dev",
+		"debug",
+		"rules",
+		"---Device control---",
+		"leases",
+		"conditions",
+		"physical-devices",
+		"remote",
+		"perf",
+		"---Parallel & capacity---",
+		"scripts",
+		"ports",
+		"capacity",
+		"golden-images",
+		"app-builds",
+		"headless"
+	]
+}

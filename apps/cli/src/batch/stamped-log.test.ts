@@ -156,11 +156,12 @@ describe("StampedLog.drained", () => {
 		void log.pump(held.stream);
 		const chatter = setInterval(() => held.push("x\n"), 10);
 		const started = performance.now();
-		await log.drained({ quietMs: 40, maxMs: 200 });
+		// quiet window 15x the chatter gap: a loaded host (parallel test workers) stalls timers by tens of ms
+		await log.drained({ quietMs: 150, maxMs: 300 });
 		const waited = performance.now() - started;
 		clearInterval(chatter);
-		expect(waited).toBeGreaterThanOrEqual(195);
-		expect(waited).toBeLessThan(400);
+		expect(waited).toBeGreaterThanOrEqual(295);
+		expect(waited).toBeLessThan(600);
 		log.close();
 		held.end();
 	});

@@ -21,6 +21,7 @@ export type ConditionsPort = Pick<
 	| "locale"
 	| "a11y"
 	| "battery"
+	| "camera"
 	| "memoryWarning"
 	| "push"
 > & {

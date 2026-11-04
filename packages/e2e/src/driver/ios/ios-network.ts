@@ -1,7 +1,13 @@
-import type { ClockCondition, HostFault, NetworkCondition } from "@delacour/warden-core/conditions/conditions.types";
+import type {
+	CameraCondition,
+	ClockCondition,
+	HostFault,
+	NetworkCondition,
+} from "@delacour/warden-core/conditions/conditions.types";
 import { resolveNetwork } from "@delacour/warden-core/conditions/network.presets";
 import type { Result } from "@delacour/warden-types/result";
 import type {
+	CameraState,
 	ClockState,
 	DriverError,
 	DriverResult,
@@ -53,6 +59,11 @@ export type IosNetwork = {
 	setClockOffset(ms: number): DriverResult<void>;
 	/** Mock the injected app's wall clock (`Driver.clock`). Live when the app is injected, else staged for the next launch. */
 	clock(op: ClockCondition, opts?: NetworkOptions): DriverResult<ClockState>;
+	/**
+	 * The simulated camera (`Driver.camera`): feeds are staged copies. Live on an app launched with the camera on
+	 * (`WARDEN_CAMERA=1`), else from the next launch, which loads the dylib for it (`appliesOnLaunch`).
+	 */
+	camera(op: CameraCondition | null): DriverResult<CameraState>;
 };
 
 const okVoid = { success: true as const, data: undefined };
@@ -65,9 +76,13 @@ export function createIosNetwork(deps: IosNetworkDeps): IosNetwork {
 	let clockFrozenMs: number | undefined = channel.current().clockFrozenMs;
 	const now = deps.now ?? Date.now;
 	let expectLoad = false;
+	let camera: CameraCondition = channel.current().camera ?? {};
+	/** a camera was ever in the state: keep sending it (empty when cleared) so a running app drops its feeds */
+	let cameraSent = channel.current().camera !== undefined;
 
 	const routing = () => condition.kind !== "online" || faults.length > 0;
 	const clockActive = () => clockOffsetMs !== 0 || clockFrozenMs !== undefined;
+	const cameraActive = () => camera.back !== undefined || camera.front !== undefined;
 	const launchClock = (): { clockOffsetMs?: number; clockFrozenMs?: number } => ({
 		...(clockOffsetMs ? { clockOffsetMs } : {}),
 		...(clockFrozenMs === undefined ? {} : { clockFrozenMs }),
@@ -77,6 +92,7 @@ export function createIosNetwork(deps: IosNetworkDeps): IosNetwork {
 			offline: condition.kind === "offline",
 			clockOffsetMs,
 			...(clockFrozenMs === undefined ? {} : { clockFrozenMs }),
+			...(cameraSent || cameraActive() ? { camera } : {}),
 		});
 
 	/** Push the current condition + faults to the proxy and the state file. */
@@ -195,6 +211,7 @@ export function createIosNetwork(deps: IosNetworkDeps): IosNetwork {
 				!shouldInject({
 					networkActive: live !== undefined,
 					clockActive: clockActive(),
+					cameraActive: cameraActive(),
 					requested: opts.inject === true,
 				})
 			) {
@@ -220,6 +237,7 @@ export function createIosNetwork(deps: IosNetworkDeps): IosNetwork {
 					statePath: channel.statePath,
 					proxy: address,
 					...launchClock(),
+					...(cameraActive() ? { camera: true } : {}),
 					...(deps.debug ? { debug: true } : {}),
 				}),
 			};
@@ -273,6 +291,21 @@ export function createIosNetwork(deps: IosNetworkDeps): IosNetwork {
 					...(applied ? {} : { appliesOnLaunch: true as const }),
 				},
 			};
+		},
+		async camera(op) {
+			camera = op ?? {};
+			const state = writeState();
+			cameraSent = cameraSent || cameraActive();
+			const attached = channel.attached();
+			if (attached?.camera !== true) {
+				return { success: true, data: { feeds: camera, ...(cameraActive() ? { appliesOnLaunch: true } : {}) } };
+			}
+			if (!(await channel.acked(state.seq, INJECT_ACK_MS))) {
+				return driverErr("E_TIMEOUT", `the injected app did not acknowledge the camera within ${INJECT_ACK_MS} ms`, {
+					detail: { pid: attached.pid, statePath: channel.statePath },
+				});
+			}
+			return { success: true, data: { feeds: camera } };
 		},
 	};
 }

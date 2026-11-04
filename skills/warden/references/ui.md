@@ -70,9 +70,9 @@ Line: `@eN [role] "name" id=<testID> value="..." <states> (x,y w×h)`. States: `
 |---|---|---|
 | `status` | | device, lease, helper, recording in progress (name, target, step count), conditions set on the lease (`conditions network 3g · location 37.3,-122`) |
 | `close` | `[--app [bundleId]] [--release]` | stops this device's helper; `--app` quits the app (default: the one `open` launched); `--release` frees the lease |
-| `snapshot` | `[-i\|--interactive] [--all] [--depth n] [--settle [ms]]` | `--settle` ends with a `-`/`+` diff and `= N unchanged` |
+| `snapshot` | `[-i\|--interactive] [--all] [--depth n] [--settle [ms]] [--a11y]` | `--settle` ends with a `-`/`+` diff and `= N unchanged`. `--a11y` adds `hint="…"`, `actions=[…]`, `a11y-focused`, `not-important`, `live=…` per line (`--json`: `a11y` per element); iOS needs `open --a11y` or it warns |
 | `find` | `<selector>` | matches with fresh `@eN` |
-| `open` | `<bundleId\|url> [--relaunch] [--metro url] [--args ...] [--kind dev\|simulator\|release] [--project dir] [--settle]` | URL on iOS accepts the "Open in ...?" sheet; running app is attached, not restarted. `--kind` installs that build first (`simulator` = the cached sim build with this worktree's JS repacked in, seconds; no Metro, so no `--metro`), relaunches when the build changed, and reports `kind` / `jsKey` (a repack fallback adds `fallbackReason`). Without `--kind` nothing is installed |
+| `open` | `<bundleId\|url> [--relaunch] [--metro url] [--args ...] [--kind dev\|simulator\|release] [--project dir] [--a11y] [--settle]` | URL on iOS accepts the "Open in ...?" sheet; running app is attached, not restarted. `--kind` installs that build first (`simulator` = the cached sim build with this worktree's JS repacked in, seconds; no Metro, so no `--metro`), relaunches when the build changed, and reports `kind` / `jsKey` (a repack fallback adds `fallbackReason`). Without `--kind` nothing is installed |
 | `press` / `tap` | `<@eN\|selector\|x y> [--verify] [--settle]` | |
 | `fill` | `<target> <text> [--secure] [--no-verify] [--via type\|paste] [--settle]` | `--` before text starting with `-`; types per key by default; `--via paste` pastes on iOS (one Cmd+V; Xcode 27 syncs every sim's pasteboard with the Mac clipboard both ways, so a paste lands in clipboard history and on other sims; the retry always types); reads back, retries once; `--secure` skips read-back and never echoes the text |
 | `type` | `<text> [--submit] [--settle]` | into whatever has focus |
@@ -105,6 +105,7 @@ Line: `@eN [role] "name" id=<testID> value="..." <states> (x,y w×h)`. States: `
 | `eval` `tree` `logs` `network log` `reload` | see Devtools | dev client only (`network log` = the request log) |
 | `network set\|flap\|fault\|status\|reset` `location` `clock` | see Network and location | change the device's network / GPS; recorded on your lease, undone on release |
 | `permission` `timezone` `locale` `a11y` `battery` `memory-warning` `push` | see Device settings | permissions, timezone, locale, text size, battery, memory warning, push; recorded on your lease, undone on release |
+| `camera set\|status\|clear` | see Camera | feed an image or video into the app's camera; recorded on your lease, undone on release |
 
 ## Biometrics
 
@@ -167,16 +168,44 @@ Each is its own verb (like `location` / `clock`) so its flags show in `--help`. 
 | `permission reset` / `status` | `[--app b]` | every recorded name back to `unset` / what is recorded (reads only) |
 | `timezone` | `<IANA name\|reset\|status>` | Android: `cmd alarm set-timezone`, device-wide and live (emulator only). iOS: staged, the app launched next gets `TZ` (`staged: true` + warning; `open --relaunch`) |
 | `locale` | `<BCP 47 tag\|reset\|status> [--app b]` | Android 13+ (API 33): per-app locale, live. iOS: staged, the next launch gets `-AppleLanguages` / `-AppleLocale` |
-| `a11y set` | `[--text-size <name\|scale>] [--bold\|--no-bold] [--contrast increased\|normal] [--reduce-motion\|--no-reduce-motion]` | text size by iOS category (`extra-small` … `accessibility-extra-extra-extra-large`) or a font scale (`1.5`, Android clamps to 0.5-2). iOS: text size + contrast. Android: text size + bold. The rest are reported `skipped`; only-skipped = `E_UNSUPPORTED` |
-| `a11y reset` / `status` | | defaults back / what is recorded |
+| `a11y set` | `[--text-size <name\|scale>] [--bold] [--contrast increased\|normal] [--reduce-motion] [--screen-reader] [--reduce-transparency] [--button-shapes] [--differentiate-without-color] [--on-off-labels] [--high-contrast-text] [--color-inversion]` (each also `--no-…`) | text size by iOS category (`extra-small` … `accessibility-extra-extra-extra-large`) or a font scale (`1.5`, Android clamps to 0.5-2). iOS: text size, contrast, bold, reduce motion (live `defaults` writes). Android: text size, bold, reduce motion (`transition_animation_scale` 0; off by default, the driver restores the device value after zeroing window/animator scales). The rest, and platform-only flags on the other platform, are reported `skipped` (table: `a11y.md`); only-skipped = `E_UNSUPPORTED`; reset also removes the `defaults` keys warden wrote |
+| `a11y reset` / `status` | | defaults back (TalkBack's services too) / what is recorded plus `screenReader` (`off`, `simulated` or `real`) |
 | `battery set` | `[--level 0-100] [--charging\|--no-charging]` | Android emulator: real (`dumpsys battery`, the app sees it). iOS: status bar only (`cosmetic: true`, warning) |
 | `battery reset` / `status` | | real battery back / what is recorded |
 | `memory-warning` | `[--app b]` | Android: `am send-trim-memory RUNNING_CRITICAL` to the running app (`E_APP_UNAVAILABLE` when it is not running). iOS: `E_UNSUPPORTED` (the `lowmemory` notification never reaches a UIKit app) |
 | `push` | `<payload.json\|'{"aps":{…}}'> [--app b]` | iOS: `simctl push` (needs `aps`, 4096 bytes max). Android: `E_UNSUPPORTED` |
 
+### Accessibility verbs (`a11y …`, details `a11y.md`)
+
+| Command | Flags | Does |
+|---|---|---|
+| `a11y audit` | `[--rule <id>]… [--ignore <rule[:identifier]>]… [--min-severity error\|warning] [--no-native] [--text-size <size>]` | issue table + `ok:` / `FAIL: n at or above <severity>`. **Exit 1 (result still printed; `--json` has `passed`, `failing`, `issues`, `skipped`) when an issue is at or above `--min-severity`** (default `error`). A native engine that cannot run is a warning, not a failure |
+| `a11y order` | | the reading order, labelled simulated (`--json`: `simulated: true`, `order[]`) |
+| `a11y speak` | `<@eN\|selector>` | what a reader would say for one element (simulated); `usage` for coordinates, `target_not_found` for no match |
+| `a11y announcements` | `[--since <cursor>]` | announcements and live-region changes, oldest first, then `cursor N`; iOS needs `open --a11y` (`unsupported` otherwise) |
+| `a11y focus` | `next\|prev\|activate\|status` | TalkBack's accessibility focus, printing what it holds (`end of screen` past the last); `unsupported` unless TalkBack is driving (Android emulator after `a11y set --screen-reader`) |
+| `a11y spoken` | `[--since <cursor>]` | what TalkBack said, with its source, then `cursor N`; same `unsupported` rule |
+
+These only read: a device a live `warden e2e` / `batch` holds is reported on, not refused. `unsupported` exits 1 and its hint names the fix.
+
 - Permissions apply before the first launch (iOS terminates a running app whose permission changes): `permission set` then `open`. iOS `camera` and `notifications` have no `simctl privacy` service and are skipped.
 - Android permissions are the ones the app's manifest declares; a name the app does not declare is skipped with a warning.
 - `--json`: `result.action` is `permission-set`, `-reset`, `-status`, `timezone-set`, `-reset`, `-status`, `locale-*`, `a11y-*`, `battery-*`, `memory-warning`, `push`.
+
+## Camera (`camera`)
+
+Feeds a file into the app's real camera (preview, photo capture, QR scan), no app-side bypass. Accepted: png, jpg, heic (image), mp4, mov (video); anything else is `E_CAMERA_MEDIA`, a missing file `E_CAMERA_NOT_FOUND`. The state is the lease's `camera` condition, shared with `device.camera` in specs, and **release / gc undo it**.
+
+| Command | Args / flags | Notes |
+|---|---|---|
+| `camera set` | `<path> [--facing back\|front\|both] [--no-loop]` | `--facing` default `back`; the other facing keeps its feed. `--no-loop`: a video stops on its last frame (default loops). Default `--timeout` 120000 (a video can reboot the emulator) |
+| `camera status` | | feeds the lease has (`result.camera`, null when none); reads only |
+| `camera clear` | `[--facing back\|front\|both]` | default both; nothing set = `changed: false` |
+
+- iOS: live in an app launched with warden's dylib; an app started without it gets the feed from its next launch (`appliesOnLaunch`: `warden ui open` again). QR is the only code type the iOS fake decodes.
+- Android emulator: needs a `--camera` device (`claim android --camera`, profile `<p>+cam`), else `E_CAMERA_DEVICE`. An image swap shows on the app's next camera open (`appliesOnCameraOpen`); a video feed (or image to video) reboots the emulator (`rebooted`).
+- Text output ends with the lines saying when the change applies. `--json`: `result.action` is `camera-set`, `camera-clear`, `camera-status`; `result.camera` the feeds, plus `appliesOnLaunch` / `appliesOnCameraOpen` / `rebooted` when the driver reported them.
+- Physical devices: `E_UNSUPPORTED`.
 
 ## Selector grammar
 
@@ -204,6 +233,7 @@ Values: bare `id=sign-in`, quoted `label="Sign in"`, or regex `text=/^\d+ left$/
 |---|---|
 | `warden dev enable <hud\|perf\|devtools\|all…> [--udid u] [--json]` | turns extras on in the running session; `perf` = `hud`; prints `<udid>: hud on · devtools on`, `--json` `{ udid, features }` |
 | `warden dev disable <…>` · `warden dev status` | off again · read the state. `hud` needs the dashboard (a `--json` run: exit 1 "no dashboard", use `warden perf start`) |
+| `warden dev restart-metro [--clear] [--udid u] [--json]` | stops the session's Metro and starts it on the same leased port; device, lease, app and dev client stay. `--clear` resets Metro's cache (expo `--clear` / RN `--reset-cache`). Waits for the new Metro (up to 5 min), prints `<udid>: Metro restarted at <url>`, `--json` `{ udid, metroUrl, clear }`. Exit 1 while another restart / reinstall / sim restart runs (`busy: …`), or when Metro does not come back (the session then ends as when Metro dies). Reload the app after (`warden ui reload`) if it shows a disconnected red box |
 
 A session started by an older warden has no control socket: restart `warden dev`.
 

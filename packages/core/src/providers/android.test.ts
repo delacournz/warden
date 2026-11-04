@@ -670,7 +670,7 @@ describe("waitReady", () => {
 		const { exec, calls } = fakeExec({ [WAIT]: out(""), [settings]: out("") });
 		const provider = createAndroidProvider(deps(exec), { sleep: async () => {} });
 		expect(await provider.waitReady("emulator-5554", 60_000)).toEqual(ok(undefined));
-		expect(calls).toEqual([WAIT, settings]);
+		expect(calls).toEqual([WAIT, settings, `${ADB} -s emulator-5554 shell dumpsys window`]);
 	});
 
 	const BIO_STATE = `${ADB} -s emulator-5554 get-state`;
@@ -723,7 +723,40 @@ describe("waitReady", () => {
 		const plain = fakeExec({ [wait]: out(""), [plainSettings]: out("") });
 		const other = createAndroidProvider(deps(plain.exec), { sleep: async () => {} });
 		expect(await other.waitReady("emulator-5560", 60_000)).toEqual(ok(undefined));
-		expect(plain.calls).toEqual([wait, plainSettings]);
+		expect(plain.calls).toEqual([wait, plainSettings, `${ADB} -s emulator-5560 shell dumpsys window`]);
+		expect(plain.calls.some((c) => c.includes("input"))).toBe(false);
+	});
+
+	test("a plain emulator restored behind the lock screen is unlocked (the app cannot resolve its launcher otherwise)", async () => {
+		let dumps = 0;
+		const wait = `${ADB} -s emulator-5560 wait-for-device shell ${BOOT_WAIT_SCRIPT}`;
+		const plainSettings = `${ADB} -s emulator-5560 shell ${bootSettingsCommand()}`;
+		const dump = `${ADB} -s emulator-5560 shell dumpsys window`;
+		const unlock = `${ADB} -s emulator-5560 shell ${unlockCommand()}`;
+		const awake = `${ADB} -s emulator-5560 shell ${STAY_AWAKE_COMMAND}`;
+		const plain = fakeExec({
+			[wait]: out(""),
+			[plainSettings]: out(""),
+			[dump]: () => out(++dumps <= 2 ? "isKeyguardShowing=true" : "isKeyguardShowing=false"),
+			[unlock]: out(""),
+			[awake]: out(""),
+		});
+		const other = createAndroidProvider(deps(plain.exec), { sleep: async () => {} });
+		expect(await other.waitReady("emulator-5560", 60_000)).toEqual(ok(undefined));
+		expect(plain.calls).toContain(unlock);
+		expect(plain.calls).toContain(awake);
+	});
+
+	test("a plain emulator that stays locked is still ready, never discarded", async () => {
+		const wait = `${ADB} -s emulator-5560 wait-for-device shell ${BOOT_WAIT_SCRIPT}`;
+		const plain = fakeExec({
+			[wait]: out(""),
+			[`${ADB} -s emulator-5560 shell ${bootSettingsCommand()}`]: out(""),
+			[`${ADB} -s emulator-5560 shell dumpsys window`]: out("isKeyguardShowing=true"),
+		});
+		const other = createAndroidProvider(deps(plain.exec), { sleep: async () => {} });
+		expect(await other.waitReady("emulator-5560", 60_000)).toEqual(ok(undefined));
+		expect(plain.calls.some((c) => c.includes("emu kill"))).toBe(false);
 	});
 
 	test("a biometrics emulator stuck on its keyguard fails readiness and is shut down, not left locked", async () => {
@@ -842,10 +875,16 @@ describe("bootSettingsCommand", () => {
 
 describe("shutdown", () => {
 	test("refuses to kill a foreign emulator", async () => {
-		const { exec, calls } = fakeExec({});
+		const { exec, calls } = fakeExec({ [`${ADB} devices -l`]: out(ADB_DEVICES_MIXED) });
 		const result = await createAndroidProvider(deps(exec)).shutdown("emulator-5554");
 		expect(result).toEqual(err("refusing to shut down foreign emulator emulator-5554"));
-		expect(calls).toHaveLength(0);
+		expect(calls).toEqual([`${ADB} devices -l`]);
+	});
+
+	test("an emulator that is neither recorded nor running is already shut down", async () => {
+		const { exec, calls } = fakeExec({ [`${ADB} devices -l`]: out(ADB_DEVICES_EMPTY) });
+		expect(await createAndroidProvider(deps(exec)).shutdown("emulator-5554")).toEqual(ok(undefined));
+		expect(calls).toEqual([`${ADB} devices -l`]);
 	});
 
 	test("kills a warden emulator, releases its port lease, forgets the device", async () => {
@@ -1079,5 +1118,122 @@ describe("physical phones", () => {
 		for (const call of toPhones) {
 			expect(call).not.toMatch(/\bemu\b|package_verifier|verifier_verify|settings put|kill/);
 		}
+	});
+});
+
+describe("camera emulator", () => {
+	const CAM = "pixel-10+cam";
+	const camDir = () => join(dir, "camera", "emulator-5554");
+
+	function spawnRecorder(): { spawn: SpawnDetached; spawned: (readonly string[])[] } {
+		const spawned: (readonly string[])[] = [];
+		return {
+			spawned,
+			spawn: async (cmd) => {
+				spawned.push(cmd);
+				return ok({ pid: 4242 });
+			},
+		};
+	}
+
+	test("create launches both cameras on the grey placeholders, cold, with no VideoPlayback", async () => {
+		const { exec } = fakeExec({
+			[`${EMULATOR} -list-avds`]: out(EMULATOR_LIST_AVDS),
+			[`${ADB} devices -l`]: out(ADB_DEVICES_EMPTY),
+		});
+		const { spawn, spawned } = spawnRecorder();
+		await createAndroidProvider(deps(exec), { spawnDetached: spawn }).create("w", CAM);
+		const argv = spawned[0] ?? [];
+		expect(argv).toContain("-no-snapshot-load");
+		expect(argv).toContain(`imagefile:${camDir()}/back.png`);
+		expect(argv).toContain(`imagefile:${camDir()}/front.png`);
+		expect(argv).not.toContain("VideoPlayback");
+	});
+
+	test("a new device ignores feeds and a video mode a previous emulator on its port left behind", async () => {
+		mkdirSync(camDir(), { recursive: true });
+		writeFileSync(join(camDir(), "mode.json"), JSON.stringify({ back: "back.mp4" }));
+		const { exec } = fakeExec({
+			[`${EMULATOR} -list-avds`]: out(EMULATOR_LIST_AVDS),
+			[`${ADB} devices -l`]: out(ADB_DEVICES_EMPTY),
+		});
+		const { spawn, spawned } = spawnRecorder();
+		await createAndroidProvider(deps(exec), { spawnDetached: spawn }).create("w", CAM);
+		const argv = spawned[0] ?? [];
+		expect(argv).not.toContain("VideoPlayback");
+		expect(argv[argv.indexOf("-camera-back") + 1]).toBe(`imagefile:${camDir()}/back.png`);
+	});
+
+	describe("relaunch", () => {
+		function recordCam(profile: string = CAM): void {
+			store.recordDevice({ platform: "android", id: "emulator-5554", name: "w", profile }, 1);
+			store.insertLease({ resource: { kind: "port", port: 5554 }, owner, ttlMs: 1, label: "emulator w" }, 1);
+		}
+
+		/** `adb devices -l` lists the emulator until `emu kill` ran, then not. */
+		function killableExec(): { exec: Exec; calls: string[] } {
+			let up = true;
+			return fakeExec({
+				[`${EMULATOR} -list-avds`]: out(EMULATOR_LIST_AVDS),
+				[`${ADB} -s emulator-5554 emu kill`]: () => {
+					up = false;
+					return out("OK: killing emulator, bye bye\n");
+				},
+				[`${ADB} devices -l`]: () => out(up ? ADB_DEVICES_MIXED : ADB_DEVICES_EMPTY),
+			});
+		}
+
+		test("kills the emulator and launches the same serial / port again from the recorded mode, keeping lease and device", async () => {
+			recordCam();
+			mkdirSync(camDir(), { recursive: true });
+			writeFileSync(join(camDir(), "mode.json"), JSON.stringify({ front: "front.mov" }));
+			const { exec, calls } = killableExec();
+			const { spawn, spawned } = spawnRecorder();
+			const provider = createAndroidProvider(deps(exec), { spawnDetached: spawn, sleep: async () => {} });
+			expect(await provider.relaunch?.("emulator-5554")).toEqual(ok(undefined));
+			expect(calls).toContain(`${ADB} -s emulator-5554 emu kill`);
+			const argv = spawned[0] ?? [];
+			expect(argv.slice(argv.indexOf("-port"), argv.indexOf("-port") + 2)).toEqual(["-port", "5554"]);
+			expect(argv[argv.indexOf("-camera-front") + 1]).toBe(`videofile:${camDir()}/front.mov`);
+			expect(argv).toContain("VideoPlayback");
+			expect(store.listDevices("android").map((d) => d.id)).toEqual(["emulator-5554"]);
+			expect(store.findLeaseByResource({ kind: "port", port: 5554 })).toBeDefined();
+		});
+
+		test("refuses a foreign emulator and a device that is not a camera emulator, killing nothing", async () => {
+			const { exec, calls } = killableExec();
+			const provider = createAndroidProvider(deps(exec), {
+				spawnDetached: spawnRecorder().spawn,
+				sleep: async () => {},
+			});
+			expect((await provider.relaunch?.("emulator-5554"))?.success).toBe(false);
+			recordCam("pixel-10");
+			const plain = await provider.relaunch?.("emulator-5554");
+			expect(plain?.success === false && plain.error).toMatch(/not a camera emulator/);
+			expect(calls.some((c) => c.includes("emu kill"))).toBe(false);
+		});
+
+		test("an emulator that never goes away is an error and nothing is launched", async () => {
+			recordCam();
+			const { exec } = fakeExec({
+				[`${EMULATOR} -list-avds`]: out(EMULATOR_LIST_AVDS),
+				[`${ADB} -s emulator-5554 emu kill`]: out("OK\n"),
+				[`${ADB} devices -l`]: out(ADB_DEVICES_MIXED),
+			});
+			const { spawn, spawned } = spawnRecorder();
+			let t = 0;
+			const provider = createAndroidProvider(
+				deps(exec, () => t),
+				{
+					spawnDetached: spawn,
+					sleep: async (ms) => {
+						t += ms;
+					},
+				}
+			);
+			const result = await provider.relaunch?.("emulator-5554");
+			expect(result?.success).toBe(false);
+			expect(spawned).toHaveLength(0);
+		});
 	});
 });

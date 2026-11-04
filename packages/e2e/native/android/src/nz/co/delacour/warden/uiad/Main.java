@@ -22,7 +22,7 @@ import org.json.JSONObject;
  */
 public final class Main {
 	static final int PROTOCOL = 1;
-	static final String VERSION = "0.3.0";
+	static final String VERSION = "0.6.0";
 	private static final Charset ASCII = Charset.forName("US-ASCII");
 
 	private static FileOutputStream stdout;
@@ -160,8 +160,32 @@ public final class Main {
 				case "selectAll":
 					data = uia.selectAll();
 					break;
+				case "a11yEvents":
+					data = uia.a11yEvents(req.optLong("since", 0));
+					break;
+				case "srFocus":
+					data = uia.srFocus(req.optString("dir", ""), req.has("x") ? (float) req.getDouble("x") : -1, req.has("y") ? (float) req.getDouble("y") : -1);
+					break;
+				case "srFocused":
+					data = uia.srFocused();
+					break;
+				case "srActivate":
+					data = uia.srActivate();
+					break;
+				case "srEvents":
+					data = uia.srEvents(req.optLong("since", 0));
+					break;
+				case "actionClick":
+					data = uia.actionClick((float) req.getDouble("x"), (float) req.getDouble("y"), req.optString("id", null));
+					break;
+				case "actionScroll":
+					data = uia.actionScroll(req.getString("dir"), req.has("x") ? (float) req.getDouble("x") : -1, req.has("y") ? (float) req.getDouble("y") : -1);
+					break;
 				case "screenshot":
 					data = uia.screenshot();
+					break;
+				case "audit":
+					data = uia.audit(req.getString("atf"), req.optBoolean("contrast", true));
 					break;
 				case "shutdown":
 					send("{\"id\":" + quote(id) + ",\"ok\":true,\"data\":{}}");

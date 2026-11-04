@@ -11,6 +11,7 @@ import {
 	parseTurboSummary,
 	renderReport,
 	signoffArgv,
+	turboCacheEnv,
 	turboTaskName,
 	umbrellaEarned,
 } from "./signoff";
@@ -523,5 +524,27 @@ describe("drift guard", () => {
 	test("contexts are unique", () => {
 		const contexts = SIGNOFF_CHECKS.map((check) => check.context);
 		expect(new Set(contexts).size).toBe(contexts.length);
+	});
+});
+
+describe("turboCacheEnv", () => {
+	test("points TURBO_CACHE_DIR at turbo-cache inside the git common dir, so every worktree shares one", () => {
+		const env = turboCacheEnv({ PATH: "/bin" }, "/repo/.git");
+		expect(env.TURBO_CACHE_DIR).toBe("/repo/.git/turbo-cache");
+		expect(env.PATH).toBe("/bin");
+	});
+
+	test("keeps a cache dir the caller already chose", () => {
+		expect(turboCacheEnv({ TURBO_CACHE_DIR: "/elsewhere" }, "/repo/.git").TURBO_CACHE_DIR).toBe("/elsewhere");
+	});
+
+	test("without a git common dir the env is left alone (turbo falls back to .turbo/cache)", () => {
+		expect(turboCacheEnv({ PATH: "/bin" }, null)).toEqual({ PATH: "/bin" });
+	});
+
+	test("does not mutate the env it was given", () => {
+		const env: Record<string, string | undefined> = { PATH: "/bin" };
+		turboCacheEnv(env, "/repo/.git");
+		expect(env.TURBO_CACHE_DIR).toBeUndefined();
 	});
 });

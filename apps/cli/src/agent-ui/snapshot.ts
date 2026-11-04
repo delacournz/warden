@@ -1,4 +1,5 @@
-import type { Driver, Element, Rect, Snapshot } from "@delacour/warden-e2e/driver/driver.types";
+import { canReadA11y } from "@delacour/warden-e2e/driver/a11y-read";
+import type { Driver, Element, ElementA11y, Rect, Snapshot } from "@delacour/warden-e2e/driver/driver.types";
 import { assignRefs, type RefTable } from "@delacour/warden-e2e/driver/refs";
 import { DEFAULT_SETTLE_QUIET_MS, settleByHash, snapshotHash } from "@delacour/warden-e2e/driver/settle";
 import { indexSnapshot, type NodeEntry } from "@delacour/warden-e2e/screen/nodes";
@@ -27,6 +28,8 @@ export type SnapshotRequest = {
 	markMissingIds?: boolean;
 	/** `--settle [ms]`: wait for a quiet screen (budget in ms), then diff against the previous snapshot */
 	settle?: { budgetMs: number };
+	/** `--a11y`: merge the screen-reader facts (iOS: the injected library's read) and print the hint / actions / focus columns */
+	a11y?: boolean;
 };
 
 /** One element of the `--json` result (`result.elements`): what a line shows, structured. */
@@ -41,6 +44,8 @@ export type ElementJson = {
 	selected?: boolean;
 	checked?: boolean;
 	frame: Rect;
+	/** `--a11y`: the screen-reader facts the backend read */
+	a11y?: ElementA11y;
 	/** an interactive element without a testID (only set while a recording is active) */
 	noId?: true;
 };
@@ -58,6 +63,8 @@ export type TakenSnapshot = {
 	lines: string[];
 	/** structured twin of `lines` */
 	elements: ElementJson[];
+	/** `--a11y` on an iOS app launched without the injected library: hint / actions / order are absent */
+	a11yMissing?: true;
 	/** advice printed after the lines (`[no-id]` marks) */
 	hints: string[];
 	total: number;
@@ -76,9 +83,10 @@ function pruneDepth(snapshot: Snapshot, levels: number): Snapshot {
 	return { ...snapshot, elements, flat: preorder(elements) };
 }
 
-export function elementJson(entry: NodeEntry, ref: string | undefined): ElementJson {
+export function elementJson(entry: NodeEntry, ref: string | undefined, withA11y = false): ElementJson {
 	const { element, states } = entry;
 	return {
+		...(withA11y && element.a11y !== undefined ? { a11y: element.a11y } : {}),
 		...(ref !== undefined ? { ref } : {}),
 		role: entry.role,
 		...(entry.name !== undefined ? { name: entry.name } : {}),
@@ -90,6 +98,21 @@ export function elementJson(entry: NodeEntry, ref: string | undefined): ElementJ
 		...(states.checked !== undefined ? { checked: states.checked } : {}),
 		frame: element.frame,
 	};
+}
+
+/**
+ * The snapshot with the screen-reader facts of `Element.a11y` filled in where the platform needs a second read (iOS: the
+ * injected library; Android snapshots carry them). `missing`: an iOS app launched without the library.
+ */
+async function withA11yFacts(
+	driver: Driver,
+	snapshot: Snapshot
+): Promise<Result<{ snapshot: Snapshot; missing: boolean }, UiError>> {
+	if (!canReadA11y(driver)) return ok({ snapshot, missing: false });
+	const read = await driver.readA11y(snapshot);
+	if (read.success) return ok({ snapshot: read.data, missing: false });
+	if (read.error.code === "E_UNSUPPORTED") return ok({ snapshot, missing: true });
+	return { success: false, error: driverUiError(read.error) };
 }
 
 type Fetched = { snapshot: Snapshot; settle?: { quiet: boolean; waitedMs: number } };
@@ -149,7 +172,9 @@ export async function takeSnapshot(
 	const previous = readLastSnapshot(ctx, udid);
 	const fetched = await fetchSnapshot(ctx, deps, driver, request.settle);
 	if (!fetched.success) return fetched;
-	const { snapshot } = fetched.data;
+	const merged = request.a11y ? await withA11yFacts(driver, fetched.data.snapshot) : undefined;
+	if (merged !== undefined && !merged.success) return merged;
+	const snapshot = merged?.data.snapshot ?? fetched.data.snapshot;
 	const { generation, refs } = storeSnapshot(ctx, udid, snapshot);
 	const hash = snapshotHash(snapshot);
 
@@ -157,6 +182,7 @@ export async function takeSnapshot(
 	const rendered = renderSnapshot(view, {
 		interactiveOnly: request.interactiveOnly,
 		refs: refs.byId,
+		...(request.a11y ? { a11y: true } : {}),
 		...(request.all ? {} : { maxLines: DEFAULT_MAX_LINES }),
 	});
 	const entries = indexSnapshot(view).entries;
@@ -185,7 +211,7 @@ export async function takeSnapshot(
 		}),
 		lines,
 		elements: listed.map((entry) => ({
-			...elementJson(entry, refs.byId.get(entry.element.id)),
+			...elementJson(entry, refs.byId.get(entry.element.id), request.a11y === true),
 			...(unmarked(entry) ? { noId: true as const } : {}),
 		})),
 		hints:
@@ -197,6 +223,7 @@ export async function takeSnapshot(
 		total: rendered.total,
 		shown: rendered.shown,
 		omitted: rendered.omitted,
+		...(merged?.data.missing ? { a11yMissing: true as const } : {}),
 	};
 	if (fetched.data.settle) taken.settle = fetched.data.settle;
 	if (request.settle && previous) {

@@ -34,7 +34,7 @@ jobs:
     # Loop guard 1: never react to the App's own pushes (it writes only changeset-release/* and tags,
     # but a stray write to develop must not start a second version run).
     if: github.actor != 'delacour-release[bot]'
-    runs-on: namespace-profile-linux-small
+    runs-on: namespace-profile-linux-medium
     # Repo writes use the App token. The workflow token checks out and dispatches ci.yml (the App
     # has no `actions` permission), hence actions: write.
     permissions:

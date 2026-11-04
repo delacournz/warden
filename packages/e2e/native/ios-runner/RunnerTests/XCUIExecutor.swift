@@ -115,14 +115,20 @@ final class XCUIExecutor: CommandExecutor {
     case let .pressButton(button):
       switch button {
       case .home: XCUIDevice.shared.press(.home)
-      case .volumeUp: XCUIDevice.shared.press(.volumeUp)
-      case .volumeDown: XCUIDevice.shared.press(.volumeDown)
+      case .volumeUp, .volumeDown:
+        // XCUIDevice.Button.volumeUp / .volumeDown are unavailable in the Simulator (the runner also builds for it, A11Y-4)
+        #if targetEnvironment(simulator)
+        throw WireError(.unsupported, "volume buttons are not available in the Simulator", detail: ["op": "pressButton"])
+        #else
+        XCUIDevice.shared.press(button == .volumeUp ? .volumeUp : .volumeDown)
+        #endif
       }
       return [:]
     case let .screenshot(scale): return screenshot(scale: scale)
     case .orientation: return ["orientation": .string(deviceOrientation.rawValue), "source": "device"]
     case .alertButtons: return try alertButtons()
     case let .frontmost(bundleId): return ["frontmost": .bool(app(bundleId).state == .runningForeground)]
+    case let .audit(params): return try audit(params)
     case let .appState(bundleId): return ["state": .string(Self.stateName(app(bundleId).state))]
     case let .launch(params): return launch(params)
     case let .terminate(bundleId): return terminate(bundleId)
@@ -173,6 +179,55 @@ final class XCUIExecutor: CommandExecutor {
       hasFocus: snapshot.hasFocus,
       children: snapshot.children.map(rawNode)
     )
+  }
+
+  /// `performAccessibilityAudit` on an app that is already running (never launched or restarted here). The handler
+  /// records every issue and returns `true`, so XCTest records no failure (`continueAfterFailure` stays on). A
+  /// not-running app is answered `E_APP_UNAVAILABLE` first: the audit itself throws error -51 for it (A11Y-0 spike).
+  private func audit(_ params: AuditParams) throws -> JSON {
+    let application = app(params.bundleId)
+    guard application.state != .notRunning else {
+      throw WireError(
+        .appUnavailable, "\(params.bundleId) is not running; the audit needs a running app",
+        detail: ["bundleId": .string(params.bundleId)])
+    }
+    if application.state != .runningForeground { application.activate() }
+    var mask: XCUIAccessibilityAuditType = []
+    for name in params.types { mask.insert(Self.auditType(name)) }
+    var found: [RawAuditIssue] = []
+    let began = Date()
+    try application.performAccessibilityAudit(for: mask) { issue in
+      found.append(Self.rawIssue(issue))
+      return true
+    }
+    let ms = Date().timeIntervalSince(began) * 1000
+    return AuditEncoder.auditData(issues: found, types: params.types, space: space(of: application), ms: ms)
+  }
+
+  private static func auditType(_ name: String) -> XCUIAccessibilityAuditType {
+    switch name {
+    case "contrast": return .contrast
+    case "elementDetection": return .elementDetection
+    case "hitRegion": return .hitRegion
+    case "sufficientElementDescription": return .sufficientElementDescription
+    case "dynamicType": return .dynamicType
+    case "textClipped": return .textClipped
+    default: return .trait
+    }
+  }
+
+  private static func rawIssue(_ issue: XCUIAccessibilityAuditIssue) -> RawAuditIssue {
+    let types = AuditEncoder.knownTypes.filter { issue.auditType.contains(auditType($0)) }
+    var element: RawAuditIssue.Element?
+    if let found = issue.element {
+      let frame = found.frame
+      element = RawAuditIssue.Element(
+        type: elementTypeName(found.elementType), identifier: found.identifier, label: found.label,
+        frame: Rect(x: frame.minX, y: frame.minY, width: frame.width, height: frame.height))
+    }
+    return RawAuditIssue(
+      auditTypes: types, compactDescription: issue.compactDescription, detailedDescription: issue.detailedDescription,
+      element: element)
   }
 
   private func alertButtons() throws -> JSON {

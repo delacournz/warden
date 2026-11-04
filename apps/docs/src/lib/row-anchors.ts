@@ -4,7 +4,7 @@ import type { Element, ElementContent, Root, RootContent } from "hast";
  * Deep links into reference tables. Headings already carry Fumadocs' anchors, but most of what a
  * reader wants to point at (`gesture pinch`, `--udid`, `WARDEN_HOME`, a troubleshooting symptom)
  * is a table row. Every body row whose first cell opens with inline code or a **bold term** gets
- * an id from it, and that lead becomes a link to its own row, so `/docs/agents/ui#gesture-pinch`
+ * an id from it, and that lead becomes a link to its own row, so `/docs/sims/ui#gesture-pinch`
  * lands on pinch. Bold is how a table of prose terms opts in; a data table (benchmarks, timings)
  * leads with plain text and stays unanchored. Wired into the MDX pipeline in `source.config.ts`;
  * `.row-anchor` and `tr:target` are styled in `app.css`.

@@ -61,7 +61,7 @@ Leasing, agent device control and an e2e test framework in one CLI, on one share
 ## Evidence on Hand
 
 - Parallel e2e run (salient, Oct 2026): 37 offline e2e specs of the Salient app across 5 leased iPhone 17 simulators in 3m25s wall time, 37/37 passing (one on retry), recorded as `public/demo/*` video. Serial baseline on one simulator: 13m55s, 36/37. 4.1× (say "4×" or the two times, never rounded up). The app may be named.
-- Framework benchmark (`content/docs/bench/data/ios-2026-10-25.json`, `packages/e2e-bench`): same 8 parity tests, same build, one fresh simulator per framework on EAS Workflows `macos-large`, no LLM. **Decision (2026-10-24): plan a landing section naming competitors with these ratios, but do not build it yet; bench stays in docs.**
+- Framework benchmark (`content/docs/e2e/bench/data/ios-2026-10-25.json`, `packages/e2e-bench`): same 8 parity tests, same build, one fresh simulator per framework on EAS Workflows `macos-large`, no LLM. **Decision (2026-10-24): plan a landing section naming competitors with these ratios, but do not build it yet; bench stays in docs.**
 - Golden-image measurements: fresh create + first boot 146–239 s; clone of settled golden + boot 3.7 s + 11.9 s; 3 clones in parallel ~20 s; second boot of a pool device ~6.5 s.
 - Real CLI help output and command surface (`apps/cli`), the skill (`skills/warden/`).
 - Agent support is real for: any agent the `skills` CLI installs into (skill), Claude Code and Codex (skill + SessionEnd hook). Agent logos for a "Works with" strip must be the agents' own marks, not redrawn.

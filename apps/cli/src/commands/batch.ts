@@ -11,6 +11,7 @@ import {
 	runBatch,
 } from "@delacour/warden-core/batch/schedule";
 import type { ClaimedDevice, ClaimOutcome } from "@delacour/warden-core/claim";
+import { parseClaimError } from "@delacour/warden-core/claim-errors";
 import { formatDuration, parseDuration } from "@delacour/warden-core/duration";
 import { bunExec, execError } from "@delacour/warden-core/exec";
 import { readGitFacts, readGitFactsSync } from "@delacour/warden-core/git-facts";
@@ -75,6 +76,7 @@ import { helperDir } from "../e2e/bun-runner";
 import { readE2ePackageVersion, stageBundledRuntime } from "../e2e/e2e-runtime";
 import { residentSocket, warmConnect } from "../e2e/warm-connect";
 import { claimLateWorkers, type ElasticPlan, type LateWorker, planElastic } from "../elastic";
+import { defaultLeaseHealthDeps } from "../lease-health";
 import {
 	type AppFlagValues,
 	appPhaseProgress,
@@ -2126,6 +2128,7 @@ async function batch(
 			headless,
 			...(preset?.slim !== undefined ? { slimConfig: preset.slim } : {}),
 			...(preset?.biometrics === true ? { biometrics: true } : {}),
+			...(preset?.reclaim !== undefined ? { reclaimConfig: preset.reclaim } : {}),
 		},
 		ctx.cwd,
 		merged.base
@@ -2252,7 +2255,7 @@ async function abortClaim(
 	const claimError = claimed.success || claimed.error === INTERRUPTED ? undefined : claimed.error;
 	const metroError = launch && metro && !metro.success ? `${metro.error} (log: ${launch.log})` : undefined;
 	const reason = claimError ?? (interrupted ? INTERRUPTED : (metroError ?? INTERRUPTED));
-	if (!interrupted && claimError !== undefined && isLockedClaimError(claimError)) {
+	if (!interrupted && claimError !== undefined && (isLockedClaimError(claimError) || parseClaimError(claimError))) {
 		return { code: reportClaimFailure(ctx, name, claimError) };
 	}
 	reportError(ctx, name, reason);
@@ -2516,6 +2519,7 @@ export const defaultBatchDeps: BatchDeps = {
 	},
 	onSignal: processOnSignal,
 	every: intervalEvery,
+	health: defaultLeaseHealthDeps,
 	after: (ms, fn) => {
 		const timer = setTimeout(fn, ms);
 		return () => clearTimeout(timer);
