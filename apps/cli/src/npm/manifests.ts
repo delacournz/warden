@@ -83,6 +83,38 @@ export const BINARY_PATH = `${BIN_DIR}/warden`;
 /** Copied from the repo root into every package. */
 export const LICENSE_FILE = "LICENSE";
 
+/** npm search terms for `@delacour/warden`: the queries a developer types to find it. */
+export const CLI_KEYWORDS = [
+	"ios-simulator",
+	"android-emulator",
+	"ai-agents",
+	"coding-agents",
+	"claude-code",
+	"codex",
+	"react-native",
+	"expo",
+	"e2e-testing",
+	"mobile-testing",
+	"parallel-testing",
+	"simulator",
+	"emulator",
+	"mcp",
+	"cli",
+];
+
+/** npm search terms for `@delacour/warden-e2e`. */
+export const E2E_KEYWORDS = [
+	"e2e",
+	"e2e-testing",
+	"react-native",
+	"expo",
+	"ios-simulator",
+	"android-emulator",
+	"mobile-testing",
+	"bun",
+	"testing",
+];
+
 /** Path of the e2e docs on the website: `@delacour/warden-e2e`'s homepage. */
 export const E2E_DOCS_PATH = "/docs/e2e";
 
@@ -136,7 +168,7 @@ export function mainManifest(meta: PackageMeta): MainManifest {
 		description: meta.description,
 		license: meta.license,
 		...repoLinks(meta),
-		keywords: ["ios-simulator", "android-emulator", "leasing", "agents", "e2e", "cli"],
+		keywords: CLI_KEYWORDS,
 		bin: { warden: SHIM_PATH },
 		exports: {
 			"./config": { types: `./${CONFIG_ENTRY_DTS}`, default: `./${CONFIG_ENTRY_JS}` },
@@ -162,11 +194,12 @@ export function e2eManifest(meta: PackageMeta, dependencies: Record<string, stri
 	return {
 		name: E2E_PACKAGE,
 		version: meta.version,
-		description: "TypeScript spec API for `warden e2e`: test, expect, screen, device, app",
+		description:
+			"TypeScript e2e testing for React Native and Expo on iOS simulators and Android emulators, run by `warden e2e`: test, expect, screen, device, app",
 		license: meta.license,
 		...repoLinks(meta, meta.homepage && `${meta.homepage}${E2E_DOCS_PATH}`),
 		type: "module",
-		keywords: ["e2e", "ios-simulator", "android-emulator", "bun", "testing"],
+		keywords: E2E_KEYWORDS,
 		exports: {
 			...Object.fromEntries(
 				Object.entries(E2E_ENTRIES).map(([key, entry]) => [

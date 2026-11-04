@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { e2eManifest, mainManifest, type PackageMeta, platformManifest } from "./manifests";
+import { CLI_KEYWORDS, E2E_KEYWORDS, e2eManifest, mainManifest, type PackageMeta, platformManifest } from "./manifests";
 import { RELEASE_TARGETS } from "./platforms";
 
 const meta: PackageMeta = { version: "0.3.0", description: "warden CLI", license: "MIT" };
@@ -113,10 +113,11 @@ describe("e2eManifest", () => {
 		expect(e2eManifest(meta, { zod: "^4.4.3" })).toEqual({
 			name: "@delacour/warden-e2e",
 			version: "0.3.0",
-			description: "TypeScript spec API for `warden e2e`: test, expect, screen, device, app",
+			description:
+				"TypeScript e2e testing for React Native and Expo on iOS simulators and Android emulators, run by `warden e2e`: test, expect, screen, device, app",
 			license: "MIT",
 			type: "module",
-			keywords: ["e2e", "ios-simulator", "android-emulator", "bun", "testing"],
+			keywords: E2E_KEYWORDS,
 			exports: {
 				".": { types: "./index.d.ts", default: "./index.mjs" },
 				"./preload": { types: "./preload.d.ts", default: "./preload.mjs" },
@@ -141,5 +142,30 @@ describe("e2eManifest", () => {
 	test("homepage = the e2e docs on the website when one is given", () => {
 		expect(e2eManifest(withSite, {}).homepage).toBe("https://warden.co.nz/docs/e2e");
 		expect("homepage" in e2eManifest(meta, {})).toBe(false);
+	});
+});
+
+describe("npm keywords", () => {
+	test("name the searches warden answers, no duplicates", () => {
+		for (const keyword of [
+			"ios-simulator",
+			"android-emulator",
+			"ai-agents",
+			"react-native",
+			"expo",
+			"e2e-testing",
+			"mcp",
+		]) {
+			expect(CLI_KEYWORDS).toContain(keyword);
+		}
+		for (const keyword of ["e2e-testing", "react-native", "expo", "ios-simulator", "android-emulator"]) {
+			expect(E2E_KEYWORDS).toContain(keyword);
+		}
+		expect(new Set(CLI_KEYWORDS).size).toBe(CLI_KEYWORDS.length);
+		expect(new Set(E2E_KEYWORDS).size).toBe(E2E_KEYWORDS.length);
+	});
+
+	test("the main package carries them", () => {
+		expect(mainManifest(meta).keywords).toEqual(CLI_KEYWORDS);
 	});
 });
