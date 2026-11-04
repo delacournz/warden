@@ -23,6 +23,20 @@ warden host doctor mini
 
 A host with no inbound port (behind NAT, a CI runner) is reached with `--jump <bastion>` or `--proxy-command` (for example `cloudflared access ssh --hostname %h` or `tailscale nc %h %p`).
 
+### A CI runner or a fresh Mac
+
+A machine that can't take a normal ssh login, like a GitHub Actions macOS runner, can attach itself instead:
+
+```bash
+# on the laptop: the key to hand over
+warden host key
+
+# on the runner: a user-level sshd that lets in only that key (no sudo)
+warden host attach --grant "ssh-ed25519 AAAA… warden:…" --advertise 100.64.0.9 --for 60m
+```
+
+`host attach` prints the `warden host add … --granted` line to run on the laptop. `--granted` means the runner already lets your key in, so there is no `host setup` step. The runner is reached on your tailnet (`--tailscale`, or `--advertise` with a userspace tailscaled), or through a bastion it dials out to (`--jump user@bastion --jump-port 2201`). The warden repo has an example workflow, `.github/workflows/remote-host.yml`, that keeps a macOS runner attached for up to two hours.
+
 ## Claim a device on a host
 
 ```bash
