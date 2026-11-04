@@ -1,6 +1,5 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
-import { userInfo } from "node:os";
 import { join } from "node:path";
 import { wardenHome } from "@delacour/warden-core/store";
 import { err, ok, type Result } from "@delacour/warden-types/result";
@@ -162,6 +161,16 @@ async function keygen(ctx: CommandContext, path: string): Promise<Result<string>
 	return ok(readFileSync(`${path}.pub`, "utf8").trim().split(" ").slice(0, 2).join(" "));
 }
 
+/**
+ * The user a user-level sshd lets in: the one it runs as. Asked of the OS: `USER` can be unset (launchd, turbo) and
+ * Bun's `os.userInfo()` then answers "unknown".
+ */
+export async function loginUser(ctx: CommandContext): Promise<Result<string>> {
+	const id = await ctx.exec(["id", "-un"]);
+	const name = id.stdout.trim();
+	return id.exitCode === 0 && name !== "" ? ok(name) : err(`id -un failed: ${id.stderr.trim() || "no output"}`);
+}
+
 /** Set up and start the sshd (and the dial-out); `stop` ends both. */
 export async function startAttach(ctx: CommandContext, opts: AttachOptions): Promise<Result<Attached>> {
 	if (!existsSync(SSHD)) return err(`${SSHD} is missing: host attach needs OpenSSH's sshd`);
@@ -190,11 +199,15 @@ export async function startAttach(ctx: CommandContext, opts: AttachOptions): Pro
 	const dial = opts.jump
 		? Bun.spawn(dialArgv(opts.jump, port), { stdin: "ignore", stdout: "ignore", stderr: "inherit" })
 		: undefined;
-	// a user-level sshd lets in only the user it runs as
-	const user = userInfo().username;
+	const user = await loginUser(ctx);
+	if (!user.success) {
+		dial?.kill();
+		sshd.kill();
+		return user;
+	}
 	const add = attachAddLine({
 		name: opts.name,
-		user,
+		user: user.data,
 		hostname: opts.jump ? "127.0.0.1" : (opts.advertise ?? opts.listen),
 		port: opts.jump ? opts.jump.remotePort : port,
 		hostKey: hostKey.data,

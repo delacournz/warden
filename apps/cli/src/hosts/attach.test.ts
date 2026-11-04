@@ -5,7 +5,7 @@ import { bunExec } from "@delacour/warden-core/exec";
 import { getHost } from "@delacour/warden-core/hosts/registry";
 import { createHostCommand } from "../commands/host";
 import { type TestContext, testContext } from "../testing";
-import { type Attached, attachAddLine, dialArgv, sshdConfig, startAttach } from "./attach";
+import { type Attached, attachAddLine, dialArgv, loginUser, sshdConfig, startAttach } from "./attach";
 import { ensureLaptopKey } from "./setup";
 import { sshdSkipReason } from "./sshd.testing";
 
@@ -118,4 +118,17 @@ describe.skipIf(sshdSkipReason(process.env) !== undefined)("host attach over a r
 			expect.objectContaining({ name: "warden", ok: true })
 		);
 	}, 60_000);
+});
+
+describe("loginUser", () => {
+	test("the OS's answer (`id -un`), never a guess from an env that may lack USER", async () => {
+		const ctx = testContext([], { exec: async () => ({ exitCode: 0, stdout: "runner\n", stderr: "" }) });
+		ctxs.push(ctx);
+		ctx.env.USER = "someone-else";
+		expect(await loginUser(ctx)).toEqual({ success: true, data: "runner" });
+		const broken = testContext([], { exec: async () => ({ exitCode: 1, stdout: "", stderr: "no" }) });
+		ctxs.push(broken);
+		const r = await loginUser(broken);
+		expect(r.success).toBe(false);
+	});
 });
