@@ -58,4 +58,16 @@ describe("routeRules", () => {
 		expect(routeRules["/llms.txt"].headers["X-Robots-Tag"]).toBe("noindex");
 		expect(routeRules["/llms-full.txt"].headers["X-Robots-Tag"]).toBe("noindex");
 	});
+
+	test("every response carries the security headers, and they never override a route's own", () => {
+		const all = routeRules["/**"].headers;
+		expect(all["Strict-Transport-Security"]).toBe("max-age=63072000; includeSubDomains");
+		expect(all["X-Content-Type-Options"]).toBe("nosniff");
+		expect(all["X-Frame-Options"]).toBe("SAMEORIGIN");
+		expect(all["Content-Security-Policy"]).toBe("frame-ancestors 'self'");
+		expect(all["Referrer-Policy"]).toBe("strict-origin-when-cross-origin");
+		expect(all["Permissions-Policy"]).toContain("camera=()");
+		expect("Cache-Control" in all).toBe(false);
+		expect("X-Robots-Tag" in all).toBe(false);
+	});
 });

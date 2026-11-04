@@ -5,8 +5,8 @@ import { ConsentBanner } from "@/components/consent-banner";
 import { TrackedSearchDialog } from "@/components/search-dialog";
 import { startPosthog } from "@/lib/analytics/posthog";
 import { installClickTracking } from "@/lib/analytics/track";
-import { socialImageMeta, tagline } from "@/lib/seo";
-import { appDescription, appName, defaultOgImage } from "@/lib/shared";
+import { siteJsonLd, socialImageMeta, tagline } from "@/lib/seo";
+import { appDescription, appName, defaultOgImage, metaDescription } from "@/lib/shared";
 import { themeHeadScript } from "@/lib/theme";
 import appCss from "@/styles/app.css?url";
 
@@ -16,18 +16,21 @@ export const Route = createRootRoute({
 			{ charSet: "utf-8" },
 			{ name: "viewport", content: "width=device-width, initial-scale=1" },
 			{ title: `${appName} — ${tagline}` },
-			{ name: "description", content: appDescription },
+			{ name: "description", content: metaDescription },
 			{ property: "og:type", content: "website" },
 			{ property: "og:site_name", content: appName },
 			{ property: "og:title", content: `${appName} — ${tagline}` },
 			{ property: "og:description", content: appDescription },
+			{ name: "twitter:title", content: `${appName} — ${tagline}` },
+			{ name: "twitter:description", content: metaDescription },
 			...socialImageMeta(defaultOgImage, `${appName} — ${tagline}`),
 		],
 		links: [
 			{ rel: "stylesheet", href: appCss },
 			{ rel: "icon", href: "/favicon.svg", type: "image/svg+xml", sizes: "any" },
+			{ rel: "alternate", type: "text/plain", href: "/llms.txt", title: "llms.txt" },
 		],
-		scripts: [themeHeadScript],
+		scripts: [themeHeadScript, { type: "application/ld+json", children: JSON.stringify(siteJsonLd()) }],
 	}),
 	component: RootComponent,
 });

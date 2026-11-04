@@ -1,7 +1,7 @@
 {
 	"name": "@delacour/warden",
 	"version": "0.9.0",
-	"description": "warden CLI: machine-wide device + port leasing for agents and users",
+	"description": "Give every AI coding agent its own iOS simulator or Android emulator: machine-wide leasing of devices, ports and app builds, plus TypeScript e2e testing for React Native and Expo",
 	"homepage": "https://warden.co.nz",
 	"license": "MIT",
 	"type": "module",
