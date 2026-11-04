@@ -71,6 +71,8 @@ Put the app on it first: `warden app ensure --lease <host lease id> [--kind <dev
 
 `warden e2e` / `warden batch` on a host's devices: not yet. `close --release` releases the lease on the host too. Someone else's host lease is `device_foreign` (exit 2).
 
+A person watches or drives it: `warden view [<host lease id>] [--watch] [--json]` serves a page on `127.0.0.1` (a random token path; only that host and origin) and opens the browser (not with `--json`, which prints `{ leaseId, host, url, watch }`). Frames come from the driver's screenshot (half scale, one at a time, a few per second); a click is a tap, a drag a swipe, keys type (Enter / Backspace / Tab / arrows as keys, Esc = home). `--watch` refuses input. Input needs portrait (rotated: watch only, use `warden ui`). Holds until Ctrl-C (exit 0, the lease stays yours) or the lease ends (exit 11). `--detach` is for hosted devices only.
+
 ## Dev client on a host's device (`warden dev --host`)
 
 `warden dev [ios|android] --host <name> [--port <from:span>] [--no-open] [--json] [-- <expo start args>]`: claims a device on the host (like `claim --host`; `--profile`, `--runtime`, `--ttl`, `--label`, `--wait`, `--priority` pass on), leases a Metro port **here** and starts Metro here, sends + installs the dev build there (as `app ensure`, while Metro warms up), then opens one `ssh -R <host port>:127.0.0.1:<port>` so Metro answers on the host's loopback, and points the dev client at it (iOS `http://127.0.0.1:<host port>`, Android `http://10.0.2.2:<host port>`). The host leases its end of the forward (`port claim` there, from 8091) and holds it only while that ssh lives. Devtools and fast refresh ride the same port.

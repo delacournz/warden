@@ -338,7 +338,7 @@ export const COMMANDS: readonly CommandEntry[] = [
 	{
 		name: "view",
 		group: "Account",
-		summary: "open a hosted device in the warden viewer window",
+		summary: "watch and drive a device: hosted (the warden viewer window) or on a warden host (a browser tab)",
 		load: async () => (await import("./view")).viewCommand,
 	},
 	{
