@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import type { ExecResult } from "@delacour/warden-core/exec";
 import { type HostRecord, putHost } from "@delacour/warden-core/hosts/registry";
 import { type TestContext, testContext } from "../testing";
-import { hostMetroUrl, openTunnel, type TunnelProc, tunnelArgv } from "./tunnel";
+import { hostMetroUrl, openTunnel, RELAY_NO_TUNNEL, type TunnelProc, tunnelArgv } from "./tunnel";
 
 const ctxs: TestContext[] = [];
 afterEach(() => {
@@ -98,6 +98,20 @@ describe("openTunnel", () => {
 		expect(proc.state.argv).toContain("8093:127.0.0.1:8081");
 		await r.data.close();
 		expect(proc.state.ended).toBe(true);
+	});
+
+	test("a relayed host has no ssh to forward over: refused before any port is leased there", async () => {
+		const remotes: string[][] = [];
+		const ctx = context(remotes);
+		putHost(ctx.db, {
+			name: "cloud",
+			ssh: { hostname: "relay" },
+			relay: { apiUrl: "http://a", hostId: "h1" },
+			addedAt: 1,
+		});
+		const r = await openTunnel(ctx, "cloud", 8081, { spawn: fakeProc([]).spawn });
+		expect(!r.success && r.error).toContain(RELAY_NO_TUNNEL);
+		expect(remotes).toEqual([]);
 	});
 
 	test("the host's failure is the error, and its port lease is released", async () => {

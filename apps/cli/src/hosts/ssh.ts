@@ -3,6 +3,7 @@ import { join } from "node:path";
 import type { ClaimErrorCode } from "@delacour/warden-core/claim-errors";
 import type { HostRecord, SshTarget } from "@delacour/warden-core/hosts/registry";
 import { err, ok, type Result } from "@delacour/warden-types/result";
+import { selfCommand } from "../self-command";
 
 /** Where a host's pinned `known_hosts` and the shared control sockets live under `$WARDEN_HOME`. */
 export function hostKnownHosts(home: string, name: string): string {
@@ -103,7 +104,31 @@ export function shellSplit(line: string): Result<string[]> {
 	return ok(words);
 }
 
+/**
+ * A relayed host's stand-in for ssh: `warden __relay-dial --api <url> --host-id <id> -- <cmd…>` carries the same stdio and exit
+ * code over warden-api (255 = the relay failed). Forwards (`-R`, `-t`) have no relay equivalent and are dropped;
+ * callers that need one refuse a relayed host first.
+ */
+export function relayArgv(host: HostRecord, cmd: readonly string[], dialer: readonly string[]): string[] {
+	const r = host.relay;
+	if (r === undefined) return [...cmd];
+	return [
+		...dialer,
+		"__relay-dial",
+		"--api",
+		r.apiUrl,
+		"--host-id",
+		r.hostId,
+		...(r.account !== undefined ? ["--account", r.account] : []),
+		...(r.organization !== undefined ? ["--organization", r.organization] : []),
+		"--",
+		...cmd,
+	];
+}
+
 export type SshArgvOptions = {
+	/** the warden argv that dials a relayed host (default: this one) */
+	dialer?: readonly string[];
 	home: string;
 	/** first contact: pin the host key ssh is shown (`accept-new`), never accept a changed one */
 	trustNew?: boolean;
@@ -119,6 +144,7 @@ export type SshArgvOptions = {
  * dead link is noticed in ~45 s, and one shared connection per host. Each word of `cmd` is quoted for the remote shell.
  */
 export function sshArgv(host: HostRecord, cmd: readonly string[], opts: SshArgvOptions): string[] {
+	if (host.relay !== undefined) return relayArgv(host, cmd, opts.dialer ?? selfCommand());
 	const argv = [
 		"ssh",
 		"-T",

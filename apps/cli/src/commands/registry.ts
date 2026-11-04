@@ -221,6 +221,12 @@ export const COMMANDS: readonly CommandEntry[] = [
 		load: async () => (await import("./host-tunnel")).hostTunnelCommand,
 	},
 	{
+		name: "__relay-dial",
+		summary: "run one command on a relayed host through warden-api, like ssh would (internal)",
+		hidden: true,
+		load: async () => (await import("./relay-dial")).relayDialCommand,
+	},
+	{
 		name: "__ios-runner-host",
 		summary: "resident iPhone runner host behind `warden ui` (internal)",
 		hidden: true,

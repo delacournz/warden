@@ -6,6 +6,7 @@ import { err, ok, type Result } from "@delacour/warden-types/result";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import type { AttachFlags } from "../hosts/attach-run";
+import type { RelayPin } from "../hosts/cloud";
 import type { FetchSpawn } from "../hosts/evidence";
 import { grantKey, revokeKey } from "../hosts/grant";
 import type { PassthroughSpawn } from "../hosts/passthrough";
@@ -14,6 +15,7 @@ import { ensureLaptopKey, laptopKeyPath, setupHost, type UploadFile } from "../h
 import { formatSshTarget, hostKnownHosts, parseSshTarget } from "../hosts/ssh";
 import { emit, note, reportError, success, table, warn } from "../output";
 import { reportClaimFailure } from "../physical-lock";
+import type { AuthPin } from "../remote/context";
 
 /** What `warden host` reaches the outside world through beyond the context; tests inject the upload. */
 export type HostDeps = {
@@ -33,8 +35,67 @@ type AddOpts = {
 	hostKey?: string;
 	/** the host already grants this laptop's key (`warden host attach --grant`): use it, no setup */
 	granted?: true;
+	/** reach it through warden-api's relay (`warden host uplink` there), not ssh */
+	cloud?: true;
+	hostId?: string;
 	json?: true;
 };
+
+const SSH_ONLY: ReadonlyArray<[keyof AddOpts, string]> = [
+	["ssh", "--ssh"],
+	["identity", "--identity"],
+	["proxyCommand", "--proxy-command"],
+	["jump", "--jump"],
+	["hostKey", "--host-key"],
+	["granted", "--granted"],
+];
+
+/** `host add --cloud`: find the host on warden-api, record the relay and the session that dials it, say hello. */
+async function addCloud(ctx: CommandContext, name: string, opts: AddOpts): Promise<number> {
+	const clash = SSH_ONLY.filter(([k]) => opts[k] !== undefined).map(([, flag]) => flag);
+	if (clash.length > 0) return fail(ctx, `--cloud goes through warden-api, not ssh: drop ${clash.join(", ")}`);
+	if (!NAME.test(name)) return fail(ctx, `bad host name ${name}: letters, digits, . _ -`);
+	const [{ authedApi, pinOf }, { cloudRecord, pickRelayHost }] = await Promise.all([
+		import("../remote/session"),
+		import("../hosts/cloud"),
+	]);
+	const authed = authedApi(ctx);
+	if (!authed.success) return fail(ctx, authed.error);
+	const listed = await authed.data.api.listHosts();
+	if (!listed.success) return fail(ctx, `warden-api: ${listed.error.message}`);
+	const picked = pickRelayHost(listed.data, name, opts.hostId);
+	if (!picked.success) return fail(ctx, picked.error);
+	const record = cloudRecord(name, picked.data, relayPin(authed.data.apiUrl, pinOf(authed.data)), ctx.now());
+	const version = picked.data.status === "online" ? await hostVersion(ctx, record, { allowSkew: true }) : undefined;
+	if (version !== undefined && !version.success && /HOST_AUTH/.test(version.error)) {
+		return reportClaimFailure(ctx, SCOPE, version.error);
+	}
+	const recorded: HostRecord = { ...record, ...(version?.success ? { version: version.data } : {}) };
+	putHost(ctx.store(), recorded);
+	const warden = version?.success ? version.data : undefined;
+	if (opts.json) emit(ctx, true, { host: recorded, warden: warden ?? null }, "");
+	else success(ctx, cloudAddedText(name, picked.data.id, warden));
+	return 0;
+}
+
+function relayPin(apiUrl: string, pin: AuthPin): RelayPin {
+	return {
+		apiUrl,
+		...(pin.account !== undefined ? { account: pin.account } : {}),
+		...(pin.organizationId !== undefined ? { organization: pin.organizationId } : {}),
+	};
+}
+
+function cloudAddedText(name: string, hostId: string, warden: string | undefined): string {
+	return warden !== undefined
+		? `added ${name} (relay ${hostId}, warden ${warden}); next: warden host doctor ${name}`
+		: `added ${name} (relay ${hostId}); it is offline: run warden host uplink there`;
+}
+
+function fail(ctx: CommandContext, message: string): number {
+	reportError(ctx, SCOPE, message);
+	return 1;
+}
 
 /** The record `add` makes from its flags, or why the flags are wrong. */
 function hostFromFlags(ctx: CommandContext, name: string, opts: AddOpts): Result<HostRecord> {
@@ -80,6 +141,8 @@ function addedText(name: string, host: HostRecord, version: Result<string>, gran
 
 /** Record a host and make first contact (pins its host key; reads its warden version when one is installed). */
 async function add(ctx: CommandContext, name: string, opts: AddOpts): Promise<number> {
+	if (opts.cloud) return addCloud(ctx, name, opts);
+	if (opts.hostId !== undefined) return fail(ctx, "--host-id goes with --cloud");
 	const host = hostFromFlags(ctx, name, opts);
 	if (!host.success) {
 		reportError(ctx, SCOPE, host.error);
@@ -328,6 +391,10 @@ async function key(ctx: CommandContext, opts: { json?: true }): Promise<number> 
 	return 0;
 }
 
+async function uplink(ctx: CommandContext, opts: { api?: string; tokenFile?: string }): Promise<number> {
+	return (await import("../hosts/uplink-run")).uplinkHost(ctx, opts);
+}
+
 async function attach(ctx: CommandContext, opts: AttachFlags): Promise<number> {
 	const { attachHost } = await import("../hosts/attach-run");
 	return attachHost(ctx, opts);
@@ -350,6 +417,8 @@ export function createHostCommand(deps: HostDeps = {}) {
 				.option("--jump <host>", "ssh jump host (ProxyJump), for a host with no inbound")
 				.option("--host-key <key>", "pin this host key (`ssh-ed25519 AAAA…`) instead of trusting the first one seen")
 				.option("--granted", "the host already grants this laptop's key (host attach): use it, no setup")
+				.option("--cloud", "reach it through warden-api (warden host uplink there, or a hosted Mac), not ssh")
+				.option("--host-id <id>", "with --cloud: which of the account's hosts (default: the one named <name>)")
 				.option("--json", "machine-readable output")
 				.action(async (name, opts) => done(await add(ctx, name, opts)));
 			cmd
@@ -375,6 +444,12 @@ export function createHostCommand(deps: HostDeps = {}) {
 				.option("--for <duration>", "stop after this long (default: until Ctrl-C / SIGTERM)")
 				.option("--json", "machine-readable output")
 				.action(async (opts) => done(await attach(ctx, opts)));
+			cmd
+				.command("uplink")
+				.description("on the host: keep an outbound link to warden-api so laptops reach it with no inbound at all")
+				.option("--api <url>", "warden-api (default: $WARDEN_API_URL, else the hosted one)")
+				.option("--token-file <file>", "the host token (default: $WARDEN_HOST_TOKEN)")
+				.action(async (opts) => done(await uplink(ctx, opts)));
 			cmd
 				.command("setup")
 				.description("install this warden on the host (no sudo), fetch its helper, grant this laptop's key")

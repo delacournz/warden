@@ -228,6 +228,14 @@ export async function devOnHost(ctx: CommandContext, deps: DevDeps, req: HostDev
 		reportError(ctx, "dev", "--host runs Expo dev clients only; a bare React Native app is not supported there yet");
 		return 1;
 	}
+	const [{ getHost }, { RELAY_NO_TUNNEL }] = await Promise.all([
+		import("@delacour/warden-core/hosts/registry"),
+		import("../hosts/tunnel"),
+	]);
+	if (getHost(ctx.store(), req.host)?.relay !== undefined) {
+		reportError(ctx, "dev", `${req.host} ${RELAY_NO_TUNNEL}`);
+		return 1;
+	}
 	const bundle = bundleIdFor(project, req.platform);
 	if (!bundle.success) {
 		reportError(ctx, "dev", bundle.error);

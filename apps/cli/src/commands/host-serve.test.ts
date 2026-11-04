@@ -125,4 +125,18 @@ describe("warden __host-serve", () => {
 		expect(await unknown.run()).toBe(2);
 		expect(await setup("warden perf report S1 --json").run()).toBe(0);
 	});
+
+	test("--relay-owner (host serve --uplink): the relay's owner, never with --key, malformed refused", async () => {
+		const relayed = setup("warden ls --json", { grant: false });
+		relayed.ctx.argv = ["--relay-owner", '{"machineId":"m9","user":"me@x.nz"}'];
+		expect(await relayed.run()).toBe(0);
+		expect(relayed.spawned[0]?.env.WARDEN_HOST_OWNER).toBe('{"machineId":"m9","user":"me@x.nz"}');
+		const bad = setup("warden ls --json", { grant: false });
+		bad.ctx.argv = ["--relay-owner", "{}"];
+		expect(await bad.run()).toBe(1);
+		const both = setup("warden ls --json");
+		both.ctx.argv = ["--key", "SHA256:abc", "--relay-owner", '{"machineId":"m9","user":"u"}'];
+		expect(await both.run()).toBe(1);
+		expect(both.spawned).toHaveLength(0);
+	});
 });

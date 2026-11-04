@@ -2016,6 +2016,8 @@ Commands:
                             to grant on a host or pass to host attach
   attach                    on a machine with no inbound ssh (a CI runner): a
                             user-level sshd that lets one laptop key in
+  uplink                    on the host: keep an outbound link to warden-api so
+                            laptops reach it with no inbound at all
   setup <name>              install this warden on the host (no sudo), fetch its
                             helper, grant this laptop's key
   doctor <name>             check a host: reachable, key accepted, same warden
@@ -2051,6 +2053,10 @@ Options:
                          trusting the first one seen
   --granted              the host already grants this laptop's key (host
                          attach): use it, no setup
+  --cloud                reach it through warden-api (warden host uplink there,
+                         or a hosted Mac), not ssh
+  --host-id <id>         with --cloud: which of the account's hosts (default:
+                         the one named <name>)
   --json                 machine-readable output
   -h, --help             display help for command
 
@@ -2088,6 +2094,18 @@ Options:
   --for <duration>        stop after this long (default: until Ctrl-C / SIGTERM)
   --json                  machine-readable output
   -h, --help              display help for command
+
+$ warden host uplink --help
+Usage: warden host uplink [options]
+
+on the host: keep an outbound link to warden-api so laptops reach it with no
+inbound at all
+
+Options:
+  --api <url>          warden-api (default: $WARDEN_API_URL, else the hosted
+                       one)
+  --token-file <file>  the host token (default: $WARDEN_HOST_TOKEN)
+  -h, --help           display help for command
 
 $ warden host setup --help
 Usage: warden host setup [options] <name>
@@ -4505,7 +4523,8 @@ for a laptop (internal)
 
 Options:
   --key <fingerprint>
-  -h, --help           display help for command"
+  --relay-owner <json>
+  -h, --help            display help for command"
 `;
 
 exports[`help output warden __host-tunnel --help (and nested subcommands) 1`] = `
@@ -4519,6 +4538,20 @@ Options:
   --lease <id>
   --json
   -h, --help     display help for command"
+`;
+
+exports[`help output warden __relay-dial --help (and nested subcommands) 1`] = `
+"$ warden __relay-dial --help
+Usage: warden __relay-dial [options] [cmd...]
+
+run one command on a relayed host through warden-api, like ssh would (internal)
+
+Options:
+  --api <url>
+  --host-id <id>
+  --account <name>
+  --organization <id>
+  -h, --help           display help for command"
 `;
 
 exports[`help output warden __ios-runner-host --help (and nested subcommands) 1`] = `
