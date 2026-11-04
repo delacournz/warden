@@ -41,6 +41,16 @@ A lease on a host can also end without a release. `warden events` records it as 
 | `remote_gone` | the host no longer holds the lease |
 | `host_expired` | a hosted Mac's session reached its end; `warden heartbeat` warns 10 minutes before |
 
+To drive the device, put the app on it and use `warden ui`:
+
+```bash
+warden app ensure --lease <lease id> --json
+warden ui open com.example.app
+warden ui snapshot -i
+```
+
+`app ensure` builds or fetches the app here, sends it to the host once per content hash, and installs it there. `warden ui` runs its driver on the host over ssh. Verbs that run local tools (screenshots, rotation, network conditions, devtools) don't reach a host's device yet, and neither does `warden e2e`.
+
 A claim that can't reach the host is tried three times with the same idempotency key, so a claim that landed before the link dropped is returned rather than made twice.
 
 ## What the laptop's key can do

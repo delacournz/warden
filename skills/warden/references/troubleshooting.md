@@ -126,6 +126,7 @@
 | 120 | A `warden run` / `warden dev` on a host lease stops with `LEASE_LOST` (exit 11); `warden events` shows `host_lost … unreachable` | The keepalive could not reach the host 3 times in a row (≈ 90 s), so the host's lease could no longer be renewed | `warden host doctor <name>`; once it answers, claim again (`warden claim <platform> --host <name>`). Never loop on the claim |
 | 121 | `host_lost … remote_gone` in `warden events`, or `heartbeat` warns `<host> no longer holds <id>` | The host's lease ended there: its gc expired it (the laptop slept past `WARDEN_REMOTE_TTL`) or a person released it on the host | Claim again. A laptop that sleeps often: raise the host's `WARDEN_REMOTE_TTL` |
 | 122 | `<host>'s session ends in …` warnings, then `host_lost … host_expired` | The hosted Mac's session has a hard end (`expiresAt`); the lease ends with it | A person renews or replaces the host session; then claim again. Warden never renews it on its own |
+| 123 | `warden app ensure --lease <host lease>` fails with `upload of <name> failed: … does not match …` | The build reached the host altered or cut short (the link dropped mid-send), so the host refused it and kept nothing | Run it again: only a build whose content matches its hash is kept. Again and again: `warden host doctor <name>`, then check the host's free disk |
 
 ## Code lookup
 

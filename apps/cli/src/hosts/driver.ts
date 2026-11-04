@@ -53,7 +53,11 @@ export function hostDriverArgv(ctx: CommandContext, lease: HostLease): Result<st
 }
 
 /** The driver of a host's device, served by the host's warden over ssh; closing it ends the ssh session. */
-export async function connectHostDriver(ctx: CommandContext, lease: HostLease): Promise<Result<Driver, UiError>> {
+export async function connectHostDriver(
+	ctx: CommandContext,
+	lease: HostLease,
+	opts: { requestTimeoutMs?: number } = {}
+): Promise<Result<Driver, UiError>> {
 	const argv = hostDriverArgv(ctx, lease);
 	if (!argv.success) return { success: false, error: uiError("engine_unavailable", argv.error) };
 	mkdirSync(hostControlDir(wardenHome(ctx.env)), { recursive: true, mode: 0o700 });
@@ -65,6 +69,7 @@ export async function connectHostDriver(ctx: CommandContext, lease: HostLease): 
 		transport: stdioTransport({ cmd: argv.data }),
 		label: lease.resource.host,
 		readyTimeoutMs: 30_000,
+		...(opts.requestTimeoutMs !== undefined ? { requestTimeoutMs: opts.requestTimeoutMs } : {}),
 	});
 	if (!client.success) {
 		return { success: false, error: uiError("engine_unavailable", `${lease.resource.host}: ${client.error.message}`) };

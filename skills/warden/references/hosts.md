@@ -48,7 +48,9 @@ After `claim --host`, `warden ui` picks the host lease like any other (the only 
 |---|---|
 | `status`, `open <bundleId\|url>`, `snapshot`, `find`, `get`, `is`, `wait`, `press`, `tap`, `fill`, `type`, `key`, `scroll`, `gesture …`, `close [--release]` | `screen …` (screenshot, rotate, video, appearance), `home`, `back`, `alert`, conditions (`net`, `location`, `clock`, …), devtools (`eval`, `logs`, `tree`, …), `record …`, `bench` |
 
-`open --metro`, `--kind` and `--project` are refused on a host device: open an app already installed there by bundle id. `close --release` releases the lease on the host too. Someone else's host lease is `device_foreign` (exit 2).
+Put the app on it first: `warden app ensure --lease <host lease id> [--kind <dev|simulator|release>] [--json]` (or `--udid <udid>`) resolves the build here (cache, EAS or a local build, as for a local device), sends it to the host once per content hash (`$WARDEN_HOME/uploads/<sha256>/<name>` there; unused for 7 days = pruned), and installs that copy through the host's driver → `{ appPath, hash, source, installed: true, host, hostPath }`. `--install-mode` / `--reset-keychain` are refused there. `open --metro`, `--kind` and `--project` are refused on a host device: `app ensure` it, then open it by bundle id.
+
+`warden e2e` / `warden batch` on a host's devices: not yet. `close --release` releases the lease on the host too. Someone else's host lease is `device_foreign` (exit 2).
 
 A spec process reaches a host's device the same way when `WARDEN_HOST` (its name) and `WARDEN_HOST_DRIVER` (JSON argv of the ssh command that serves the driver) are set.
 
@@ -62,6 +64,7 @@ The grant is a forced command in the host's `~/.ssh/authorized_keys`: `command="
 | `claim … --json` | the session selector refused; no `--ttl` = `WARDEN_REMOTE_TTL` on the host (default `90s`) |
 | `heartbeat … --json`, `release … --json` | the session selector, `--all` and `--udid` refused; a lease id held by another owner refused |
 | `__driver-serve --lease <id>` | the driver of the caller's own device lease, on stdio |
+| `__host-recv … --json` | an app build as a tar on stdin, named by its content hash: unpacked into the host's uploads only if its content matches; `app ensure` asks first whether the host has it |
 
 Anything else exits 2 (`refused: …` on stderr). The owner on the host is `{kind: "host", machineId, user}` from the grant (owner key `host:<machineId>`), never from a flag or env the laptop sends: every session on that laptop is one owner there, so `WARDEN_MAX_PER_OWNER` counts per laptop. Host leases carry no pid: they live by heartbeat + TTL only.
 
@@ -80,4 +83,4 @@ Every call is `ssh -T -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnown
 | `HOST_VERSION_SKEW` | 14 | the host runs another warden version: `warden host setup <name>` |
 | `HOST_UNKNOWN` | 15 | no host by that name: `warden host ls` |
 
-Rows 115-122 in troubleshooting.md.
+Rows 115-123 in troubleshooting.md.
