@@ -322,9 +322,15 @@ macOS only. Lines up the open Simulator.app (Xcode 27: Device Hub) windows of wa
 
 Duplicate a shut-down iOS simulator (udid or name) into warden's pool. `--name` defaults to the next free `warden-<profile>-N`.
 
-### `warden golden ensure | ls | prune`
+### `warden golden ensure | ls | prune | key | export | import`
 
 Golden iOS images / Android snapshots new devices start from. All three take `--platform ios|android` (default `ios`). `ensure [--profile] [--runtime]` builds once or reuses (profile default `iphone-17`; Android: first AVD); `ls` lists them; `prune` deletes stale goldens (`--all` every golden, `-y` skips the prompt before `--all`). See [Golden images](/docs/sims/golden-images).
+
+iOS only, to carry a golden between machines (a CI cache):
+
+- `key [--profile] [--runtime] [--json]` — print the golden's name, `warden-golden-<profile>-<key>-r<recipe>`, without building it; `--json` → `{ profile, key, name, recipe, xcodeBuild, runtimeId, runtimeBuild, deviceType }`.
+- `export <dir> [--profile] [--runtime] [--json]` — copy the golden (built first when missing) into `<dir>/<name>/` (`golden.json` + `device/`), replacing an older copy; `--json` → `{ name, key, udid, built, path }`.
+- `import <dir> [--json]` — register each archive in `<dir>` whose key this machine would build; exit 0 when there is nothing to import, the dir is missing, or an archive is stale or broken (each skip has a `reason`). `--json` → `[{ name, profile, imported, udid?, reason? }]`.
 
 ### `warden check`
 
@@ -356,7 +362,7 @@ By port, `--lease <id...>` or `--mine`. `--force` releases leases held by someon
 
 ### `warden app fingerprint [platform]`
 
-Print the project's native fingerprint (both platforms by default). `--project`, `--bundle-id`, `--variant`.
+Print the project's native fingerprint (both platforms by default). `--project`, `--bundle-id`, `--variant`. `--kind dev|simulator|release` prints instead the native fingerprint that kind's build is cached under; `--json` adds `kind` and `hashes` (the cache hash: `<fp>:base` for `simulator`, `<fp>:dev` for `dev`; none for `release`, whose hash also carries the JS key). `warden app fingerprint ios --kind simulator` is the fingerprint `warden builds import --kind simulator-base` files a base under.
 
 ### `warden app ensure [platform]`
 
@@ -387,6 +393,7 @@ Bundle this worktree's JS into the cached simulator build (building that base on
 - `rm <hash…> [--platform ios|android] [--dry-run] [--yes]` (alias `remove`) — remove cached builds by hash or a unique prefix (at least 6 characters, as `warden builds` shows it), with their aliases, and forget the install records at those hashes so the next ensure reinstalls. A prefix matching several builds, or a build being fetched or built, is an error. Asks first in a terminal unless `--yes`; `--json` → `{ dryRun, removed, forgotInstalls }`.
 - `prune [--max-size 20G] [--dry-run] [--yes]` — remove least-recently-used builds until the cache fits; build-locked ones stay. `--max-size` defaults to `WARDEN_MAX_CACHE_SIZE`, else `20G` (the cap `warden gc --max-cache-size` uses).
 - `import <path.app|path.apk> --hash <h> [--platform] [--project] [--profile] [--bundle-id]` — copy a local build into the cache.
+- `import <App.app> --kind simulator-base [--hash <nativeFp>] [--project] [--profile] [--bundle-id]` — file a Release simulator `.app` built elsewhere (a CI job) as the simulator base that `warden repack` / `warden e2e` clone, under `<nativeFp>:base`. `--hash` defaults to warden's own fingerprint of the project (`warden app fingerprint ios --kind simulator`); `<fp>:base` is accepted too. Refused: not a simulator build (`DTPlatformName`), no slice for this Mac's simulators, another bundle id, a Debug or expo-dev-client build (`<exe>.debug.dylib`, `EXDevLauncher`, `EXDevMenu`), or an executable without its mode bits. An embedded `main.jsbundle` is left out of the cached copy (`--json`: `strippedBundle: true`). iOS only. See [CI](/docs/e2e/ci#reuse-a-prebuilt-app-and-the-golden).
 
 ## Drive a device
 

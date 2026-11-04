@@ -125,6 +125,9 @@ warden builds ls
 warden builds rm cd8e2dbeae5b             # drop one bad build (+ its install records)
 warden builds prune --max-size 20G        # LRU; build-locked entries stay
 warden builds import App.app --hash <h>   # file a local build under a fingerprint
+warden builds import App.app --kind simulator-base   # a CI-built Release simulator .app as the repack base
 ```
+
+`--kind simulator-base` takes a Release simulator `.app` built outside warden (another CI job's `xcodebuild … -configuration Release -sdk iphonesimulator`) and files it as the base the `simulator` kind repacks, keyed on warden's own native fingerprint of the project (`warden app fingerprint ios --kind simulator`). It checks the `.app` first (simulator build, a slice for this Mac, the project's bundle id, no Debug or dev-client payload) and leaves an embedded `main.jsbundle` out of the cached copy. See [CI](/docs/e2e/ci#reuse-a-prebuilt-app-and-the-golden).
 
 `--max-size` defaults to `20G` (or `$WARDEN_MAX_CACHE_SIZE`). `warden gc` runs the same prune (`--max-cache-size`), keeping builds used in the last 30 min, so the cache stays bounded without you calling it. The cache lives under `$WARDEN_HOME/builds` (`~/.warden/builds`).

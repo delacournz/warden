@@ -4,7 +4,7 @@ import type { Platform } from "../types";
 import type { KindKey } from "./cache";
 import type { Project } from "./config";
 import type { KindBuildKey } from "./ensure";
-import { computeCacheKey, type FingerprintMemo } from "./fingerprint";
+import { type CacheKey, computeCacheKey, type FingerprintMemo } from "./fingerprint";
 import type { ReadFile } from "./js-inputs";
 import { computeJsKey } from "./js-key";
 import { type BuildKind, type DeviceTarget, type KindSettings, projectForKind, resolveKind } from "./kinds";
@@ -42,14 +42,14 @@ export type KindKeys = {
 	settings: KindSettings;
 };
 
+type KindFingerprints = { nativeFp: string; native: CacheKey; project: Project; settings: KindSettings };
+
 /**
- * The cache keys of `kind` for `project` on `platform`. `nativeFp` is the cache key of the kind's native build with no JS
- * mixed in (Release-salted for `simulator` / `release`); `jsKey` (`simulator`: the repack, `release`: the build) is the
- * content key of `kinds.<kind>.jsInputs` + bundle env + native fingerprint (`computeJsKey`).
+ * `nativeFp` of `kind`: the fingerprint of the project resolved as the kind, with no JS mixed in (what the kind's
+ * native build is cached under, `<nativeFp>:base` for the simulator base). No JS key is computed.
  */
-export async function computeKindKey(deps: KindKeyDeps): AsyncResult<KindKeys> {
+export async function kindFingerprints(deps: Omit<KindKeyDeps, "bundlerFlags">): AsyncResult<KindFingerprints> {
 	const { exec, platform, kind, device } = deps;
-	if (device && kind === "simulator") return err(SIMULATOR_ON_DEVICE);
 	const settings = resolveKind(deps.project, kind, device);
 	const project = projectForKind(deps.project, kind, device);
 	const native = await computeCacheKey(exec, project, platform, deps.readFile, deps.memo, deps.env);
@@ -59,8 +59,21 @@ export async function computeKindKey(deps: KindKeyDeps): AsyncResult<KindKeys> {
 		? await computeCacheKey(exec, withoutJs, platform, deps.readFile, deps.memo, deps.env)
 		: native;
 	if (!nativeOnly.success) return nativeOnly;
-	const nativeFp = nativeOnly.data.key;
-	const base = { buildKey: native.data.key, native: native.data.native, project, settings };
+	return ok({ nativeFp: nativeOnly.data.key, native: native.data, project, settings });
+}
+
+/**
+ * The cache keys of `kind` for `project` on `platform`. `nativeFp` is the cache key of the kind's native build with no JS
+ * mixed in (Release-salted for `simulator` / `release`); `jsKey` (`simulator`: the repack, `release`: the build) is the
+ * content key of `kinds.<kind>.jsInputs` + bundle env + native fingerprint (`computeJsKey`).
+ */
+export async function computeKindKey(deps: KindKeyDeps): AsyncResult<KindKeys> {
+	const { exec, platform, kind, device } = deps;
+	if (device && kind === "simulator") return err(SIMULATOR_ON_DEVICE);
+	const fps = await kindFingerprints(deps);
+	if (!fps.success) return fps;
+	const { nativeFp, native, project, settings } = fps.data;
+	const base = { buildKey: native.key, native: native.native, project, settings };
 	const onDevice = device ? { device } : {};
 	if (kind === "dev") return ok({ ...base, key: { kind: "dev", nativeFp, ...onDevice } });
 	const jsKey = await computeJsKey({

@@ -64,7 +64,7 @@ Devices:
                                 warden's pool (fast: no first boot)
   golden                        golden iOS images / Android snapshots new
                                 devices start from (fast boots): ensure | ls |
-                                prune
+                                prune | key | export | import
 
 Builds:
   app                           fingerprint an Expo app and install the matching
@@ -1740,7 +1740,7 @@ exports[`help output warden golden --help (and nested subcommands) 1`] = `
 Usage: warden golden [options] [command]
 
 golden iOS images / Android snapshots new devices start from (fast boots):
-ensure | ls | prune
+ensure | ls | prune | key | export | import
 
 Options:
   -h, --help      display help for command
@@ -1748,6 +1748,12 @@ Options:
 Commands:
   ensure          build (once) or reuse the golden image
   ls              list golden images
+  key             print the golden's name (profile + key of Xcode, runtime,
+                  device type, recipe): a CI cache key
+  export <dir>    copy the golden (built first if missing) into <dir>/<name>/
+                  for a CI cache to save
+  import <dir>    register the goldens archived in <dir> that match this machine
+                  (stale ones are skipped)
   prune           delete stale goldens (--all: every golden)
   help [command]  display help for command
 
@@ -1770,6 +1776,50 @@ list golden images
 
 Options:
   --platform <platform>  ios (default) or android
+  --json                 machine-readable output
+  -h, --help             display help for command
+
+$ warden golden key --help
+Usage: warden golden key [options]
+
+print the golden's name (profile + key of Xcode, runtime, device type, recipe):
+a CI cache key
+
+Options:
+  --platform <platform>  ios (default); android has no portable golden
+  --profile <slug>       device profile (default: iphone-17)
+  --runtime <runtime>    runtime: latest, iOS-26-5, 26.5 …
+  --json                 machine-readable output
+  -h, --help             display help for command
+
+$ warden golden export --help
+Usage: warden golden export [options] <dir>
+
+copy the golden (built first if missing) into <dir>/<name>/ for a CI cache to
+save
+
+Arguments:
+  dir                    archive dir (one subdir per golden)
+
+Options:
+  --platform <platform>  ios (default); android has no portable golden
+  --profile <slug>       device profile (default: iphone-17)
+  --runtime <runtime>    runtime: latest, iOS-26-5, 26.5 …
+  --json                 machine-readable output
+  -h, --help             display help for command
+
+$ warden golden import --help
+Usage: warden golden import [options] <dir>
+
+register the goldens archived in <dir> that match this machine (stale ones are
+skipped)
+
+Arguments:
+  dir                    archive dir written by golden export (missing = nothing
+                         to import)
+
+Options:
+  --platform <platform>  ios (default); android has no portable golden
   --json                 machine-readable output
   -h, --help             display help for command
 
@@ -1951,6 +2001,9 @@ Options:
   --project <dir>   project directory (default: cwd)
   --bundle-id <id>  override the bundle id / package
   --variant <name>  fingerprint this projects[].variants build
+  --kind <kind>     print the native fingerprint this build kind is cached under
+                    (simulator: the base \`builds import --kind simulator-base\`
+                    files under) (choices: "dev", "simulator", "release")
   --json            machine-readable output
   -h, --help        display help for command"
 `;
@@ -4314,7 +4367,8 @@ Commands:
   rm|remove <hash...>  remove cached builds by hash (or a unique prefix) and
                        forget the installs at that hash
   import <path>        copy a local .app / .apk into the cache under a
-                       fingerprint hash
+                       fingerprint hash (--kind simulator-base: a CI-built
+                       Release simulator .app that repacks clone from)
   help [command]       display help for command
 
 $ warden builds ls --help
@@ -4360,13 +4414,18 @@ Options:
 $ warden builds import --help
 Usage: warden builds import [options] <path>
 
-copy a local .app / .apk into the cache under a fingerprint hash
+copy a local .app / .apk into the cache under a fingerprint hash (--kind
+simulator-base: a CI-built Release simulator .app that repacks clone from)
 
 Arguments:
   path                   path.app | path.apk
 
 Options:
-  --hash <hash>          fingerprint hash to file it under
+  --hash <hash>          fingerprint hash to file it under (required without
+                         --kind; simulator-base: <nativeFp>, default warden's
+                         own)
+  --kind <kind>          simulator-base: file it as the base \`warden repack\` /
+                         \`warden e2e\` reuse
   --platform <platform>  ios | android (default: from the extension)
   --project <dir>        project directory (default: cwd)
   --profile <profile>    build profile (default: the project's EAS profile, else

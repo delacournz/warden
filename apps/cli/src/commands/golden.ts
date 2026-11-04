@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import { profileSlug } from "@delacour/warden-core/allocate";
 import { biometricProfile, splitBiometricProfile } from "@delacour/warden-core/biometrics";
 import { splitCameraProfile } from "@delacour/warden-core/camera-profile";
@@ -189,6 +190,80 @@ async function prune(ctx: CommandContext, sleep: Sleep | undefined, opts: PruneO
 	return 0;
 }
 
+type ArchiveOpts = PlatformOpt & { profile?: string; runtime?: string; json?: true };
+
+/** `key` / `export` / `import` move iOS goldens between machines; an Android snapshot lives inside its AVD. */
+function iosOnly(ctx: CommandContext, sub: string, opts: PlatformOpt): boolean {
+	const platform = platformOf(ctx, opts);
+	if (platform === undefined) return false;
+	if (platform === "ios") return true;
+	reportError(ctx, `golden ${sub}`, "iOS only: an Android snapshot lives in its AVD (cache ~/.android/avd instead)");
+	return false;
+}
+
+async function keyCmd(ctx: CommandContext, sleep: Sleep | undefined, opts: ArchiveOpts): Promise<number> {
+	if (!iosOnly(ctx, "key", opts)) return 1;
+	const { goldenInfo } = await import("@delacour/warden-core/golden/ios-golden-archive");
+	const info = await goldenInfo(
+		goldenDeps(ctx, resolveOwner(ctx), sleep),
+		opts.profile ?? DEFAULT_PROFILE.ios,
+		opts.runtime
+	);
+	if (!info.success) return fail(ctx, info.error);
+	emit(ctx, opts.json === true, info.data, info.data.name);
+	return 0;
+}
+
+async function exportCmd(
+	ctx: CommandContext,
+	sleep: Sleep | undefined,
+	dir: string,
+	opts: ArchiveOpts
+): Promise<number> {
+	if (!iosOnly(ctx, "export", opts)) return 1;
+	const { exportGolden } = await import("@delacour/warden-core/golden/ios-golden-archive");
+	const profile = opts.profile ?? DEFAULT_PROFILE.ios;
+	if (!opts.json) heading(ctx, "golden export", profile);
+	const exported = await withSpinner(ctx, `exporting golden ${profile} image…`, (sctx) =>
+		exportGolden(goldenDeps(sctx, resolveOwner(ctx), sleep), profile, opts.runtime, resolve(ctx.cwd, dir))
+	);
+	if (!exported.success) return fail(ctx, exported.error);
+	const { color } = ctx.ui;
+	const { name, path, built } = exported.data;
+	emit(
+		ctx,
+		opts.json === true,
+		exported.data,
+		`${color.green(color.bold(name))} → ${path} ${color.dim(`(${built ? "built" : "reused"})`)}`
+	);
+	return 0;
+}
+
+async function importCmd(
+	ctx: CommandContext,
+	sleep: Sleep | undefined,
+	dir: string,
+	opts: ArchiveOpts
+): Promise<number> {
+	if (!iosOnly(ctx, "import", opts)) return 1;
+	const { importGoldens } = await import("@delacour/warden-core/golden/ios-golden-archive");
+	if (!opts.json) heading(ctx, "golden import", dir);
+	const imported = await withSpinner(ctx, `importing golden images from ${dir}…`, (sctx) =>
+		importGoldens(goldenDeps(sctx, resolveOwner(ctx), sleep), resolve(ctx.cwd, dir))
+	);
+	if (!imported.success) return fail(ctx, imported.error);
+	const { color } = ctx.ui;
+	const lines = imported.data.map((g) =>
+		g.imported
+			? color.green(`imported ${color.bold(g.name)} ${g.udid}`)
+			: `${color.yellow(`skipped ${g.name}`)} ${color.dim(`(${g.reason})`)}`
+	);
+	const text =
+		lines.length > 0 ? lines.join("\n") : color.dim(`no golden archives in ${dir}: a claim builds the golden`);
+	emit(ctx, opts.json === true, imported.data, text);
+	return 0;
+}
+
 function fail(ctx: CommandContext, error: string): number {
 	reportError(ctx, "golden", error);
 	return 1;
@@ -204,7 +279,8 @@ export function createGoldenCommand(opts: { sleep?: Sleep } = {}): Command {
 	return defineCommand({
 		name: "golden",
 		group: "Devices",
-		summary: "golden iOS images / Android snapshots new devices start from (fast boots): ensure | ls | prune",
+		summary:
+			"golden iOS images / Android snapshots new devices start from (fast boots): ensure | ls | prune | key | export | import",
 		register: (cmd, ctx, done) => {
 			cmd
 				.command("ensure")
@@ -220,6 +296,30 @@ export function createGoldenCommand(opts: { sleep?: Sleep } = {}): Command {
 				.option("--platform <platform>", "ios (default) or android")
 				.option("--json", "machine-readable output")
 				.action(async (o) => done(await ls(ctx, sleep, o)));
+			cmd
+				.command("key")
+				.description("print the golden's name (profile + key of Xcode, runtime, device type, recipe): a CI cache key")
+				.option("--platform <platform>", "ios (default); android has no portable golden")
+				.option("--profile <slug>", `device profile (default: ${DEFAULT_PROFILE.ios})`)
+				.option("--runtime <runtime>", "runtime: latest, iOS-26-5, 26.5 …")
+				.option("--json", "machine-readable output")
+				.action(async (o) => done(await keyCmd(ctx, sleep, o)));
+			cmd
+				.command("export")
+				.description("copy the golden (built first if missing) into <dir>/<name>/ for a CI cache to save")
+				.argument("<dir>", "archive dir (one subdir per golden)")
+				.option("--platform <platform>", "ios (default); android has no portable golden")
+				.option("--profile <slug>", `device profile (default: ${DEFAULT_PROFILE.ios})`)
+				.option("--runtime <runtime>", "runtime: latest, iOS-26-5, 26.5 …")
+				.option("--json", "machine-readable output")
+				.action(async (dir, o) => done(await exportCmd(ctx, sleep, dir, o)));
+			cmd
+				.command("import")
+				.description("register the goldens archived in <dir> that match this machine (stale ones are skipped)")
+				.argument("<dir>", "archive dir written by golden export (missing = nothing to import)")
+				.option("--platform <platform>", "ios (default); android has no portable golden")
+				.option("--json", "machine-readable output")
+				.action(async (dir, o) => done(await importCmd(ctx, sleep, dir, o)));
 			cmd
 				.command("prune")
 				.description("delete stale goldens (--all: every golden)")

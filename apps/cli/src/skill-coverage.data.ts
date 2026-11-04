@@ -34,7 +34,6 @@ export const SKILL_OMITTED_OPTIONS: Readonly<Record<string, string>> = {
 	"sims delete --stale": "interactive disk cleanup for people",
 	"clone --name": TUNING,
 	"app ensure --no-install": TUNING,
-	"builds import --hash": TUNING,
 	"install --claude": SETUP,
 	"install --codex": SETUP,
 	"install --shim": "contributor-only (`bun run cli:link`)",

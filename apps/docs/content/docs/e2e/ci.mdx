@@ -36,7 +36,7 @@ A private fork in `repo` needs a `token` with Contents: read on that repo.
 
 - macOS for iOS simulators, with Xcode and the iOS runtime installed; Android needs the SDK. There is no Windows support.
 - No bun install: warden runs the specs with the bun built into its own binary, so CI needs no bun install (`WARDEN_BUN` picks a different one).
-- No prior state. The `--profile` is created on claim, cloned from a golden image that is built on first use (about a minute or two); cache `~/Library/Developer/CoreSimulator/Devices` between runs to keep it ([Golden images](/docs/sims/golden-images)). If cloning fails it falls back to `simctl create`.
+- No prior state. The `--profile` is created on claim, cloned from a golden image that is built on first use (about four minutes on a hosted runner); keep it between runs with `warden golden export` / `import` and `actions/cache` ([below](#reuse-a-prebuilt-app-and-the-golden)). If cloning fails it falls back to `simctl create`.
 
 ## Gate a pull request
 
@@ -53,6 +53,63 @@ Keep the evidence when a run fails:
             e2e-report.json
             ~/.warden/batches
 ```
+
+## Reuse a prebuilt app and the golden
+
+On a fresh runner, a `simulator`-kind suite (`app: true`) pays twice before the first spec runs: a native Release build of the simulator base, and the golden image's first boot. When another job already builds the Release simulator `.app`, import it; cache the golden between runs.
+
+```yaml title=".github/workflows/ios.yml"
+jobs:
+  ios-build:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      # … install dependencies, pod install …
+      - run: |
+          xcodebuild -workspace ios/App.xcworkspace -scheme App -configuration Release \
+            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
+            ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO \
+            -derivedDataPath ios/build/dd build
+      # upload-artifact zips files and drops the executable bit: ship the .app as a tarball
+      - run: tar -czf App.app.tgz -C ios/build/dd/Build/Products/Release-iphonesimulator App.app
+      - uses: actions/upload-artifact@v4
+        with: { name: ios-simulator-app, path: App.app.tgz }
+
+  e2e:
+    needs: ios-build
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install
+      - uses: delacournz/warden/.github/actions/install-warden@main
+
+      - uses: actions/download-artifact@v4
+        with: { name: ios-simulator-app }
+      - run: tar -xzf App.app.tgz && warden builds import App.app --kind simulator-base
+
+      - id: golden
+        run: echo "name=$(warden golden key --profile iphone-17)" >> "$GITHUB_OUTPUT"
+      - id: golden-cache
+        uses: actions/cache/restore@v4
+        with: { path: ~/warden-goldens, key: "${{ steps.golden.outputs.name }}" }
+      - run: warden golden import ~/warden-goldens
+
+      - run: warden e2e mobile --all --count 1
+
+      - if: steps.golden-cache.outputs.cache-hit != 'true'
+        run: warden golden export ~/warden-goldens --profile iphone-17
+      - if: steps.golden-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with: { path: ~/warden-goldens, key: "${{ steps.golden.outputs.name }}" }
+```
+
+**The base.** `warden builds import <App.app> --kind simulator-base` files the `.app` as the base every repack clones, under warden's own native fingerprint of the project (`--project <dir>` when the app is not in the working directory). The next `warden e2e` / `warden repack` bundles this checkout's JS into it in seconds instead of building. The import refuses a `.app` that is not a simulator build, has no slice for this Mac (`arm64` on Apple silicon), has another bundle id (`--bundle-id` overrides), is a Debug or expo-dev-client build, or whose executable lost its mode bits. A `main.jsbundle` embedded by the build (no `SKIP_BUNDLING`) is stripped from the cached copy; every repack writes its own.
+
+The fingerprint is warden's, not `@expo/fingerprint`'s: they differ. To key an artifact or check which base a run will look for, print it with `warden app fingerprint ios --kind simulator --json` (`fingerprints.ios`, and `hashes.ios` = `<fp>:base`). `--hash <fp>` files the import under a fingerprint you computed earlier. A base whose fingerprint no longer matches the checkout is never used: the run builds one, as without an import.
+
+**The golden.** `warden golden key` prints the golden's name, `warden-golden-<profile>-<key>-r<recipe>`, where the key covers the Xcode build, the runtime build, the device type and the recipe: a runner image with another Xcode or runtime gets another cache entry. `warden golden import <dir>` exits 0 whatever it finds: a cache miss, an archive for another Xcode or runtime, or a broken one is skipped with the reason, and the first claim builds the golden as before. Use the same `--profile` (and `--runtime`) as the suite's devices. An archive is about 2 GB before compression; GitHub keeps 10 GB of caches per repository. See [Golden images](/docs/sims/golden-images#carry-a-golden-between-machines).
 
 ## Headless and cleanup
 

@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, realpathSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fakeApp } from "@delacour/warden-core/builds/builds.testing";
 import { getInstall, listBuilds, recordInstall, recordRepack, storeArtifact } from "@delacour/warden-core/builds/cache";
+import { hostSimulatorArch } from "@delacour/warden-core/builds/import-base";
 import { buildLockKey, buildResource } from "@delacour/warden-core/builds/lock";
 import { fakeExec, scriptedUi, type TestContext, testContext } from "../testing";
 import { buildsCommand, inferPlatform } from "./builds";
@@ -263,5 +264,113 @@ describe("warden builds", () => {
 	test("unknown subcommand → exit 1", async () => {
 		const c = setup(["frobnicate"]);
 		expect(await buildsCommand.run(c)).toBe(1);
+	});
+});
+
+describe("warden builds import --kind simulator-base", () => {
+	const FP = "fcc32ec409b7019aa65d30d170f9b654495722b2";
+
+	/** `fakeApp` with an executable main binary, as xcodebuild leaves it. */
+	function baseApp(parent: string): string {
+		const app = fakeApp(parent);
+		chmodSync(join(app, "App"), 0o755);
+		return app;
+	}
+
+	function setupBase(argv: string[], plist: Record<string, string> = {}, archs = "x86_64 arm64"): TestContext {
+		const c = testContext(argv);
+		ctx = c;
+		writeFileSync(
+			join(c.cwd, "warden.config.json"),
+			JSON.stringify({
+				projects: [
+					{ name: "demo", root: ".", bundleId: { ios: "com.demo" }, fingerprint: { command: "fp {platform}" } },
+				],
+			})
+		);
+		const values: Record<string, string> = {
+			CFBundleIdentifier: "com.demo",
+			CFBundleExecutable: "App",
+			DTPlatformName: "iphonesimulator",
+			...plist,
+		};
+		c.exec = fakeExec([
+			...Object.entries(values).map(([key, value]): [string, { stdout: string }] => [
+				`plutil -extract ${key} raw`,
+				{ stdout: `${value}\n` },
+			]),
+			["plutil", { exitCode: 1 }],
+			["lipo -archs", { stdout: `${archs}\n` }],
+			["sh -c fp ios", { stdout: JSON.stringify({ hash: FP }) }],
+			["git", { exitCode: 128 }],
+		]);
+		return c;
+	}
+
+	test("files a simulator-base row under warden's own native fingerprint, without the embedded main.jsbundle", async () => {
+		const c = setupBase(["import", "src/App.app", "--kind", "simulator-base", "--json"]);
+		const app = baseApp(join(c.cwd, "src"));
+		writeFileSync(join(app, "main.jsbundle"), "embedded js");
+		expect(await buildsCommand.run(c)).toBe(0);
+		const out = JSON.parse(c.stdout.join("\n"));
+		expect(out).toMatchObject({
+			kind: "simulator-base",
+			platform: "ios",
+			source: "import",
+			strippedBundle: true,
+		});
+		expect(out.hash).toMatch(/^[0-9a-f]{40}:base$/);
+		const [row] = listBuilds(c.db);
+		expect(row?.kind).toBe("simulator-base");
+		expect(row?.hash).toBe(out.hash);
+		expect(row?.profile).toBe("local:simulator");
+		expect(row?.path).toContain("/simulator/base/App.app");
+		expect(existsSync(join(row?.path ?? "", "main.jsbundle"))).toBe(false);
+		expect(existsSync(join(app, "main.jsbundle"))).toBe(true);
+	});
+
+	test("--hash <nativeFp> (or <nativeFp>:base) files it under that fingerprint", async () => {
+		for (const hash of ["deadbeef", "deadbeef:base"]) {
+			const c = setupBase(["import", "src/App.app", "--kind", "simulator-base", "--hash", hash, "--json"]);
+			baseApp(join(c.cwd, "src"));
+			expect(await buildsCommand.run(c)).toBe(0);
+			expect(JSON.parse(c.stdout.join("\n")).hash).toBe("deadbeef:base");
+			c.cleanup();
+			ctx = undefined;
+		}
+	});
+
+	test("a build of another app, a device build or a Debug build is refused, nothing cached", async () => {
+		const cases: Array<[Record<string, string>, string, string]> = [
+			[{ CFBundleIdentifier: "com.other" }, "arm64", "com.other"],
+			[{ DTPlatformName: "iphoneos" }, "arm64", "iphoneos"],
+			[{}, "i386", `no ${hostSimulatorArch()} slice`],
+		];
+		for (const [plist, archs, message] of cases) {
+			const c = setupBase(["import", "src/App.app", "--kind", "simulator-base", "--hash", "f"], plist, archs);
+			baseApp(join(c.cwd, "src"));
+			expect(await buildsCommand.run(c)).toBe(1);
+			expect(c.stderr.join("\n")).toContain(message);
+			expect(listBuilds(c.db)).toEqual([]);
+			c.cleanup();
+			ctx = undefined;
+		}
+	});
+
+	test("an unknown kind, an Android base, or a kind-less import without --hash is a usage error", async () => {
+		const cases: Array<[string[], string]> = [
+			[["import", "src/App.app", "--kind", "nope"], "--kind"],
+			[["import", "src/a.apk", "--kind", "simulator-base", "--hash", "f"], "iOS"],
+			[["import", "src/App.app"], "--hash"],
+		];
+		for (const [argv, message] of cases) {
+			const c = setupBase(argv);
+			baseApp(join(c.cwd, "src"));
+			writeFileSync(join(c.cwd, "src", "a.apk"), "apk");
+			expect(await buildsCommand.run(c)).toBe(1);
+			expect(c.stderr.join("\n")).toContain(message);
+			c.cleanup();
+			ctx = undefined;
+		}
 	});
 });

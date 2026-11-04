@@ -35,6 +35,23 @@ warden golden ls
 warden golden prune                        # delete stale goldens; --all deletes every one
 ```
 
+## Carry a golden between machines
+
+A CI runner starts with no golden, so its first claim spends about four minutes on the first boot. `warden golden export` and `import` move the golden through a cache instead.
+
+```bash
+warden golden key --profile iphone-17           # warden-golden-iphone-17-<key>-r2: the cache key
+warden golden import ~/warden-goldens           # restore: registers what matches this machine
+warden golden export ~/warden-goldens --profile iphone-17   # save: <dir>/<name>/{golden.json,device/}
+```
+
+- An iOS golden is only a CoreSimulator device; warden's store holds no state for it. The archive is that device's directory (about 2 GB) without `device.plist`, plus a `golden.json` manifest with the key and its inputs.
+- `import` never copies a directory into the device set behind CoreSimulator's back: the service would not see it until it restarts, and restarting it stops every booted simulator. It does what `simctl clone` does instead: `simctl create` registers a fresh `-wip` device of the same device type and runtime, the archive replaces its contents, absolute symlinks into the old device are pointed at the new one, the first-boot migration record is checked, and only then is the device renamed to the golden's name. All of it runs under the `golden:ios` lease, so no claim clones a half-imported golden.
+- An archive for another Xcode build, runtime build, device type or recipe is skipped with the reason, as is one whose migration record is missing; a golden already on the machine is left as it is. Nothing is an error: the next claim builds the golden as it would without an archive.
+- `export` builds the golden first when there is none, and replaces an older archive of the same name. Android snapshots live inside their AVD and are not covered: `key`, `export` and `import` refuse `--platform android`.
+
+A GitHub Actions workflow is in [CI](/docs/e2e/ci#reuse-a-prebuilt-app-and-the-golden).
+
 ## Android: warden's quick-boot snapshot
 
 Claimed emulators launch `-read-only -snapshot warden-<key>` from a quick-boot snapshot warden owns when it exists, instead of whatever `default_boot` your last Android Studio run left (or a full cold boot). A claim never builds it: a claim that finds no current snapshot cold-boots read-only exactly as before, logs one line, and marks the AVD. The next `warden gc` (auto-gc runs it in the background) builds the snapshot of one marked AVD per pass, only while no emulator of that AVD is running and never when `CI` is set; `warden golden ensure --platform android --profile <slug>` builds it now.
