@@ -1,5 +1,6 @@
-import { getGrant, HOST_OWNER_ENV } from "@delacour/warden-core/hosts/registry";
-import { sameOwner } from "@delacour/warden-core/types";
+import { getGrant, HOST_OWNER_ENV, parseHostOwner } from "@delacour/warden-core/hosts/registry";
+import { type HostOwner, sameOwner } from "@delacour/warden-core/types";
+import { ok, type Result } from "@delacour/warden-types/result";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { checkHostCommand } from "../hosts/allowlist";
@@ -72,22 +73,44 @@ function leaseRefusal(
 	return foreign.length > 0 ? `refused: ${foreign.join(" ")} is held by another owner on this host` : undefined;
 }
 
-async function serve(ctx: CommandContext, deps: HostServeDeps, opts: { key?: string }): Promise<number> {
-	if (opts.key === undefined) {
-		reportError(ctx, SCOPE, "--key is required");
-		return 1;
+type ServeOpts = { key?: string; relayOwner?: string };
+
+/**
+ * Who the command runs as: the grant of the ssh key (`--key`, written into authorized_keys by `host grant`), or the
+ * owner warden-api vouched for on a relayed channel (`--relay-owner`, passed only by `host serve --uplink`).
+ */
+type Refused = { message: string; exit: number };
+
+const refuse = (message: string, exit: number): Result<HostOwner, Refused> => ({
+	success: false,
+	error: { message, exit },
+});
+
+function callerOwner(ctx: CommandContext, opts: ServeOpts): Result<HostOwner, Refused> {
+	if (opts.relayOwner !== undefined) {
+		const owner = opts.key === undefined ? parseHostOwner(opts.relayOwner) : undefined;
+		return owner ? ok(owner) : refuse("--relay-owner: not a {machineId, user} owner", 1);
 	}
+	if (opts.key === undefined) return refuse("--key is required", 1);
 	const grant = getGrant(ctx.store(), opts.key);
 	if (grant === undefined) {
-		reportError(ctx, SCOPE, `key ${opts.key} is not granted on this host (warden host grant)`);
-		return EXIT_REFUSED;
+		return refuse(`key ${opts.key} is not granted on this host (warden host grant)`, EXIT_REFUSED);
+	}
+	return ok({ kind: "host", machineId: grant.machineId, user: grant.user });
+}
+
+async function serve(ctx: CommandContext, deps: HostServeDeps, opts: ServeOpts): Promise<number> {
+	const who = callerOwner(ctx, opts);
+	if (!who.success) {
+		reportError(ctx, SCOPE, who.error.message);
+		return who.error.exit;
 	}
 	const checked = checkHostCommand(ctx.env.SSH_ORIGINAL_COMMAND ?? "");
 	if (!checked.success) {
 		reportError(ctx, SCOPE, checked.error);
 		return EXIT_REFUSED;
 	}
-	const owner = { kind: "host", machineId: grant.machineId, user: grant.user } as const;
+	const owner = who.data;
 	const { name } = checked.data;
 	const argv = [...checked.data.argv];
 	const refused = leaseRefusal(ctx, name, argv, owner);
@@ -116,7 +139,10 @@ export function createHostServeCommand(deps: HostServeDeps = {}) {
 		summary: "the forced command a warden host grant installs: runs one allowed warden command for a laptop (internal)",
 		hidden: true,
 		register: (cmd, ctx, done) => {
-			cmd.option("--key <fingerprint>").action(async (opts) => done(await serve(ctx, deps, opts)));
+			cmd
+				.option("--key <fingerprint>")
+				.option("--relay-owner <json>")
+				.action(async (opts) => done(await serve(ctx, deps, opts)));
 		},
 	});
 }

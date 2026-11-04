@@ -116,3 +116,8 @@ export type ApiError =
 	| { kind: "payment_required"; code?: string; message: string; billingUrl?: string }
 	| { kind: "http"; status: number; code?: string; message: string }
 	| { kind: "invalid_response"; message: string };
+
+export type RelayHostStatus = "online" | "offline";
+
+/** A Mac the user's org can reach through the relay (`GET /v1/hosts`); `expiresAt` = a hosted session's end (epoch ms) */
+export type RelayHost = { id: string; name: string; status: RelayHostStatus; expiresAt?: number };

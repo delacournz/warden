@@ -9,7 +9,16 @@ import type { HostOwner } from "../types";
 /** `user@hostname[:port]`, split. */
 export type SshTarget = { user?: string; hostname: string; port?: number };
 
-/** A Mac this laptop drives. `identity` is the key `ssh` uses; `hostKey` the pinned `known_hosts` key, once seen. */
+/**
+ * A host reached through warden-api's relay instead of ssh (`warden host add --cloud`): the API, the host's id there,
+ * and the `warden login` account (and org) whose session dials it.
+ */
+export type HostRelay = { apiUrl: string; hostId: string; account?: string; organization?: string };
+
+/**
+ * A Mac this laptop drives. `identity` is the key `ssh` uses; `hostKey` the pinned `known_hosts` key, once seen.
+ * With `relay`, calls go through warden-api instead and the ssh fields are unused.
+ */
 export type HostRecord = {
 	name: string;
 	ssh: SshTarget;
@@ -24,6 +33,7 @@ export type HostRecord = {
 	wardenPath?: string;
 	/** a hosted Mac's session end (epoch ms): leases on it are capped here and end `LEASE_LOST` `host_expired` */
 	expiresAt?: number;
+	relay?: HostRelay;
 	addedAt: number;
 };
 

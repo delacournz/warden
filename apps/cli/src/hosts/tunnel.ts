@@ -131,6 +131,10 @@ async function sshFailure(host: HostRecord, proc: TunnelProc): Promise<string> {
 export type OpenTunnelDeps = { spawn?: TunnelSpawn };
 
 /** Lease a port on `hostName`, forward it to `localPort` here, and wait until the host sees Metro through it. */
+/** why a relayed host can't take `dev --host` yet: the relay carries commands, not port forwards */
+export const RELAY_NO_TUNNEL =
+	"is relayed (host add --cloud): dev --host needs a port forward to Metro, which only ssh carries for now";
+
 export async function openTunnel(
 	ctx: CommandContext,
 	hostName: string,
@@ -139,6 +143,7 @@ export async function openTunnel(
 ): Promise<Result<Tunnel>> {
 	const host = lookupHost(ctx, hostName);
 	if (!host.success) return host;
+	if (host.data.relay !== undefined) return err(`${hostName} ${RELAY_NO_TUNNEL}`);
 	const claimed = await claimHostPort(ctx, host.data);
 	if (!claimed.success) return claimed;
 	const home = wardenHome(ctx.env);

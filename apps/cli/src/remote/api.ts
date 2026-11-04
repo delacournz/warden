@@ -11,6 +11,7 @@ import type {
 	LedgerPage,
 	Me,
 	Organization,
+	RelayHost,
 	RemoteConnectionState,
 	RemoteDevice,
 	RevylApproval,
@@ -57,6 +58,8 @@ export type WardenApi = {
 	listLedger: (opts?: { limit?: number; cursor?: string }) => AsyncResult<LedgerPage, ApiError>;
 	/** owner/admin only (403 `BILLING_ROLE` otherwise) */
 	createTopup: (amountUsd: number) => AsyncResult<Topup, ApiError>;
+	/** Macs reachable through the relay: self-hosted ones on `warden host serve --uplink`, and hosted ones */
+	listHosts: () => AsyncResult<RelayHost[], ApiError>;
 };
 
 /** `organization` (id or slug) is sent as `X-Warden-Organization` with a token: the org this call acts for. */
@@ -275,6 +278,18 @@ function parseDeviceCode(b: unknown): DeviceCode | undefined {
 	};
 }
 
+function parseRelayHost(value: unknown): RelayHost | undefined {
+	if (typeof value !== "object" || value === null) return undefined;
+	const id: unknown = Reflect.get(value, "id");
+	const name: unknown = Reflect.get(value, "name");
+	const status: unknown = Reflect.get(value, "status");
+	const expiresAt: unknown = Reflect.get(value, "expiresAt");
+	if (typeof id !== "string" || typeof name !== "string") return undefined;
+	if (status !== "online" && status !== "offline") return undefined;
+	if (expiresAt !== undefined && typeof expiresAt !== "number") return undefined;
+	return { id, name, status, ...(typeof expiresAt === "number" ? { expiresAt } : {}) };
+}
+
 export function createWardenApi(options: WardenApiOptions): WardenApi {
 	const baseUrl = options.baseUrl.replace(/\/+$/, "");
 	const doFetch: Fetch = options.fetch ?? ((input, init) => fetch(input, init));
@@ -377,6 +392,12 @@ export function createWardenApi(options: WardenApiOptions): WardenApi {
 		createDevice: (request, opts) =>
 			call("POST", "/v1/devices", parseDevice, request, opts?.machine ? { "x-warden-machine": opts.machine } : {}),
 		getDevice: (id) => call("GET", `/v1/devices/${encodeURIComponent(id)}`, parseDevice),
+		listHosts: () =>
+			call("GET", "/v1/hosts", (b) => {
+				if (!Array.isArray(b)) return undefined;
+				const hosts = b.map(parseRelayHost);
+				return hosts.every((h) => h !== undefined) ? hosts.filter((h) => h !== undefined) : undefined;
+			}),
 		listDevices: () =>
 			call("GET", "/v1/devices", (b) => {
 				if (!Array.isArray(b)) return undefined;

@@ -37,6 +37,21 @@ warden host attach --grant "ssh-ed25519 AAAA… warden:…" --advertise 100.64.0
 
 `host attach` prints the `warden host add … --granted` line to run on the laptop. `--granted` means the runner already lets your key in, so there is no `host setup` step. The runner is reached on your tailnet (`--tailscale`, or `--advertise` with a userspace tailscaled), or through a bastion it dials out to (`--jump user@bastion --jump-port 2201`). The warden repo has an example workflow, `.github/workflows/remote-host.yml`, that keeps a macOS runner attached for up to two hours.
 
+### No inbound at all: through warden-api
+
+A Mac that can only dial out keeps one link to warden-api, and laptops in the same account reach it with their `warden login` session. Nothing listens on the Mac.
+
+```bash
+# on the Mac
+WARDEN_HOST_TOKEN=… warden host uplink
+
+# on the laptop
+warden host add mini --cloud
+warden host doctor mini
+```
+
+Commands over the relay go through the same allowlist and leases as ssh. `warden dev --host` still needs ssh, because Metro rides an ssh port forward. A hosted Mac's session end caps its leases, and they end with `LEASE_LOST` (`host_expired`).
+
 ## Claim a device on a host
 
 ```bash

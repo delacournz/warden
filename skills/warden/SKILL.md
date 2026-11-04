@@ -37,7 +37,7 @@ Open the reference file for details before acting; this file only routes.
 | screen reader, a11y audit, reading order, announcements, TalkBack, text size / contrast / reduce motion | [references/a11y.md](references/a11y.md) |
 | profile an app: CPU, memory, frames, startup, JS, React, native; before/after diffs | [references/perf.md](references/perf.md) |
 | hosted devices (warden cloud): login, credits, `warden billing`, out-of-credits errors | [references/cloud.md](references/cloud.md) |
-| another Mac's devices over ssh: `warden host add/setup/doctor/run/fetch`, grants, `HOST_*` errors | [references/hosts.md](references/hosts.md) |
+| another Mac's devices over ssh or warden-api: `warden host add/setup/doctor/run/fetch/attach/uplink`, grants, `HOST_*` errors | [references/hosts.md](references/hosts.md) |
 | use a real phone / tablet: claim, allowlist, iPhone signing, Android quirks, privacy | [references/physical.md](references/physical.md) |
 | an error code, a dropped tap, a sheet, a stale helper, Metro refused | [references/troubleshooting.md](references/troubleshooting.md) |
 

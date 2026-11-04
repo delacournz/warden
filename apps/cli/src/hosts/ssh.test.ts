@@ -117,3 +117,34 @@ describe("classifySshFailure", () => {
 		expect(classifySshFailure(0, "")).toBeUndefined();
 	});
 });
+
+describe("sshArgv on a relayed host", () => {
+	test("dials through warden __relay-dial with the command as is, never ssh", () => {
+		const host = {
+			name: "mini",
+			ssh: { hostname: "relay" },
+			relay: { apiUrl: "https://api.warden.co.nz", hostId: "h1", account: "work", organization: "o1" },
+			addedAt: 1,
+		};
+		expect(
+			sshArgv(host, ["warden", "claim", "ios", "--label", "a b"], { home: "/h", dialer: ["/w"], forwards: ["-t"] })
+		).toEqual([
+			"/w",
+			"__relay-dial",
+			"--api",
+			"https://api.warden.co.nz",
+			"--host-id",
+			"h1",
+			"--account",
+			"work",
+			"--organization",
+			"o1",
+			"--",
+			"warden",
+			"claim",
+			"ios",
+			"--label",
+			"a b",
+		]);
+	});
+});
