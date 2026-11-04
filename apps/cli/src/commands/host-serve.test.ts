@@ -1,0 +1,105 @@
+import { afterEach, describe, expect, test } from "bun:test";
+import { putGrant } from "@delacour/warden-core/hosts/registry";
+import { type TestContext, testContext } from "../testing";
+import { createHostServeCommand, type HostServeSpawn } from "./host-serve";
+
+const ctxs: TestContext[] = [];
+afterEach(() => {
+	for (const ctx of ctxs.splice(0)) ctx.cleanup();
+});
+
+type Spawned = { argv: string[]; env: Record<string, string | undefined> };
+
+function setup(line: string | undefined, opts: { grant?: boolean; exit?: number } = {}) {
+	const ctx = testContext(["--key", "SHA256:abc"]);
+	ctxs.push(ctx);
+	ctx.env = {
+		...ctx.env,
+		WARDEN_SESSION_ID: "laptop-session",
+		CLAUDE_CODE_SESSION_ID: "x",
+		CI: "true",
+		...(line !== undefined ? { SSH_ORIGINAL_COMMAND: line } : {}),
+	};
+	if (opts.grant !== false) {
+		putGrant(ctx.db, {
+			fingerprint: "SHA256:abc",
+			machineId: "m1",
+			user: "chris",
+			publicKey: "ssh-ed25519 AAA",
+			addedAt: 0,
+		});
+	}
+	const spawned: Spawned[] = [];
+	const spawn: HostServeSpawn = async (argv, env) => {
+		spawned.push({ argv: [...argv], env });
+		return opts.exit ?? 0;
+	};
+	const run = () => createHostServeCommand({ spawn, self: ["/bin/warden"] }).run(ctx);
+	return { ctx, spawned, run };
+}
+
+describe("warden __host-serve", () => {
+	test("runs an allowed command as the granted key's host owner, never the caller's env owner", async () => {
+		const { spawned, run } = setup("warden ls --json");
+		expect(await run()).toBe(0);
+		expect(spawned).toHaveLength(1);
+		const [first] = spawned;
+		expect(first?.argv).toEqual(["/bin/warden", "ls", "--json"]);
+		expect(first?.env.WARDEN_HOST_OWNER).toBe('{"machineId":"m1","user":"chris"}');
+		expect(first?.env.WARDEN_SESSION_ID).toBeUndefined();
+		expect(first?.env.CLAUDE_CODE_SESSION_ID).toBeUndefined();
+		expect(first?.env.CI).toBeUndefined();
+		expect(first?.env.SSH_ORIGINAL_COMMAND).toBeUndefined();
+	});
+
+	test("passes the command's exit code through", async () => {
+		const { run } = setup("warden claim ios --json --ttl 90s", { exit: 5 });
+		expect(await run()).toBe(5);
+	});
+
+	test("a claim without --ttl gets WARDEN_REMOTE_TTL (default 90s)", async () => {
+		const { spawned, run, ctx } = setup("warden claim ios --json");
+		expect(await run()).toBe(0);
+		expect(spawned[0]?.argv).toEqual(["/bin/warden", "claim", "ios", "--json", "--ttl", "90s"]);
+		ctx.env.WARDEN_REMOTE_TTL = "2m";
+		await run();
+		expect(spawned[1]?.argv.slice(-2)).toEqual(["--ttl", "2m"]);
+	});
+
+	test("a key with no grant exits 2 and runs nothing", async () => {
+		const { spawned, run, ctx } = setup("warden ls --json", { grant: false });
+		expect(await run()).toBe(2);
+		expect(spawned).toEqual([]);
+		expect(ctx.stderr.join("\n")).toContain("not granted");
+	});
+
+	test("a refused command exits 2 and runs nothing", async () => {
+		for (const line of ["bash", "warden gc --json", "warden release --session other --json", undefined]) {
+			const { spawned, run } = setup(line);
+			expect(await run()).toBe(2);
+			expect(spawned).toEqual([]);
+		}
+	});
+
+	test("release / heartbeat of a lease another owner holds is refused", async () => {
+		const { ctx, spawned, run } = setup(undefined);
+		const theirs = ctx.db.insertLease(
+			{ resource: { kind: "port", port: 9000 }, owner: { kind: "agent", sessionId: "s", cwd: "/" }, ttlMs: 60_000 },
+			ctx.now()
+		);
+		const mine = ctx.db.insertLease(
+			{
+				resource: { kind: "port", port: 9001 },
+				owner: { kind: "host", machineId: "m1", user: "chris" },
+				ttlMs: 60_000,
+			},
+			ctx.now()
+		);
+		ctx.env.SSH_ORIGINAL_COMMAND = `warden release ${mine.id} ${theirs.id} --json`;
+		expect(await run()).toBe(2);
+		expect(ctx.stderr.join("\n")).toContain(theirs.id);
+		ctx.env.SSH_ORIGINAL_COMMAND = `warden heartbeat ${mine.id} --json`;
+		expect(await run()).toBe(0);
+		expect(spawned.map((s) => s.argv[1])).toEqual(["heartbeat"]);
+	});
+});

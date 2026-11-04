@@ -1,5 +1,6 @@
 import { basename, dirname, isAbsolute, resolve } from "node:path";
 import { type GitFactsSyncOptions, readGitFactsSync } from "./git-facts";
+import { HOST_OWNER_ENV, parseHostOwner } from "./hosts/registry";
 import type { Owner } from "./types";
 
 export type GitInfo = { repo: string; worktree: string };
@@ -22,10 +23,12 @@ function isCi(env: OwnerContext["env"]): boolean {
 }
 
 /**
- * Who is claiming. Order: hook session id → CI → session env (`WARDEN_SESSION_ID`,
+ * Who is claiming. Order: a host owner `__host-serve` handed down (`WARDEN_HOST_OWNER`) → hook session id → CI → session env (`WARDEN_SESSION_ID`,
  * `CLAUDE_CODE_SESSION_ID`, `CLAUDE_SESSION_ID`) → the user's parent process (the invoking shell).
  */
 export function detectOwner(ctx: OwnerContext): Owner {
+	const host = parseHostOwner(ctx.env[HOST_OWNER_ENV]);
+	if (host) return host;
 	const location = ctx.git ? { repo: ctx.git.repo, worktree: ctx.git.worktree } : {};
 	if (ctx.sessionId) return { kind: "agent", sessionId: ctx.sessionId, cwd: ctx.cwd, ...location };
 	if (isCi(ctx.env)) {

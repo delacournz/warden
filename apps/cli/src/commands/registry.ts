@@ -161,6 +161,12 @@ export const COMMANDS: readonly CommandEntry[] = [
 		load: async () => (await import("./repack")).repackCommand,
 	},
 	{
+		name: "host",
+		group: "Devices",
+		summary: "drive another Mac's sims / emulators over ssh: add, setup, doctor, ls, rm (host side: grant, revoke)",
+		load: async () => (await import("./host")).hostCommand,
+	},
+	{
 		name: "ui",
 		summary: "drive a leased simulator / emulator (agents): status, snapshot, find, open, press, fill, scroll, …",
 		load: async () => (await import("./ui")).uiCommand,
@@ -182,6 +188,12 @@ export const COMMANDS: readonly CommandEntry[] = [
 		summary: "serve a leased device's driver on stdin/stdout for a remote warden (internal)",
 		hidden: true,
 		load: async () => (await import("./driver-serve")).driverServeCommand,
+	},
+	{
+		name: "__host-serve",
+		summary: "the forced command a warden host grant installs: runs one allowed warden command for a laptop (internal)",
+		hidden: true,
+		load: async () => (await import("./host-serve")).hostServeCommand,
 	},
 	{
 		name: "__ios-runner-host",

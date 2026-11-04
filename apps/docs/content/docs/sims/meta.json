@@ -16,6 +16,7 @@
 		"conditions",
 		"physical-devices",
 		"remote",
+		"hosts",
 		"perf",
 		"---Parallel & capacity---",
 		"scripts",
