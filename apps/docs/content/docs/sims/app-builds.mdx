@@ -77,6 +77,8 @@ Why not share DerivedData? Its build database and dependency files hold absolute
 | `simulator` | Release for a simulator, no JS embedded (the **base**) | repacked per JS content | base: native fingerprint; repack: native fingerprint + `jsKey` |
 | `release` | Release | embedded at build | native fingerprint + JS content |
 
+A project whose own build is the `dev` kind's build (Debug, the default or the same `build` command, no variant, no `fingerprint.include: "native+js"`, no `kinds.dev.env`) has one dev build per fingerprint: `warden dev`, `warden app ensure` with no `--kind`, `--kind dev`, `warden ui open` and `warden e2e --dev` all find, build and install it under `<fingerprint>:dev`, so `warden app ensure ios --kind dev --no-install` warms the cache `warden dev` reads. A build an older warden cached under the plain `<fingerprint>` (or a legacy cache dir of it) is reused as that build, and a device it was installed on is not reinstalled.
+
 ```bash
 warden repack ios                     # this worktree's JS into the cached simulator base (builds the base once)
 warden repack ios --json              # { result, baseHash, jsKey, artifact, bundleMs }

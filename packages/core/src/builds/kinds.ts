@@ -158,3 +158,16 @@ export function projectForKind(project: Project, kind: BuildKind, device?: Devic
 	if (settings.fingerprint === "native+js" && settings.jsInputs) resolved.jsInputs = settings.jsInputs;
 	return resolved;
 }
+
+/**
+ * The kind-less build of `project` on `platform` is the `dev` kind's build: same command, Debug, no JS in the key, no
+ * variant, kind env or device target. Then both are one build, cached once under the dev kind (`kindHash`), and a
+ * kind-less row of the same fingerprint (written before they were unified) is that build too.
+ */
+export function kindlessIsDev(project: Project, platform: Platform): boolean {
+	if (project.kind !== undefined || project.variant !== undefined || project.target === "device") return false;
+	if (project.jsInputs !== undefined || project.buildConfiguration !== "Debug") return false;
+	if (project.buildEnv !== undefined && Object.keys(project.buildEnv).length > 0) return false;
+	const dev = resolveKind(project, "dev");
+	return Object.keys(dev.env).length === 0 && dev.build[platform] === project.build[platform];
+}

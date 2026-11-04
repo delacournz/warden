@@ -94,7 +94,7 @@ By hand, specs need the preload: `bun test --preload @delacour/warden-e2e/preloa
 - The SessionEnd hook releases and shuts down what the session booted; `/clear` keeps sims up.
 - Codex: set `WARDEN_SESSION_ID`, or leases count as the shell's user leases.
 - A failed `warden e2e` leaves sims booted for inspection.
-- Build kinds: `dev` (Debug, Metro), `simulator` (Release, no JS embedded: built once per native fingerprint, this worktree's JS repacked into a clone per JS content hash `jsKey`), `release` (JS embedded, keyed on native + JS). `warden e2e` and `warden repack` default to `simulator`; `warden ui open` / `warden dev` stay on `dev`. A repack that cannot be applied builds `release` instead and says why.
+- Build kinds: `dev` (Debug, Metro), `simulator` (Release, no JS embedded: built once per native fingerprint, this worktree's JS repacked into a clone per JS content hash `jsKey`), `release` (JS embedded, keyed on native + JS). `warden e2e` and `warden repack` default to `simulator`; `warden ui open` / `warden dev` stay on `dev`. One dev build per fingerprint (`<fp>:dev`): `warden dev`, `app ensure` with no `--kind` and `--kind dev` share it unless a variant / custom `build` / `native+js` makes the project's own build differ, so `warden app ensure ios --kind dev --no-install` pre-warms `warden dev`; a build cached under the old plain `<fp>` is reused, never rebuilt. A repack that cannot be applied builds `release` instead and says why.
 
 ## Done
 

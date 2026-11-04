@@ -42,7 +42,7 @@ import {
 	uninstallApp,
 } from "./install";
 import { type DeviceIo, phoneAppMatches } from "./install-device";
-import { type DeviceTarget, projectForKind } from "./kinds";
+import { type DeviceTarget, kindlessIsDev, projectForKind } from "./kinds";
 import { liveLogTail, openLiveLog } from "./live-log";
 import { type PrebuildStamp, runLocalBuild } from "./local";
 import { type BuildLockDeps, buildLockKey, buildTreeLockKey, withBuildLock } from "./lock";
@@ -163,8 +163,11 @@ export type EnsureInput = ProjectContext & {
 	git?: GitFactsCache;
 	/** progress for a spinner: fetching / waiting / building / installing / ready (`AppPhase`) */
 	onPhase?: (phase: AppPhase) => void;
-	/** set by `ensureKindBuild`: the build goes into its kind dir and a local build is verified against `buildKey` */
-	kind?: { key: KindBuildKey; buildKey: string };
+	/**
+	 * set by `ensureKindBuild`: the build goes into its kind dir and a local build is verified against `buildKey`.
+	 * `kindless`: the kind-less cache key that names the same build (`kindlessIsDev`), read as an alias of this one.
+	 */
+	kind?: { key: KindBuildKey; buildKey: string; kindless?: string };
 };
 
 /** The kind builds `ensureKindBuild` makes: a repack is made from a base by the repack engine, never built. */
@@ -385,9 +388,26 @@ function buildStep(
 	return () => lockFollowing(input, treeKey, run, waitLine);
 }
 
+/**
+ * A dev build cached under its kind-less key (before `warden dev` and `--kind dev` shared one key): aliased under the
+ * kind hash, so the cache, the build lock and an install recorded at the old key all name it.
+ */
+function adoptKindless(input: EnsureInput): void {
+	const kindless = input.kind?.kindless;
+	if (kindless === undefined) return;
+	const { store, projectKey, platform, hash } = input;
+	if (cachedBuild(store, projectKey, platform, hash, input.now())) return;
+	const plain = cachedBuild(store, projectKey, platform, kindless, input.now());
+	if (plain === undefined || (plain.kind !== undefined && plain.kind !== "legacy")) return;
+	if (aliasBuild(store, { ...plain, kind: "dev" }, hash, input.now())) {
+		input.log(`using the dev build cached under ${kindless}`);
+	}
+}
+
 /** Wire the real effects (sqlite cache, simctl/adb, eas-cli, local build) into `resolveApp`. */
 export async function ensureApp(input: EnsureInput): AsyncResult<EnsureResult> {
 	const { store, env, project, projectKey, platform, hash } = input;
+	adoptKindless(input);
 	const layout = input.kind && {
 		dir: kindDir(env, projectKey, platform, input.kind.key),
 		kind:
@@ -427,8 +447,8 @@ export async function ensureApp(input: EnsureInput): AsyncResult<EnsureResult> {
 		...(input.onPhase ? { onPhase: input.onPhase } : {}),
 		cached: () => cachedBuild(store, projectKey, platform, hash, input.now())?.path,
 		legacy: async () => {
-			if (input.kind) return ok(undefined);
-			const found = findLegacyArtifact(project.cacheDirs, platform, hash);
+			if (input.kind && input.kind.kindless === undefined) return ok(undefined);
+			const found = findLegacyArtifact(project.cacheDirs, platform, input.kind?.kindless ?? hash);
 			if (!found) return ok(undefined);
 			const stored = await cache(found, "legacy", false);
 			return stored.success ? ok(stored.data.path) : stored;
@@ -522,14 +542,17 @@ export type EnsureKindInput = Omit<EnsureInput, "hash" | "kind" | "project"> & {
 /**
  * `ensureApp` for one build of a kind, through the same cache / EAS / local-build / install pipeline: cached under
  * `kindDir`, keyed (cache, build lock, install record) by `kindHash(key)`, built with the kind's command and env
- * (`projectForKind`). The legacy cache dirs are not consulted, and EAS never supplies the simulator base.
+ * (`projectForKind`). EAS never supplies the simulator base. A `dev` build whose project's kind-less build is the same
+ * build (`kindlessIsDev`) also finds the kind-less row and legacy dirs of its fingerprint; other kinds never do.
  */
 export async function ensureKindBuild(input: EnsureKindInput): AsyncResult<EnsureResult> {
 	const { key, buildKey, project, ...rest } = input;
+	const kindless =
+		key.kind === "dev" && !key.device && kindlessIsDev(project, input.platform) ? key.nativeFp : undefined;
 	return ensureApp({
 		...rest,
 		project: projectForKind(project, buildKindOfKey(key), deviceOf(key)),
 		hash: kindHash(key),
-		kind: { key, buildKey },
+		kind: { key, buildKey, ...(kindless !== undefined ? { kindless } : {}) },
 	});
 }

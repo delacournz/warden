@@ -195,8 +195,16 @@ describe("warden app ensure", () => {
 		const path = await seed(c);
 		const cmd = createAppCommand(deps);
 		expect(await cmd.run(c)).toBe(0);
-		expect(JSON.parse(c.stdout.join("\n"))).toEqual({ appPath: path, hash: HASH, source: "cache", installed: true });
-		expect(getInstall(c.db, "ios", "U1", "com.demo")?.hash).toBe(HASH);
+		// the kind-less build is the dev build: found at its old key, ensured and installed under the dev kind's
+		expect(JSON.parse(c.stdout.join("\n"))).toEqual({
+			appPath: path,
+			hash: `${HASH}:dev`,
+			source: "cache",
+			installed: true,
+			kind: "dev",
+			requestedKind: "dev",
+		});
+		expect(getInstall(c.db, "ios", "U1", "com.demo")?.hash).toBe(`${HASH}:dev`);
 
 		c.stdout.length = 0;
 		calls.length = 0;
@@ -348,6 +356,70 @@ describe("warden app ensure", () => {
 		c.argv = ["fingerprint", "ios", "--project", "apps/nope"];
 		expect(await createAppCommand(deps).run(c)).toBe(1);
 		expect(calls).toEqual([]);
+	});
+});
+
+describe("one dev build per fingerprint", () => {
+	/** every spawn that would build: anything run through `sh -c` but the fingerprint */
+	const builds = (calls: string[][]) =>
+		calls.filter((cmd) => cmd[0] === "sh" && cmd[1] === "-c" && !cmd[2]?.startsWith("fp "));
+
+	test("app ensure --kind dev warms what a kind-less ensure (warden dev) reads: no second build", async () => {
+		const calls: string[][] = [];
+		const c = setup(["ensure", "ios", "--no-install", "--no-eas", "--kind", "dev", "--json"], [], calls);
+		const root = realpathSync(join(c.cwd, "app"));
+		const devApp = await storeArtifact({
+			store: c.db,
+			env: c.env,
+			projectKey: `path:${root}`,
+			platform: "ios",
+			profile: "local:dev",
+			hash: `${HASH}:dev`,
+			artifact: fakeApp(join(c.cwd, "src")),
+			source: "build",
+			layout: { dir: join(c.cwd, "dev-dir"), kind: "dev" },
+			now: 1,
+		});
+		if (!devApp.success) throw new Error(devApp.error);
+		const cmd = createAppCommand(deps);
+		expect(await cmd.run(c)).toBe(0);
+		expect(JSON.parse(c.stdout.join("\n"))).toMatchObject({ hash: `${HASH}:dev`, source: "cache" });
+
+		c.stdout.length = 0;
+		c.argv = ["ensure", "ios", "--no-install", "--no-eas", "--json"];
+		expect(await cmd.run(c)).toBe(0);
+		expect(JSON.parse(c.stdout.join("\n"))).toMatchObject({
+			appPath: devApp.data.path,
+			hash: `${HASH}:dev`,
+			source: "cache",
+			kind: "dev",
+		});
+		expect(builds(calls)).toEqual([]);
+	});
+
+	test("a build cached under the old kind-less key still hits, for both, and is installed once", async () => {
+		const calls: string[][] = [];
+		const c = setup(
+			["ensure", "ios", "--udid", "U1", "--no-eas", "--no-build", "--json"],
+			[
+				["xcrun simctl install U1", {}],
+				["xcrun simctl get_app_container U1 com.demo", { stdout: installedApp() }],
+				["plutil -convert json", { stdout: JSON.stringify({ CFBundleVersion: "1", CFBundleExecutable: "App" }) }],
+			],
+			calls
+		);
+		const path = await seed(c);
+		recordInstall(c.db, { platform: "ios", deviceId: "U1", bundleId: "com.demo", hash: HASH, installedAt: 1 });
+		const cmd = createAppCommand(deps);
+		expect(await cmd.run(c)).toBe(0);
+		expect(JSON.parse(c.stdout.join("\n"))).toMatchObject({ appPath: path, hash: `${HASH}:dev`, source: "installed" });
+
+		c.stdout.length = 0;
+		c.argv = ["ensure", "ios", "--udid", "U1", "--no-eas", "--no-build", "--kind", "dev", "--json"];
+		expect(await cmd.run(c)).toBe(0);
+		expect(JSON.parse(c.stdout.join("\n"))).toMatchObject({ hash: `${HASH}:dev`, source: "installed" });
+		expect(calls.some((x) => x.join(" ").startsWith("xcrun simctl install"))).toBe(false);
+		expect(builds(calls)).toEqual([]);
 	});
 });
 
