@@ -4,8 +4,15 @@ import { E2E_PACKAGE, NPM_PACKAGE, platformPackageName, RELEASE_TARGETS, type Re
 /**
  * Fields every published package shares, taken from `apps/cli/package.json`. `repository`
  * (`owner/name` on GitHub) adds repository / homepage / bugs links; leave it out while the repo is private.
+ * `homepage` (the website) is public either way and wins over the GitHub readme link.
  */
-export type PackageMeta = { version: string; description: string; license: string; repository?: string };
+export type PackageMeta = {
+	version: string;
+	description: string;
+	license: string;
+	repository?: string;
+	homepage?: string;
+};
 
 type RepoLinks = { repository?: { type: "git"; url: string }; homepage?: string; bugs?: { url: string } };
 type PublishConfig = { access: "public" };
@@ -76,11 +83,17 @@ export const BINARY_PATH = `${BIN_DIR}/warden`;
 /** Copied from the repo root into every package. */
 export const LICENSE_FILE = "LICENSE";
 
-function repoLinks(repo: string | undefined): RepoLinks {
-	if (!repo) return {};
+/** Path of the e2e docs on the website: `@delacour/warden-e2e`'s homepage. */
+export const E2E_DOCS_PATH = "/docs/e2e";
+
+function repoLinks(meta: PackageMeta, homepage = meta.homepage): RepoLinks {
+	const repo = meta.repository;
+	const site = homepage ? { homepage } : {};
+	if (!repo) return site;
 	return {
 		repository: { type: "git", url: `git+https://github.com/${repo}.git` },
 		homepage: `https://github.com/${repo}#readme`,
+		...site,
 		bugs: { url: `https://github.com/${repo}/issues` },
 	};
 }
@@ -97,7 +110,7 @@ export function platformManifest(target: ReleaseTarget, meta: PackageMeta, helpe
 		version: meta.version,
 		description: `The ${target} binary for ${NPM_PACKAGE}`,
 		license: meta.license,
-		...repoLinks(meta.repository),
+		...repoLinks(meta),
 		os: [os],
 		cpu: [cpu],
 		files: [BINARY_PATH, ...(shipped ? helperFiles(BIN_DIR, shipped.frameworks, shipped.inject) : []), LICENSE_FILE],
@@ -122,7 +135,7 @@ export function mainManifest(meta: PackageMeta): MainManifest {
 		version: meta.version,
 		description: meta.description,
 		license: meta.license,
-		...repoLinks(meta.repository),
+		...repoLinks(meta),
 		keywords: ["ios-simulator", "android-emulator", "leasing", "agents", "e2e", "cli"],
 		bin: { warden: SHIM_PATH },
 		exports: {
@@ -151,7 +164,7 @@ export function e2eManifest(meta: PackageMeta, dependencies: Record<string, stri
 		version: meta.version,
 		description: "TypeScript spec API for `warden e2e`: test, expect, screen, device, app",
 		license: meta.license,
-		...repoLinks(meta.repository),
+		...repoLinks(meta, meta.homepage && `${meta.homepage}${E2E_DOCS_PATH}`),
 		type: "module",
 		keywords: ["e2e", "ios-simulator", "android-emulator", "bun", "testing"],
 		exports: {
