@@ -175,6 +175,8 @@ Options:
                            first)
   --view                   with --remote: open the device in the warden viewer
                            and stay until it closes
+  --host <name>            claim on a warden host (warden host add) over ssh;
+                           the host allocates and boots
   --idempotency-key <key>  a repeat claim with this key (same owner, leases
                            alive) returns the same leases (env
                            WARDEN_IDEMPOTENCY_KEY)
@@ -1505,6 +1507,7 @@ Usage: warden ls [options]
 list leases (resource, state, owner, repo/worktree, age, heartbeat)
 
 Options:
+  --hosts     only leases on warden hosts (claim --host)
   --json      machine-readable output
   -h, --help  display help for command"
 `;
@@ -4376,6 +4379,18 @@ serve a leased device's driver on stdin/stdout for a remote warden (internal)
 Options:
   --lease <id>
   -h, --help    display help for command"
+`;
+
+exports[`help output warden __host-keepalive --help (and nested subcommands) 1`] = `
+"$ warden __host-keepalive --help
+Usage: warden __host-keepalive [options]
+
+renew a host's leases while the local ones live; end them when the host can't
+back them (internal)
+
+Options:
+  --host <name>
+  -h, --help     display help for command"
 `;
 
 exports[`help output warden __host-serve --help (and nested subcommands) 1`] = `

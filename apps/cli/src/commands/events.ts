@@ -48,6 +48,10 @@ export function eventDetail(e: LeaseEvent): string {
 			return `${e.data.deviceId}${e.data.reason ? `: ${e.data.reason}` : ""}`;
 		case "device_recovered":
 			return e.data.deviceId;
+		case "host_claimed":
+			return `${e.data.deviceName} on ${e.data.host} (${e.data.remoteLeaseId})`;
+		case "host_lost":
+			return `${e.data.host} ${e.data.remoteLeaseId}: ${e.data.reason}`;
 	}
 }
 

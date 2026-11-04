@@ -123,6 +123,9 @@
 | 117 | `warden host doctor` / a host command exits 14 `HOST_VERSION_SKEW`: `<host> runs warden X, this laptop runs Y` | The host's warden is not this laptop's version | `warden host setup <name>` (a dev/local build: `--binary <path>`) |
 | 118 | Exit 15 `HOST_UNKNOWN`: `no host named <name>` | No `warden host add` for that name in this `WARDEN_HOME` | `warden host ls`, then `warden host add <name> --ssh user@host` |
 | 119 | A host command exits 2 with `warden __host-serve: refused: …` | The forced command allows only `version`, `claim`, `heartbeat`, `release`, `ls`, `doctor` with `--json`, and `__driver-serve`; the session selector, `--all`, `--udid`, `doctor --fix` and another owner's lease ids are refused | Use the allowed form (hosts.md). A person with a normal shell on the host can do the rest there |
+| 120 | A `warden run` / `warden dev` on a host lease stops with `LEASE_LOST` (exit 11); `warden events` shows `host_lost … unreachable` | The keepalive could not reach the host 3 times in a row (≈ 90 s), so the host's lease could no longer be renewed | `warden host doctor <name>`; once it answers, claim again (`warden claim <platform> --host <name>`). Never loop on the claim |
+| 121 | `host_lost … remote_gone` in `warden events`, or `heartbeat` warns `<host> no longer holds <id>` | The host's lease ended there: its gc expired it (the laptop slept past `WARDEN_REMOTE_TTL`) or a person released it on the host | Claim again. A laptop that sleeps often: raise the host's `WARDEN_REMOTE_TTL` |
+| 122 | `<host>'s session ends in …` warnings, then `host_lost … host_expired` | The hosted Mac's session has a hard end (`expiresAt`); the lease ends with it | A person renews or replaces the host session; then claim again. Warden never renews it on its own |
 
 ## Code lookup
 

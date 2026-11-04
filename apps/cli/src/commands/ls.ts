@@ -16,6 +16,8 @@ export function describeResource(resource: Resource): string {
 			return `build ${resource.key}`;
 		case "remote-device":
 			return `remote ${resource.platform} ${resource.name} (${resource.id})`;
+		case "host-device":
+			return `${resource.platform} ${resource.name} (${resource.id}) on ${resource.host}`;
 	}
 }
 
@@ -25,10 +27,19 @@ async function stopReasons(ctx: CommandContext, leases: readonly Lease[]): Promi
 	return (await import("../remote/claim")).remoteStopReasons(ctx, leases);
 }
 
-async function list(ctx: CommandContext, json: boolean): Promise<number> {
+/** The host a lease's device is on: a warden host's name, else this machine (empty). */
+function hostOf(resource: Resource): string {
+	return resource.kind === "host-device" ? resource.host : "";
+}
+
+async function list(ctx: CommandContext, json: boolean, hostsOnly: boolean): Promise<number> {
 	const { color } = ctx.ui;
 	const now = ctx.now();
-	const stored = ctx.store().listLeases();
+	const stored = ctx
+		.store()
+		.listLeases()
+		.filter((l) => !hostsOnly || l.resource.kind === "host-device");
+	const showHost = stored.some((l) => l.resource.kind === "host-device");
 	const reasons = await stopReasons(ctx, stored);
 	const leases = stored.map((lease) => {
 		const stopReason = lease.resource.kind === "remote-device" ? reasons[lease.resource.id] : undefined;
@@ -40,6 +51,7 @@ async function list(ctx: CommandContext, json: boolean): Promise<number> {
 	});
 	const rows = leases.map((l) => [
 		l.id,
+		...(showHost ? [hostOf(l.resource)] : []),
 		describeResource(l.resource),
 		l.stopReason
 			? color.yellow(`stop_reason: ${l.stopReason}`)
@@ -55,10 +67,22 @@ async function list(ctx: CommandContext, json: boolean): Promise<number> {
 	const text =
 		leases.length === 0
 			? color.dim("no leases")
-			: table(ctx, ["LEASE", "RESOURCE", "STATE", "OWNER", "REPO/WORKTREE", "LABEL", "AGE", "HEARTBEAT"], rows, {
-					column: 4,
-					keep: "end",
-				});
+			: table(
+					ctx,
+					[
+						"LEASE",
+						...(showHost ? ["HOST"] : []),
+						"RESOURCE",
+						"STATE",
+						"OWNER",
+						"REPO/WORKTREE",
+						"LABEL",
+						"AGE",
+						"HEARTBEAT",
+					],
+					rows,
+					{ column: showHost ? 5 : 4, keep: "end" }
+				);
 	const stale = leases.filter((l) => l.state === "stale").length;
 	const detail = `${plural(leases.length, "lease")}${stale > 0 ? ` · ${stale} stale` : ""}`;
 	emit(ctx, json, { leases }, text, { scope: "ls", detail });
@@ -70,6 +94,9 @@ export const lsCommand = defineCommand({
 	group: "Lease",
 	summary: "list leases (resource, state, owner, repo/worktree, age, heartbeat)",
 	register: (cmd, ctx, done) => {
-		cmd.option("--json", "machine-readable output").action(async (opts) => done(await list(ctx, opts.json === true)));
+		cmd
+			.option("--hosts", "only leases on warden hosts (claim --host)")
+			.option("--json", "machine-readable output")
+			.action(async (opts) => done(await list(ctx, opts.json === true, opts.hosts === true)));
 	},
 });

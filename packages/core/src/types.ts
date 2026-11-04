@@ -46,7 +46,21 @@ export type RemoteDeviceResource = {
 	account?: string;
 	organizationId?: string;
 };
-export type Resource = DeviceResource | PortResource | BuildResource | RemoteDeviceResource;
+/**
+ * A device on another Mac (`warden claim --host`): `id` / `name` are the host's udid / serial and device name,
+ * `remoteLeaseId` the lease the host holds for this laptop (owner `host:<machineId>` there). `expiresAt` is set
+ * when the host itself ends then (a hosted Mac's session): the lease is capped there and ends `host_expired`.
+ */
+export type HostDeviceResource = {
+	kind: "host-device";
+	host: string;
+	remoteLeaseId: string;
+	platform: Platform;
+	id: string;
+	name: string;
+	expiresAt?: number;
+};
+export type Resource = DeviceResource | PortResource | BuildResource | RemoteDeviceResource | HostDeviceResource;
 
 export type AgentOwner = { kind: "agent"; sessionId: string; cwd: string; repo?: string; worktree?: string };
 export type UserOwner = { kind: "user"; pid: number; tty?: string; cwd: string; repo?: string; worktree?: string };
@@ -145,6 +159,8 @@ export function resourceKey(resource: Resource): string {
 			return `build:${resource.key}`;
 		case "remote-device":
 			return `remote-device:${resource.platform}:${resource.id}`;
+		case "host-device":
+			return `host-device:${resource.host}:${resource.remoteLeaseId}`;
 	}
 }
 

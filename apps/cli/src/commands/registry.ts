@@ -190,6 +190,12 @@ export const COMMANDS: readonly CommandEntry[] = [
 		load: async () => (await import("./driver-serve")).driverServeCommand,
 	},
 	{
+		name: "__host-keepalive",
+		summary: "renew a host's leases while the local ones live; end them when the host can't back them (internal)",
+		hidden: true,
+		load: async () => (await import("./host-keepalive")).hostKeepaliveCommand,
+	},
+	{
 		name: "__host-serve",
 		summary: "the forced command a warden host grant installs: runs one allowed warden command for a laptop (internal)",
 		hidden: true,

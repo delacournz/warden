@@ -81,6 +81,17 @@ async function pickLeases(ctx: CommandContext, opts: ReleaseOpts): Promise<Picke
 	return { kind: "ids", ids: answer };
 }
 
+/** Stop the hosted devices (warden cloud) and release the host leases (warden hosts) behind `leases`. */
+async function releaseElsewhere(ctx: CommandContext, leases: readonly Lease[], shutdown: boolean) {
+	const remote = leases.some((l) => l.resource.kind === "remote-device")
+		? await (await import("../remote/claim")).stopRemoteLeases(ctx, leases)
+		: { stopped: [], notes: [], stopReasons: {} };
+	const host = leases.some((l) => l.resource.kind === "host-device")
+		? await (await import("../hosts/claim")).releaseHostLeases(ctx, leases, { shutdown })
+		: { released: [], notes: [] };
+	return { remote, host };
+}
+
 /**
  * Release the selected leases; with `--shutdown`, first shut down the devices warden may shut down and stop every
  * released device's `warden-simd`. Without it the helper stays resident for the next run (idle timeout reaps it).
@@ -107,10 +118,8 @@ async function release(ctx: CommandContext, ids: string[], opts: ReleaseOpts): P
 					return outcome;
 				})
 			: { shutdown: [], notes: [], kept: [], deleted: [] };
-	const remote = leases.some((l) => l.resource.kind === "remote-device")
-		? await (await import("../remote/claim")).stopRemoteLeases(ctx, leases)
-		: { stopped: [], notes: [], stopReasons: {} };
-	notes.push(...remote.notes);
+	const { remote, host } = await releaseElsewhere(ctx, leases, opts.shutdown === true);
+	notes.push(...remote.notes, ...host.notes);
 	await releaseDevices(
 		ctx,
 		leases.map((l) => l.id),
@@ -125,6 +134,7 @@ async function release(ctx: CommandContext, ids: string[], opts: ReleaseOpts): P
 			: color.green(`released ${leases.map((l) => l.id).join(" ")}`),
 		...(shutdown.length > 0 ? [color.green(`shut down ${shutdown.join(" ")}`)] : []),
 		...(remote.stopped.length > 0 ? [color.green(`stopped remote ${remote.stopped.join(" ")}`)] : []),
+		...(host.released.length > 0 ? [color.green(`released on the host ${host.released.join(" ")}`)] : []),
 		...(deleted.length > 0
 			? [color.green(`deleted ${deleted.join(" ")} (ephemeral; the next claim clones fresh)`)]
 			: []),
@@ -141,6 +151,7 @@ async function release(ctx: CommandContext, ids: string[], opts: ReleaseOpts): P
 			shutdown,
 			remoteStopped: remote.stopped,
 			remoteStopReasons: remote.stopReasons,
+			hostReleased: host.released,
 			deleted,
 			quarantined: bad.quarantined,
 			unknown,
