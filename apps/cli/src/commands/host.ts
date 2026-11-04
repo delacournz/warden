@@ -1,14 +1,16 @@
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { deleteHost, type HostRecord, listGrants, listHosts, putHost } from "@delacour/warden-core/hosts/registry";
 import { wardenHome } from "@delacour/warden-core/store";
+import { err, ok, type Result } from "@delacour/warden-types/result";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
+import type { AttachFlags } from "../hosts/attach-run";
 import type { FetchSpawn } from "../hosts/evidence";
 import { grantKey, revokeKey } from "../hosts/grant";
 import type { PassthroughSpawn } from "../hosts/passthrough";
 import { hostVersion, lookupHost, remoteFailure, wardenJson } from "../hosts/remote";
-import { setupHost, type UploadFile } from "../hosts/setup";
+import { ensureLaptopKey, laptopKeyPath, setupHost, type UploadFile } from "../hosts/setup";
 import { formatSshTarget, hostKnownHosts, parseSshTarget } from "../hosts/ssh";
 import { emit, note, reportError, success, table, warn } from "../output";
 import { reportClaimFailure } from "../physical-lock";
@@ -29,53 +31,70 @@ type AddOpts = {
 	proxyCommand?: string;
 	jump?: string;
 	hostKey?: string;
+	/** the host already grants this laptop's key (`warden host attach --grant`): use it, no setup */
+	granted?: true;
 	json?: true;
 };
 
-/** Record a host and make first contact (pins its host key; reads its warden version when one is installed). */
-async function add(ctx: CommandContext, name: string, opts: AddOpts): Promise<number> {
-	if (!NAME.test(name)) {
-		reportError(ctx, SCOPE, `bad host name ${name}: letters, digits, . _ -`);
-		return 1;
-	}
-	if (opts.ssh === undefined) {
-		reportError(ctx, SCOPE, "--ssh user@host[:port] is required");
-		return 1;
-	}
+/** The record `add` makes from its flags, or why the flags are wrong. */
+function hostFromFlags(ctx: CommandContext, name: string, opts: AddOpts): Result<HostRecord> {
+	if (!NAME.test(name)) return err(`bad host name ${name}: letters, digits, . _ -`);
+	if (opts.ssh === undefined) return err("--ssh user@host[:port] is required");
 	const target = parseSshTarget(opts.ssh);
-	if (!target.success) {
-		reportError(ctx, SCOPE, target.error);
-		return 1;
+	if (!target.success) return target;
+	const laptopKey = laptopKeyPath(wardenHome(ctx.env));
+	if (opts.granted && opts.identity === undefined && !existsSync(laptopKey)) {
+		return err("--granted: this laptop has no warden key yet (warden host key makes one; grant it on the host)");
 	}
-	const host: HostRecord = {
+	const identity = opts.identity ?? (opts.granted ? laptopKey : undefined);
+	return ok({
 		name,
 		ssh: target.data,
-		...(opts.identity !== undefined ? { identity: opts.identity } : {}),
+		...(identity !== undefined ? { identity } : {}),
 		...(opts.proxyCommand !== undefined ? { proxyCommand: opts.proxyCommand } : {}),
 		...(opts.jump !== undefined ? { jump: opts.jump } : {}),
 		...(opts.hostKey !== undefined ? { hostKey: opts.hostKey.trim() } : {}),
 		addedAt: ctx.now(),
-	};
-	const knownHosts = hostKnownHosts(wardenHome(ctx.env), name);
+	});
+}
+
+/** Start the host's known_hosts afresh: the pinned key when one was given, else empty (trusted on first contact). */
+function pinHostKey(ctx: CommandContext, host: HostRecord): string {
+	const knownHosts = hostKnownHosts(wardenHome(ctx.env), host.name);
 	mkdirSync(dirname(knownHosts), { recursive: true, mode: 0o700 });
 	rmSync(knownHosts, { force: true });
 	if (host.hostKey !== undefined) {
-		const label =
-			target.data.port !== undefined ? `[${target.data.hostname}]:${target.data.port}` : target.data.hostname;
+		const { hostname, port } = host.ssh;
+		const label = port !== undefined ? `[${hostname}]:${port}` : hostname;
 		writeFileSync(knownHosts, `${label} ${host.hostKey}\n`, { mode: 0o600 });
 	}
-	const version = await hostVersion(ctx, host, { trustNew: host.hostKey === undefined, allowSkew: true });
+	return knownHosts;
+}
+
+function addedText(name: string, host: HostRecord, version: Result<string>, granted: boolean): string {
+	const at = formatSshTarget(host.ssh);
+	if (!version.success) return `added ${name} (${at}); warden is not set up there yet: warden host setup ${name}`;
+	const next = granted ? `warden host doctor ${name}` : `warden host setup ${name}`;
+	return `added ${name} (${at}, warden ${version.data}); next: ${next}`;
+}
+
+/** Record a host and make first contact (pins its host key; reads its warden version when one is installed). */
+async function add(ctx: CommandContext, name: string, opts: AddOpts): Promise<number> {
+	const host = hostFromFlags(ctx, name, opts);
+	if (!host.success) {
+		reportError(ctx, SCOPE, host.error);
+		return 1;
+	}
+	const knownHosts = pinHostKey(ctx, host.data);
+	const version = await hostVersion(ctx, host.data, { trustNew: host.data.hostKey === undefined, allowSkew: true });
 	if (!version.success && /HOST_(AUTH|UNREACHABLE)/.test(version.error)) {
 		rmSync(knownHosts, { force: true });
 		return reportClaimFailure(ctx, SCOPE, version.error);
 	}
-	const recorded: HostRecord = { ...host, ...(version.success ? { version: version.data } : {}) };
+	const recorded: HostRecord = { ...host.data, ...(version.success ? { version: version.data } : {}) };
 	putHost(ctx.store(), recorded);
-	const text = version.success
-		? `added ${name} (${formatSshTarget(target.data)}, warden ${version.data}); next: warden host setup ${name}`
-		: `added ${name} (${formatSshTarget(target.data)}); warden is not set up there yet: warden host setup ${name}`;
 	if (opts.json) emit(ctx, true, { host: recorded, warden: version.success ? version.data : null }, "");
-	else success(ctx, text);
+	else success(ctx, addedText(name, recorded, version, opts.granted === true));
 	return 0;
 }
 
@@ -299,6 +318,21 @@ async function fetchEvidence(
 	return 0;
 }
 
+async function key(ctx: CommandContext, opts: { json?: true }): Promise<number> {
+	const made = await ensureLaptopKey(ctx);
+	if (!made.success) {
+		reportError(ctx, "host key", made.error);
+		return 1;
+	}
+	emit(ctx, opts.json === true, { publicKey: made.data.publicKey, identity: made.data.path }, made.data.publicKey);
+	return 0;
+}
+
+async function attach(ctx: CommandContext, opts: AttachFlags): Promise<number> {
+	const { attachHost } = await import("../hosts/attach-run");
+	return attachHost(ctx, opts);
+}
+
 export function createHostCommand(deps: HostDeps = {}) {
 	return defineCommand({
 		name: "host",
@@ -315,8 +349,32 @@ export function createHostCommand(deps: HostDeps = {}) {
 				.option("--proxy-command <cmd>", "ssh ProxyCommand (cloudflared, tailscale nc, an SSM bridge)")
 				.option("--jump <host>", "ssh jump host (ProxyJump), for a host with no inbound")
 				.option("--host-key <key>", "pin this host key (`ssh-ed25519 AAAA…`) instead of trusting the first one seen")
+				.option("--granted", "the host already grants this laptop's key (host attach): use it, no setup")
 				.option("--json", "machine-readable output")
 				.action(async (name, opts) => done(await add(ctx, name, opts)));
+			cmd
+				.command("key")
+				.description("print this laptop's warden key (made on first use), to grant on a host or pass to host attach")
+				.option("--json", "machine-readable output")
+				.action(async (opts) => done(await key(ctx, opts)));
+			cmd
+				.command("attach")
+				.description("on a machine with no inbound ssh (a CI runner): a user-level sshd that lets one laptop key in")
+				.option("--grant <key>", "the laptop's key (warden host key there): public key line or .pub file")
+				.option("--as <name>", "the name to give this host on the laptop", "ci")
+				.option("--listen <addr>", "sshd listen address", "127.0.0.1")
+				.option("--port <port>", "sshd port (default: a free one)")
+				.option("--tailscale", "listen on this machine's tailnet address (tailscale ip -4)")
+				.option(
+					"--advertise <addr>",
+					"the address the laptop dials (a userspace tailscaled's IP, a NAT); sshd stays on --listen"
+				)
+				.option("--jump <target>", "dial out to this bastion (user@host) and forward its --jump-port here")
+				.option("--jump-port <port>", "the bastion's loopback port that reaches this sshd")
+				.option("--jump-identity <file>", "ssh key for the bastion")
+				.option("--for <duration>", "stop after this long (default: until Ctrl-C / SIGTERM)")
+				.option("--json", "machine-readable output")
+				.action(async (opts) => done(await attach(ctx, opts)));
 			cmd
 				.command("setup")
 				.description("install this warden on the host (no sudo), fetch its helper, grant this laptop's key")

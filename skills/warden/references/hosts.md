@@ -12,6 +12,16 @@ A **host** is another Mac (a desk Mac, a Mac mini over Tailscale, EC2 Mac, MacSt
 
 `warden host ls [--json]` · `warden host rm <name>` (also drops the pinned key).
 
+## A machine with no inbound ssh: CI runner, fresh hosted Mac (`host attach`)
+
+| Where | Command | What happens |
+|---|---|---|
+| laptop | `warden host key [--json]` | Prints this laptop's warden key (made on first use) → `{ publicKey, identity }` |
+| the machine | `warden host attach --grant <key line \| .pub> [--as <name>] [--listen <addr>] [--port <p>] [--tailscale \| --advertise <addr> \| --jump <user@bastion> --jump-port <p> [--jump-identity <key>]] [--for <duration>] [--json]` | No sudo: a user-level sshd (`/usr/sbin/sshd`, keys only, no root/agent/X11; `$WARDEN_HOME/attach/`) whose only key is the laptop's, through the forced `__host-serve`. `--tailscale` listens on `tailscale ip -4`; `--advertise` names the address the laptop dials (a userspace tailscaled forwards to loopback); `--jump` dials out `ssh -N -R <jump-port>:127.0.0.1:<port>`. Prints the laptop's `warden host add …` line (JSON: `{ name, port, hostKey, add }`), holds until Ctrl-C / SIGTERM / `--for`, then stops sshd |
+| laptop | the printed `warden host add <name> --ssh <user>@<addr>:<port> [--jump …] --host-key '…' --granted` | `--granted`: the host already grants this laptop's key, so it is used at once and no `host setup` is needed. Then `warden host doctor <name>` |
+
+Example GitHub Actions workflow (macOS runner, userspace tailscaled, `TS_AUTHKEY` secret): `.github/workflows/remote-host.yml` in the warden repo.
+
 ## Claim on a host (`claim --host`)
 
 `warden claim ios|android --host <name> [--profile <slug>] [--runtime <r>] [--count <n>] [--max <n>] [--wait <d> | --no-wait] [--priority <n>] [--label <x>] [--ttl <d>] [--idempotency-key <k>] [--json]`

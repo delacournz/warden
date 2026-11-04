@@ -2012,6 +2012,10 @@ Options:
 Commands:
   add <name>                record a Mac to drive over ssh and pin its host key
                             (first contact)
+  key                       print this laptop's warden key (made on first use),
+                            to grant on a host or pass to host attach
+  attach                    on a machine with no inbound ssh (a CI runner): a
+                            user-level sshd that lets one laptop key in
   setup <name>              install this warden on the host (no sudo), fetch its
                             helper, grant this laptop's key
   doctor <name>             check a host: reachable, key accepted, same warden
@@ -2045,8 +2049,45 @@ Options:
   --jump <host>          ssh jump host (ProxyJump), for a host with no inbound
   --host-key <key>       pin this host key (\`ssh-ed25519 AAAA…\`) instead of
                          trusting the first one seen
+  --granted              the host already grants this laptop's key (host
+                         attach): use it, no setup
   --json                 machine-readable output
   -h, --help             display help for command
+
+$ warden host key --help
+Usage: warden host key [options]
+
+print this laptop's warden key (made on first use), to grant on a host or pass
+to host attach
+
+Options:
+  --json      machine-readable output
+  -h, --help  display help for command
+
+$ warden host attach --help
+Usage: warden host attach [options]
+
+on a machine with no inbound ssh (a CI runner): a user-level sshd that lets one
+laptop key in
+
+Options:
+  --grant <key>           the laptop's key (warden host key there): public key
+                          line or .pub file
+  --as <name>             the name to give this host on the laptop (default:
+                          "ci")
+  --listen <addr>         sshd listen address (default: "127.0.0.1")
+  --port <port>           sshd port (default: a free one)
+  --tailscale             listen on this machine's tailnet address (tailscale ip
+                          -4)
+  --advertise <addr>      the address the laptop dials (a userspace tailscaled's
+                          IP, a NAT); sshd stays on --listen
+  --jump <target>         dial out to this bastion (user@host) and forward its
+                          --jump-port here
+  --jump-port <port>      the bastion's loopback port that reaches this sshd
+  --jump-identity <file>  ssh key for the bastion
+  --for <duration>        stop after this long (default: until Ctrl-C / SIGTERM)
+  --json                  machine-readable output
+  -h, --help              display help for command
 
 $ warden host setup --help
 Usage: warden host setup [options] <name>
