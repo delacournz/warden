@@ -163,7 +163,8 @@ export const COMMANDS: readonly CommandEntry[] = [
 	{
 		name: "host",
 		group: "Devices",
-		summary: "drive another Mac's sims / emulators over ssh: add, setup, doctor, ls, rm (host side: grant, revoke)",
+		summary:
+			"drive another Mac's sims / emulators over ssh: add, setup, doctor, run, fetch, ls, rm (host side: grant, revoke)",
 		load: async () => (await import("./host")).hostCommand,
 	},
 	{
@@ -200,6 +201,12 @@ export const COMMANDS: readonly CommandEntry[] = [
 		summary: "receive an app build from a laptop into the host's uploads, checked against its hash (internal)",
 		hidden: true,
 		load: async () => (await import("./host-recv")).hostRecvCommand,
+	},
+	{
+		name: "__host-send",
+		summary: "send a perf session's files to the laptop that holds its device, as a tar on stdout (internal)",
+		hidden: true,
+		load: async () => (await import("./host-send")).hostSendCommand,
 	},
 	{
 		name: "__host-serve",

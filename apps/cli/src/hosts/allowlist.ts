@@ -7,6 +7,32 @@ import { shellSplit } from "./ssh";
  * flags it refuses: `--session` / `--all` / `--udid` / `port --force` would reach leases that are not the caller's,
  * `doctor --fix` writes.
  */
+/** every `warden perf` subcommand: each acts on the device of `--lease`, which `__host-serve` holds to the caller's own */
+const PERF_SUBCOMMANDS = [
+	"start",
+	"stop",
+	"record",
+	"mark",
+	"report",
+	"query",
+	"diff",
+	"metrics",
+	"memory",
+	"frames",
+	"startup",
+	"js",
+	"heap",
+	"react",
+	"native",
+	"logs",
+	"crashes",
+	"ls",
+	"doctor",
+	"tools",
+] as const;
+
+type Rule = { json: boolean; refuse: readonly string[]; subcommands?: readonly string[] };
+
 const ALLOWED = {
 	version: { json: true, refuse: [] },
 	claim: { json: true, refuse: ["--session"] },
@@ -18,7 +44,18 @@ const ALLOWED = {
 	"__driver-serve": { json: false, refuse: [] },
 	"__host-recv": { json: true, refuse: [] },
 	"__host-tunnel": { json: true, refuse: [] },
-} as const satisfies Record<string, { json: boolean; refuse: readonly string[] }>;
+	// passthrough (`warden host run`): text or --json, a device only through the caller's own --lease
+	perf: {
+		json: false,
+		refuse: ["--udid", "--serial", "--claim", "--force", "--allow-mutate-foreign"],
+		subcommands: PERF_SUBCOMMANDS,
+	},
+	golden: { json: false, refuse: [], subcommands: ["ls", "ensure"] },
+	builds: { json: false, refuse: [], subcommands: ["ls"] },
+	capacity: { json: false, refuse: [] },
+	queue: { json: false, refuse: [] },
+	"__host-send": { json: false, refuse: [] },
+} as const satisfies Record<string, Rule>;
 
 export type HostCommandName = keyof typeof ALLOWED;
 
@@ -42,7 +79,13 @@ export function checkHostCommand(line: string): Result<HostCommand> {
 	const allowedList = `allowed: ${HOST_COMMANDS.join(", ")}`;
 	if (name === undefined) return err(`refused: no command (${allowedList})`);
 	if (!isAllowed(name)) return err(`refused: \`${name}\` is not allowed over warden host (${allowedList})`);
-	const rule = ALLOWED[name];
+	const rule: Rule = ALLOWED[name];
+	const sub = words[1];
+	if (rule.subcommands !== undefined && (sub === undefined || !rule.subcommands.includes(sub))) {
+		return err(
+			`refused: \`${name} ${sub ?? ""}\` is not allowed over warden host (allowed: ${rule.subcommands.map((s) => `${name} ${s}`).join(", ")})`
+		);
+	}
 	const bad = words.find((w) => SHELL_META.test(w));
 	if (bad !== undefined) return err(`refused: \`${bad}\` holds a shell character`);
 	for (const flag of rule.refuse) {

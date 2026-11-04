@@ -4,7 +4,8 @@ import { COMMANDS } from "./commands/registry";
 import { type CommandContext, defaultContext, STDERR, STDOUT } from "./context";
 
 /**
- * Run warden with `argv` (without `bun cli.ts`). Returns the exit code. Only the dispatched command's module is
+ * Run warden with `argv` (without `bun cli.ts`). Returns the exit code. `warden --host <name> <cmd…>` is
+ * `warden host run <name> -- <cmd…>`. Only the dispatched command's module is
  * imported (`runLazyProgram`); `entries` is injectable so tests can watch what gets loaded.
  */
 export async function main(
@@ -13,7 +14,12 @@ export async function main(
 	entries: readonly CommandEntry[] = COMMANDS
 ): Promise<number> {
 	const [first, ...rest] = argv;
-	const normalised = first === "--version" || first === "-V" ? ["version", ...rest] : argv;
+	const normalised =
+		first === "--version" || first === "-V"
+			? ["version", ...rest]
+			: first === "--host" && rest[0] !== undefined
+				? ["host", "run", rest[0], "--", ...rest.slice(1)]
+				: argv;
 	return runLazyProgram(entries, normalised, makeContext(normalised));
 }
 
