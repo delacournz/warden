@@ -149,6 +149,7 @@ A terminal under 60 columns or 16 rows shows `terminal too small` until it is re
 
 - Same fingerprint as any earlier build (any worktree, EAS or local): no prebuild, no Xcode, seconds to a running app.
 - A native change: one local build, cached for every other worktree.
+- One dev build per fingerprint: `warden app ensure ios --kind dev --no-install` (or `warden ui open`, `warden e2e --dev`) warms the same cache entry `warden dev` installs, unless a variant or a custom `build` command makes the project's own build differ (see [App builds](/docs/sims/app-builds)).
 - Two worktrees missing the same hash at once share one build (build lock).
 
 ## Options

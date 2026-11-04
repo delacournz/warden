@@ -37,6 +37,8 @@ Every environment variable warden reads, and the ones `warden run`, `batch` and 
 | `WARDEN_RELEASE_REPO` | GitHub repo `warden update` downloads releases from (default `delacournz/warden`) |
 | `WARDEN_SIMD`, `WARDEN_HELPER_DIR`, `WARDEN_SIMD_SOCKET`, `WARDEN_HELPER_URL` | the iOS driver helper: binary, directory, running socket, download URL ([iOS driver helper](/docs/reference/e2e-driver)) |
 | `WARDEN_SIMD_GUEST_MAX_AGE_S` | read by the `warden-simd` helper: seconds after which it replaces its iOS accessibility guests before they wedge (default 12; `0` never; a non-positive or non-numeric value keeps the default) |
+| `WARDEN_SIMD_BRIDGE_DEADLINE_MS` | read by the `warden-simd` helper: how long one read through the in-sim accessibility bridge may take before it counts as stalled and the read moves to the host `ax` reader (default 4000; `0` no deadline) |
+| `WARDEN_SIMD_BRIDGE_COOLDOWN_S` | read by the `warden-simd` helper: seconds after a stalled bridge read during which reads go straight to `ax` before the bridge is asked again (default 20; `0` never skip) |
 | `CODEX_HOME` | Codex config directory (default `~/.codex`) |
 | `WARDEN_BINARY` | npm package only: run this binary instead of the platform package's |
 | `WARDEN_NPM_REGISTRY` | npm registry `warden update` uses for npm installs (default `https://registry.npmjs.org`) |

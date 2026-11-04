@@ -308,6 +308,23 @@ describe("Driver methods over the helper", () => {
 		expect(logs.some((line) => line.includes("axbridge -> ax: applicationUnavailable"))).toBe(true);
 	});
 
+	test("a snapshot the helper read on ax says why on its span, so a silent bridge shows in trace.jsonl", async () => {
+		const reason = "the axbridge guest did not answer within 4000 ms (stage: bridge read)";
+		const { driver } = await open(() => ({
+			data: { ...snapshotData, backend: "ax", fallback: { from: "axbridge", to: "ax", reason } },
+		}));
+		const notes: SpanDetail = {};
+		await collectSpanDetail(notes, () => unwrapped(driver.snapshot()));
+		expect(notes).toEqual({ backend: "ax", fallback: reason });
+	});
+
+	test("a snapshot read on the bridge leaves its span alone", async () => {
+		const { driver } = await open(() => ({ data: snapshotData }));
+		const notes: SpanDetail = {};
+		await collectSpanDetail(notes, () => unwrapped(driver.snapshot()));
+		expect(notes).toEqual({});
+	});
+
 	test("snapshot without options sends no null params", async () => {
 		const { driver, helper } = await open(() => ({ data: snapshotData }));
 		await unwrapped(driver.snapshot());
@@ -904,7 +921,7 @@ describe("settle", () => {
 		const notes: SpanDetail = {};
 		await collectSpanDetail(notes, () => unwrapped(driver.app.launch(BUNDLE)));
 		expect(helper.of("rebind")).toHaveLength(1);
-		expect(helper.of("rebind")[0]).toMatchObject({ bundleId: BUNDLE, rebindTimeoutMs: 3000, timeoutMs: 5000 });
+		expect(helper.of("rebind")[0]).toMatchObject({ bundleId: BUNDLE, rebindTimeoutMs: 10000, timeoutMs: 12000 });
 		expect(notes).toEqual({ via: "simd", pid: 4242, rebind: "bound", rebindMs: 700 });
 		await unwrapped(driver.settle());
 		expect(helper.of("settle")[0]).not.toHaveProperty("bundleId");

@@ -1149,12 +1149,47 @@ describe("ensureKindBuild", () => {
 		expect(getInstall(store, "ios", "U1", "com.x.app")?.hash).toBe(`${FP}:dev`);
 	});
 
-	test("a flat legacy build of the same fingerprint is not the dev build", async () => {
+	test("a kind-less build of the same fingerprint is the dev build: aliased under the kind hash, no build", async () => {
+		const path = await seedCache(FP);
+		const calls: string[] = [];
+		const res = await ensureKindBuild(kindInput(fpExec(calls), { deviceId: undefined, build: true }));
+		expect(res).toEqual({
+			success: true,
+			data: { appPath: path, hash: `${FP}:dev`, source: "cache", installed: false },
+		});
+		expect(calls.some((c) => c.startsWith("sh -c") && c !== "sh -c fp")).toBe(false);
+		expect(getBuild(store, KEY, "ios", `${FP}:dev`)?.path).toBe(path);
+		expect(getBuild(store, KEY, "ios", FP)?.path).toBe(path);
+	});
+
+	test("an install recorded at the old kind-less hash is that build: no reinstall", async () => {
+		await seedCache(FP);
+		recordInstall(store, { platform: "ios", deviceId: "U1", bundleId: "com.x.app", hash: FP, installedAt: 1 });
+		const calls: string[] = [];
+		const res = await ensureKindBuild(kindInput(fpExec(calls)));
+		if (!res.success) throw new Error(res.error);
+		expect(res.data).toMatchObject({ hash: `${FP}:dev`, source: "installed", installed: true });
+		expect(calls.some((c) => c.startsWith("xcrun simctl install"))).toBe(false);
+	});
+
+	test("a legacy cache dir of the fingerprint is the dev build", async () => {
+		const legacy = join(dir, "legacy");
+		fakeApp(join(legacy, FP));
+		const project = testProject({ root: join(dir, "app"), fingerprintCommand: "fp", cacheDirs: [legacy] });
+		const res = await ensureKindBuild(kindInput(fpExec([]), { project, deviceId: undefined }));
+		if (!res.success) throw new Error(res.error);
+		expect(res.data).toMatchObject({ hash: `${FP}:dev`, source: "cache" });
+		expect(getBuild(store, KEY, "ios", `${FP}:dev`)).toMatchObject({ kind: "dev", source: "legacy" });
+	});
+
+	test("a kind-less build made with another command is not the dev build", async () => {
 		await seedCache(FP);
 		const calls: string[] = [];
-		const res = await ensureKindBuild(kindInput(fpExec(calls), { deviceId: undefined }));
+		const own = testProject({ root: join(dir, "app"), fingerprintCommand: "fp" });
+		const project = { ...own, build: { ...own.build, ios: "my-build" } };
+		const res = await ensureKindBuild(kindInput(fpExec(calls), { project, deviceId: undefined }));
 		expect(res.success).toBe(false);
-		expect(calls.some((c) => c.startsWith("sh -c"))).toBe(false);
+		expect(getBuild(store, KEY, "ios", `${FP}:dev`)).toBeUndefined();
 	});
 
 	test("a miss builds with the kind's command, verifies the build key and caches into the kind dir", async () => {

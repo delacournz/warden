@@ -135,11 +135,13 @@ struct AXOutcome<Value: Sendable>: Sendable {
 
 extension Session {
   /// Failures that mean "the in-guest bridge cannot answer right now", where the host `ax` reader still may.
+  /// A guest that stalls (`BridgeStalled`) or that idb reports as not answering is one of them.
   static func isBridgeFailure(_ error: any Error) -> Bool {
+    if error is BridgeStalled { return true }
     if let error = error as? AXBridgeError {
       switch error {
       case .bridgeUnavailable, .readerUnavailable, .frontmostUnresolved, .applicationUnavailable,
-        .applicationNotResponding, .guestDiedBeforeBinding, .guestFailure:
+        .applicationNotResponding, .guestDiedBeforeBinding, .guestFailure, .guestNotAnswering:
         return true
       default:
         return false
@@ -195,43 +197,22 @@ extension Session {
   }
 
   /// Runs `body` on the requested reader (default: the session's `--ax`, i.e. `axbridge`). With no explicit
-  /// `backend`, an `axbridge` read that fails with `bridgeUnavailable` / `applicationUnavailable` /
-  /// `applicationNotResponding` (or a bridge that never came up) is retried once on `ax` and a `log` event says so.
+  /// `backend`, an `axbridge` read that fails with a bridge failure (`bridgeUnavailable` / `applicationUnavailable` /
+  /// `applicationNotResponding` / a guest not answering), that stalls past `bridgeDeadline.readMs`, or a bridge that
+  /// never came up is retried once on `ax` and a `log` event says so. After a stall the bridge is skipped for
+  /// `bridgeDeadline.cooldownSeconds` (`Session.readAX`).
   func withAX<Value: Sendable>(
     backend requested: AXBackend?, op: String,
-    _ body: @Sendable (any UIAutomation) async throws -> Value
+    _ body: @escaping @Sendable (any UIAutomation) async throws -> Value
   ) async throws -> AXOutcome<Value> {
     let primary = requested ?? AXBackend(rawValue: axDefault) ?? .axbridge
-    if primary == .ax {
-      guard let reader = axHostReader else {
-        throw WireError(.axUnavailable, "the host accessibility (ax) reader could not be created")
-      }
-      return AXOutcome(value: try await body(reader), backend: .ax, fallback: nil)
-    }
-
-    var reason: String
-    if let reader = axBridgeReader {
-      do {
-        let value = try await Session.readRecovering(
-          read: { try await body(reader) },
-          recover: { pid in await self.recoverBridge(pid: pid) },
-          log: { OpLog.shared.log(.warn, $0, op: op) })
-        bridgeHealth.recordSuccess()
-        return AXOutcome(value: value, backend: .axbridge, fallback: nil)
-      } catch {
-        if Session.isBridgeFailure(error) { bridgeHealth.recordFailure(WireError.from(error).message) }
-        guard requested == nil, Session.isBridgeFailure(error), axHostReader != nil else { throw error }
-        reason = WireError.from(error).message
-      }
-    } else {
-      guard requested == nil, axHostReader != nil else {
-        throw WireError(.axUnavailable, "the axbridge reader is unavailable (bridge \(bridge.name))")
-      }
-      reason = "axbridge reader unavailable (bridge \(bridge.name))"
-    }
-    OpLog.shared.log(.warn, "axbridge -> ax fallback: \(reason)", op: op)
-    let value = try await body(axHostReader!)
-    return AXOutcome(value: value, backend: .ax, fallback: Fallback(reason: reason))
+    let bridge = axBridgeReader.map { reader in { @Sendable in try await body(reader) } }
+    let host = axHostReader.map { reader in { @Sendable in try await body(reader) } }
+    return try await Session.readAX(
+      requested: primary == .ax ? .ax : requested, bridge: bridge, host: host,
+      recover: { pid in await self.recoverBridge(pid: pid) }, policy: bridgeDeadline, gate: bridgeStall,
+      health: bridgeHealth, now: { ProcessInfo.processInfo.systemUptime },
+      log: { OpLog.shared.log(.warn, $0, op: op) }, bridgeName: self.bridge.name)
   }
 
   func buildOptions(interactiveOnly: Bool = false, maxDepth: Int? = nil, maxNodes: Int? = nil, document: AccessibilityScreenInfo?)
@@ -485,8 +466,30 @@ extension Session {
     let readOptions = options
     let screen = self.screen
     return try await Session.answerAlert(request, screen: screen) { backend in
-      guard let reader = backend == .ax ? self.axHostReader : self.axBridgeReader else { return nil }
-      return try await reader.describe(.frontmost, options: readOptions).document
+      if backend == .ax {
+        guard let reader = self.axHostReader else { return nil }
+        return try await reader.describe(.frontmost, options: readOptions).document
+      }
+      guard let reader = self.axBridgeReader else { return nil }
+      // the bridge is bounded like `withAX`, so a silent guest leaves the default read time for its `ax` half
+      if request.backend == nil,
+        self.bridgeStall.skipReason(
+          now: ProcessInfo.processInfo.systemUptime, cooldownSeconds: self.bridgeDeadline.cooldownSeconds) != nil
+      {
+        return nil
+      }
+      do {
+        let document = try await Session.bounded(
+          { try await reader.describe(.frontmost, options: readOptions).document },
+          deadlineMs: self.bridgeDeadline.readMs)
+        self.bridgeStall.recordSuccess()
+        return document
+      } catch let stall as BridgeStalled {
+        self.bridgeStall.recordStall(at: ProcessInfo.processInfo.systemUptime)
+        self.bridgeHealth.recordFailure(stall.localizedDescription)
+        OpLog.shared.log(.warn, "axbridge: \(stall.localizedDescription)", op: "alertButtons")
+        throw stall
+      }
     }
   }
 

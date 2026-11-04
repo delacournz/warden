@@ -15,7 +15,7 @@ import {
 } from "@delacour/warden-core/builds/ensure-kind";
 import { type CacheKey, computeCacheKey } from "@delacour/warden-core/builds/fingerprint";
 import { kindFingerprints } from "@delacour/warden-core/builds/kind-key";
-import { BUILD_KINDS, type BuildKind } from "@delacour/warden-core/builds/kinds";
+import { BUILD_KINDS, type BuildKind, kindlessIsDev } from "@delacour/warden-core/builds/kinds";
 import type { ApplyRepack } from "@delacour/warden-core/builds/repack.types";
 import type { AppPhase, EnsureResult } from "@delacour/warden-core/builds/resolve";
 import { processAlive } from "@delacour/warden-core/liveness";
@@ -228,8 +228,10 @@ export async function prepareApp(
 	}
 	const project = await loadContext(ctx, opts, platform);
 	if (!project.success) return project;
-	// a phone runs a build made for it: without a kind, the release build (the project's kind-less build targets simulators)
-	const kind = opts.kind ?? (phone ? PHYSICAL_APP_KIND : undefined);
+	// a phone runs a build made for it: without a kind, the release build (the project's kind-less build targets simulators);
+	// a kind-less build that is the dev build is that build, under its one key (`app ensure --kind dev` warms `warden dev`)
+	const kind =
+		opts.kind ?? (phone ? PHYSICAL_APP_KIND : kindlessIsDev(project.data.project, platform) ? "dev" : undefined);
 	if (kind !== undefined) return prepareKind(ctx, deps, platform, project.data, kind, opts);
 	const hash = await fingerprint(ctx, project.data, platform);
 	return hash.success ? ok({ project: project.data, hash: hash.data }) : hash;
