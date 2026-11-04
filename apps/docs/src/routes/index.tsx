@@ -4,7 +4,8 @@ import type { ReactElement, ReactNode } from "react";
 import { CopyBlock } from "@/components/copy-block";
 import { InstallCommand } from "@/components/install-command";
 import { ClipTabs } from "@/components/landing/clip-tabs";
-import { DemoVideo } from "@/components/landing/demo-video";
+import { DemoReel } from "@/components/landing/demo-video";
+import { FeatureMedia } from "@/components/landing/feature-media";
 import { GlitchWord } from "@/components/landing/glitch-word";
 import { LazerLogo } from "@/components/landing/lazer-logo";
 import { RichText } from "@/components/rich-text";
@@ -172,7 +173,12 @@ function Home(): ReactElement {
 				</section>
 
 				<section className={`${PAGE} scroll-mt-20 pt-16`} id="demo">
-					<DemoVideo />
+					<DemoReel
+						command="warden dev ios"
+						facts="dev build from cache 3.5s · Metro 3.9s · dev client 0.2s · hot reload 0.8s · iPhone 17 Pro simulator, real time"
+						label="warden dev's dashboard beside the iOS simulator it leased: the dev client opens, an edited string hot reloads on the phone, the HUD turns on, q releases the device and port"
+						src="/demos/dev/hero"
+					/>
 				</section>
 
 				<section className={`${PAGE} flex flex-col items-center gap-10 pt-28 text-center`}>
@@ -220,7 +226,12 @@ function Home(): ReactElement {
 					<div className="flex flex-col gap-20 sm:gap-28">
 						{ON_THE_DEVICE.features.map((feature, i) => (
 							<Feature feature={feature} flip={i % 2 === 1} key={feature.label}>
-								{feature.sample ? <Terminal code={feature.sample.code} label={feature.sample.label} /> : <RunChart />}
+								<FeatureMedia
+									clip={feature.clip}
+									sample={
+										feature.sample ? <Terminal code={feature.sample.code} label={feature.sample.label} /> : <RunChart />
+									}
+								/>
 							</Feature>
 						))}
 					</div>
@@ -373,7 +384,11 @@ function Step({ step }: { step: StepData }): ReactElement {
 	);
 }
 
-/** One step of the loop: label, heading and verb-first points beside its working sample; `flip` swaps the sides. */
+/**
+ * One step of the loop. A feature with a recorded clip gives the clip the full content width under a two-column
+ * head (title, then points), because the terminal text inside a 1920px render is unreadable at half width. A feature
+ * with only a sample keeps label, heading and points beside it; `flip` swaps the sides.
+ */
 function Feature({
 	feature,
 	flip,
@@ -383,27 +398,49 @@ function Feature({
 	flip: boolean;
 	children: ReactNode;
 }): ReactElement {
+	const wide = Boolean(feature.clip);
+	const head = (
+		<div className="flex flex-col gap-5">
+			<p className="font-mono text-accent-text text-xs">{feature.label}</p>
+			<h3 className={`text-balance text-[1.9rem] text-ink leading-[1.02] sm:text-[2.3rem] ${DISPLAY}`}>
+				{feature.title}
+			</h3>
+		</div>
+	);
+	const points = (
+		<div className="flex flex-col gap-5">
+			<ul className="flex flex-col border-hairline border-t">
+				{feature.points.map((point) => (
+					<li className="border-hairline border-b py-2.5 text-ink-2 leading-relaxed" key={point}>
+						{point}
+					</li>
+				))}
+			</ul>
+			<Link
+				className="self-start font-mono text-ink text-xs underline decoration-ink-2 underline-offset-4 hover:decoration-accent"
+				params={{ _splat: feature.link.to }}
+				to="/docs/$"
+			>
+				{feature.link.text} →
+			</Link>
+		</div>
+	);
+	if (wide) {
+		return (
+			<article className="flex flex-col gap-8 lg:gap-10">
+				<div className="grid grid-cols-1 gap-6 lg:grid-cols-2 lg:items-start lg:gap-16">
+					{head}
+					{points}
+				</div>
+				<div className="min-w-0">{children}</div>
+			</article>
+		);
+	}
 	return (
 		<article className="grid grid-cols-1 items-center gap-8 lg:grid-cols-2 lg:gap-16">
 			<div className={`flex flex-col gap-5 ${flip ? "lg:order-2" : ""}`}>
-				<p className="font-mono text-accent-text text-xs">{feature.label}</p>
-				<h3 className={`text-balance text-[1.9rem] text-ink leading-[1.02] sm:text-[2.3rem] ${DISPLAY}`}>
-					{feature.title}
-				</h3>
-				<ul className="flex flex-col border-hairline border-t">
-					{feature.points.map((point) => (
-						<li className="border-hairline border-b py-2.5 text-ink-2 leading-relaxed" key={point}>
-							{point}
-						</li>
-					))}
-				</ul>
-				<Link
-					className="self-start font-mono text-ink text-xs underline decoration-ink-2 underline-offset-4 hover:decoration-accent"
-					params={{ _splat: feature.link.to }}
-					to="/docs/$"
-				>
-					{feature.link.text} →
-				</Link>
+				{head}
+				{points}
 			</div>
 			<div className={`min-w-0 ${flip ? "lg:order-1" : ""}`}>{children}</div>
 		</article>

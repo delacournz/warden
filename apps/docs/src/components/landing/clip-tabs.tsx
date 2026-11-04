@@ -1,5 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import { type KeyboardEvent, type ReactElement, useEffect, useId, useRef, useState } from "react";
+import { ExpandClip } from "@/components/landing/expand-clip";
 import { QuietVideo } from "@/components/quiet-video";
 import { RichText } from "@/components/rich-text";
 import { cn } from "@/lib/cn";
@@ -11,7 +12,8 @@ import { useReducedMotion } from "./demo-video";
  * between tabs, as in `InstallCommand`. The selected clip autoplays muted and loops; with reduced motion it rests on
  * its poster (the end state) with controls. A tab change remounts the video so it starts from the beginning. `readMore`
  * off drops the link, for a docs page that is itself the clip's Read more. `controls` off (docs) drops the browser's
- * player chrome for a {@link QuietVideo}, paused and resumed by a click.
+ * player chrome for a {@link QuietVideo}, paused and resumed by a click. Each clip has an expand button
+ * ({@link ExpandClip}).
  */
 export function ClipTabs({
 	clips,
@@ -27,6 +29,7 @@ export function ClipTabs({
 	const id = useId();
 	const tabs = useRef<Array<HTMLButtonElement | null>>([]);
 	const video = useRef<HTMLVideoElement>(null);
+	const media = useRef<HTMLDivElement>(null);
 	const clip = clips[selected] ?? clips[0];
 
 	useEffect(() => {
@@ -48,7 +51,7 @@ export function ClipTabs({
 	if (!clip) return null;
 
 	return (
-		<div className="mx-auto flex w-full max-w-4xl flex-col gap-5">
+		<div className="mx-auto flex w-full flex-col gap-5">
 			<div
 				aria-label="Device condition"
 				className="flex flex-wrap justify-center gap-1"
@@ -78,7 +81,7 @@ export function ClipTabs({
 				))}
 			</div>
 			<figure aria-labelledby={`${id}-${clip.id}`} className="flex flex-col gap-3" id={`${id}-panel`} role="tabpanel">
-				<div className="overflow-hidden rounded-[var(--radius-group)] bg-surface">
+				<div className="overflow-hidden rounded-[var(--radius-group)] bg-surface" ref={media}>
 					{controls ? (
 						<video
 							aria-label={`${clip.title} Recorded on a leased simulator.`}
@@ -108,15 +111,18 @@ export function ClipTabs({
 					<span className="max-w-[68ch]">
 						<RichText text={clip.caption} />
 					</span>
-					{readMore ? (
-						<Link
-							className="shrink-0 font-mono text-[11px] text-ink uppercase tracking-[0.12em] hover:text-accent-text"
-							params={{ _splat: clip.href }}
-							to="/docs/$"
-						>
-							Read more →
-						</Link>
-					) : null}
+					<span className="flex shrink-0 items-center gap-4">
+						<ExpandClip container={media} label={`${clip.title} Recorded on a leased simulator.`} src={clip.src} />
+						{readMore ? (
+							<Link
+								className="font-mono text-[11px] text-ink uppercase tracking-[0.12em] hover:text-accent-text"
+								params={{ _splat: clip.href }}
+								to="/docs/$"
+							>
+								Read more →
+							</Link>
+						) : null}
+					</span>
 				</figcaption>
 			</figure>
 		</div>

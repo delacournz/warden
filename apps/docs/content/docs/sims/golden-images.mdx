@@ -4,6 +4,13 @@ description: Clone new simulators from a settled golden for ~16 s boots.
 icon: Layers
 ---
 
+<DemoReel
+  src="/demos/golden/clone"
+  label="warden golden ensure reusing the warm golden image, then warden claim ios cloning it into a new simulator and booting it"
+  command="warden claim ios"
+  facts="golden image reused in 0.4s · claim returned at 9s · home screen at 22s · the boot logo stretch is shown at 3× speed"
+/>
+
 A golden image is a settled simulator warden clones new pool devices from, so a claim that needs a new iOS sim boots in seconds instead of minutes; you only touch it to pre-build one or prune old ones.
 
 ```bash

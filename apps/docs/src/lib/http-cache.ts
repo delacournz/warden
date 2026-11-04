@@ -19,7 +19,7 @@ export const routeRules = {
 	"/robots.txt": { headers: { "Cache-Control": staticCache } },
 	"/sitemap.xml": { headers: { "Cache-Control": staticCache } },
 	"/bench/**": { headers: { "Cache-Control": staticCache, "X-Robots-Tag": "noindex" } },
-	"/demo/**": { headers: { "Cache-Control": staticCache } },
+	"/demos/**": { headers: { "Cache-Control": staticCache } },
 	"/og/**": { headers: { "Cache-Control": staticCache } },
 	"/favicon.svg": { headers: { "Cache-Control": staticCache } },
 } as const;

@@ -4,6 +4,13 @@ description: Where a failed e2e run leaves its evidence, how to read it, and the
 icon: Bug
 ---
 
+<DemoReel
+  src="/demos/debug/failure"
+  label="warden e2e running a spec with a wrong testID on a simulator it leases, the failure, then grep of screen-at-failure.txt showing the real id"
+  command="warden e2e example"
+  facts="spec fails 24s in on getByTestId(sign-in-emial) · screen-at-failure.txt lists sign-in-email · real time, no speed ramp"
+/>
+
 When a spec fails, read the evidence in this order: the run's stdout, `screen-at-failure.txt`, `failure.png`, `trace.jsonl`, then the logs. A missing element is fixed in the component, not with retries.
 
 ```bash

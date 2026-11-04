@@ -6,7 +6,7 @@ icon: Signal
 
 import { Accessibility, BatteryMedium, BellRing, Camera, Clock, FingerprintPattern, Languages, MapPin, ShieldCheck, Wifi } from "lucide-react";
 
-<DemoTabs ids={["network", "fault", "location", "clock", "biometrics"]} />
+<DemoTabs ids={["network", "fault", "location", "clock", "biometrics", "camera", "a11y", "events"]} />
 
 A spec can put the device into a condition (offline, 3G, one host failing, a moving GPS fix, a clock two weeks ahead, a failed Face ID, a denied permission, a QR code in front of the camera) and check what the app does. Everything a test changes belongs to its lease: when the test ends, or the lease is released or reclaimed, warden puts it back, so the next agent never inherits a shaped device.
 

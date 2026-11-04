@@ -4,6 +4,10 @@ description: Feed an image or video into the app's real camera on iOS simulators
 icon: Camera
 ---
 
+<DemoTabs ids={["camera"]} />
+
+`warden ui camera set qr-hello.png` swaps a QR image into the example app's camera preview on a leased simulator, then `warden ui wait text "hello"` sees the app's own scanner read it.
+
 Specs, suites and [`warden ui`](/docs/sims/ui) feed a file into the app's real camera API, so the app's own preview, photo capture, video recording and QR scanning run against a known picture. There is no app-side bypass. Simulators and emulators only: a physical device fails with `E_UNSUPPORTED`.
 
 Accepted files: png, jpg, heic (image), mp4, mov (video). warden reads the leading bytes, not the extension. Anything else is `E_CAMERA_MEDIA`, and a missing file is `E_CAMERA_NOT_FOUND`.

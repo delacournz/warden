@@ -4,6 +4,10 @@ description: Raise the text size, turn on bold text, contrast, reduce motion or 
 icon: Accessibility
 ---
 
+<DemoTabs ids={["a11y"]} />
+
+`warden ui a11y audit --rule role-in-name` flags the bad variant's “Submit button”, `warden ui a11y audit --no-native` passes the good screen, and `warden ui a11y set --text-size accessibility-large --bold` grows the text.
+
 `device.a11y` changes the system accessibility settings the app renders with, so a spec can check that a screen still fits at the largest text size or takes its reduced-motion path.
 
 ```ts

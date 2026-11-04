@@ -4,6 +4,13 @@ description: A spec file, a suite in warden.config.ts and one command, warden e2
 icon: FlaskConical
 ---
 
+<DemoReel
+  src="/demos/e2e/parallel"
+  label="warden e2e running the example app's specs on two leased iOS simulators at once"
+  command="warden e2e example"
+  facts="5/5 specs passed · 2 simulators · 55s wall time · shown at 1.3x speed"
+/>
+
 An e2e test in warden is a `*.e2e.ts` file; `warden e2e <suite>` runs a suite of them across leased simulators or emulators and writes a report. Read this page first, then follow the links for each piece.
 
 ```bash

@@ -41,10 +41,10 @@ describe("compressResponse", () => {
 });
 
 describe("routeRules", () => {
-	test("pages are edge-cacheable with stale-while-revalidate; the demo video is cached", () => {
+	test("pages are edge-cacheable with stale-while-revalidate; demo videos are cached", () => {
 		expect(routeRules["/docs/**"].headers["Cache-Control"]).toContain("stale-while-revalidate");
 		expect(routeRules["/docs/**"].headers["Cache-Control"]).toContain("s-maxage");
-		expect(routeRules["/demo/**"].headers["Cache-Control"]).toContain("max-age=86400");
+		expect(routeRules["/demos/**"].headers["Cache-Control"]).toContain("max-age=86400");
 	});
 
 	test("the sitemap is cached like robots.txt", () => {

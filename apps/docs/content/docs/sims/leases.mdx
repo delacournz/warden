@@ -4,6 +4,13 @@ description: Claim a simulator or emulator, keep it alive, see who holds what, a
 icon: KeyRound
 ---
 
+<DemoReel
+  src="/demos/dev/worktrees"
+  label="Two warden dev sessions in two git worktrees, each with its own simulator and Metro port, then warden ls listing both leases"
+  command="warden dev ios × 2"
+  facts="2 worktrees · 2 simulators · Metro on :8081 and :8082 · 4 leases in warden ls · real time"
+/>
+
 `warden claim` leases a booted, ready simulator or emulator that nothing else on the Mac can take until you release it; use it whenever you need a device outside `warden ui`, `warden dev` or `warden e2e`, which claim for you.
 
 ```bash

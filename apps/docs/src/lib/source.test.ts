@@ -40,7 +40,7 @@ describe("docs demo clips", () => {
 		text: readFileSync(file, "utf-8"),
 	}));
 
-	test("pages embed demos with <DemoClip> (autoplay, reduced motion), never a raw <video>", () => {
+	test("pages embed demos with <DemoClip> or <DemoReel> (autoplay, reduced motion), never a raw <video>", () => {
 		expect(pages.filter((page) => page.text.includes("<video")).map((page) => page.file)).toEqual([]);
 	});
 
@@ -51,6 +51,18 @@ describe("docs demo clips", () => {
 		expect(srcs.length).toBeGreaterThan(0);
 		const pub = join(CONTENT, "..", "..", "public");
 		const missing = srcs.flatMap((src) => [`${src}.mp4`, `${src}.jpg`]).filter((file) => !existsSync(join(pub, file)));
+		expect(missing).toEqual([]);
+	});
+
+	test("every <DemoReel> has its webm, mp4 and poster in public/", () => {
+		const srcs = pages.flatMap((page) =>
+			[...page.text.matchAll(/<DemoReel[^>]*?\ssrc="([^"]+)"/g)].map((m) => m[1] as string)
+		);
+		expect(srcs.length).toBeGreaterThan(0);
+		const pub = join(CONTENT, "..", "..", "public");
+		const missing = srcs
+			.flatMap((src) => [`${src}.webm`, `${src}.mp4`, `${src}.jpg`])
+			.filter((file) => !existsSync(join(pub, file)));
 		expect(missing).toEqual([]);
 	});
 
@@ -68,7 +80,7 @@ describe("docs demo clips", () => {
 	test("a page's demo sits right under the page header, before any prose", () => {
 		const late = pages.filter(({ text }) => {
 			const body = text.replace(/^---[\s\S]*?---\s*/, "").replace(/^(import [^\n]*\n\s*)+/, "");
-			return /<Demo(Clip|Tabs)/.test(body) && !/^<Demo(Clip|Tabs)/.test(body);
+			return /<Demo(Clip|Tabs|Reel)/.test(body) && !/^<Demo(Clip|Tabs|Reel)/.test(body);
 		});
 		expect(late.map((page) => page.file)).toEqual([]);
 	});
