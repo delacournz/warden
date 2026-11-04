@@ -1,18 +1,23 @@
 import {
+	type Budget,
 	type Cost,
+	capacityBlock,
 	deviceCost,
 	explain,
 	fits,
+	hostUsage,
 	maxConcurrent,
-	totalCost,
 	ZERO_COST,
 } from "@delacour/warden-core/capacity";
+import type { CapacityReason } from "@delacour/warden-core/claim-errors";
 import type { InventoryDevice, Platform } from "@delacour/warden-core/types";
+import { warmEnabled } from "@delacour/warden-core/warm-pool";
 import { CAPACITY_PLATFORMS, capacityEnabled, hostInventoryOf, pressureOf, readCapacityBasis } from "../capacity-deps";
 import { resolveOwner } from "../claim-flags";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { emit, table } from "../output";
+import { readWarmPlan } from "../warm-pool";
 
 type PlatformUsage = { booted: number; warden: number; foreign: number; memMb: number; units: number };
 
@@ -35,6 +40,31 @@ function usageOf(
 		memMb: booted.reduce((sum, d) => sum + (slimmed.has(d.id) ? slimCost : cost).memMb, 0),
 		units: booted.length * cost.cpu,
 	};
+}
+
+/**
+ * Per platform, what booting one more device would run out of now (null = it fits): the claim gate's own
+ * `fits` + `capacityBlock` over the same usage, with a new iOS sim counted slim as claims count it.
+ */
+function nextBootBlock(
+	used: Cost,
+	slimCosts: Record<Platform, Cost>,
+	costs: Record<Platform, Cost>,
+	budget: Budget,
+	held: boolean
+): Record<Platform, CapacityReason | null> {
+	return Object.fromEntries(
+		CAPACITY_PLATFORMS.map((p) => {
+			const need = p === "ios" ? slimCosts.ios : costs[p];
+			return [p, capacityBlock(fits(used, need, budget), held) ?? null];
+		})
+	) as Record<Platform, CapacityReason | null>;
+}
+
+/** `blocked   ios cpu-budget · android cpu-budget` for the platforms whose next boot would not fit. */
+function blockedLine(blocked: Record<Platform, CapacityReason | null>): string[] {
+	const parts = CAPACITY_PLATFORMS.flatMap((p) => (blocked[p] === null ? [] : [`${p} ${blocked[p]}`]));
+	return parts.length === 0 ? [] : [`blocked   ${parts.join(" · ")}`];
 }
 
 /** `warden capacity`: what the machine can run, what is running, and why a claim would queue. */
@@ -60,12 +90,7 @@ async function capacity(ctx: CommandContext, json: boolean): Promise<number> {
 	const usage = Object.fromEntries(
 		CAPACITY_PLATFORMS.map((p) => [p, usageOf(devices, p, costs[p], slimCosts[p], slimmed)])
 	) as Record<Platform, PlatformUsage>;
-	const live = devices.filter((d) => d.state === "booted" || d.state === "booting");
-	const used = totalCost(
-		live.map((d) => d.platform),
-		config,
-		live.map((d) => d.platform === "ios" && slimmed.has(d.id))
-	);
+	const used = hostUsage(devices, config, slimmed);
 	const concurrent = Object.fromEntries(CAPACITY_PLATFORMS.map((p) => [p, maxConcurrent(p, budget, config)])) as Record<
 		Platform,
 		number
@@ -74,8 +99,19 @@ async function capacity(ctx: CommandContext, json: boolean): Promise<number> {
 	const why = explain(verdict, used, budget);
 	const cpuLimit = Math.min(budget.cpu, budget.maxUnits);
 
+	const warmOn = warmEnabled(ctx.env);
+	const warmPlan = warmOn ? await readWarmPlan(ctx, owner) : undefined;
+	const warmRows = (warmPlan?.rows ?? []).map(({ platform, profile, target, actual, peak }) => ({
+		platform,
+		profile,
+		target,
+		actual,
+		peak,
+	}));
+
 	const data = {
 		enabled,
+		warm: { enabled: warmOn, rows: warmRows },
 		host: {
 			os: host.os,
 			totalMemGb: Math.round((host.totalMem / 1024 ** 3) * 10) / 10,
@@ -94,6 +130,7 @@ async function capacity(ctx: CommandContext, json: boolean): Promise<number> {
 		maxConcurrent: concurrent,
 		pressure: pressure.success ? pressure.data : "unknown",
 		explain: why,
+		blocked: nextBootBlock(used, slimCosts, costs, budget, pressure.success && pressure.data !== "normal"),
 	};
 
 	const { color } = ctx.ui;
@@ -108,6 +145,14 @@ async function capacity(ctx: CommandContext, json: boolean): Promise<number> {
 		`budget    ${Math.round(budget.memMb / MB_PER_GB)} GB · ${cpuLimit.toFixed(1)} cpu units${enabled ? "" : color.yellow("  (capacity gate OFF: WARDEN_CAPACITY=off)")}`,
 		`usage     ${used.cpu.toFixed(1)} units · ${Math.round(used.memMb)} MB booted`,
 		`pressure  ${data.pressure}`,
+		...(warmOn
+			? [
+					warmRows.length === 0
+						? "warm      on · no demand in the last 24 h"
+						: `warm      on · ${warmRows.map((r) => `${r.platform}/${r.profile} ${r.actual}/${r.target}`).join(", ")} (booted/target)`,
+				]
+			: []),
+		...blockedLine(data.blocked),
 		"",
 		table(ctx, ["PLATFORM", "BOOTED", "COST/DEVICE", "MAX ALONE"], rows),
 		"",

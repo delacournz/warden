@@ -61,15 +61,68 @@ describe("docs demo clips", () => {
 				[...(m[1] as string).matchAll(/"([^"]+)"/g)].map((id) => id[1] as string)
 			)
 		);
-		expect(ids).toEqual(["network", "fault", "location", "clock"]);
+		expect([...new Set(ids)].sort()).toEqual([...known].sort());
 		expect(ids.filter((id) => !known.has(id))).toEqual([]);
 	});
 
 	test("a page's demo sits right under the page header, before any prose", () => {
 		const late = pages.filter(({ text }) => {
-			const body = text.replace(/^---[\s\S]*?---\s*/, "");
+			const body = text.replace(/^---[\s\S]*?---\s*/, "").replace(/^(import [^\n]*\n\s*)+/, "");
 			return /<Demo(Clip|Tabs)/.test(body) && !/^<Demo(Clip|Tabs)/.test(body);
 		});
 		expect(late.map((page) => page.file)).toEqual([]);
+	});
+});
+
+/** The content file a `/docs/<slugs>` path renders, or `undefined` when there is no page. */
+function pageFor(slugs: string): string | undefined {
+	const base = join(CONTENT, slugs);
+	const candidates = [`${base}.mdx`, `${base}.md`, join(base, "index.mdx"), join(base, "index.md")];
+	return candidates.find((path) => existsSync(path));
+}
+
+function metaUnder(dir: string): string[] {
+	return readdirSync(dir).flatMap((name) => {
+		const path = join(dir, name);
+		if (statSync(path).isDirectory()) return metaUnder(path);
+		return name === "meta.json" ? [path] : [];
+	});
+}
+
+describe("docs tabs", () => {
+	const tabs = metaUnder(CONTENT)
+		.map((file) => ({ file: file.slice(CONTENT.length + 1), meta: JSON.parse(readFileSync(file, "utf-8")) }))
+		.filter(({ meta }) => meta.root === true);
+
+	test("the five top tabs exist, in order, each with a landing page", () => {
+		const root = JSON.parse(readFileSync(join(CONTENT, "meta.json"), "utf-8"));
+		expect(root.pages).toEqual(["getting-started", "sims", "e2e", "reference", "releases"]);
+		expect(tabs.map(({ file }) => file.split("/")[0]).sort()).toEqual([...root.pages].sort());
+	});
+
+	test("every tab icon is a canonical lucide icon", () => {
+		const unknown = tabs.flatMap(({ file, meta }) => (meta.icon in icons ? [] : [`${file}: ${meta.icon}`]));
+		expect(unknown).toEqual([]);
+	});
+});
+
+describe("docs links", () => {
+	test("every /docs link in a page resolves to a page", () => {
+		const dead = mdxUnder(CONTENT).flatMap((file) => {
+			const text = readFileSync(file, "utf-8");
+			return [...text.matchAll(/(?<![a-z0-9.])\/docs\/([a-z0-9][a-z0-9/-]*?)(?:\.md)?(?=[)#"'\s`])/g)]
+				.map((m) => m[1])
+				.filter((slugs): slugs is string => slugs !== undefined && pageFor(slugs) === undefined)
+				.map((slugs) => `${file.slice(CONTENT.length + 1)}: /docs/${slugs}`);
+		});
+		expect(dead).toEqual([]);
+	});
+
+	test("every landing link into the docs resolves to a page", () => {
+		const text = readFileSync(join(import.meta.dirname, "landing.data.ts"), "utf-8");
+		const dead = [...text.matchAll(/(?:href|to): "([a-z][a-z0-9/-]*)"/g)]
+			.map((m) => m[1])
+			.filter((slugs): slugs is string => slugs !== undefined && pageFor(slugs) === undefined);
+		expect(dead).toEqual([]);
 	});
 });

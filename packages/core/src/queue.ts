@@ -1,4 +1,5 @@
 import { err, ok, type Result } from "@delacour/warden-types/result";
+import type { CapacityReason } from "./claim-errors";
 import type { QueueEntry } from "./types";
 
 export const PRIORITY = { interactive: 30, high: 20, normal: 10, low: 0 } as const;
@@ -49,3 +50,36 @@ export function queuePosition(entries: readonly QueueEntry[], id: string, now: n
 export function isHead(entries: readonly QueueEntry[], id: string, now: number): boolean {
 	return queuePosition(entries, id, now) === 1;
 }
+
+/** Why a polling claim has no device yet although the host has room: nothing to reserve. */
+export const DEVICE_WAIT_REASONS = ["device-limit", "requester-limit", "waiting-for-device"] as const;
+
+export type DeviceWaitReason = (typeof DEVICE_WAIT_REASONS)[number];
+
+/**
+ * Why a claim is not running yet. Queued for host capacity: behind an earlier claim, or the resource the
+ * host is out of. Polling for a device: the pool is at `--max`, the owner is at its limit, or a physical
+ * device is not free / ready.
+ */
+export type WaitReason = "behind-earlier" | CapacityReason | DeviceWaitReason;
+
+const WAIT_REASONS: ReadonlySet<string> = new Set<WaitReason>([
+	"behind-earlier",
+	"ram-budget",
+	"cpu-budget",
+	"memory-pressure",
+	"host-load",
+	...DEVICE_WAIT_REASONS,
+]);
+
+export const isWaitReason = (s: string): s is WaitReason => WAIT_REASONS.has(s);
+
+export const isDeviceWaitReason = (reason: WaitReason | undefined): reason is DeviceWaitReason =>
+	reason !== undefined && (DEVICE_WAIT_REASONS as readonly string[]).includes(reason);
+
+/**
+ * Rows that take part in admission order. A claim polling for a device holds a row so `warden queue` can
+ * show why it waits, but it needs no boot slot: it is never ahead of, or counted against, a claim that does.
+ */
+export const admissionQueue = (entries: readonly QueueEntry[]): QueueEntry[] =>
+	entries.filter((e) => !isDeviceWaitReason(e.reason));

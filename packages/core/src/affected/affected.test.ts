@@ -185,6 +185,21 @@ describe("computeAffected", () => {
 		}
 	});
 
+	test("suite.a11y: the top-level a11y settings, each key replaced by the suite's own", async () => {
+		const merged = await makeSuiteRepo(
+			{ a11y: { minSeverity: "warning" } },
+			{ a11y: { minSeverity: "error", rules: ["missing-name"] } }
+		);
+		const none = await makeSuiteRepo();
+		try {
+			const [a, b] = await Promise.all([merged, none].map((r) => findSuite(bunExec, r.dir)));
+			expect(a?.success && a.data.a11y).toEqual({ minSeverity: "warning", rules: ["missing-name"] });
+			expect(b?.success && b.data.a11y).toBeUndefined();
+		} finally {
+			for (const r of [merged, none]) rmSync(r.dir, { recursive: true, force: true });
+		}
+	});
+
 	test("overlay config: specs resolve in the overlay, project root and git diff stay in the checkout", async () => {
 		const home = mkdtempSync(join(tmpdir(), "warden-affected-home-"));
 		cleanup.push(home);

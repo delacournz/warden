@@ -411,3 +411,28 @@ describe("enabled", () => {
 		expect(ops.enabled()).toBe(false);
 	});
 });
+
+describe("audit", () => {
+	test("falls back (undefined) when no ATF jar can be provided", async () => {
+		const { ops } = setup();
+		expect(await ops.audit({ contrast: true })).toBeUndefined();
+	});
+
+	test("surfaces a jar that cannot be written to the device", async () => {
+		const fake = fakeUiad();
+		const clock = { now: () => 0, sleep: async () => {} };
+		const backend = createUiadBackend({
+			session: SESSION,
+			adb: "adb",
+			serial: "emulator-5554",
+			clock,
+			options: {},
+			launch: async () => startUiad({ cmd: ["adb", "shell", "x"], spawn: fake.spawn, graceMs: 20 }),
+		});
+		const error = driverError("E_IO", "cannot write warden-atf");
+		const ops = createUiadOps({ backend, baseScreen: SCREEN, clock, atf: async () => ({ success: false, error }) });
+		open.push(ops);
+		const res = await ops.audit({ contrast: true });
+		expect(res).toEqual({ success: false, error });
+	});
+});

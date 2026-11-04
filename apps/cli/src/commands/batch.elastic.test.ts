@@ -12,6 +12,16 @@ afterEach(() => ctx?.cleanup());
 
 const FOREIGN = { kind: "agent", sessionId: "other", cwd: "/" } as const;
 
+/** the late claim re-checks the queue this often (production: every 2 s) */
+const CLAIM_POLL_MS = 20;
+
+/** a manual harness whose queued claims poll every `CLAIM_POLL_MS` */
+function fastHarness() {
+	const h = harness({ manual: true });
+	h.deps.claimPollMs = CLAIM_POLL_MS;
+	return h;
+}
+
 const done = (stdout = "") => ({ exitCode: 0, stdout, stderr: "" });
 
 /** boot / bootstatus / shutdown flip a sim's state in the fixture */
@@ -74,7 +84,7 @@ function freeForeign(c: TestContext, sims: FixtureSim[]) {
 describe("warden batch elastic workers", () => {
 	test("3 wanted, 2 fit: starts with 2; a freed slot lets the 3rd join and take jobs", async () => {
 		const { c, sims } = setup();
-		const h = harness({ manual: true });
+		const h = fastHarness();
 		const done = createBatchCommand(h.deps).run(c);
 		await until(() => h.jobs().length === 2);
 		expect(new Set(h.jobs().map((j) => j.opts.env.WARDEN_UDID))).toEqual(new Set(["U1", "U2"]));
@@ -105,7 +115,7 @@ describe("warden batch elastic workers", () => {
 
 	test("the queue drains before the late claim lands: the claim is abandoned and nothing stays leased", async () => {
 		const { c } = setup();
-		const h = harness({ manual: true });
+		const h = fastHarness();
 		const done = createBatchCommand(h.deps).run(c);
 		await until(() => h.jobs().length === 2);
 		for (const job of ["a", "b", "c", "d", "e"]) {
@@ -122,7 +132,7 @@ describe("warden batch elastic workers", () => {
 
 	test("SIGINT aborts the pending claim: exit 130, every lease released", async () => {
 		const { c } = setup();
-		const h = harness({ manual: true });
+		const h = fastHarness();
 		const done = createBatchCommand(h.deps).run(c);
 		await until(() => h.jobs().length === 2);
 		await until(() => c.db.listQueue().length === 1);

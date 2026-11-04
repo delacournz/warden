@@ -1,4 +1,5 @@
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
+import { stageCameraFeed } from "@delacour/warden-core/conditions/camera-media";
 import {
 	type NetworkInput,
 	normalizeConditions,
@@ -8,6 +9,8 @@ import {
 import type {
 	A11yCondition,
 	BatteryCondition,
+	CameraCondition,
+	CameraFacing,
 	ClockCondition,
 	HostFault,
 	LatLon,
@@ -21,11 +24,13 @@ import type {
 } from "@delacour/warden-core/conditions/conditions.types";
 import { appliedA11y, resolveTextSize } from "@delacour/warden-core/conditions/text-size";
 import { parseDuration } from "@delacour/warden-core/duration";
+import { wardenHome } from "@delacour/warden-core/store";
 import type {
 	A11yOp,
 	A11yState,
 	BatteryOp,
 	BatteryState,
+	CameraState,
 	Driver,
 	DriverResult,
 	LocaleState,
@@ -39,6 +44,7 @@ import type {
 import { settled, toE2eError } from "../driver/unwrap";
 import type { E2eEnv } from "../env";
 import { E2eError } from "../errors";
+import { callerFile } from "../runner/callsite";
 import { type ConditionEvent, type ConditionSink, openConditionSink } from "./condition-events";
 import type { ConditionRecorder } from "./lease-recorder";
 import { realTickerClock, type TickerClock } from "./route-ticker";
@@ -166,7 +172,34 @@ export type ConditionsInternals = {
 	readonly declared: boolean;
 };
 
+/** `facing` of `device.camera.set` / `clear`: one camera, or `"both"`. */
+export type CameraFacingChoice = CameraFacing | "both";
+
+export type CameraSetOptions = {
+	/** which camera plays the asset; default `"back"` */
+	facing?: CameraFacingChoice;
+	/** video only: play again from the start at the end; default true */
+	loop?: boolean;
+};
+
+export type DeviceCamera = {
+	/**
+	 * Feeds the png, jpg, heic, mp4 or mov at `path` (relative to the spec file) into the app's camera, replacing what
+	 * that facing played; the other facing keeps its feed. The result says when it shows: `appliesOnLaunch` (iOS: an
+	 * app launched without the camera sees it from the next launch), `appliesOnCameraOpen` (Android: the app's next
+	 * camera open) or `rebooted` (Android: a video feed restarted the emulator). Android needs a `--camera` device
+	 * (`E_CAMERA_DEVICE` otherwise); a missing or unsupported file fails with `E_CAMERA_NOT_FOUND` / `E_CAMERA_MEDIA`.
+	 * Taken off when the test ends (back to the suite's `camera`).
+	 */
+	set(path: string, options?: CameraSetOptions): Promise<CameraState>;
+	/** Takes the feed off one camera, or both (the default). */
+	clear(facing?: CameraFacingChoice): Promise<CameraState>;
+	/** The feeds this spec has in place. */
+	status(): Promise<CameraState>;
+};
+
 export type DeviceConditions = {
+	camera: DeviceCamera;
 	network: DeviceNetwork;
 	location: DeviceLocation;
 	clock: DeviceClock;
@@ -200,6 +233,10 @@ export type DeviceConditionsDeps = {
 	log?: (line: string) => void;
 	/** where changes are written on the device's lease so release can undo them after a crash; default none */
 	recorder?: ConditionRecorder;
+	/** the warden home camera assets are staged under; default `$WARDEN_HOME` / `~/.warden` */
+	wardenHome?: string;
+	/** the directory a relative camera path is resolved against; default the calling spec file's, else `specsDir`, else cwd */
+	specDir?: () => string | undefined;
 };
 
 type ConditionChange = ConditionEvent extends infer E
@@ -262,6 +299,27 @@ function locationOf(input: LocationCondition | LatLon): LocationCondition {
 	return { kind: "point", lat: input.lat, lon: input.lon };
 }
 
+/** This package's own sources: frames in them (tracing wrappers, this module) are never "the spec" (its tests are). */
+const PACKAGE_SRC = `${resolve(import.meta.dir, "..")}/`;
+
+/** The directory of the spec file that called into the device API, from the stack of the call; undefined when unknown. */
+function callingSpecDir(): string | undefined {
+	const file = callerFile(new Error().stack, (path) => path.startsWith(PACKAGE_SRC) && !path.endsWith(".test.ts"));
+	return file === "unknown" ? undefined : dirname(file);
+}
+
+const FACINGS: Record<CameraFacingChoice, readonly CameraFacing[]> = {
+	back: ["back"],
+	front: ["front"],
+	both: ["back", "front"],
+};
+
+function facingsOf(choice: CameraFacingChoice | undefined): readonly CameraFacing[] {
+	const facings = FACINGS[choice ?? "back"];
+	if (facings === undefined) throw invalid(`unknown camera facing "${String(choice)}" (use back, front or both)`);
+	return facings;
+}
+
 const registry = new WeakMap<object, ConditionsInternals>();
 
 /** Ties a device (or a wrapper of it) to its conditions' runner hooks; `Device` itself does not expose them. */
@@ -299,6 +357,8 @@ export function createDeviceConditions(deps: DeviceConditionsDeps): DeviceCondit
 	let localeDirty = false;
 	let a11yDirty = false;
 	let batteryDirty = false;
+	let cameraDirty = false;
+	let currentCamera: CameraCondition = {};
 	/** permission states this test set, per name, and the app they are for */
 	const permissionStates = new Map<PermissionName, PermissionState>();
 	let permissionBundle: string | undefined;
@@ -591,9 +651,9 @@ export function createDeviceConditions(deps: DeviceConditionsDeps): DeviceCondit
 	};
 
 	/** a remote driver offers only the ops its server has, so a setting op can be missing at runtime */
-	function settingOp<K extends "permissions" | "timezone" | "locale" | "a11y" | "battery" | "memoryWarning" | "push">(
-		name: K
-	): Driver[K] {
+	function settingOp<
+		K extends "permissions" | "timezone" | "locale" | "a11y" | "battery" | "camera" | "memoryWarning" | "push",
+	>(name: K): Driver[K] {
 		const op: Driver[K] | undefined = driver[name];
 		if (typeof op !== "function") {
 			throw toE2eError({ code: "E_UNSUPPORTED", message: `this driver has no ${name} op`, retryable: false }, name);
@@ -693,6 +753,13 @@ export function createDeviceConditions(deps: DeviceConditionsDeps): DeviceCondit
 						...appliedA11y(op, state.applied),
 						...(resolved?.success ? { fontScale: resolved.data.scale } : {}),
 					};
+		if (op?.screenReader === false && currentA11y.screenReaderPrevious !== undefined) {
+			// Android TalkBack is back off and the device restored: nothing of it stays on the record
+			const { screenReader: _off, screenReaderPrevious: _prior, ...rest } = currentA11y;
+			currentA11y = rest;
+		} else if (state.screenReaderPrevious !== undefined) {
+			currentA11y = { ...currentA11y, screenReaderPrevious: state.screenReaderPrevious };
+		}
 		if (Object.keys(currentA11y).length === 0) recorder?.settle("a11y", currentA11y, true);
 		else recorder?.record("a11y", currentA11y);
 		emit({ area: "a11y", value: currentA11y });
@@ -708,6 +775,70 @@ export function createDeviceConditions(deps: DeviceConditionsDeps): DeviceCondit
 		else recorder?.record("battery", value);
 		emit({ area: "battery", value });
 		return state;
+	}
+
+	const home = deps.wardenHome ?? wardenHome(process.env);
+
+	/** The whole next camera state to the driver; the feeds that landed are recorded on the lease and reported. */
+	async function applyCamera(next: CameraCondition): Promise<CameraState> {
+		cameraDirty = true;
+		const run = settingOp("camera");
+		const empty = Object.keys(next).length === 0;
+		const state = await call("camera", () => run(empty ? null : next));
+		currentCamera = state.feeds;
+		if (Object.keys(currentCamera).length === 0) recorder?.settle("camera", currentCamera, true);
+		else recorder?.record("camera", currentCamera);
+		emit({ area: "camera", value: currentCamera });
+		return state;
+	}
+
+	/** A feed copied under the device's camera dir; a missing or unsupported file is an `INVALID_ARGUMENT` naming the code. */
+	function stage(facing: CameraFacing, source: string, loop: boolean): CameraCondition[CameraFacing] {
+		const staged = stageCameraFeed({ wardenHome: home, udid: env.udid, facing, source, loop });
+		if (!staged.success) {
+			throw invalid(`camera failed: ${staged.error.code}: ${staged.error.message}`);
+		}
+		return staged.data;
+	}
+
+	function specPath(path: string, dir: string | undefined): string {
+		if (typeof path !== "string" || path === "") throw invalid("camera.set needs the path of an image or video");
+		return resolve(dir ?? (env.specsDir !== undefined ? resolve(env.specsDir) : process.cwd()), path);
+	}
+
+	const cameraApi: DeviceCamera = {
+		async set(path, options = {}) {
+			const dir = (deps.specDir ?? callingSpecDir)();
+			const source = specPath(path, dir);
+			const facings = facingsOf(options.facing);
+			const loop = options.loop ?? true;
+			const next: CameraCondition = { ...currentCamera };
+			for (const facing of facings) {
+				const feed = stage(facing, source, loop);
+				if (feed !== undefined) next[facing] = feed;
+			}
+			return applyCamera(next);
+		},
+		async clear(facing = "both") {
+			const next: CameraCondition = { ...currentCamera };
+			for (const f of facingsOf(facing)) delete next[f];
+			return applyCamera(next);
+		},
+		async status() {
+			return { feeds: currentCamera };
+		},
+	};
+
+	/** The suite's `camera` as staged feeds. */
+	function baselineCamera(): CameraCondition {
+		const feeds: CameraCondition = {};
+		for (const facing of ["back", "front"] as const) {
+			const configured = env.cameraFeeds?.[facing];
+			if (configured === undefined) continue;
+			const feed = stage(facing, configured.path, configured.loop);
+			if (feed !== undefined) feeds[facing] = feed;
+		}
+		return feeds;
 	}
 
 	async function startTimelineRun(steps: readonly TimelineStepInput[]): Promise<ConditionRun> {
@@ -757,7 +888,8 @@ export function createDeviceConditions(deps: DeviceConditionsDeps): DeviceCondit
 		baseline.permissions !== undefined ||
 		baseline.locale !== undefined ||
 		baseline.timezone !== undefined ||
-		baseline.a11y !== undefined;
+		baseline.a11y !== undefined ||
+		env.cameraFeeds !== undefined;
 
 	const internals: ConditionsInternals = {
 		declared,
@@ -769,6 +901,7 @@ export function createDeviceConditions(deps: DeviceConditionsDeps): DeviceCondit
 			localeDirty ||
 			a11yDirty ||
 			batteryDirty ||
+			cameraDirty ||
 			runs.size > 0,
 		wantsInject: () =>
 			baseline.network !== undefined ||
@@ -787,6 +920,8 @@ export function createDeviceConditions(deps: DeviceConditionsDeps): DeviceCondit
 			if (baseline.clock !== undefined) await applyClock(baseline.clock);
 			if (baseline.location !== undefined) await applyLocation(baseline.location);
 			if (baseline.network !== undefined) await applyNetwork(baseline.network, { relaunch: true });
+			if (env.cameraFeeds !== undefined) await applyCamera(baselineCamera());
+			cameraDirty = false;
 			networkDirty = false;
 			locationDirty = false;
 			clockDirty = false;
@@ -836,6 +971,12 @@ export function createDeviceConditions(deps: DeviceConditionsDeps): DeviceCondit
 					batteryDirty = false;
 				});
 			}
+			if (cameraDirty) {
+				await attempt(async () => {
+					await applyCamera(baselineCamera());
+					cameraDirty = false;
+				});
+			}
 			if (errors.length > 0) throw errors[0];
 		},
 	};
@@ -849,6 +990,7 @@ export function createDeviceConditions(deps: DeviceConditionsDeps): DeviceCondit
 		locale: applyLocale,
 		a11y: applyA11y,
 		battery: applyBattery,
+		camera: cameraApi,
 		memoryWarning: async (options) => {
 			const op = settingOp("memoryWarning");
 			await call("memoryWarning", () => op(options ?? { bundleId: env.bundleId }));

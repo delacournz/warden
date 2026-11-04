@@ -62,6 +62,8 @@ export function conditionsLine(records: readonly ConditionRecord[]): string | un
 				return `locale ${[record.value.timezone, record.value.locale].filter((v) => v !== undefined).join(" ")}`;
 			case "a11y":
 				return `a11y ${[record.value.textSize === undefined ? undefined : `text ${record.value.textSize}`, record.value.boldText ? "bold" : undefined].filter((v) => v !== undefined).join(" ")}`.trim();
+			case "camera":
+				return `camera ${(["back", "front"] as const).filter((f) => record.value[f] !== undefined).join("+") || "none"}`;
 			case "battery":
 				return `battery ${record.value.level === undefined ? "" : `${record.value.level}%`}${record.value.cosmetic ? " (status bar)" : ""}`.trim();
 		}

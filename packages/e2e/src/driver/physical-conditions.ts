@@ -14,6 +14,7 @@ export const PHYSICAL_CONDITION_OPS = [
 	"battery",
 	"memoryWarning",
 	"push",
+	"camera",
 ] as const satisfies readonly (keyof Driver)[];
 
 type PhysicalConditionOps = Pick<Driver, (typeof PHYSICAL_CONDITION_OPS)[number]>;
@@ -42,5 +43,6 @@ export function physicalConditionOps(device: string): PhysicalConditionOps {
 		battery: () => refuse("battery"),
 		memoryWarning: () => refuse("memoryWarning"),
 		push: () => refuse("push"),
+		camera: () => refuse("camera"),
 	};
 }

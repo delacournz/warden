@@ -1,3 +1,4 @@
+import { a11yTargetOf, registerA11yTarget } from "./a11y/a11y-target";
 import { conditionsOf, registerConditions } from "./conditions/device-conditions";
 import type { Device } from "./device";
 import type { SpanRunner } from "./runner/span";
@@ -11,8 +12,20 @@ import type { SpanRunner } from "./runner/span";
  */
 export function traceDevice(device: Device, span: SpanRunner | undefined): Device {
 	if (span === undefined) return device;
-	const { network, location, clock, permissions } = device;
+	const { network, location, clock, permissions, camera } = device;
+	const { screenReader } = device;
 	const traced: Device = {
+		a11yAudit: (options) => span("device.a11yAudit", () => device.a11yAudit(options)),
+		announcements: (options) => span("device.announcements", () => device.announcements(options)),
+		screenReader: {
+			order: () => span("device.screenReader.order", () => screenReader.order()),
+			state: () => span("device.screenReader.state", () => screenReader.state()),
+			next: () => span("device.screenReader.next", () => screenReader.next()),
+			prev: () => span("device.screenReader.prev", () => screenReader.prev()),
+			activate: () => span("device.screenReader.activate", () => screenReader.activate()),
+			focused: () => span("device.screenReader.focused", () => screenReader.focused()),
+			spoken: (options) => span("device.screenReader.spoken", () => screenReader.spoken(options)),
+		},
 		get devtools() {
 			return device.devtools;
 		},
@@ -48,6 +61,11 @@ export function traceDevice(device: Device, span: SpanRunner | undefined): Devic
 		locale: (tag, options) => span("device.locale", () => device.locale(tag, options)),
 		a11y: (op) => span("device.a11y", () => device.a11y(op)),
 		battery: (op) => span("device.battery", () => device.battery(op)),
+		camera: {
+			set: (path, options) => span("device.camera.set", () => camera.set(path, options)),
+			clear: (facing) => span("device.camera.clear", () => camera.clear(facing)),
+			status: () => span("device.camera.status", () => camera.status()),
+		},
 		memoryWarning: (options) => span("device.memoryWarning", () => device.memoryWarning(options)),
 		push: (payload, options) => span("device.push", () => device.push(payload, options)),
 		timeline: (steps) => span("device.timeline", () => device.timeline(steps)),
@@ -82,5 +100,7 @@ export function traceDevice(device: Device, span: SpanRunner | undefined): Devic
 	};
 	const internals = conditionsOf(device);
 	if (internals !== undefined) registerConditions(traced, internals);
+	const a11yTarget = a11yTargetOf(device);
+	if (a11yTarget !== undefined) registerA11yTarget(traced, a11yTarget);
 	return traced;
 }

@@ -161,6 +161,7 @@ describe("parseClaimFlags physical", () => {
 		["--runtime", { runtime: "35" }],
 		["--adopt", { adopt: true }],
 		["--biometrics", { biometrics: true }],
+		["--camera", { camera: true }],
 	] as const)("%s is rejected with --physical", (flag, extra) => {
 		expect(fail("android", { physical: true, ...extra })).toContain(`${flag} cannot be used with --physical`);
 	});
@@ -545,6 +546,28 @@ describe("physical allowlist", () => {
 		const c = make();
 		writeFileSync(join(c.cwd, "warden.config.json"), "{ not json");
 		expect(await failure(c, { physical: true })).toContain("allowlist");
+	});
+});
+
+describe("parseClaimFlags camera", () => {
+	test("android --camera puts the +cam identity on the profile, after +bio", () => {
+		const flags = parseClaimFlags("android", { profile: "pixel-10", camera: true });
+		expect(flags.success && flags.data.request.profile).toBe("pixel-10+cam");
+		const both = parseClaimFlags("android", { profile: "pixel-10", biometrics: true, camera: true });
+		expect(both.success && both.data.request.profile).toBe("pixel-10+bio+cam");
+	});
+
+	test("ios accepts --camera and leaves the profile unchanged", () => {
+		const plain = parseClaimFlags("ios", { profile: "iphone-17" });
+		const cam = parseClaimFlags("ios", { profile: "iphone-17", camera: true });
+		expect(cam.success && cam.data.request.profile).toBe("iphone-17");
+		if (!plain.success || !cam.success) throw new Error("parse failed");
+		expect(cam.data.request).toEqual(plain.data.request);
+	});
+
+	test("unset or false leaves the android profile alone", () => {
+		const off = parseClaimFlags("android", { profile: "pixel-10", camera: false });
+		expect(off.success && off.data.request.profile).toBe("pixel-10");
 	});
 });
 

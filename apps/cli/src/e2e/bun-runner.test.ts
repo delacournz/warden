@@ -117,6 +117,11 @@ describe("specEnv perf", () => {
 		version: "1",
 	};
 
+	test("WARDEN_DEV_CLIENT_SCHEME only when given", () => {
+		expect(specEnv(base).WARDEN_DEV_CLIENT_SCHEME).toBeUndefined();
+		expect(specEnv({ ...base, devClientScheme: "exp+warden" }).WARDEN_DEV_CLIENT_SCHEME).toBe("exp+warden");
+	});
+
 	test("WARDEN_BIN, WARDEN_PERF and the budgets", () => {
 		const env = specEnv({ ...base, bin: ["/bin/warden"], perf: ["react", "js"], perfBudgets: { jankPct: 5 } });
 		expect(env.WARDEN_BIN).toBe('["/bin/warden"]');
@@ -124,9 +129,28 @@ describe("specEnv perf", () => {
 		expect(env.WARDEN_PERF_BUDGETS).toBe('{"jankPct":5}');
 	});
 
+	test("WARDEN_CAMERA_FEEDS only for a suite with a camera", () => {
+		const cameraFeeds = { back: { path: "/fx/qr.png", loop: true } };
+		expect(specEnv({ ...base, cameraFeeds }).WARDEN_CAMERA_FEEDS).toBe(JSON.stringify(cameraFeeds));
+		expect("WARDEN_CAMERA_FEEDS" in specEnv({ ...base, cameraFeeds: {} })).toBe(false);
+		expect("WARDEN_CAMERA_FEEDS" in specEnv(base)).toBe(false);
+	});
+
 	test("WARDEN_BIOMETRICS only for a biometrics suite", () => {
 		expect(specEnv({ ...base, biometrics: true }).WARDEN_BIOMETRICS).toBe("1");
 		expect("WARDEN_BIOMETRICS" in specEnv({ ...base, biometrics: false })).toBe(false);
+	});
+
+	test("WARDEN_A11Y_AUDIT carries the suite's a11y config; WARDEN_A11Y=1 only when asked", () => {
+		const env = specEnv({
+			...base,
+			a11yAudit: { minSeverity: "warning", ignore: [{ rule: "target-size" }] },
+			a11y: true,
+		});
+		expect(env.WARDEN_A11Y_AUDIT).toBe('{"minSeverity":"warning","ignore":[{"rule":"target-size"}]}');
+		expect(env.WARDEN_A11Y).toBe("1");
+		const quiet = specEnv({ ...base, a11y: false });
+		expect("WARDEN_A11Y" in quiet || "WARDEN_A11Y_AUDIT" in quiet).toBe(false);
 	});
 
 	test("absent unless asked for; empty budgets are not exported", () => {

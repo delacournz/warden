@@ -1,5 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import { type KeyboardEvent, type ReactElement, useEffect, useId, useRef, useState } from "react";
+import { QuietVideo } from "@/components/quiet-video";
 import { RichText } from "@/components/rich-text";
 import { cn } from "@/lib/cn";
 import type { Clip } from "@/lib/landing.data";
@@ -9,14 +10,17 @@ import { useReducedMotion } from "./demo-video";
  * The device-control clips as tabs: each a real simulator driven by the commands its caption names. Arrow keys move
  * between tabs, as in `InstallCommand`. The selected clip autoplays muted and loops; with reduced motion it rests on
  * its poster (the end state) with controls. A tab change remounts the video so it starts from the beginning. `readMore`
- * off drops the link, for a docs page that is itself the clip's Read more.
+ * off drops the link, for a docs page that is itself the clip's Read more. `controls` off (docs) drops the browser's
+ * player chrome for a {@link QuietVideo}, paused and resumed by a click.
  */
 export function ClipTabs({
 	clips,
 	readMore = true,
+	controls = true,
 }: {
 	clips: readonly Clip[];
 	readMore?: boolean;
+	controls?: boolean;
 }): ReactElement | null {
 	const [selected, setSelected] = useState(0);
 	const reduced = useReducedMotion();
@@ -75,21 +79,30 @@ export function ClipTabs({
 			</div>
 			<figure aria-labelledby={`${id}-${clip.id}`} className="flex flex-col gap-3" id={`${id}-panel`} role="tabpanel">
 				<div className="overflow-hidden rounded-[var(--radius-group)] bg-surface">
-					<video
-						aria-label={`${clip.title} Recorded on a leased simulator.`}
-						autoPlay={!reduced}
-						className="block aspect-video h-auto w-full"
-						controls={reduced}
-						key={clip.id}
-						loop
-						muted
-						playsInline
-						poster={`${clip.src}.jpg`}
-						preload="metadata"
-						ref={video}
-					>
-						<source src={`${clip.src}.mp4`} type="video/mp4" />
-					</video>
+					{controls ? (
+						<video
+							aria-label={`${clip.title} Recorded on a leased simulator.`}
+							autoPlay={!reduced}
+							className="block aspect-video h-auto w-full"
+							controls={reduced}
+							key={clip.id}
+							loop
+							muted
+							playsInline
+							poster={`${clip.src}.jpg`}
+							preload="metadata"
+							ref={video}
+						>
+							<source src={`${clip.src}.mp4`} type="video/mp4" />
+						</video>
+					) : (
+						<QuietVideo
+							className="block aspect-video h-auto w-full"
+							key={clip.id}
+							label={`${clip.title} Recorded on a leased simulator.`}
+							src={clip.src}
+						/>
+					)}
 				</div>
 				<figcaption className="flex flex-col gap-x-6 gap-y-2 text-start text-ink-2 text-sm leading-relaxed sm:flex-row sm:items-baseline sm:justify-between">
 					<span className="max-w-[68ch]">

@@ -1,4 +1,6 @@
-import type { DriverError, DriverResult, Logger, Point, ScreenInfo, Snapshot } from "../driver.types";
+import { type A11yEventsRead, parseUiadA11yEvents } from "../a11y-events";
+import type { DriverError, DriverResult, Element, Logger, Point, ScreenInfo, Snapshot } from "../driver.types";
+import { driverErr } from "../errors";
 import type { GesturePlan } from "../gesture-geometry";
 import type { SettleDetail } from "../settle";
 import { noteSpanDetail } from "../span-detail";
@@ -7,6 +9,14 @@ import { type Clock, rotatedScreen } from "./android-device";
 import type { UiadBackend } from "./uiad-backend";
 import { isBusy, neverSent, type UiadClient } from "./uiad-client";
 import type { UiadSnapshotData } from "./uiad-protocol";
+import {
+	parseScrolled,
+	parseSrEvents,
+	parseSrFocus,
+	parseSrFocused,
+	type SrEventsRead,
+	type SrFocusRead,
+} from "./uiad-screen-reader";
 import { parseUiadNodes } from "./uiautomator";
 
 /**
@@ -46,6 +56,22 @@ export type UiadOps = {
 	typeText(text: string): Maybe<void>;
 	/** replace the whole text of the focused input (`ACTION_SET_TEXT`); `undefined` = refused or no server */
 	setText(text: string): Maybe<void>;
+	/** announcements and live-region changes since a cursor (`a11yEvents` op, server 0.5.0+) */
+	a11yEvents(since?: number): Maybe<A11yEventsRead>;
+	/** move accessibility focus one stop (`dir`) or to the stop at a point (`srFocus` op, server 0.6.0+) */
+	srFocus(target: { dir: "next" | "prev" } | { point: Point }): Maybe<SrFocusRead>;
+	/** the node holding accessibility focus (`srFocused`, 0.6.0+) */
+	srFocused(): Maybe<Element | undefined>;
+	/** `ACTION_CLICK` on the focused node's clickable ancestor (`srActivate`, 0.6.0+) */
+	srActivate(): Maybe<void>;
+	/** accessibility-focus moves since a cursor (`srEvents`, 0.6.0+) */
+	srEvents(since?: number): Maybe<SrEventsRead>;
+	/** `ACTION_CLICK` on the clickable node at a point, no touch injected (`actionClick`, 0.6.0+) */
+	actionClick(point: Point): Maybe<void>;
+	/** `ACTION_SCROLL_FORWARD|BACKWARD` on the scrollable at a point, else the largest on screen; answers whether it moved (`actionScroll`, 0.6.0+) */
+	actionScroll(dir: "forward" | "backward", point?: Point): Maybe<boolean>;
+	/** run the Accessibility Test Framework on the active window (`audit` op, server 0.5.0+); `undefined` = no server */
+	audit(opts: { contrast: boolean }): Maybe<unknown>;
 	stop(): Promise<void>;
 };
 
@@ -54,6 +80,8 @@ export type UiadOpsDeps = {
 	baseScreen: ScreenInfo;
 	clock: Clock;
 	log?: Logger;
+	/** puts `warden-atf.jar` on the device and names it; without it `audit` answers `undefined` */
+	atf?: () => DriverResult<string> | Promise<Res<string>>;
 };
 
 /** The wire has no `E_HID` for "nothing was injected" vs "some was": a refusal means the server could not inject at all. */
@@ -74,6 +102,7 @@ const EDIT_QUIET_TIMEOUT_MS = 1_000;
 const KEY_GAP_MS = 30;
 const KEY_BASE_TIMEOUT_MS = 10_000;
 const KEY_PRESS_BUDGET_MS = 150;
+const AUDIT_TIMEOUT_MS = 30_000;
 const ok = { success: true as const, data: undefined };
 
 /** `null root node`: the window is not there yet. (A busy slot is also `E_AX_UNAVAILABLE`, but it never comes from a request.) */
@@ -114,12 +143,19 @@ export function createUiadOps(deps: UiadOpsDeps): UiadOps {
 	}
 
 	/** One request that has an effect or a read-back, with the fallback rules in the header. */
-	async function call<T>(op: string, use: (server: UiadClient) => DriverResult<T>, idempotent: boolean): Maybe<T> {
+	async function call<T>(
+		op: string,
+		use: (server: UiadClient) => DriverResult<T>,
+		idempotent: boolean,
+		surfaceRefusals = false
+	): Maybe<T> {
 		for (let attempt = 0; attempt < 2; attempt++) {
 			const server = await backend.server();
 			if (server === undefined) return undefined;
 			const res = await use(server);
 			if (res.success) return res;
+			// a screen-reader op that is refused has an answer for the caller ("nothing is focused"), not a way to do it otherwise
+			if (surfaceRefusals && REFUSALS.has(res.error.code)) return res;
 			const verdict = await judge(op, res.error, attempt === 0);
 			if (verdict === "surface" && !idempotent) return res;
 			if (verdict !== "retry") return undefined;
@@ -227,6 +263,76 @@ export function createUiadOps(deps: UiadOpsDeps): UiadOps {
 		selectAll: () => call("selectAll", async (server) => mapVoid(await server.request("selectAll")), true),
 		typeText: (text) => edit("typeText", (server) => server.typeText(text)),
 		setText: (text) => edit("setText", (server) => server.request("setText", { text })),
+		a11yEvents: (since) =>
+			call(
+				"a11yEvents",
+				async (server) => {
+					const res = await server.request("a11yEvents", since ? { since } : {});
+					if (!res.success) return res;
+					const parsed = parseUiadA11yEvents(res.data);
+					return parsed.success ? { success: true, data: parsed.data } : driverErr("E_INTERNAL", parsed.error);
+				},
+				true
+			),
+		srFocus: (target) =>
+			call(
+				"srFocus",
+				async (server) => {
+					const params = "dir" in target ? { dir: target.dir } : { x: target.point.x, y: target.point.y };
+					const res = await server.request("srFocus", params);
+					if (!res.success) return res;
+					const parsed = parseSrFocus(res.data, deps.baseScreen);
+					return parsed.success ? { success: true, data: parsed.data } : driverErr("E_INTERNAL", parsed.error);
+				},
+				false,
+				true
+			),
+		srFocused: () =>
+			call(
+				"srFocused",
+				async (server) => {
+					const res = await server.request("srFocused");
+					if (!res.success) return res;
+					const parsed = parseSrFocused(res.data, deps.baseScreen);
+					return parsed.success ? { success: true, data: parsed.data } : driverErr("E_INTERNAL", parsed.error);
+				},
+				true
+			),
+		srActivate: () => call("srActivate", async (server) => mapVoid(await server.request("srActivate")), false, true),
+		srEvents: (since) =>
+			call(
+				"srEvents",
+				async (server) => {
+					const res = await server.request("srEvents", since ? { since } : {});
+					if (!res.success) return res;
+					const parsed = parseSrEvents(res.data, deps.baseScreen);
+					return parsed.success ? { success: true, data: parsed.data } : driverErr("E_INTERNAL", parsed.error);
+				},
+				true
+			),
+		actionClick: (point) => effect("actionClick", { x: point.x, y: point.y }),
+		actionScroll: (dir, point) =>
+			call(
+				"actionScroll",
+				async (server) => {
+					const res = await server.request("actionScroll", { dir, ...(point ? { x: point.x, y: point.y } : {}) });
+					if (!res.success) return res;
+					const parsed = parseScrolled(res.data);
+					return parsed.success ? { success: true, data: parsed.data } : driverErr("E_INTERNAL", parsed.error);
+				},
+				false
+			),
+		audit: async (opts) => {
+			if (deps.atf === undefined) return undefined;
+			const jar = await deps.atf();
+			if (!jar.success) return jar;
+			return call(
+				"audit",
+				(server) =>
+					server.request("audit", { atf: jar.data, contrast: opts.contrast }, { timeoutMs: AUDIT_TIMEOUT_MS }),
+				true
+			);
+		},
 		stop: () => backend.stop(),
 	};
 }

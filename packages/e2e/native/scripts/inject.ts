@@ -20,7 +20,35 @@ export type Target = "ios-simulator" | "macos";
 
 /** SCNetworkReachability is deprecated but is what older NetInfo builds call: interposing it is the point. */
 const FLAGS = ["-Wall", "-Werror", "-Wno-deprecated-declarations"];
-const FRAMEWORKS = ["-framework", "Foundation", "-framework", "Network", "-framework", "SystemConfiguration"];
+const FRAMEWORKS = [
+	"-framework",
+	"Foundation",
+	"-framework",
+	"Network",
+	"-framework",
+	"SystemConfiguration",
+	// the simulated camera (`#pragma mark - camera`)
+	"-framework",
+	"AVFoundation",
+	"-framework",
+	"CoreMedia",
+	"-framework",
+	"CoreVideo",
+	"-framework",
+	"CoreImage",
+	"-framework",
+	"ImageIO",
+	"-framework",
+	"QuartzCore",
+	"-framework",
+	"CoreGraphics",
+];
+
+/**
+ * UIKit is only linked into the simulator dylib: the camera's `UIImagePickerController` overlay and the accessibility
+ * read (A11Y-1), which walks UIKit, live behind `TARGET_OS_IOS`.
+ */
+const IOS_ONLY_FRAMEWORKS = ["-framework", "UIKit"];
 
 /** `xcrun clang` argv for the injected dylib on `target`. */
 export function dylibArgv(target: Target, out: string): string[] {
@@ -41,6 +69,7 @@ export function dylibArgv(target: Target, out: string): string[] {
 		"-install_name",
 		`@rpath/${INJECT_DYLIB}`,
 		...FRAMEWORKS,
+		...(target === "ios-simulator" ? IOS_ONLY_FRAMEWORKS : []),
 		INJECT_SOURCE,
 		"-o",
 		out,

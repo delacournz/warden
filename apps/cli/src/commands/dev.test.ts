@@ -36,11 +36,13 @@ type Harness = {
 };
 
 function harness(): Harness {
-	let resolveExit: (code: number) => void = () => {};
+	const exits: Array<(code: number) => void> = [];
 	const h: Harness = {
 		spawned: [],
 		ensured: [],
-		finish: (code) => resolveExit(code),
+		finish: (code) => {
+			for (const resolve of exits) resolve(code);
+		},
 		deps: {
 			pid: 777,
 			isPortFree: async () => true,
@@ -48,7 +50,7 @@ function harness(): Harness {
 				h.spawned.push({ cmd, env, cwd, stdout });
 				return {
 					exited: new Promise<number>((resolve) => {
-						resolveExit = resolve;
+						exits.push(resolve);
 					}),
 					kill: () => {},
 				};
@@ -153,6 +155,36 @@ describe("warden dev: showing the simulator", () => {
 
 describe("warden dev: the simulator when dev ends", () => {
 	const shutdowns = (calls: string[][]) => calls.filter((cmd) => cmd[1] === "simctl" && cmd[2] === "shutdown");
+
+	test("dev's sim is persistent: shut down, never deleted, so installs and logins survive", async () => {
+		const calls: string[][] = [];
+		const c = setup(["ios"], calls, [], "Shutdown");
+		c.db.recordDevice({ platform: "ios", id: "U1", name: "warden-iphone-1" }, 0);
+		const h = harness();
+		const running = createDevCommand(h.deps).run(c);
+		await waitFor(() => h.spawned.length > 0 && calls.some((cmd) => cmd.includes("launch")));
+		h.finish(0);
+		expect(await running).toBe(0);
+		expect(shutdowns(calls)).toEqual([["xcrun", "simctl", "shutdown", "U1"]]);
+		expect(calls.some((cmd) => cmd[1] === "simctl" && cmd[2] === "delete")).toBe(false);
+		expect(c.db.listDevices("ios").find((d) => d.id === "U1")?.persistentAt).toBeDefined();
+	});
+
+	test("WARDEN_EPHEMERAL_DEV=1 → dev's sim is ephemeral like any other: deleted after shutdown", async () => {
+		const calls: string[][] = [];
+		const c = setup(["ios"], calls, [["xcrun simctl delete", {}]], "Shutdown");
+		c.env = { ...c.env, WARDEN_EPHEMERAL_DEV: "1" };
+		c.db.recordDevice({ platform: "ios", id: "U1", name: "warden-iphone-1" }, 0);
+		const h = harness();
+		const running = createDevCommand(h.deps).run(c);
+		await waitFor(() => h.spawned.length > 0 && calls.some((cmd) => cmd.includes("launch")));
+		h.finish(0);
+		expect(await running).toBe(0);
+		expect(calls.filter((cmd) => cmd[1] === "simctl" && cmd[2] === "delete")).toEqual([
+			["xcrun", "simctl", "delete", "U1"],
+		]);
+		expect(c.db.listDevices("ios").find((d) => d.id === "U1")).toBeUndefined();
+	});
 
 	test("Metro exits → the sim dev booted is shut down before its lease goes", async () => {
 		const calls: string[][] = [];
@@ -1136,7 +1168,7 @@ describe("warden dev: what the action keys call back into", () => {
 				return value;
 			});
 		await waitFor(() => a.readies.length > 0);
-		const restarted = await a.readies[0]?.actions?.restartMetro(() => {});
+		const restarted = await a.readies[0]?.actions?.restartMetro(() => {}, true);
 		expect(restarted?.success).toBe(true);
 		expect(a.h.spawned).toHaveLength(2);
 		const [first, second] = a.h.spawned;
@@ -1150,6 +1182,24 @@ describe("warden dev: what the action keys call back into", () => {
 		a.procs[1]?.finish(4);
 		expect(await running).toBe(4);
 		expect(c.db.listLeases()).toEqual([]);
+	});
+
+	test("restartMetro without clear starts a plain Metro on the same port", async () => {
+		const calls: string[][] = [];
+		const c = setup(["ios"], calls);
+		const a = actionHarness();
+		a.h.deps.selectUi = () => a.make(c);
+		const running = createDevCommand(a.h.deps).run(c);
+		await waitFor(() => a.readies.length > 0);
+		const restarted = await a.readies[0]?.actions?.restartMetro(() => {}, false);
+		expect(restarted?.success).toBe(true);
+		const [first, second] = a.h.spawned;
+		expect(second?.cmd).not.toContain("--clear");
+		expect(second?.cmd).not.toContain("--reset-cache");
+		const port = (cmd: string[] | undefined) => cmd?.[cmd.indexOf("--port") + 1];
+		expect(port(second?.cmd)).toBe(port(first?.cmd));
+		a.procs[1]?.finish(0);
+		expect(await running).toBe(0);
 	});
 
 	test("a Metro that does not come back ends the session with the old exit code", async () => {
@@ -1166,7 +1216,7 @@ describe("warden dev: what the action keys call back into", () => {
 		};
 		const running = createDevCommand(a.h.deps).run(c);
 		await waitFor(() => a.readies.length > 0);
-		const restarted = await a.readies[0]?.actions?.restartMetro(() => {});
+		const restarted = await a.readies[0]?.actions?.restartMetro(() => {}, true);
 		expect(restarted?.success).toBe(false);
 		expect(await running).toBe(143);
 	});
@@ -1252,7 +1302,7 @@ describe("warden dev: opt-in extras", () => {
 		for (let i = 0; i < 500 && socket() === undefined; i++) await Bun.sleep(2);
 		await onSession?.(socket());
 		h.finish(0);
-		return { code: await running, brokers, c };
+		return { code: await running, brokers, c, spawned: h.spawned };
 	}
 
 	test("no devtools broker by default", async () => {
@@ -1281,6 +1331,19 @@ describe("warden dev: opt-in extras", () => {
 		expect(code).toBe(0);
 		expect(brokers).toHaveLength(2);
 	});
+
+	test("the control socket restarts Metro on the same port and the session goes on", async () => {
+		let restarted: Awaited<ReturnType<typeof callDevControl>> | undefined;
+		const { code, c, spawned } = await runWith(["ios"], async (socket) => {
+			restarted = await callDevControl(socket ?? "", { op: "restart-metro", clear: true });
+		});
+		expect(spawned).toHaveLength(2);
+		expect(spawned[1]?.cmd).toContain("--clear");
+		expect(restarted?.success && restarted.data.ok).toBe(true);
+		if (restarted?.success && restarted.data.ok) expect(restarted.data.metroUrl).toContain(":");
+		expect(code).toBe(0);
+		expect(c.db.listLeases()).toEqual([]);
+	});
 });
 
 describe("selectDevUi", () => {
@@ -1297,6 +1360,7 @@ describe("selectDevUi", () => {
 			onQuit: () => {},
 			setHud: () => ok(undefined),
 			hudOn: () => false,
+			restartMetro: async () => ok("http://127.0.0.1:8081"),
 			close: async () => {},
 		};
 		const load = async (): Promise<Loaded> => ({

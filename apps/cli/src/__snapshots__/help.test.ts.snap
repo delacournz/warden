@@ -17,13 +17,20 @@ Lease:
                                 repo/worktree, age, heartbeat)
   capacity                      machine capacity: budget, booted devices
                                 (foreign too), per-device cost, memory pressure
-  queue                         claims waiting for host capacity, head first
-                                (position, priority, age, owner)
+  queue                         claims waiting for host capacity or a free
+                                device, head first (position, priority, reason,
+                                age, owner)
+  events                        lease history: requested, queued, granted,
+                                released, expired, evicted, quarantined …
+                                (--follow to tail)
+  stats                         claim wait (median, p95), lease durations and
+                                peak concurrency per profile, from the lease
+                                history
   check                         exit 0 if a device is free or yours, 2 if
                                 another owner holds it
   heartbeat [leaseIds...]       refresh lease heartbeats so they don't go stale
   gc                            reclaim stale leases; shut down idle warden
-                                devices (never deletes)
+                                devices, delete shut-down ephemeral sims
   port                          lease TCP ports from a range (bind-probed, never
                                 handed out twice)
 
@@ -104,6 +111,7 @@ Setup:
   doctor                        check warden's setup: home, db, device tools,
                                 simulator helper, install method, PATH,
                                 Claude/Codex hooks + skill, stale leases
+                                (--leases: registry drift)
   update                        update warden: rebuild from source (dev/local
                                 builds) or install the latest release
   version                       print warden's version and build channel (dev /
@@ -121,46 +129,53 @@ Usage: warden claim [options] [platform]
 lease iOS sims / Android emulators (reuse, boot or create), booted and ready
 
 Arguments:
-  platform               ios | android (asked for when omitted in a terminal)
+  platform                 ios | android (asked for when omitted in a terminal)
 
 Options:
-  --profile <slug>       device profile, e.g. iphone-17 / pixel-10 (android
-                         default: first AVD)
-  --runtime <runtime>    runtime: latest, iOS-26-5, 26.5 …
-  --count <n>            how many devices (default: "1")
-  --max <n>              max warden devices of this profile (default: what the
-                         machine's capacity allows)
-  --wait <duration>      queue up to this long for a free device or host
-                         capacity (default 30m)
-  --no-wait              fail at once instead of queueing when no device is free
-  --priority <priority>  boot-queue priority: interactive|high|normal|low or a
-                         number (env WARDEN_PRIORITY; default by command)
-  --ttl <duration>       lease TTL without heartbeat (default 30m; bare \`claim\`
-                         by an agent: 5m)
-  --label <label>        label shown in \`warden ls\`
-  --adopt                allow allocating foreign (non-warden) devices
-  --headless             iOS: close the claimed sims' Simulator.app windows (no
-                         window, even with Simulator open)
-  --no-headless          show the windows even when config / WARDEN_HEADLESS say
-                         headless
-  --slim                 iOS: slim the simulator daemons (default; ignored on
-                         android)
-  --no-slim              iOS: leave the simulator daemons running (config slim /
-                         WARDEN_SLIM=0 also turn slimming off)
-  --biometrics           claim devices with a fingerprint / Face ID enrolled
-                         (own pool and golden; config biometrics)
-  --json                 machine-readable output
-  --physical             claim a connected physical phone/tablet (never booted,
-                         shut down or created by warden)
-  --serial <serial...>   android: claim these physical devices by adb serial
-                         (implies --physical)
-  --udid <udid...>       ios: claim these physical devices by CoreDevice UDID
-                         (implies --physical)
-  --remote               lease a hosted device from warden cloud (warden login
-                         first)
-  --view                 with --remote: open the device in the warden viewer and
-                         stay until it closes
-  -h, --help             display help for command"
+  --profile <slug>         device profile, e.g. iphone-17 / pixel-10 (android
+                           default: first AVD)
+  --runtime <runtime>      runtime: latest, iOS-26-5, 26.5 …
+  --count <n>              how many devices (default: "1")
+  --max <n>                max warden devices of this profile (default: what the
+                           machine's capacity allows)
+  --wait <duration>        queue up to this long for a free device or host
+                           capacity (default 30m)
+  --no-wait                fail at once instead of queueing when no device is
+                           free
+  --priority <priority>    boot-queue priority: interactive|high|normal|low or a
+                           number (env WARDEN_PRIORITY; default by command)
+  --ttl <duration>         lease TTL without heartbeat (default 30m; bare
+                           \`claim\` by an agent: 5m)
+  --label <label>          label shown in \`warden ls\`
+  --adopt                  allow allocating foreign (non-warden) devices
+  --headless               iOS: close the claimed sims' Simulator.app windows
+                           (no window, even with Simulator open)
+  --no-headless            show the windows even when config / WARDEN_HEADLESS
+                           say headless
+  --slim                   iOS: slim the simulator daemons (default; ignored on
+                           android)
+  --no-slim                iOS: leave the simulator daemons running (config slim
+                           / WARDEN_SLIM=0 also turn slimming off)
+  --biometrics             claim devices with a fingerprint / Face ID enrolled
+                           (own pool and golden; config biometrics)
+  --camera                 Android: launch the emulator with a file-fed camera
+                           (\`+cam\` device); iOS: no effect, the simulated camera
+                           needs no special device
+  --json                   machine-readable output
+  --physical               claim a connected physical phone/tablet (never
+                           booted, shut down or created by warden)
+  --serial <serial...>     android: claim these physical devices by adb serial
+                           (implies --physical)
+  --udid <udid...>         ios: claim these physical devices by CoreDevice UDID
+                           (implies --physical)
+  --remote                 lease a hosted device from warden cloud (warden login
+                           first)
+  --view                   with --remote: open the device in the warden viewer
+                           and stay until it closes
+  --idempotency-key <key>  a repeat claim with this key (same owner, leases
+                           alive) returns the same leases (env
+                           WARDEN_IDEMPOTENCY_KEY)
+  -h, --help               display help for command"
 `;
 
 exports[`help output warden release --help (and nested subcommands) 1`] = `
@@ -221,6 +236,9 @@ Options:
                          WARDEN_SLIM=0 also turn slimming off)
   --biometrics           claim devices with a fingerprint / Face ID enrolled
                          (own pool and golden; config biometrics)
+  --camera               Android: launch the emulator with a file-fed camera
+                         (\`+cam\` device); iOS: no effect, the simulated camera
+                         needs no special device
   --json                 machine-readable output
   --physical             claim a connected physical phone/tablet (never booted,
                          shut down or created by warden)
@@ -292,6 +310,9 @@ Options:
                               slim / WARDEN_SLIM=0 also turn slimming off)
   --biometrics                claim devices with a fingerprint / Face ID
                               enrolled (own pool and golden; config biometrics)
+  --camera                    Android: launch the emulator with a file-fed
+                              camera (\`+cam\` device); iOS: no effect, the
+                              simulated camera needs no special device
   --json                      machine-readable output
   --udid <udid>               use this device instead of claiming one
   --lease <id>                use the device of this lease
@@ -337,6 +358,8 @@ Commands:
                               broker of a running \`warden dev\` (both start off)
   status                      which extras (perf HUD, devtools broker) a running
                               \`warden dev\` has on
+  restart-metro               stop and start Metro of a running \`warden dev\` on
+                              the same port; the device, lease and app stay
 
 Examples:
   warden dev
@@ -397,6 +420,18 @@ which extras (perf HUD, devtools broker) a running \`warden dev\` has on
 Options:
   --udid <udid>  the session on this device (default: the only running one)
   --json         print { udid, features } as JSON
+  -h, --help     display help for command
+
+$ warden dev restart-metro --help
+Usage: warden dev restart-metro [options]
+
+stop and start Metro of a running \`warden dev\` on the same port; the device,
+lease and app stay
+
+Options:
+  --clear        reset Metro's cache (expo --clear / react-native --reset-cache)
+  --udid <udid>  the session on this device (default: the only running one)
+  --json         print { udid, metroUrl, clear } as JSON
   -h, --help     display help for command"
 `;
 
@@ -441,6 +476,9 @@ Options:
                               slim / WARDEN_SLIM=0 also turn slimming off)
   --biometrics                claim devices with a fingerprint / Face ID
                               enrolled (own pool and golden; config biometrics)
+  --camera                    Android: launch the emulator with a file-fed
+                              camera (\`+cam\` device); iOS: no effect, the
+                              simulated camera needs no special device
   --json                      machine-readable output
   --physical                  claim a connected physical phone/tablet (never
                               booted, shut down or created by warden)
@@ -564,6 +602,9 @@ Options:
                               slim / WARDEN_SLIM=0 also turn slimming off)
   --biometrics                claim devices with a fingerprint / Face ID
                               enrolled (own pool and golden; config biometrics)
+  --camera                    Android: launch the emulator with a file-fed
+                              camera (\`+cam\` device); iOS: no effect, the
+                              simulated camera needs no special device
   --json                      machine-readable output
   --physical                  claim a connected physical phone/tablet (never
                               booted, shut down or created by warden)
@@ -634,6 +675,10 @@ Options:
                               the attempt's perf/ dir
   --dev                       run on the dev client (kind dev) against a Metro
                               warden starts, not the repacked simulator build
+  --a11y                      iOS: launch apps with the injected library so
+                              specs can read hints, actions, reading order and
+                              announcements (a suite with an \`a11y\` key does
+                              this already)
   --no-warm                   skip pre-warming the iOS socket helper per device
                               (default: on; suite warmDrivers)
   -h, --help                  display help for command
@@ -1477,11 +1522,46 @@ exports[`help output warden queue --help (and nested subcommands) 1`] = `
 "$ warden queue --help
 Usage: warden queue [options]
 
-claims waiting for host capacity, head first (position, priority, age, owner)
+claims waiting for host capacity or a free device, head first (position,
+priority, reason, age, owner)
 
 Options:
   --json      machine-readable output
   -h, --help  display help for command"
+`;
+
+exports[`help output warden events --help (and nested subcommands) 1`] = `
+"$ warden events --help
+Usage: warden events [options]
+
+lease history: requested, queued, granted, released, expired, evicted,
+quarantined … (--follow to tail)
+
+Options:
+  --since <duration>  only events from the last duration, e.g. 1h (default: all
+                      kept; with --follow: new only)
+  --lease <id>        only this lease's events
+  --owner <owner>     only events whose owner key (agent:<session>, user:<pid>,
+                      ci:<run>) contains this
+  --follow            keep printing new events (polls every 1 s) until Ctrl-C;
+                      with --json, NDJSON
+  --json              machine-readable output
+  -h, --help          display help for command"
+`;
+
+exports[`help output warden stats --help (and nested subcommands) 1`] = `
+"$ warden stats --help
+Usage: warden stats [options]
+
+claim wait (median, p95), lease durations and peak concurrency per profile, from
+the lease history
+
+Options:
+  --since <duration>  window, e.g. 24h (default 7d)
+  --json              machine-readable output
+  --csv               CSV rows (scope,platform,profile,metric,value); not with
+                      --json
+  -h, --help          display help for command"
 `;
 
 exports[`help output warden devices --help (and nested subcommands) 1`] = `
@@ -1760,7 +1840,8 @@ exports[`help output warden gc --help (and nested subcommands) 1`] = `
 "$ warden gc --help
 Usage: warden gc [options]
 
-reclaim stale leases; shut down idle warden devices (never deletes)
+reclaim stale leases; shut down idle warden devices, delete shut-down ephemeral
+sims
 
 Options:
   --idle <duration>        shut down unleased warden devices idle this long
@@ -1996,9 +2077,10 @@ Commands:
   locale <tag>                    the app's locale: <BCP 47 tag> | reset |
                                   status (Android 13+; iOS: applies to the app
                                   launched next)
-  a11y <action>                   accessibility: set [--text-size] [--bold]
-                                  [--contrast] [--reduce-motion] | reset |
-                                  status
+  a11y <action> [args...]         accessibility: set [--text-size] [--bold]
+                                  [--screen-reader] … | reset | status | audit |
+                                  order | speak <locator> | announcements |
+                                  spoken | focus next|prev|activate|status
   battery <action>                battery: set [--level] [--charging] | reset |
                                   status (Android emulator real; iOS status bar
                                   only)
@@ -2007,6 +2089,9 @@ Commands:
   push <payload>                  deliver a push notification to the app (iOS
                                   only): a JSON file or inline JSON with an
                                   \`aps\` object
+  camera                          simulated camera: set <path> | status | clear
+                                  (png, jpg, heic, mp4, mov into the app's
+                                  camera)
   help [command]                  display help for command
 
 $ warden ui status --help
@@ -2074,6 +2159,8 @@ Options:
   --settle [ms]          wait for a quiet screen (default budget 3000 ms), then
                          print a +/-/= diff
   --depth <n>            only the first n levels of the tree
+  --a11y                 add hint, actions, a11y-focused and live-region facts
+                         (iOS: needs \`open --a11y\`)
   --udid <udid>          device udid (iOS) / serial (Android)
   --serial <serial>      Android serial
   --lease <id>           use the device behind this lease id
@@ -2134,6 +2221,10 @@ Options:
   --relaunch             terminate a running app first
   --metro <url>          Metro URL: launch with --initialUrl and remember it
   --args <args...>       extra launch arguments
+  --a11y                 iOS: launch with the injected library so a11y
+                         audit/order/speak/announcements can read hints, actions
+                         and announcements (remembered for the device;
+                         relaunches the app the first time)
   --kind <kind>          install this build kind: dev (Debug, Metro), simulator
                          (Release + this worktree's JS repacked in seconds),
                          release (JS embedded at build) (choices: "dev",
@@ -3842,41 +3933,78 @@ Options:
   -h, --help             display help for command
 
 $ warden ui a11y --help
-Usage: warden ui a11y [options] <action>
+Usage: warden ui a11y [options] <action> [args...]
 
-accessibility: set [--text-size] [--bold] [--contrast] [--reduce-motion] | reset
-| status
+accessibility: set [--text-size] [--bold] [--screen-reader] … | reset | status |
+audit | order | speak <locator> | announcements | spoken | focus
+next|prev|activate|status
 
 Arguments:
-  action                 set | reset | status
+  action                            set | reset | status | audit | order | speak
+                                    | announcements | spoken | focus
+  args                              speak: a locator (@e3, id=…, label=…);
+                                    focus: next | prev | activate | status
 
 Options:
-  --text-size <size>     a name (accessibility-large, extra-large, ...) or a
-                         font scale (1.5)
-  --bold                 bold text (Android)
-  --no-bold              bold text off
-  --contrast <mode>      increased | normal (iOS)
-  --reduce-motion        reduce motion (no mechanism on either platform:
-                         reported as skipped)
-  --no-reduce-motion     reduce motion off
-  --udid <udid>          device udid (iOS) / serial (Android)
-  --serial <serial>      Android serial
-  --lease <id>           use the device behind this lease id
-  --claim                take over a stale/missing lease, or claim a device when
-                         none is held
-  --platform <platform>  platform for --claim with no device named: ios
-                         (default) | android
-  --physical             with --claim and no device named: claim a connected
-                         phone, not an emulator
-  --profile <slug>       device profile for --claim with no device named
-  --runtime <runtime>    runtime for --claim with no device named
-  --force                drive the device even while a live warden process (e2e,
-                         batch, run) holds your lease on it; your own warden dev
-                         device is shared without it
-  --timeout <ms>         deadline in milliseconds (default 5000)
-  --no-record            don't append this step to a running recording
-  --json                 machine-readable output: one JSON document on stdout
-  -h, --help             display help for command
+  --text-size <size>                a name (accessibility-large, extra-large,
+                                    ...) or a font scale (1.5); audit: the size
+                                    the app runs at
+  --bold                            bold text
+  --no-bold                         bold text off
+  --contrast <mode>                 increased | normal (iOS)
+  --reduce-motion                   reduce motion (Android: transition
+                                    animations off; the e2e driver turns them
+                                    off anyway)
+  --no-reduce-motion                reduce motion off
+  --screen-reader                   screen reader on: iOS a simulated VoiceOver
+                                    flag, Android real TalkBack (emulator, Play
+                                    image)
+  --no-screen-reader                screen reader off (Android: the previous
+                                    accessibility services come back)
+  --reduce-transparency             reduce transparency (iOS)
+  --no-reduce-transparency          reduce transparency off
+  --button-shapes                   button shapes (iOS)
+  --no-button-shapes                button shapes off
+  --differentiate-without-color     differentiate without colour (iOS)
+  --no-differentiate-without-color  differentiate without colour off
+  --on-off-labels                   on/off labels on switches (iOS)
+  --no-on-off-labels                on/off labels off
+  --high-contrast-text              high contrast text (Android)
+  --no-high-contrast-text           high contrast text off
+  --color-inversion                 colour inversion (Android)
+  --no-color-inversion              colour inversion off
+  --rule <id>                       audit: only this rule (repeat for several)
+                                    (default: [])
+  --ignore <rule[:identifier]>      audit: drop a rule, or only on the element
+                                    with that id (repeatable) (default: [])
+  --min-severity <severity>         audit: lowest severity that fails, error
+                                    (default) | warning
+  --no-native                       audit: warden's rules only, no XCUITest /
+                                    ATF
+  --since <cursor>                  announcements, spoken: only what came after
+                                    this cursor
+  --udid <udid>                     device udid (iOS) / serial (Android)
+  --serial <serial>                 Android serial
+  --lease <id>                      use the device behind this lease id
+  --claim                           take over a stale/missing lease, or claim a
+                                    device when none is held
+  --platform <platform>             platform for --claim with no device named:
+                                    ios (default) | android
+  --physical                        with --claim and no device named: claim a
+                                    connected phone, not an emulator
+  --profile <slug>                  device profile for --claim with no device
+                                    named
+  --runtime <runtime>               runtime for --claim with no device named
+  --force                           drive the device even while a live warden
+                                    process (e2e, batch, run) holds your lease
+                                    on it; your own warden dev device is shared
+                                    without it
+  --timeout <ms>                    deadline in milliseconds (default 5000)
+  --no-record                       don't append this step to a running
+                                    recording
+  --json                            machine-readable output: one JSON document
+                                    on stdout
+  -h, --help                        display help for command
 
 $ warden ui battery --help
 Usage: warden ui battery [options] <action>
@@ -3950,6 +4078,108 @@ Arguments:
 Options:
   --app <bundle>         the app's bundle id / package (default: the app \`open\`
                          launched)
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui camera --help
+Usage: warden ui camera [options] [command]
+
+simulated camera: set <path> | status | clear (png, jpg, heic, mp4, mov into the
+app's camera)
+
+Options:
+  -h, --help      display help for command
+
+Commands:
+  set <path>      feed an image or video into the camera. iOS: live in an app
+                  launched with the camera, else from its next launch. Android
+                  emulator: needs a --camera device; an image shows on the app's
+                  next camera open, a video reboots the emulator
+  status          the feeds this lease's camera has
+  clear           take the feed off one camera, or both (default)
+  help [command]  display help for command
+
+$ warden ui camera set --help
+Usage: warden ui camera set [options] <path>
+
+feed an image or video into the camera. iOS: live in an app launched with the
+camera, else from its next launch. Android emulator: needs a --camera device; an
+image shows on the app's next camera open, a video reboots the emulator
+
+Arguments:
+  path                   png | jpg | heic | mp4 | mov, relative to the working
+                         directory
+
+Options:
+  --facing <facing>      back | front | both (default back)
+  --no-loop              video: stop on the last frame instead of playing again
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui camera status --help
+Usage: warden ui camera status [options]
+
+the feeds this lease's camera has
+
+Options:
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui camera clear --help
+Usage: warden ui camera clear [options]
+
+take the feed off one camera, or both (default)
+
+Options:
+  --facing <facing>      back | front | both (default both)
   --udid <udid>          device udid (iOS) / serial (Android)
   --serial <serial>      Android serial
   --lease <id>           use the device behind this lease id
@@ -4302,11 +4532,15 @@ exports[`help output warden doctor --help (and nested subcommands) 1`] = `
 Usage: warden doctor [options]
 
 check warden's setup: home, db, device tools, simulator helper, install method,
-PATH, Claude/Codex hooks + skill, stale leases
+PATH, Claude/Codex hooks + skill, stale leases (--leases: registry drift)
 
 Options:
   --fetch-helper  download warden-simd for this version into
                   $WARDEN_HOME/simd/<version>/ first
+  --leases        check the lease registry against the machine for drift instead
+                  (exit 1 when drift remains)
+  --fix           with --leases: delete the registry rows that are safe to
+                  (never touches a device)
   --json          machine-readable output
   -h, --help      display help for command"
 `;

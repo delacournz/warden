@@ -27,7 +27,14 @@ import { withSpinner } from "../spinner-context";
 /** how long `--remote` waits for the hosted device to boot when `--wait` / `--no-wait` don't say */
 const REMOTE_BOOT_WAIT_MS = 5 * 60_000;
 
-type ClaimOpts = ClaimFlagValues & { serial?: string[]; udid?: string[]; json?: true; remote?: true; view?: true };
+type ClaimOpts = ClaimFlagValues & {
+	serial?: string[];
+	udid?: string[];
+	json?: true;
+	remote?: true;
+	view?: true;
+	idempotencyKey?: string;
+};
 
 /** `--serial` / `--udid` name phones; a physical claim keeps `--headless` as given, a sim claim resolves it. */
 function claimFlagsFor(ctx: CommandContext, platform: Platform, opts: ClaimOpts, shortLived: boolean) {
@@ -43,6 +50,12 @@ function claimFlagsFor(ctx: CommandContext, platform: Platform, opts: ClaimOpts,
 		undefined,
 		shortLived ? BARE_CLAIM_AGENT_TTL_MS : DEFAULT_TTL_MS
 	);
+}
+
+/** `--idempotency-key` wins over `WARDEN_IDEMPOTENCY_KEY`; blank = none. */
+function idempotencyKeyOf(ctx: CommandContext, opts: ClaimOpts): string | undefined {
+	const key = (opts.idempotencyKey ?? ctx.env.WARDEN_IDEMPOTENCY_KEY ?? "").trim();
+	return key === "" ? undefined : key;
 }
 
 /** Lease, then boot / create as needed; a spinner covers the (possibly minutes-long) boot. */
@@ -72,11 +85,14 @@ async function claim(ctx: CommandContext, platformArg: string | undefined, opts:
 	const { count, profile, physical } = claimFlags.request;
 	const kind = physical ? "physical" : profile;
 	if (!opts.json) heading(ctx, "claim", `${platform.data} · ${kind} ×${count}`);
+	const idempotencyKey = idempotencyKeyOf(ctx, opts);
 	const outcome = await withSpinner(
 		ctx,
 		`claiming ${count} ${kind} ${platform.data} device(s)…`,
 		async (sctx, spinner) => {
-			const result = await claimWithFlags(sctx, owner, claimFlags, leasePidFor(owner));
+			const result = await claimWithFlags(sctx, owner, claimFlags, leasePidFor(owner), {
+				...(idempotencyKey !== undefined ? { idempotencyKey } : {}),
+			});
 			if (result.success) spinner.succeed(`claimed ${result.data.claimed.map((c) => c.device.name).join(", ")}`);
 			else spinner.fail(`claim failed`);
 			return result;
@@ -227,6 +243,10 @@ export const claimCommand = defineCommand({
 		)
 			.option("--remote", "lease a hosted device from warden cloud (warden login first)")
 			.option("--view", "with --remote: open the device in the warden viewer and stay until it closes")
+			.option(
+				"--idempotency-key <key>",
+				"a repeat claim with this key (same owner, leases alive) returns the same leases (env WARDEN_IDEMPOTENCY_KEY)"
+			)
 			.action(async (platform, opts) => done(await claim(ctx, platform, opts)));
 	},
 });

@@ -554,3 +554,70 @@ figure.shiki {
 		background: var(--color-lamp);
 	}
 }
+
+/*
+ * Docs top tabs (Getting Started, Agents & Simulators, E2E Tests, Reference, Releases): one strip
+ * under the header's hairline. Labels speak in the nav's human voice, Ink 2 at rest; the current
+ * tab is Ink sitting on a 2px lamp that meets the hairline below it, the one orange mark in the
+ * chrome. The folded-in icon shows only here: the sidebar's switcher draws its own.
+ */
+.docs-tab-icon {
+	display: none;
+}
+
+[data-header-tabs] {
+	gap: 28px;
+	height: 44px;
+	padding-inline: 24px;
+	scrollbar-width: none;
+
+	& > a {
+		gap: 8px;
+		margin-bottom: -1px;
+		padding-bottom: 10px;
+		border-bottom-width: 2px;
+		color: var(--color-ink-2);
+		font-size: 0.875rem;
+		font-weight: 400;
+		letter-spacing: -0.01em;
+		font-variation-settings:
+			"wdth" 112,
+			"wght" 540;
+		transition:
+			color 150ms ease-out,
+			border-color 150ms ease-out;
+
+		&:hover {
+			color: var(--color-ink);
+			border-color: var(--color-hairline);
+		}
+
+		&:focus-visible {
+			outline: 2px solid var(--color-ink);
+			outline-offset: 2px;
+			border-radius: 4px;
+		}
+
+		&.border-fd-primary {
+			color: var(--color-ink);
+			border-color: var(--color-lamp);
+			font-variation-settings:
+				"wdth" 112,
+				"wght" 620;
+		}
+	}
+
+	& .docs-tab-icon {
+		display: inline-flex;
+
+		& svg {
+			width: 16px;
+			height: 16px;
+			stroke-width: 1.75;
+		}
+	}
+
+	&::-webkit-scrollbar {
+		display: none;
+	}
+}

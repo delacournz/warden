@@ -5,6 +5,7 @@ import {
 	type ElementSpec,
 	el,
 	type FakeDriver,
+	type FakeDriverOptions,
 	type FakeOverride,
 	fakeDriver,
 } from "@delacour/warden-e2e/driver/driver.testing";
@@ -64,6 +65,8 @@ export type HarnessOptions = {
 	conditions?: UiDeps["conditions"];
 	/** the leased device's platform (default ios) */
 	platform?: "ios" | "android";
+	/** more fake-driver options (optional capabilities: `readA11y`, `a11yEvents`, `auditNatively`, `screenReader`) */
+	driverOptions?: Partial<Omit<FakeDriverOptions, "screens" | "onCall">>;
 };
 
 const live: TestContext[] = [];
@@ -78,6 +81,7 @@ export function harness(screens: Snapshot[] | (() => Snapshot), options: Harness
 	const clock = { t: 1_000_000 };
 	const steps: RecordStep[] = [];
 	const driver: FakeDriver = fakeDriver({
+		...options.driverOptions,
 		screens,
 		...(options.selectAll ? { selectAll: true } : {}),
 		...(options.setText ? { setText: true } : {}),

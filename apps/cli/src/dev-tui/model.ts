@@ -26,6 +26,7 @@ export type ActionId =
 	| "reinstall"
 	| "restart-sim"
 	| "metro-clear"
+	| "metro-restart"
 	| "logs"
 	| "perf"
 	| "perf-all"

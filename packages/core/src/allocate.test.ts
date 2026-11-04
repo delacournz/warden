@@ -331,3 +331,36 @@ describe("allocate physical devices", () => {
 		expect(plan.kind === "assign" && plan.steps[0]?.action).toBe("create");
 	});
 });
+
+describe("allocate camera identity", () => {
+	const droid = (overrides: Partial<InventoryDevice> & { id: string }): InventoryDevice =>
+		sim({
+			platform: "android",
+			state: "booted",
+			profile: "pixel-10",
+			name: `warden-pixel-10-${overrides.id}`,
+			...overrides,
+		});
+	const areq = (profile: string): DeviceRequest => ({ platform: "android", profile, count: 1, max: 4 });
+	const plan = (inventory: InventoryDevice[], profile: string) =>
+		allocate({ inventory, leases: [], request: areq(profile), now: NOW, pidAlive: noPid });
+
+	test("a +cam claim does not reuse a running plain emulator, and a plain claim does not reuse +cam", () => {
+		const plain = droid({ id: "emulator-5554" });
+		const cam = droid({ id: "emulator-5556", name: "warden-pixel-10+cam-1", profile: "pixel-10+cam" });
+		const camPlan = plan([plain], "pixel-10+cam");
+		expect(camPlan.kind === "assign" && camPlan.steps.map((s) => s.action)).toEqual(["create"]);
+		const plainPlan = plan([cam], "pixel-10");
+		expect(plainPlan.kind === "assign" && plainPlan.steps.map((s) => s.action)).toEqual(["create"]);
+		const both = plan([plain, cam], "pixel-10+cam");
+		expect(both.kind === "assign" && both.steps.map((s) => s.action)).toEqual(["reuse"]);
+		const step = both.kind === "assign" ? both.steps[0] : undefined;
+		expect(step?.action === "reuse" && step.device.id).toBe("emulator-5556");
+	});
+
+	test("+bio and +bio+cam are separate from each other too", () => {
+		const bio = droid({ id: "emulator-5554", profile: "pixel-10+bio" });
+		const p = plan([bio], "pixel-10+bio+cam");
+		expect(p.kind === "assign" && p.steps.map((s) => s.action)).toEqual(["create"]);
+	});
+});

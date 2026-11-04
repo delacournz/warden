@@ -1,5 +1,5 @@
 import type { Result } from "@delacour/warden-types/result";
-import { ok } from "@delacour/warden-types/result";
+import { err, ok } from "@delacour/warden-types/result";
 import type { DevReady } from "../commands/dev-ui";
 import type { ActionId, HudPerf } from "./model";
 
@@ -37,7 +37,7 @@ export type ActionEffects = {
 	openClient(log: (line: string) => void): FxResult<void>;
 	reinstall(log: (line: string) => void): FxResult<{ source: string; hash: string }>;
 	restartSim(log: (line: string) => void): FxResult<void>;
-	restartMetro(log: (line: string) => void): FxResult<string>;
+	restartMetro(log: (line: string) => void, clear: boolean): FxResult<string>;
 	streamLogs(info: DevReady, onLine: (line: string) => void): LogStream;
 	perfStart(info: DevReady, mode: "default" | "all", log: (line: string) => void): FxResult<PerfStarted>;
 	perfStop(info: DevReady, sessionId: string, log: (line: string) => void): FxResult<PerfStopped>;
@@ -89,9 +89,9 @@ const errorText = (error: unknown): string => (error instanceof Error ? error.me
 type Recording = { sessionId: string; startedAt: number; endsAt: number; marks: number; stopTicker: () => void };
 
 /**
- * The warden action keys (`r d o s R x c l p P m f g`). Each runs as a task row of its own; the device, Metro and
+ * The warden action keys (`r d o s R x M c l p P m f g`). Each runs as a task row of its own; the device, Metro and
  * perf work comes from `ActionEffects`. One perf session per device, `R`/`x` are disabled while one records, and
- * `R`/`x`/`c` run one at a time.
+ * `R`/`x`/`M`/`c` run one at a time.
  */
 export function createActions(deps: ActionDeps) {
 	const { sink, fx } = deps;
@@ -105,38 +105,49 @@ export function createActions(deps: ActionDeps) {
 		sink.fail(rowOf(name), why);
 	};
 
-	/** A row that starts, does `work`, and ends ok with its detail or failed with its message. */
+	/** Why `name` can't start now (reported in its row), or undefined when it can. */
+	function blocked(name: string, title: string, info: DevReady | undefined, isExclusive: boolean): string | undefined {
+		if (info === undefined) {
+			refuse(name, title, "not ready: wait for the dev client to open");
+			return "not ready: wait for the dev client to open";
+		}
+		if (busy.has(name)) {
+			sink.log(rowOf(name), `${title}: still running`);
+			return `${title}: still running`;
+		}
+		if (isExclusive && exclusive !== undefined) {
+			const why = `busy: ${exclusive} is still running`;
+			refuse(name, title, why);
+			return why;
+		}
+		return undefined;
+	}
+
+	/** A row that starts, does `work`, and ends ok with its detail or failed with its message; resolves with that outcome. */
 	async function task(
 		name: string,
 		title: string,
 		work: (info: DevReady, log: (line: string) => void) => FxResult<string | undefined>,
 		opts: { exclusive?: boolean } = {}
-	): Promise<boolean> {
+	): Promise<Result<string | undefined>> {
 		const row = rowOf(name);
 		const info = deps.ready();
-		if (info === undefined) {
-			refuse(name, title, "not ready: wait for the dev client to open");
-			return false;
-		}
-		if (busy.has(name)) {
-			sink.log(row, `${title}: still running`);
-			return false;
-		}
-		if (opts.exclusive && exclusive !== undefined) {
-			refuse(name, title, `busy: ${exclusive} is still running`);
-			return false;
-		}
+		const why = blocked(name, title, info, opts.exclusive === true);
+		if (why !== undefined || info === undefined) return err(why ?? "not ready");
 		busy.add(name);
 		if (opts.exclusive) exclusive = title;
 		sink.start(row, title);
 		try {
 			const result = await work(info, (line) => sink.log(row, line));
-			if (result.success) sink.ok(row, result.data);
-			else sink.fail(row, result.error.message);
-			return result.success;
+			if (!result.success) {
+				sink.fail(row, result.error.message);
+				return err(result.error.message);
+			}
+			sink.ok(row, result.data);
+			return ok(result.data);
 		} catch (error) {
 			sink.fail(row, errorText(error));
-			return false;
+			return err(errorText(error));
 		} finally {
 			busy.delete(name);
 			if (opts.exclusive) exclusive = undefined;
@@ -376,6 +387,14 @@ export function createActions(deps: ActionDeps) {
 		).then(() => undefined);
 	};
 
+	/** `M` (plain) / `c` (`--clear`), and `warden dev restart-metro` through the ui: one row each, never two at once. */
+	const restartMetro = async (clear: boolean): Promise<Result<string>> => {
+		const [name, title] = clear ? ["metro-clear", "Metro --clear"] : ["metro-restart", "restart Metro"];
+		const done = await task(name, title, (_info, log) => fx.restartMetro(log, clear), { exclusive: true });
+		if (!done.success) return done;
+		return done.data === undefined ? err("Metro was not restarted") : ok(done.data);
+	};
+
 	const showReport = (): Promise<void> => {
 		if (recording === undefined)
 			return task("report", "perf report", (info, log) => plain(fx.report(info, log))).then(() => undefined);
@@ -397,10 +416,8 @@ export function createActions(deps: ActionDeps) {
 		screenshot: () => task("screenshot", "screenshot", (info) => fx.screenshot(info)).then(() => undefined),
 		reinstall,
 		"restart-sim": restartSim,
-		"metro-clear": () =>
-			task("metro-clear", "Metro --clear", (_info, log) => fx.restartMetro(log), { exclusive: true }).then(
-				() => undefined
-			),
+		"metro-clear": () => restartMetro(true).then(() => undefined),
+		"metro-restart": () => restartMetro(false).then(() => undefined),
 		logs: toggleLogs,
 		perf: () => togglePerf("default"),
 		"perf-all": () => togglePerf("all"),
@@ -419,6 +436,7 @@ export function createActions(deps: ActionDeps) {
 	return {
 		run,
 		submitMark,
+		restartMetro,
 		/** the session `p` is recording, if any */
 		recording: (): { sessionId: string; startedAt: number; marks: number } | undefined =>
 			recording && { sessionId: recording.sessionId, startedAt: recording.startedAt, marks: recording.marks },

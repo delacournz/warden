@@ -27,7 +27,7 @@ concurrency:
 
 jobs:
   promote:
-    runs-on: namespace-profile-linux-small
+    runs-on: namespace-profile-linux-medium
     permissions:
       contents: read
     steps:

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import { STAY_AWAKE_COMMAND } from "../android-keyguard";
 import { claimDevices } from "../claim";
+import { sniffCameraMedia } from "../conditions/camera-media";
 import type { Exec, ExecResult } from "../exec";
 import { BOOT_WAIT_SCRIPT, createAndroidProvider, GOLDEN_PORT_LABEL, type SpawnDetached } from "../providers/android";
 import { openStore, type Store } from "../store";
@@ -845,6 +846,15 @@ describe("stale snapshots", () => {
 		expect(existsSync(userBoot)).toBe(true);
 	});
 
+	test("cautious (gc's auto prune): an AVD whose key cannot be read keeps every snapshot", async () => {
+		const host = fakeAndroidHost();
+		const stale = plant("warden-0000000000");
+		rmSync(join(avdHomeDir, "Pixel_10.avd", "config.ini"));
+		const pruned = await pruneAndroidSnapshots(goldenDeps(host), { all: false, cautious: true });
+		expect(pruned).toEqual(ok([]));
+		expect(existsSync(stale)).toBe(true);
+	});
+
 	test("prune --all deletes the current one too; a running AVD keeps its snapshots", async () => {
 		const host = fakeAndroidHost();
 		const current = plant(snapshotName(await currentKey(host)));
@@ -981,5 +991,83 @@ describe("biometrics snapshots", () => {
 		if (!created.success)
 			expect(created.error).toContain("warden golden ensure --platform android --profile pixel-10+bio");
 		expect(host.spawned).toHaveLength(0);
+	});
+
+	describe("+cam (camera emulator)", () => {
+		const portOf = (argv: readonly string[] | undefined): string => argv?.[argv.indexOf("-port") + 1] ?? "";
+
+		test("launches cold with file-fed cameras seeded with a grey placeholder, records the +cam profile", async () => {
+			const host = fakeAndroidHost();
+			const plain = await ensureAndroidSnapshot(goldenDeps(host), "Pixel_10");
+			if (!plain.success || !plain.data) throw new Error("build failed");
+			const hooked: string[] = [];
+			const hook = (avd: string) => {
+				hooked.push(avd);
+				return snapshotForClaim(goldenDeps(host), avd);
+			};
+			const created = await provider(host, [], hook).create("w", "pixel-10+cam");
+			expect(created.success && created.data.profile).toBe("pixel-10+cam");
+			const argv = host.spawned.at(-1) ?? [];
+			const feeds = join(dir, "camera", `emulator-${portOf(argv)}`);
+			expect(argv).not.toContain("-snapshot");
+			expect(argv).toContain("-no-snapshot-load");
+			expect(hooked).toEqual([]);
+			expect(argv).toEqual(
+				expect.arrayContaining([
+					"-avd",
+					"Pixel_10",
+					"-camera-back",
+					`imagefile:${join(feeds, "back.png")}`,
+					"-camera-front",
+					`imagefile:${join(feeds, "front.png")}`,
+				])
+			);
+			for (const name of ["back.png", "front.png"]) {
+				const sniffed = sniffCameraMedia(join(feeds, name));
+				expect(sniffed.success && sniffed.data.ext).toBe("png");
+			}
+			expect(store.listDevices("android").some((d) => d.profile === "pixel-10+cam")).toBe(true);
+		});
+
+		test("a camera launch never touches the plain golden", async () => {
+			const host = fakeAndroidHost();
+			const plain = await ensureAndroidSnapshot(goldenDeps(host), "Pixel_10");
+			if (!plain.success || !plain.data) throw new Error("build failed");
+			const failed: string[] = [];
+			const golden = goldenDeps(host);
+			const p = createAndroidProvider(
+				{ exec: host.exec, store, env: env(), now: () => 1_000, owner },
+				{
+					spawnDetached: host.spawnDetached,
+					pidAlive: host.pidAlive,
+					sleep: async () => {},
+					snapshot: (avd) => snapshotForClaim(golden, avd),
+					snapshotFailed: async (avd, name) => {
+						failed.push(`${avd}:${name}`);
+						return ok(undefined);
+					},
+					snapshotLoaded: (avd) => failed.push(`loaded:${avd}`),
+				}
+			);
+			const created = await p.create("w", "pixel-10+cam");
+			if (!created.success) throw new Error(created.error);
+			expect((await p.waitReady(created.data.id, 60_000)).success).toBe(true);
+			expect(failed).toEqual([]);
+			expect(existsSync(join(avdHomeDir, "Pixel_10.avd", "snapshots", plain.data.name))).toBe(true);
+		});
+
+		test("+bio+cam is refused, never a cold-booted unenrolled emulator", async () => {
+			const host = fakeAndroidHost();
+			const created = await provider(host).create("w", "pixel-10+bio+cam");
+			expect(created.success).toBe(false);
+			if (!created.success) expect(created.error).toContain("--camera cannot be combined with --biometrics");
+			expect(host.spawned).toHaveLength(0);
+		});
+
+		test("a plain launch has no camera args", async () => {
+			const host = fakeAndroidHost();
+			await provider(host).create("w", "pixel-10");
+			expect(host.spawned.at(-1)).not.toContain("-camera-back");
+		});
 	});
 });

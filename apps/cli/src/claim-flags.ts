@@ -2,6 +2,7 @@ import { availableParallelism } from "node:os";
 import type { Command as Commander, OptionValues } from "@commander-js/extra-typings";
 import { defaultMax, profileSlug } from "@delacour/warden-core/allocate";
 import { biometricProfile, splitBiometricProfile } from "@delacour/warden-core/biometrics";
+import { cameraProfile, splitCameraProfile } from "@delacour/warden-core/camera-profile";
 import { maxConcurrent } from "@delacour/warden-core/capacity";
 import { type ClaimedDevice, type ClaimOutcome, claimDevices } from "@delacour/warden-core/claim";
 import { DEFAULT_PROFILE, DEFAULT_TTL_MS } from "@delacour/warden-core/config.defaults";
@@ -9,8 +10,10 @@ import { parseDuration } from "@delacour/warden-core/duration";
 import { isGoldenName } from "@delacour/warden-core/golden/golden";
 import { processAlive } from "@delacour/warden-core/liveness";
 import { detectOwner, type OwnerContext, readGitInfo } from "@delacour/warden-core/owner";
+import { limitFor, parseOwnerLimit } from "@delacour/warden-core/owner-limit";
 import { listAvds } from "@delacour/warden-core/providers/android";
 import { PRIORITY, parsePriority } from "@delacour/warden-core/queue";
+import type { ReclaimMode } from "@delacour/warden-core/reclaim";
 import { slimSimulator } from "@delacour/warden-core/sims/slim";
 import type { SlimProfile } from "@delacour/warden-core/sims/slim.profile";
 import { resolveSlim, type SlimSetting } from "@delacour/warden-core/slim-policy";
@@ -60,6 +63,10 @@ export function withClaimOptions<Args extends unknown[], Opts extends OptionValu
 		.option(
 			"--biometrics",
 			"claim devices with a fingerprint / Face ID enrolled (own pool and golden; config biometrics)"
+		)
+		.option(
+			"--camera",
+			"Android: launch the emulator with a file-fed camera (`+cam` device); iOS: no effect, the simulated camera needs no special device"
 		)
 		.option("--json", "machine-readable output");
 }
@@ -114,6 +121,10 @@ export type ClaimFlagValues = {
 	slimTopLevel?: SlimSetting | undefined;
 	/** `--biometrics`, or the suite / preset / top-level config `biometrics` already picked by the caller */
 	biometrics?: boolean | undefined;
+	/** `--camera`: Android only (the `+cam` identity); iOS leaves the profile unchanged */
+	camera?: boolean | undefined;
+	/** `e2e.<suite>.reclaim` / preset `reclaim` / top-level `reclaim`, already picked by the caller (`WARDEN_RECLAIM` applies below it, at release) */
+	reclaimConfig?: ReclaimMode | undefined;
 };
 
 /** Does the claim ask for physical devices (`--physical`, or naming one with `--serial` / `--udid`)? */
@@ -157,6 +168,8 @@ export type ClaimFlags = {
 	headless?: true;
 	/** iOS daemon slimming layers (flag > suite / preset > top-level config > `WARDEN_SLIM` > on); android ignores them */
 	slim?: SlimLayers;
+	/** reclaim mode from config; released with `releaseDevices({ reclaim })` (absent: `WARDEN_RECLAIM`, then none) */
+	reclaim?: ReclaimMode;
 };
 
 /** Claim queue wait when `--wait` is not given. */
@@ -238,6 +251,7 @@ function physicalConflict(values: ClaimFlagValues): string | undefined {
 			values.biometrics === true,
 			"a real Face ID / fingerprint sensor is never enrolled or matched; run biometric specs on a simulator or emulator",
 		],
+		["--camera", values.camera === true, "a physical device's camera is never fed from a file"],
 	];
 	const found = conflicts.find(([, given]) => given);
 	return found ? `${found[0]} cannot be used with --physical (${found[2]})` : undefined;
@@ -300,7 +314,8 @@ function parsePhysicalClaim(
 }
 
 function deviceRequest(values: ClaimFlagValues, platform: Platform, count: number, max: number): DeviceRequest {
-	const profile = biometricProfile(values.profile ?? DEFAULT_PROFILE[platform], values.biometrics === true);
+	const withBio = biometricProfile(values.profile ?? DEFAULT_PROFILE[platform], values.biometrics === true);
+	const profile = cameraProfile(withBio, platform === "android" && values.camera === true);
 	const request: DeviceRequest = { platform, profile, count, max };
 	if (values.runtime !== undefined) request.runtime = values.runtime;
 	if (values.adopt) request.adopt = true;
@@ -312,6 +327,7 @@ function withOptionalFlags(flags: ClaimFlags, values: ClaimFlagValues): ClaimFla
 	if (values.max === undefined) flags.maxDefaulted = true;
 	if (values.label !== undefined) flags.label = values.label;
 	if (values.headless) flags.headless = true;
+	if (values.reclaimConfig !== undefined) flags.reclaim = values.reclaimConfig;
 	const slim: SlimLayers = {};
 	if (values.slim !== undefined) slim.flag = values.slim;
 	if (values.slimConfig !== undefined) slim.config = values.slimConfig;
@@ -373,8 +389,14 @@ export type ClaimHideOptions = {
 	os?: NodeJS.Platform;
 	/** polled while the claim waits (queue, pool): true ends it with `CLAIM_ABORTED` */
 	abort?: () => boolean;
+	/** groups the leases of one command's claims, so `WARDEN_MAX_PER_OWNER` counts the command once (default: this claim alone) */
+	claimId?: string;
+	/** `warden claim --idempotency-key`: a repeat by the same owner returns the earlier claim's leases */
+	idempotencyKey?: string;
 	/** the wait between two `lockState` reads while a physical iPhone is locked (tests; default: real time) */
 	unlockSleep?: (ms: number) => Promise<void>;
+	/** the wait between two checks while the claim is queued (tests; default: the claim's own 2 s) */
+	pollMs?: number;
 };
 
 /**
@@ -388,11 +410,14 @@ export function bootedByClaim(outcome: Pick<ClaimOutcome, "claimed">): ClaimedDe
 
 /** Android `auto` profile → the first AVD; every other request as is. */
 async function resolveRequest(ctx: CommandContext, request: DeviceRequest): AsyncResult<DeviceRequest> {
-	const { profile: base, biometrics } = splitBiometricProfile(request.profile);
+	const { profile: noCam, camera } = splitCameraProfile(request.profile);
+	const { profile: base, biometrics } = splitBiometricProfile(noCam);
 	if (request.physical || request.platform !== "android" || base !== "auto") return ok(request);
 	const avds = await listAvds({ exec: ctx.exec, env: ctx.env });
 	const profile = avds.success ? resolveAutoProfile(avds.data) : avds;
-	return profile.success ? ok({ ...request, profile: biometricProfile(profile.data, biometrics) }) : profile;
+	return profile.success
+		? ok({ ...request, profile: cameraProfile(biometricProfile(profile.data, biometrics), camera) })
+		: profile;
 }
 
 /**
@@ -412,6 +437,12 @@ export async function withPhysicalAllowlist(ctx: CommandContext, request: Device
 	return ok(applyPhysicalAllow(request, resolvePhysicalAllow(ctx.env, configAllow)));
 }
 
+/** `WARDEN_MAX_PER_OWNER` for `platform` (undefined = unlimited); a malformed value is an error before any lease. */
+function ownerLimitOf(ctx: CommandContext, platform: Platform): Result<number | undefined> {
+	const parsed = parseOwnerLimit(ctx.env.WARDEN_MAX_PER_OWNER);
+	return parsed.success ? ok(limitFor(parsed.data, platform)) : parsed;
+}
+
 /** Run a device claim with the context's store + provider; iOS claims then tile the sims' windows (headless: close them; see `options.onHide`). */
 export async function claimWithFlags(
 	ctx: CommandContext,
@@ -420,6 +451,8 @@ export async function claimWithFlags(
 	pid: number | undefined,
 	options: ClaimHideOptions = {}
 ): AsyncResult<ClaimOutcome> {
+	const ownerLimit = ownerLimitOf(ctx, flags.request.platform);
+	if (!ownerLimit.success) return ownerLimit;
 	const resolved = await resolveRequest(ctx, flags.request);
 	if (!resolved.success) return resolved;
 	const allowed = await withPhysicalAllowlist(ctx, resolved.data);
@@ -445,6 +478,9 @@ export async function claimWithFlags(
 	if (!slim.success) return slim;
 	const outcome = await claimDevices({
 		store: ctx.store(),
+		...(ownerLimit.data !== undefined ? { ownerLimit: ownerLimit.data } : {}),
+		...(options.claimId !== undefined ? { claimId: options.claimId } : {}),
+		...(options.idempotencyKey !== undefined ? { idempotencyKey: options.idempotencyKey } : {}),
 		provider: providerFor(
 			request.platform,
 			ctx,
@@ -468,6 +504,7 @@ export async function claimWithFlags(
 		waitMs: flags.waitMs,
 		priority: priority.data,
 		...(options.abort ? { abort: options.abort } : {}),
+		...(options.pollMs !== undefined ? { pollMs: options.pollMs } : {}),
 		...(capacity ? { capacity } : {}),
 		orphans: { exec: ctx.exec, env: ctx.env },
 		log: (line) => ctx.err(`warden: ${line}`),

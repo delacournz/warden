@@ -713,9 +713,18 @@ export async function invalidateAndroidSnapshot(deps: AndroidGoldenDeps, avd: st
 
 /** Every warden snapshot of every AVD, `current` = named for the AVD's key today. */
 export async function listAndroidSnapshots(deps: AndroidGoldenDeps): AsyncResult<AndroidSnapshotEntry[]> {
+	const listed = await snapshotsWithKeys(deps);
+	return listed.success ? ok(listed.data.entries) : listed;
+}
+
+/** `listAndroidSnapshots` plus the AVDs one of whose keys could not be read (their `current` is unknown, not false). */
+async function snapshotsWithKeys(
+	deps: AndroidGoldenDeps
+): AsyncResult<{ entries: AndroidSnapshotEntry[]; unreadable: Set<string> }> {
 	const avds = await listAvds(deps);
 	if (!avds.success) return avds;
 	const entries: AndroidSnapshotEntry[] = [];
+	const unreadable = new Set<string>();
 	for (const avd of avds.data) {
 		const dir = avdDir(deps.env, avd);
 		const names = wardenSnapshots(dir);
@@ -723,23 +732,29 @@ export async function listAndroidSnapshots(deps: AndroidGoldenDeps): AsyncResult
 		const current = new Set<string>();
 		for (const target of targetsOf(avd)) {
 			const read = await readSnapshotInputs(deps, target);
-			if (read.success && read.data !== undefined) current.add(snapshotName(androidSnapshotKey(read.data.inputs)));
+			if (!read.success) unreadable.add(avd);
+			else if (read.data !== undefined) current.add(snapshotName(androidSnapshotKey(read.data.inputs)));
 		}
 		for (const name of names) entries.push({ avd, name, path: snapshotDir(dir, name), current: current.has(name) });
 	}
-	return ok(entries);
+	return ok({ entries, unreadable });
 }
 
-/** Delete stale warden snapshots (or all with `all`), skipping AVDs that are running. */
+/**
+ * Delete stale warden snapshots (or all with `all`), skipping AVDs that are running. `cautious` (gc's auto prune) also
+ * skips an AVD whose key could not be read, since its current snapshot is then unknown.
+ */
 export async function pruneAndroidSnapshots(
 	deps: AndroidGoldenDeps,
-	opts: { all: boolean }
+	opts: { all: boolean; cautious?: boolean }
 ): AsyncResult<AndroidSnapshotEntry[]> {
-	const listed = await listAndroidSnapshots(deps);
+	const listed = await snapshotsWithKeys(deps);
 	if (!listed.success) return listed;
+	const { entries, unreadable } = listed.data;
 	const deleted: AndroidSnapshotEntry[] = [];
-	for (const avd of new Set(listed.data.map((e) => e.avd))) {
-		const targets = listed.data.filter((e) => e.avd === avd && (opts.all || !e.current));
+	for (const avd of new Set(entries.map((e) => e.avd))) {
+		if (opts.cautious && unreadable.has(avd)) continue;
+		const targets = entries.filter((e) => e.avd === avd && (opts.all || !e.current));
 		if (targets.length === 0) continue;
 		const pruned = await withBuildLock(lockDeps(deps), androidGoldenLockKey(avd), async () => {
 			const busy = await instancesOf(deps, avd);

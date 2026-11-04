@@ -27,8 +27,8 @@ export type DevActionHost = {
 	reinstall(log: (line: string) => void): AsyncResult<{ source: string; hash: string }>;
 	/** iOS: shut the sim down, boot it, bring its window back */
 	restartSim(log: (line: string) => void): AsyncResult<void>;
-	/** stop Metro and start it again with `--clear` on the same leased port; resolves with its URL */
-	restartMetro(log: (line: string) => void): AsyncResult<string>;
+	/** stop Metro and start it again on the same leased port (`clear`: with `--clear`); resolves with its URL */
+	restartMetro(log: (line: string) => void, clear: boolean): AsyncResult<string>;
 };
 
 /** What the ui shows once the session is up. */
@@ -79,6 +79,12 @@ export type DevUi = {
 	setHud(on: boolean): Result<void>;
 	/** whether the HUD sampler is running */
 	hudOn(): boolean;
+	/**
+	 * Restart Metro the way this ui shows it (`warden dev restart-metro`): the dashboard runs it as its `M` / `c` row
+	 * (one at a time with the other restart keys, through the host `ready` carried; refused before `ready`); plain
+	 * calls `host` with its lines on stderr (a `--json` run never calls `ready`).
+	 */
+	restartMetro(clear: boolean, host: DevActionHost): AsyncResult<string>;
 	/** restore the terminal; idempotent; always called, also after a failure */
 	close(): Promise<void>;
 };

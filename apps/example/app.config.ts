@@ -32,6 +32,22 @@ const expoConfig: ExpoConfig = {
 			},
 		],
 		[
+			"expo-camera",
+			{
+				cameraPermission: "The Camera screen shows a live preview, scans QR codes and takes photos.",
+				microphonePermission: false,
+				recordAudioAndroid: false,
+			},
+		],
+		[
+			"expo-image-picker",
+			{
+				cameraPermission: "The Camera screen takes a photo with the system camera.",
+				microphonePermission: false,
+				photosPermission: false,
+			},
+		],
+		[
 			"expo-local-authentication",
 			{
 				faceIDPermission: "Allow $(PRODUCT_NAME) to use Face ID to unlock the biometrics demo.",

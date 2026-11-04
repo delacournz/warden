@@ -1,3 +1,4 @@
+import { parseClaimError } from "@delacour/warden-core/claim-errors";
 import { isLeaseAlive, processAlive } from "@delacour/warden-core/liveness";
 import { readLockState } from "@delacour/warden-core/providers/devicectl";
 import { realTimer } from "@delacour/warden-core/providers/health";
@@ -90,9 +91,17 @@ export const lockedClaimMessage = (error: string): string => error.slice(PREFIX.
 
 /**
  * Report a failed claim for command `scope` and return its exit code: 2 for a phone that stayed locked (the `--json`
- * envelope carries `device_locked` and the hint), 1 otherwise.
+ * envelope carries `device_locked` and the hint), the table's exit code for a coded claim error (`NO_DEVICE` 5 …
+ * `LEASE_LOST` 11, the envelope carries its code, hint and `capacityReason`), 1 otherwise.
  */
-export function reportClaimFailure(ctx: CommandContext, scope: string, error: string): 1 | 2 {
+export function reportClaimFailure(ctx: CommandContext, scope: string, error: string): number {
+	const coded = parseClaimError(error);
+	if (coded) {
+		const { message, exit, ...extra } = coded;
+		reportError(ctx, scope, message, extra);
+		ctx.err(ctx.ui.color.dim(coded.hint));
+		return exit;
+	}
 	if (!isLockedClaimError(error)) {
 		reportError(ctx, scope, error);
 		return 1;

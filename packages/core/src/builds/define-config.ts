@@ -340,6 +340,13 @@ export interface WardenBatchPreset {
 	 * `biometrics`. Default false.
 	 */
 	biometrics?: boolean | undefined;
+	/**
+	 * What happens to the state of the devices of this run when they are released: `"erase"` (iOS: shutdown +
+	 * `simctl erase`; Android: uninstalls the third-party apps), `"uninstall"` (removes the user-installed apps) or
+	 * `"none"`. Only warden-created simulators and emulators are reclaimed, never foreign, golden or physical
+	 * devices. Overrides the top-level `reclaim`; `WARDEN_RECLAIM` is the fallback below it. Default `"none"`.
+	 */
+	reclaim?: "erase" | "uninstall" | "none" | undefined;
 	/** Per-job log dir. */
 	logs?: string | undefined;
 	/**
@@ -439,6 +446,29 @@ export interface WardenPerfConfig {
 	budgets?: WardenPerfBudgets | undefined;
 }
 
+/** `a11y` (top level, or `e2e.<suite>.a11y`): how accessibility audits judge a screen. */
+export interface WardenA11yConfig {
+	/** Findings to drop: a rule everywhere, or only on the element with that `identifier` (testID). */
+	ignore?: Array<{ rule: WardenA11yRule; identifier?: string | undefined }> | undefined;
+	/** Lowest severity that fails an audit. @default "error" */
+	minSeverity?: "error" | "warning" | undefined;
+	/** Run only these rules (default: all). */
+	rules?: WardenA11yRule[] | undefined;
+}
+
+/** A rule id an audit reports; `native` = XCUITest / ATF findings. */
+export type WardenA11yRule =
+	| "missing-name"
+	| "image-no-name"
+	| "target-size"
+	| "target-size-platform"
+	| "duplicate-name"
+	| "role-in-name"
+	| "label-in-name"
+	| "hidden-focusable"
+	| "text-clipped"
+	| "native";
+
 /** `conditions.network` as a custom shape: the fields of a `custom` network condition. */
 export interface WardenCustomNetwork {
 	/** Added round-trip time, ms. */
@@ -532,6 +562,12 @@ export interface WardenE2eDeviceLeg {
 	default?: boolean | undefined;
 }
 
+/** One camera asset: a path (relative to the config file), or `{ path, loop }`. */
+export type WardenCameraFeed = string | { path: string; loop?: boolean | undefined };
+
+/** `e2e.<suite>.camera`: the asset each facing plays. At least one of `back` / `front`. */
+export type WardenCameraConfig = { back?: WardenCameraFeed | undefined; front?: WardenCameraFeed | undefined };
+
 /**
  * `e2e.<suite>`: the specs `warden affected` selects and `warden e2e` runs. Every path and glob is
  * relative to the config file.
@@ -546,6 +582,14 @@ export interface WardenE2eSuite {
 	perf?: WardenPerfConfig | undefined;
 	/** Device conditions every spec of this suite starts from; each area replaces the top-level one. */
 	conditions?: WardenConditionsConfig | undefined;
+	/** Accessibility audit settings for this suite; each key replaces the top-level `a11y` one. */
+	a11y?: WardenA11yConfig | undefined;
+	/**
+	 * The simulated camera every spec of this suite starts from, applied before the first `app.open()`: a path, or
+	 * `{ path, loop }` (video loop, default true), per facing. Paths are relative to the config file. Android devices of
+	 * the suite are claimed with `--camera` (profile `<profile>+cam`, cold boot). png, jpg, heic, mp4 and mov are accepted.
+	 */
+	camera?: WardenCameraConfig | undefined;
 	/** Directory of specs: `*.e2e.ts(x)` specs whose other `.ts` files are helpers (searched recursively; dot dirs, `node_modules` and `__baselines__` skipped). */
 	specsDir: string;
 	/** How the specs run: the app under test, its launch arguments and the timeouts. */
@@ -707,6 +751,13 @@ export interface WardenE2eSuite {
 	 * `biometrics`. Default false.
 	 */
 	biometrics?: boolean | undefined;
+	/**
+	 * What happens to the state of the devices of this run when they are released: `"erase"` (iOS: shutdown +
+	 * `simctl erase`; Android: uninstalls the third-party apps), `"uninstall"` (removes the user-installed apps) or
+	 * `"none"`. Only warden-created simulators and emulators are reclaimed, never foreign, golden or physical
+	 * devices. Overrides the top-level `reclaim`; `WARDEN_RECLAIM` is the fallback below it. Default `"none"`.
+	 */
+	reclaim?: "erase" | "uninstall" | "none" | undefined;
 	/** Removed: renamed `warmDrivers`. */
 	warmRunners?: undefined;
 	/**
@@ -768,10 +819,19 @@ export interface WardenConfig {
 	 * override it. Default false.
 	 */
 	biometrics?: boolean | undefined;
+	/**
+	 * What happens to the state of the devices of this run when they are released: `"erase"` (iOS: shutdown +
+	 * `simctl erase`; Android: uninstalls the third-party apps), `"uninstall"` (removes the user-installed apps) or
+	 * `"none"`. Only warden-created simulators and emulators are reclaimed, never foreign, golden or physical
+	 * devices. Overrides the top-level `reclaim`; `WARDEN_RECLAIM` is the fallback below it. Default `"none"`.
+	 */
+	reclaim?: "erase" | "uninstall" | "none" | undefined;
 	/** Perf budgets every `e2e` suite starts from (a suite's own `perf.budgets` replace them per key). */
 	perf?: WardenPerfConfig | undefined;
 	/** Device conditions every `e2e` suite starts from (a suite's own `conditions` replace them per area). */
 	conditions?: WardenConditionsConfig | undefined;
+	/** Accessibility audit settings every `e2e` suite starts from (a suite's own `a11y` keys replace them). */
+	a11y?: WardenA11yConfig | undefined;
 	/** Android emulator settings. */
 	android?: WardenAndroidSettings | undefined;
 	/** Physical iPhone settings. */

@@ -1,5 +1,6 @@
+import type { CapacityReason } from "./claim-errors";
 import type { HostFacts } from "./host";
-import type { Platform } from "./types";
+import type { InventoryDevice, Platform } from "./types";
 
 /** What one booted device (or a set of them) takes from the host. cpu is also the "unit" `max` caps. */
 export type Cost = { memMb: number; cpu: number };
@@ -113,4 +114,32 @@ export function explain(result: FitResult, usage: Cost, budget: Budget): string 
 	const label = DIMENSION_LABEL[result.binding];
 	const fmt = (n: number) => (result.binding === "mem" ? String(Math.round(n)) : n.toFixed(1));
 	return `no room, ${result.binding} binds: need ${fmt(result.need)} of ${fmt(result.available)} ${label}; ${state}`;
+}
+
+const isLive = (d: InventoryDevice): boolean =>
+	(d.state === "booted" || d.state === "booting") && d.physical === undefined;
+
+/**
+ * Cost of everything booted or booting on the host (foreign included; phones cost nothing) plus `pending`
+ * creates not yet visible in it. The one usage figure `warden capacity` prints and a claim is admitted
+ * against. `slimmed` = ids of iOS sims whose store record says `sim slim` ran; `pendingSlim` says whether
+ * the pending creates will be slim.
+ */
+export function hostUsage(
+	devices: readonly InventoryDevice[],
+	config: CapacityConfig,
+	slimmed: ReadonlySet<string>,
+	pending: { platforms: readonly Platform[]; slim: boolean } = { platforms: [], slim: false }
+): Cost {
+	const live = devices.filter(isLive);
+	return totalCost([...live.map((d) => d.platform), ...pending.platforms], config, [
+		...live.map((d) => d.platform === "ios" && slimmed.has(d.id)),
+		...pending.platforms.map(() => pending.slim),
+	]);
+}
+
+/** What stops a boot: the resource a failed fit ran out of (`max` units are cpu units), else memory pressure, else nothing. */
+export function capacityBlock(fit: FitResult, held: boolean): CapacityReason | undefined {
+	if (!fit.fits) return fit.binding === "mem" ? "ram-budget" : "cpu-budget";
+	return held ? "memory-pressure" : undefined;
 }

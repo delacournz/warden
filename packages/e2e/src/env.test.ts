@@ -171,6 +171,17 @@ describe("perf env", () => {
 		expect(readEnv(base)).toMatchObject({ success: true });
 	});
 
+	test("WARDEN_CAMERA_FEEDS", () => {
+		const feeds = { back: { path: "/fx/qr.png", loop: true } };
+		expect(readEnv({ ...base, WARDEN_CAMERA_FEEDS: JSON.stringify(feeds) })).toMatchObject({
+			data: { cameraFeeds: feeds },
+		});
+		const bad = readEnv({ ...base, WARDEN_CAMERA_FEEDS: "{" });
+		expect(bad.success).toBe(false);
+		const none = readEnv(base);
+		expect(none.success && none.data && "cameraFeeds" in none.data).toBe(false);
+	});
+
 	test("WARDEN_BIN, WARDEN_PERF and WARDEN_PERF_BUDGETS", () => {
 		const r = readEnv({
 			...base,
@@ -196,6 +207,20 @@ describe("perf env", () => {
 			const res = readEnv({ ...base, WARDEN_CONDITIONS: bad });
 			expect(res.success).toBe(false);
 			expect(res.success ? "" : res.error).toContain("WARDEN_CONDITIONS");
+		}
+	});
+});
+
+describe("a11y audit env", () => {
+	test("WARDEN_A11Y_AUDIT is the suite's a11y settings as JSON; a bad value is reported by name", () => {
+		const config = { ignore: [{ rule: "target-size", identifier: "close" }], minSeverity: "warning" } as const;
+		expect(read({ ...base, WARDEN_A11Y_AUDIT: JSON.stringify(config) })?.a11yAudit as unknown).toEqual(config);
+		const plain = readEnv(base);
+		expect(plain.success && plain.data && "a11yAudit" in plain.data).toBe(false);
+		for (const bad of ["{", '{"minSeverity":"info"}']) {
+			const res = readEnv({ ...base, WARDEN_A11Y_AUDIT: bad });
+			expect(res.success).toBe(false);
+			expect(res.success ? "" : res.error).toContain("WARDEN_A11Y_AUDIT");
 		}
 	});
 });

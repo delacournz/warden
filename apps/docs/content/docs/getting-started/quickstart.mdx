@@ -1,0 +1,135 @@
+---
+title: Quickstart
+description: Install warden, set up an Expo app, let your agent verify a screen on a leased simulator, then run the saved test.
+icon: Rocket
+---
+
+## Set up with your agent
+
+Paste this into your coding agent. It installs warden, sets up the app, verifies a screen and runs the first test.
+
+<CopyBlock
+  label="prompt"
+  text={`Set up warden in this repo so you can drive the app on a simulator and keep what you check as e2e tests.
+1. Install it with bunx @delacour/warden install if bun is installed (check with command -v bun), otherwise npx @delacour/warden install. Show me the diff before you approve it. If warden is not found afterwards, add ~/.local/bin to PATH.
+2. Run warden doctor and fix anything it reports.
+3. Run warden skill show, read it, and follow its rules from now on.
+4. In the Expo app, run warden init (add --bundle-id <id> if the app has none) and install every package it names.
+5. Add @delacour/warden-e2e as a dev dependency, at the version warden --version prints.
+6. Run warden dev ios --json in the background and take the udid from its first line. Pass it on every call.
+7. Run warden ui snapshot -i and tell me what is on the first screen.
+8. Stop warden dev, then run warden e2e. If a spec fails, read screen-at-failure.txt in the batch dir and fix the cause (a missing testID goes in the component with accessible), never the timeout.
+Report what you installed, what you verified and the e2e result.`}
+/>
+
+## Or set up manually
+
+This takes an Expo app from nothing to an agent-verified screen and a passing e2e run. You need macOS with Xcode and an iOS runtime installed.
+
+<Steps>
+<Step>
+
+### Install warden
+
+<Tabs items={["npm", "bun", "pnpm"]}>
+<Tab value="npm">
+```bash
+npm i -g @delacour/warden && warden install
+```
+</Tab>
+<Tab value="bun">
+```bash
+bun add -g @delacour/warden && warden install
+```
+</Tab>
+<Tab value="pnpm">
+```bash
+pnpm add -g @delacour/warden && warden install
+```
+</Tab>
+</Tabs>
+
+`warden install` links `~/.local/bin/warden`, installs the agent skill and wires the SessionEnd hook for Claude Code and Codex. It shows a diff and asks first. More options: [Installation](/docs/getting-started/installation).
+
+</Step>
+<Step>
+
+### Check it
+
+```bash
+warden doctor
+```
+
+It checks warden's home, the db, `xcrun simctl`, `adb`, `emulator`, `PATH`, hooks and the skill.
+
+</Step>
+<Step>
+
+### Set up your app
+
+In the Expo app's directory:
+
+```bash
+warden init --bundle-id com.example.app
+```
+
+This writes the bundle id into `app.json`, a `warden.config.ts` and `e2e/smoke.e2e.ts`. It names the packages to install and installs nothing:
+
+```bash
+npx expo install expo-dev-client
+bun add -d @delacour/warden-e2e     # same version as the CLI
+```
+
+`--dry-run` prints what would be written.
+
+</Step>
+<Step>
+
+### Run the app
+
+```bash
+warden dev
+```
+
+warden claims a simulator, installs the dev build cached for your native fingerprint, starts Metro on a leased port and opens the dev client. The first build is local; the same fingerprint in any other worktree is a cache hit. Ctrl-C releases the device and the port. See [`warden dev`](/docs/sims/dev).
+
+</Step>
+<Step>
+
+### Ask your agent to verify a screen
+
+Prompt your agent:
+
+> Use warden to open the app on a simulator and check that the home screen shows the todo input. Release the device when you are done.
+
+It runs commands like these:
+
+```bash
+warden claim ios --json                                  # lease; keep the udid
+warden ui open com.example.app --udid $UDID              # launch
+warden ui snapshot -i --udid $UDID                       # read the screen
+warden ui wait id=todo-input --udid $UDID                # verify, not a screenshot
+warden ui close --release --udid $UDID                   # release
+```
+
+If the agent does not know warden yet, see [Set up your agent](/docs/getting-started/agent-setup). The commands are explained in [warden ui](/docs/sims/ui).
+
+</Step>
+<Step>
+
+### Run the e2e suite
+
+```bash
+warden e2e
+```
+
+`warden e2e` leases devices, installs the app, runs every spec and writes a report under the batch directory. Add `--count 3` to fan out over three simulators. Next: [your first test](/docs/e2e).
+
+</Step>
+</Steps>
+
+<Cards>
+  <Card title="Agents drive devices" href="/docs/sims/agent-loop" description="The loop your agent follows." />
+  <Card title="Write specs" href="/docs/e2e/specs" description="Keep a check as a test." />
+  <Card title="e2e tests" href="/docs/e2e" description="Suites and parallel runs." />
+</Cards>

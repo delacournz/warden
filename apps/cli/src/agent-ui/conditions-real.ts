@@ -1,11 +1,15 @@
+import type { Exec } from "@delacour/warden-core/exec";
 import { processAlive } from "@delacour/warden-core/liveness";
 import { getProxyStatus } from "@delacour/warden-core/netproxy/control";
 import { handlePath, readHandleFile } from "@delacour/warden-core/netproxy/handle-file";
 import { ensureLeaseProxy } from "@delacour/warden-core/netproxy/lease-proxy";
 import { androidTools } from "@delacour/warden-core/providers/android";
+import { wardenHome } from "@delacour/warden-core/store";
 import { spawnDetachedTicker, spawnDetachedTickerVia } from "@delacour/warden-e2e/conditions/route-ticker.spawn";
 import { spawnDetachedScheduler, spawnDetachedSchedulerVia } from "@delacour/warden-e2e/conditions/scheduler.spawn";
+import { uiadFromEnv } from "@delacour/warden-e2e/driver/android/uiad-backend";
 import { leaseClockRecorder } from "@delacour/warden-e2e/driver/clock-recorder";
+import type { Driver } from "@delacour/warden-e2e/driver/driver.types";
 import { driverErr } from "@delacour/warden-e2e/driver/errors";
 import {
 	lazyLeaseNetworkProxy,
@@ -51,6 +55,28 @@ async function openIos(ctx: CommandContext, device: UiDevice): Promise<Result<Co
 }
 
 /**
+ * The Android emulator camera for `warden ui`: the full driver's camera ops (feed files, `+cam` profile check, the
+ * reboot for a video source) on warden's store, so `ui camera set` feeds a `--camera` emulator and refuses any other
+ * one with `E_CAMERA_DEVICE`. Loaded only when a condition verb opens Android.
+ */
+export async function androidUiCamera(o: {
+	serial: string;
+	env: Record<string, string | undefined>;
+	exec: Exec;
+}): Promise<Driver["camera"]> {
+	const [{ createAndroidCamera }, { createAndroidCameraHost }] = await Promise.all([
+		import("@delacour/warden-e2e/driver/android/android-camera"),
+		import("@delacour/warden-e2e/driver/android/android-camera-host"),
+	]);
+	return createAndroidCamera({
+		serial: o.serial,
+		wardenHome: wardenHome(o.env),
+		exec: o.exec,
+		...createAndroidCameraHost({ serial: o.serial, exec: o.exec, env: o.env }),
+	});
+}
+
+/**
  * Android without the full driver (no animation changes, no uiad, no host): the resident adb shell for network and
  * `adb emu geo fix` for a point. A moving location is the route ticker's job.
  */
@@ -81,7 +107,7 @@ async function openAndroid(ctx: CommandContext, device: UiDevice): Promise<Resul
 		clock: realClock,
 		proxy: leaseNetworkProxy(proxyDeps(ctx), device.lease),
 	});
-	const settings = createAndroidSettings({ session, serial });
+	const settings = createAndroidSettings({ session, serial, uiadAvailable: () => uiadFromEnv(ctx.env) === true });
 	return ok({
 		...settings,
 		network: net.network,
@@ -99,6 +125,7 @@ async function openAndroid(ctx: CommandContext, device: UiDevice): Promise<Resul
 			return failure === undefined ? { success: true, data: undefined } : driverErr("E_IO", failure);
 		},
 		clock: (op) => applyAndroidClock({ session, exec: ctx.exec, adb, serial }, op),
+		camera: await androidUiCamera({ serial, env: ctx.env, exec: ctx.exec }),
 		close: () => session.close(),
 	});
 }

@@ -1,0 +1,46 @@
+---
+title: Accessibility settings
+description: Raise the text size, turn on bold text, contrast, reduce motion or a screen reader, and check the layout still holds.
+icon: Accessibility
+---
+
+`device.a11y` changes the system accessibility settings the app renders with, so a spec can check that a screen still fits at the largest text size or takes its reduced-motion path.
+
+```ts
+await device.a11y({ textSize: "accessibility-large", boldText: true, reduceMotion: true });
+await app.open();
+await device.a11y(null); // defaults back
+```
+
+| Option / flag | iOS | Android |
+|---|---|---|
+| `textSize` / `--text-size` | a category (`extra-small` … `accessibility-extra-extra-extra-large`) or a scale, live | a scale, clamped to 0.5-2 |
+| `boldText` / `--bold` | live | `font_weight_adjustment` |
+| `contrast` / `--contrast increased\|normal` | live | skipped |
+| `reduceMotion` / `--reduce-motion` | live | `transition_animation_scale`; off by default, `true` zeroes it |
+| `--reduce-transparency`, `--button-shapes`, `--differentiate-without-color`, `--on-off-labels` | live | skipped |
+| `--high-contrast-text`, `--color-inversion` | skipped | live |
+| `screenReader` / `--screen-reader` | a simulated flag | real TalkBack |
+
+It returns `{ applied, skipped, notes }`. An option the platform cannot set is reported `skipped`; a call where every option is skipped throws `E_UNSUPPORTED`. Physical devices refuse every setting.
+
+Auditing screens, reading order, announcements and driving TalkBack are in [Accessibility testing](/docs/e2e/accessibility).
+
+## In a suite
+
+```ts title="warden.config.ts"
+conditions: { a11y: { textSize: "accessibility-large", reduceMotion: true } },
+```
+
+The suite key takes `textSize`, `boldText`, `contrast` and `reduceMotion`.
+
+## By hand
+
+```bash
+warden ui a11y set --text-size accessibility-large --bold --reduce-motion
+warden ui a11y set --no-bold        # each flag has a --no- form
+warden ui a11y status
+warden ui a11y reset
+```
+
+Release puts every setting back, including TalkBack's accessibility services and master switch, exactly as the device had them.

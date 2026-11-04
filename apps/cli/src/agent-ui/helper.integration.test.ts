@@ -275,11 +275,18 @@ describe("helper lifecycle (real fake-simd --socket)", () => {
 
 	test("a resident helper slow to send `ready` (busy) is waited for, not replaced: same pid, nothing spawned", async () => {
 		const c = setup();
-		// the 2nd and 3rd connections' ready comes 3 s late, past the client's 2 s handshake timeout; later ones are prompt
-		const first = await startHelper(c, { readyDelay: { ms: 3000, connections: [2, 3] } });
+		// the 2nd and 3rd connections' ready comes 400 ms late, past the client's 150 ms handshake timeout (production:
+		// 3 s late vs 2 s); later ones are prompt
+		const first = await startHelper(c, { readyDelay: { ms: 400, connections: [2, 3] } });
 		const spawns = { count: 0 };
 		const deps: HelperDeps = {
 			...first.deps,
+			connect: async (socketPath, options) =>
+				(await import("@delacour/warden-e2e/driver/ios/simd-client")).connectSimd({
+					socketPath,
+					readyTimeoutMs: 150,
+					...(options?.defaultTimeoutMs !== undefined ? { defaultTimeoutMs: options.defaultTimeoutMs } : {}),
+				}),
 			spawnDetached: (spec) => {
 				spawns.count += 1;
 				return first.deps.spawnDetached(spec);
@@ -292,7 +299,7 @@ describe("helper lifecycle (real fake-simd --socket)", () => {
 	}, 10_000);
 
 	/** `ensureHelper` against a fake helper that announces itself as `announce`; counts connects made after the spawn. */
-	async function startAnnouncing(announce: "ready" | "legacy" | "none") {
+	async function startAnnouncing(announce: "ready" | "legacy" | "none", signalMs?: number) {
 		const c = setup();
 		const socketPath = join(dir, "simd", `${UDID}.sock`);
 		const seen = { connectsAfterSpawn: 0, spawned: false };
@@ -305,7 +312,7 @@ describe("helper lifecycle (real fake-simd --socket)", () => {
 			},
 			spawnDetached: (spec) => {
 				seen.spawned = true;
-				return base.spawnDetached(spec);
+				return base.spawnDetached(signalMs === undefined ? spec : { ...spec, signalMs });
 			},
 		};
 		const began = Date.now();
@@ -327,7 +334,8 @@ describe("helper lifecycle (real fake-simd --socket)", () => {
 	});
 
 	test("a helper that prints nothing still starts: the socket poll takes over after the signal wait", async () => {
-		const { res, ms } = await startAnnouncing("none");
+		// the signal wait (production 1.5 s) is cut to 300 ms; the socket poll must still find the helper right after
+		const { res, ms } = await startAnnouncing("none", 300);
 		expect(res).toMatchObject({ success: true, data: { spawned: true } });
 		expect(ms).toBeLessThan(4000);
 	});
