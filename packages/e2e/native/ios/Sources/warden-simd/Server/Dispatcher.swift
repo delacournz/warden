@@ -51,7 +51,7 @@ struct Dispatcher<Context: Sendable>: Sendable {
 /// caller is answered on time.
 func withTimeout<T: Sendable>(
   milliseconds: Int,
-  error makeError: @escaping @Sendable () -> WireError,
+  error makeError: @escaping @Sendable () -> any Error,
   _ body: @escaping @Sendable () async throws -> T
 ) async throws -> T {
   try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<T, any Error>) in

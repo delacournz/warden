@@ -115,6 +115,7 @@
 | 109 | `hint` / `actions` / `announcements` missing; `E_UNSUPPORTED … launched without it`; "not read" warning | iOS app launched without the injected library | `warden ui open <bundle> --a11y` (relaunches once), or `warden e2e --a11y` / an `a11y` key on the suite |
 | 110 | `audit` prints `xcuitest audit skipped: …` | The XCUITest runner could not run: app not running, or runner sources not in this install | Open the app first (`warden ui open`); update warden if "not bundled". Warden's own rules still ran |
 | 111 | `audit` prints `atf audit skipped: …` | `warden-uiad` is off, or the foreground app is not the one under test | Leave uiad on; bring the app to the front |
+| 112 | Every iOS `snapshot` `E_TIMEOUT` after 10000 ms (warm-up `not warm: snapshot failed: E_TIMEOUT`), launch span `rebind: "timeout"`, screenshots fine; or snapshots answer with `backend: "ax"` and a `fallback` reason `the axbridge guest did not answer within N ms` | The in-sim accessibility bridge guest is up but silent (seen on a fresh GitHub `macos-26` runner, Xcode 26.6 + iOS 26.5) | warden-simd bounds each bridge read (`WARDEN_SIMD_BRIDGE_DEADLINE_MS`, default 4000) and reads on `ax` instead, skipping the bridge for `WARDEN_SIMD_BRIDGE_COOLDOWN_S` (default 20) before asking again. `ax` cannot see app-owned sheets (Keychain); upgrade warden if you still see the raw `E_TIMEOUT`. The `driver.snapshot` span in `trace.jsonl` carries `fallback` |
 
 ## Code lookup
 
