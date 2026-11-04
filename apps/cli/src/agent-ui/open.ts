@@ -94,6 +94,17 @@ export function uiOpen(ctx: CommandContext, deps: UiDeps, what: string, opts: Op
 				}),
 			};
 		}
+		if (
+			device.lease.resource.kind === "host-device" &&
+			(opts.metro !== undefined || opts.kind !== undefined || opts.project !== undefined)
+		) {
+			return {
+				success: false,
+				error: uiError("usage", "--metro, --kind and --project don't reach a host's device yet", {
+					hint: "open an app installed on the host by its bundle id",
+				}),
+			};
+		}
 		const launch = isUrl ? opts : withA11yLaunch(ctx, device, opts);
 		// remembered before the driver opens: it reads the flag to decide whether launches carry the injected library
 		const driver = await env.driver();

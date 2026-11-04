@@ -40,6 +40,18 @@ How a host lease ends without a release (`host_lost` in `warden events`; a `ward
 
 A laptop that vanishes (sleep, crash, network) holds the host's device for at most its TTL: the host's lease has no pid, only heartbeat + TTL, and the host's gc reaps it.
 
+## Drive a host's device (`warden ui`)
+
+After `claim --host`, `warden ui` picks the host lease like any other (the only one held, `--lease <id>`, or `--udid <udid>`). The driver runs on the host (`<host's warden> __driver-serve --lease <remote id>` over its own ssh connection) and every call crosses ssh.
+
+| Works on a host device | Not yet (exit 1 `usage`: `warden ui <verb> does not drive a host's device`) |
+|---|---|
+| `status`, `open <bundleId\|url>`, `snapshot`, `find`, `get`, `is`, `wait`, `press`, `tap`, `fill`, `type`, `key`, `scroll`, `gesture …`, `close [--release]` | `screen …` (screenshot, rotate, video, appearance), `home`, `back`, `alert`, conditions (`net`, `location`, `clock`, …), devtools (`eval`, `logs`, `tree`, …), `record …`, `bench` |
+
+`open --metro`, `--kind` and `--project` are refused on a host device: open an app already installed there by bundle id. `close --release` releases the lease on the host too. Someone else's host lease is `device_foreign` (exit 2).
+
+A spec process reaches a host's device the same way when `WARDEN_HOST` (its name) and `WARDEN_HOST_DRIVER` (JSON argv of the ssh command that serves the driver) are set.
+
 ## What the granted key can do
 
 The grant is a forced command in the host's `~/.ssh/authorized_keys`: `command="<warden> __host-serve --key SHA256:…",restrict,port-forwarding <key>`. Whatever the laptop asks for arrives in `SSH_ORIGINAL_COMMAND` and runs only if allowed (as an argv, never a shell):
