@@ -27,4 +27,6 @@ packages/e2e/native/ios/.build
 **/.env.*
 !**/.env.example
 **/*.log
+# The bench run logs the docs link to (/bench/<run>/**/*.log) ship with the site.
+!apps/docs/public/bench/**/*.log
 **/.DS_Store
