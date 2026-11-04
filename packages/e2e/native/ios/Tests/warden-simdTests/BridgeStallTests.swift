@@ -23,7 +23,7 @@ private final class Clock: @unchecked Sendable {
   func advance(_ seconds: Double) { lock.withLock { value += seconds } }
 }
 
-/// An in-sim bridge guest that never answers (seen on a GitHub `macos-26` runner: Xcode 26.6, iOS 26.5, every
+/// An in-sim bridge guest that never answers (seen on a slow GitHub `macos-26` runner, every
 /// `snapshot` `E_TIMEOUT` after the client's 10 s) must not take the read down with it: the bridge read gets its own
 /// deadline, a stall is a bridge failure that falls back to the host `ax` reader, and the bridge is skipped for a
 /// cooldown so every later read does not pay the deadline again.

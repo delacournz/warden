@@ -921,7 +921,7 @@ describe("settle", () => {
 		const notes: SpanDetail = {};
 		await collectSpanDetail(notes, () => unwrapped(driver.app.launch(BUNDLE)));
 		expect(helper.of("rebind")).toHaveLength(1);
-		expect(helper.of("rebind")[0]).toMatchObject({ bundleId: BUNDLE, rebindTimeoutMs: 3000, timeoutMs: 5000 });
+		expect(helper.of("rebind")[0]).toMatchObject({ bundleId: BUNDLE, rebindTimeoutMs: 10000, timeoutMs: 12000 });
 		expect(notes).toEqual({ via: "simd", pid: 4242, rebind: "bound", rebindMs: 700 });
 		await unwrapped(driver.settle());
 		expect(helper.of("settle")[0]).not.toHaveProperty("bundleId");

@@ -2,8 +2,8 @@ import Foundation
 
 /// How long one `axbridge` read may take before it counts as a stalled guest, and how long the bridge is then skipped.
 ///
-/// A guest that never answers (first seen on a GitHub `macos-26` runner: Xcode 26.6, an iOS 26.5 sim, every bridge
-/// read and every quiescence stream silent) used to hang each read until the client's own timeout, with no fallback,
+/// A guest that does not answer in time (seen on GitHub `macos-26` runners, 3 vCPU: a cold sim, or one booted beside a
+/// local Xcode build, took 4-11 s for its first bridge read and every `snapshot` ended `E_TIMEOUT` at the client's 10 s) used to hang each read until the client's own timeout, with no fallback,
 /// because only a bridge *error* fell back to the host `ax` reader. `readMs` turns the silence into a bridge failure
 /// with time left for the `ax` read inside the client's 10 s; `cooldownSeconds` sends the reads that follow straight
 /// to `ax`, so a dead guest costs one deadline, not one per read, and the bridge is probed again after it.

@@ -126,8 +126,12 @@ export type OpenIosDriverOptions = {
 const DEFAULT_QUIET_MS = 250;
 const DEFAULT_SETTLE_TIMEOUT_MS = 5_000;
 const SETTLE_MARGIN_MS = 2_000;
-/** How long `app.launch` lets the helper wait for its stream to follow the new process; the helper answers earlier. */
-const REBIND_TIMEOUT_MS = 3_000;
+/**
+ * How long `app.launch` lets the helper wait for its stream to follow the new process. The helper answers the moment
+ * it binds (0.7 s on a dev Mac), so this only costs time on a host that needs it: a GitHub `macos-26` runner bound in
+ * 2.4-4 s warm and 8.6-11.3 s right after boot, and a 3 s budget left every launch there unbound.
+ */
+const REBIND_TIMEOUT_MS = 10_000;
 const GESTURE_MARGIN_MS = 5_000;
 /** `frontmost` is one launchd lookup; a helper that has not answered in this long is busy, and the caller carries on without. */
 const FRONTMOST_TIMEOUT_MS = 3_000;
