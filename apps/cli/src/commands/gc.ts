@@ -4,13 +4,17 @@ import { DEFAULT_MAX_CACHE_SIZE } from "@delacour/warden-core/builds/builds.defa
 import { cacheCap, formatSize, GC_PRUNE_GRACE_MS, isAlias, pruneBuilds } from "@delacour/warden-core/builds/prune";
 import { DEFAULT_IDLE_MS } from "@delacour/warden-core/config.defaults";
 import { formatDuration, parseDuration } from "@delacour/warden-core/duration";
+import { DEFAULT_EVENTS_DAYS, eventsRetentionMs } from "@delacour/warden-core/lease-events";
 import { isLeaseAlive, processAlive } from "@delacour/warden-core/liveness";
-import { staleShutdownBlock } from "@delacour/warden-core/shutdown-policy";
-import { type DeviceRecord, wardenHome } from "@delacour/warden-core/store";
+import { RECLAIM_QUARANTINE_PREFIX } from "@delacour/warden-core/reclaim";
+import { ephemeralEnabled, staleShutdownBlock } from "@delacour/warden-core/shutdown-policy";
+import { type DeviceRecord, ownerKey, wardenHome } from "@delacour/warden-core/store";
 import type { DeviceResource, Lease, Owner, Platform } from "@delacour/warden-core/types";
+import { saveWarmSet, WARM_META_KEY, type WarmPlan, warmEnabled } from "@delacour/warden-core/warm-pool";
 import { ok, type Result } from "@delacour/warden-types/result";
 import { sweepDeadHelpersLazily } from "../agent-ui/helper-sweep";
 import { stopHelperAfter } from "../agent-ui/stop-helper-after";
+import { EPHEMERAL_SWEPT_META_KEY } from "../autogc";
 import { mapBounded } from "../bounded";
 import { resolveOwner } from "../claim-flags";
 import { closeSimWindowsAfter } from "../close-sim-windows-after";
@@ -19,10 +23,13 @@ import type { CommandContext } from "../context";
 import { releaseDevices } from "../device-lease";
 import { shutdownReleasedDevices } from "../device-shutdown";
 import { androidSnapshotPass } from "../golden-deps";
+import { goldenPrunePass } from "../golden-prune";
+import { simMarkerBlock } from "../marker-guard";
 import { emit, heading, plural, reportError } from "../output";
 import { providerFor } from "../providers";
 import { hasForegroundApp } from "../running-apps";
 import { withSpinner } from "../spinner-context";
+import { bootWarm, readWarmPlan } from "../warm-pool";
 
 const PLATFORMS: readonly Platform[] = ["ios", "android"];
 
@@ -36,7 +43,13 @@ const GC_SHUTDOWN_TTL_MS = 2 * 60_000;
 type ShutDevice = { platform: Platform; id: string; name: string };
 
 /** What a pass reads: when it is, how idle is idle, and which devices someone holds. */
-type GcPlan = { now: number; idleMs: number; leased: ReadonlySet<string> };
+type GcPlan = {
+	now: number;
+	idleMs: number;
+	leased: ReadonlySet<string>;
+	/** `platform:id` of the devices that make up the warm pool: never shut down as idle */
+	warm: ReadonlySet<string>;
+};
 
 /** Conditions a deleted lease left on devices nobody holds now are undone; a failed reset stays for the next pass. */
 async function undoUnleasedOrphans(ctx: CommandContext, leased: ReadonlySet<string>): Promise<string[]> {
@@ -48,6 +61,16 @@ async function undoUnleasedOrphans(ctx: CommandContext, leased: ReadonlySet<stri
 		notes.push(...report.errors.map((e) => `leftover conditions on ${device.id}: ${e}`));
 	}
 	return notes;
+}
+
+/** Failed reclaims whose backoff elapsed get their next try (nothing loads unless a device is reclaim-quarantined). */
+async function retryReclaims(ctx: CommandContext, owner: Owner): Promise<string[]> {
+	const quarantined = PLATFORMS.flatMap((p) => ctx.store().listDevices(p)).some((d) =>
+		d.quarantineReason?.startsWith(RECLAIM_QUARANTINE_PREFIX)
+	);
+	if (!quarantined) return [];
+	const { retryDueReclaims } = await import("../reclaim");
+	return retryDueReclaims(ctx, owner, stopHelperAfter(ctx));
 }
 
 /** What one platform's pass did. */
@@ -114,7 +137,11 @@ async function gcPlatform(
 		}
 	}
 	const idle = records.filter(
-		(r) => booted.has(r.id) && !plan.leased.has(`${platform}:${r.id}`) && plan.now - r.lastUsedAt >= plan.idleMs
+		(r) =>
+			booted.has(r.id) &&
+			!plan.leased.has(`${platform}:${r.id}`) &&
+			!plan.warm.has(`${platform}:${r.id}`) &&
+			plan.now - r.lastUsedAt >= plan.idleMs
 	);
 	const results = await mapBounded(idle, SHUTDOWN_CONCURRENCY, async (record) => {
 		const hold = holdForShutdown(ctx, owner, record);
@@ -129,11 +156,38 @@ async function gcPlatform(
 	});
 	for (const { record, result } of results) {
 		if (result === undefined) outcome.notes.push(`${record.name}: in use again, left running`);
-		else if (result.success) outcome.shutdown.push({ platform, id: record.id, name: record.name });
-		else outcome.notes.push(`shutdown ${record.id} failed: ${result.error}`);
+		else if (result.success) {
+			outcome.shutdown.push({ platform, id: record.id, name: record.name });
+			ctx.store().recordEvent({
+				at: ctx.now(),
+				type: "shutdown",
+				data: { platform, deviceId: record.id, deviceName: record.name, cause: "idle" },
+				resourceKey: `device:${platform}:${record.id}`,
+				ownerKey: ownerKey(owner),
+			});
+		} else outcome.notes.push(`shutdown ${record.id} failed: ${result.error}`);
 	}
 	await closeShutDownWindows(ctx, platform, outcome);
 	return outcome;
+}
+
+/**
+ * With `WARDEN_WARM=1`: compute the warm pool and persist its set (claims evict it last, the idle pass spares it).
+ * Off: a previously saved set is cleared. A failure keeps gc going, with the pool treated as off this pass.
+ */
+async function planWarm(ctx: CommandContext, owner: Owner, now: number): Promise<WarmPlan | undefined> {
+	const store = ctx.store();
+	if (!warmEnabled(ctx.env)) {
+		if (store.getMeta(WARM_META_KEY) !== undefined) saveWarmSet(store, [], now);
+		return undefined;
+	}
+	try {
+		const plan = await readWarmPlan(ctx, owner);
+		saveWarmSet(store, plan.warm, now);
+		return plan;
+	} catch {
+		return undefined;
+	}
 }
 
 function parseIdle(raw: string | undefined): Result<number> {
@@ -163,6 +217,20 @@ function pruneCache(ctx: CommandContext, maxBytes: number, now: number): string[
 	} catch (e) {
 		return [`build cache prune failed: ${e instanceof Error ? e.message : String(e)}`];
 	}
+}
+
+/** Delete lease events older than `WARDEN_EVENTS_DAYS` (default 7); a bad value keeps the default, with a note. */
+function pruneEvents(ctx: CommandContext, now: number): string[] {
+	const keep = eventsRetentionMs(ctx.env);
+	const ms = keep.success ? keep.data : DEFAULT_EVENTS_DAYS * 86_400_000;
+	const notes = keep.success ? [] : [`${keep.error}; pruning at ${DEFAULT_EVENTS_DAYS} days`];
+	try {
+		const removed = ctx.store().pruneEvents(now - ms);
+		if (removed > 0) notes.push(`pruned ${plural(removed, "old lease event")}`);
+	} catch (e) {
+		notes.push(`lease event prune failed: ${e instanceof Error ? e.message : String(e)}`);
+	}
+	return notes;
 }
 
 /** A `warden dev` session dir (`$WARDEN_HOME/dev/<leaseId>`) is swept once idle this long. */
@@ -221,19 +289,51 @@ function removeIfIdle(dir: string, now: number): boolean {
 
 type GcOpts = { idle?: string; maxCacheSize?: string; quiet?: true; json?: true };
 
-/** Everything a pass reports. */
-type GcOutcome = PlatformOutcome & { reclaimed: string[] };
+/** Everything a pass reports. `deleted`: ephemeral sims `simctl delete`d (stale-lease shutdowns + the sweep); `warmed`: warm-pool boots. */
+type GcOutcome = PlatformOutcome & {
+	reclaimed: string[];
+	deleted: ShutDevice[];
+	goldens: Array<{ platform: Platform; name: string }>;
+	warmed: ShutDevice[];
+};
+
+/**
+ * Ephemeral sims (`ephemeralEnabled`): every shut-down, unleased, unquarantined warden sim is deleted, unless its ownership marker names another instance, — including the
+ * idle ones this pass just shut down and the backlog an older warden left — and the next claim clones fresh from the
+ * golden. Imported lazily: list + judge + delete code a gc with ephemeral sims off never loads.
+ */
+async function sweepEphemeral(ctx: CommandContext, owner: Owner): Promise<{ deleted: ShutDevice[]; notes: string[] }> {
+	if (!ephemeralEnabled(ctx.env)) return { deleted: [], notes: [] };
+	const { sweepEphemeralSims } = await import("@delacour/warden-core/sims/ephemeral");
+	const swept = await sweepEphemeralSims({
+		exec: ctx.exec,
+		store: ctx.store(),
+		owner,
+		pid: process.pid,
+		now: ctx.now,
+		pidAlive: processAlive,
+		markerBlock: (udid) => simMarkerBlock(ctx, udid),
+	});
+	// no simctl listing (no Xcode, Linux): nothing to sweep; the ios pass above already notes a failing inventory
+	if (!swept.success) return { deleted: [], notes: [] };
+	ctx.store().setMeta(EPHEMERAL_SWEPT_META_KEY, String(ctx.now()));
+	return {
+		deleted: swept.data.removed.map((e) => ({ platform: "ios", id: e.udid, name: e.name })),
+		notes: swept.data.failed.map((f) => `delete ${f.entry.name} (${f.entry.udid}) failed: ${f.error}`),
+	};
+}
 
 /**
  * Stale leases (owner died without releasing, e.g. a Claude session killed before SessionEnd) are
  * reclaimed, and their devices shut down when the shutdown policy allows (warden-created, or booted
  * by that owner) — unless the lease went stale under 10 min ago or an app is running on the device,
  * which then stays up with its idle clock restarted. Then shut down warden-created devices (store `devices` table) that are
- * booted, unleased and idle longer than `--idle` (both platforms at once, a few devices at a time), and LRU-prune the build cache to its cap. Foreign devices are never touched; no device is
- * ever deleted. Android records whose emulator has exited (and is unleased) are forgotten — an
+ * booted, unleased and idle longer than `--idle` (both platforms at once, a few devices at a time), and LRU-prune the build cache to its cap. Foreign devices are never touched.
+ * With ephemeral sims on (default; `WARDEN_EPHEMERAL=0` off), every shut-down, unleased warden iOS sim is then deleted
+ * (`sweepEphemeral`); otherwise no device is ever deleted. Android records whose emulator has exited (and is unleased) are forgotten — an
  * emulator can't be rebooted in place. A platform whose provider fails is skipped with a note. Then one
  * AVD a claim cold-booted for want of a quick-boot snapshot gets it built, if no emulator of it runs
- * (never under `CI`).
+ * (never under `CI`). Once a day, stale goldens (iOS sims, Android snapshots) are pruned (`goldenPrunePass`).
  */
 async function gc(ctx: CommandContext, opts: GcOpts): Promise<number> {
 	const { color } = ctx.ui;
@@ -270,6 +370,7 @@ async function gc(ctx: CommandContext, opts: GcOpts): Promise<number> {
 		const reclaimed = (
 			await releaseDevices(sctx, staleIds, {
 				touch: false,
+				end: "expired",
 				only: (l) => !isLeaseAlive(l, now, processAlive),
 				after: stopHelperAfter(sctx),
 			})
@@ -288,12 +389,21 @@ async function gc(ctx: CommandContext, opts: GcOpts): Promise<number> {
 			store.touchDevice(l.resource.platform, l.resource.id, now);
 			leased.add(`${l.resource.platform}:${l.resource.id}`);
 		}
-		const plan: GcPlan = { now, idleMs: idle.data, leased };
+		const reclaimNotes = await retryReclaims(sctx, owner);
+		const warmPlan = await planWarm(sctx, owner, now);
+		const plan: GcPlan = { now, idleMs: idle.data, leased, warm: new Set(warmPlan?.warm ?? []) };
 		const platforms = await Promise.all(PLATFORMS.map((platform) => gcPlatform(sctx, platform, owner, plan)));
 		// after the idle shutdowns, which may have freed the AVD: one pending Android snapshot build
 		const snapshotNotes = await androidSnapshotPass(sctx, owner);
+		const swept = await sweepEphemeral(sctx, owner);
+		// after the snapshot build, so a just-replaced snapshot is pruned this pass
+		const pruned = await goldenPrunePass(sctx, owner);
+		// last: after the sweep, so a sim booted warm is never deleted the same pass
+		const warmed = warmPlan === undefined ? { booted: [], notes: [] } : await bootWarm(sctx, owner, warmPlan);
 		return {
 			reclaimed,
+			goldens: pruned.goldens,
+			warmed: warmed.booted.map((d) => ({ platform: d.platform, id: d.id, name: d.name })),
 			shutdown: [
 				...stale.flatMap((l) =>
 					l.resource.kind === "device" && orphaned.shutdown.includes(l.resource.id)
@@ -303,13 +413,29 @@ async function gc(ctx: CommandContext, opts: GcOpts): Promise<number> {
 				...platforms.flatMap((p) => p.shutdown),
 			],
 			forgotten: platforms.flatMap((p) => p.forgotten),
-			notes: [...orphaned.notes, ...orphanNotes, ...platforms.flatMap((p) => p.notes), ...snapshotNotes],
+			deleted: [
+				...stale.flatMap((l) =>
+					l.resource.kind === "device" && orphaned.deleted.includes(l.resource.id)
+						? [{ platform: l.resource.platform, id: l.resource.id, name: l.resource.name }]
+						: []
+				),
+				...swept.deleted,
+			],
+			notes: [
+				...orphaned.notes,
+				...orphanNotes,
+				...reclaimNotes,
+				...platforms.flatMap((p) => p.notes),
+				...snapshotNotes,
+				...swept.notes,
+				...warmed.notes,
+			],
 		};
 	};
 	if (!opts.quiet && !opts.json)
 		heading(ctx, "gc", `${plural(stale.length, "stale lease")} · idle > ${formatDuration(idle.data)}`);
 	// `--quiet` is the detached auto-gc: no terminal, so no spinner.
-	const { reclaimed, shutdown, forgotten, notes } = opts.quiet
+	const { reclaimed, shutdown, forgotten, deleted, goldens, warmed, notes } = opts.quiet
 		? await shutDownIdle(ctx)
 		: await withSpinner(ctx, "shutting down idle devices…", shutDownIdle);
 	notes.push(
@@ -318,6 +444,7 @@ async function gc(ctx: CommandContext, opts: GcOpts): Promise<number> {
 			: [`WARDEN_MAX_CACHE_SIZE: ${cap.bytes.error}; build cache prune skipped`])
 	);
 	notes.push(...sweepDevDirs(ctx, now));
+	notes.push(...pruneEvents(ctx, now));
 	store.setMeta("last_gc_at", String(now));
 	if (opts.quiet) return 0;
 	const text = [
@@ -325,19 +452,28 @@ async function gc(ctx: CommandContext, opts: GcOpts): Promise<number> {
 		shutdown.length > 0
 			? color.green(`shut down ${shutdown.map((d) => d.name).join(" ")} (idle > ${formatDuration(idle.data)})`)
 			: color.dim("no idle devices"),
+		...(warmed.length > 0 ? [color.green(`warm-booted ${warmed.map((d) => d.name).join(" ")}`)] : []),
 		...(forgotten.length > 0
 			? [color.yellow(`forgot exited emulators ${forgotten.map((d) => d.name).join(" ")}`)]
 			: []),
+		...(deleted.length > 0
+			? [
+					color.green(
+						`deleted ephemeral sims ${deleted.map((d) => d.name).join(" ")} (claims clone fresh from the golden)`
+					),
+				]
+			: []),
+		...(goldens.length > 0 ? [color.green(`pruned stale goldens ${goldens.map((g) => g.name).join(" ")}`)] : []),
 		...notes.map((n) => color.yellow(n)),
 	].join("\n");
-	emit(ctx, opts.json === true, { reclaimed, shutdown, forgotten, notes }, text);
+	emit(ctx, opts.json === true, { reclaimed, shutdown, forgotten, deleted, goldens, warmed, notes }, text);
 	return 0;
 }
 
 export const gcCommand = defineCommand({
 	name: "gc",
 	group: "Lease",
-	summary: "reclaim stale leases; shut down idle warden devices (never deletes)",
+	summary: "reclaim stale leases; shut down idle warden devices, delete shut-down ephemeral sims",
 	register: (cmd, ctx, done) => {
 		cmd
 			.option(

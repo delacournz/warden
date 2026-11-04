@@ -264,10 +264,10 @@ export function createDevTui(deps: DevTuiDeps): DevTui {
 		},
 		fx: {
 			...effects,
-			restartMetro: async (log) => {
+			restartMetro: async (log, clear) => {
 				metroSwap = true;
 				try {
-					return await effects.restartMetro(log);
+					return await effects.restartMetro(log, clear);
 				} finally {
 					metroSwap = false;
 				}
@@ -352,7 +352,7 @@ export function createDevTui(deps: DevTuiDeps): DevTui {
 		},
 		attach: (terminal, exited) => {
 			metroTerminal = terminal;
-			// a restart (`c`) ends the old Metro on purpose: that exit is not the session's
+			// a restart (`M` / `c` / `warden dev restart-metro`) ends the old Metro on purpose: that exit is not the session's
 			void exited.then(
 				(code) => {
 					if (!metroSwap) dispatch({ type: "metro:exit", code, at: now() });
@@ -399,6 +399,7 @@ export function createDevTui(deps: DevTuiDeps): DevTui {
 			return ok(undefined);
 		},
 		hudOn: () => hudTicker !== undefined,
+		restartMetro: (clear) => actions.restartMetro(clear),
 		async close() {
 			if (closed) return;
 			if (timer !== undefined) clearTimeout(timer);

@@ -181,6 +181,7 @@ export const LIST_BINDINGS: readonly Binding[] = [
 	run("s", "screenshot", "screenshot"),
 	run("R", "reinstall app", "reinstall"),
 	run("x", "restart sim", "restart-sim"),
+	run("M", "restart Metro", "metro-restart"),
 	run("c", "Metro --clear", "metro-clear"),
 	run("l", "device logs", "logs"),
 	run("p", "perf on/off", "perf"),

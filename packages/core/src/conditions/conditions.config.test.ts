@@ -1,10 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import {
+	cameraConfigSchema,
 	conditionsConfigSchema,
 	mergeConditionsConfig,
 	type NetworkInput,
 	normalizeConditions,
+	parseCameraFeedsEnv,
 	parseConditionsEnv,
+	resolveCameraConfig,
 	toNetworkCondition,
 } from "./conditions.config";
 
@@ -141,5 +144,42 @@ describe("parseConditionsEnv", () => {
 	test("bad JSON and bad shape are errors", () => {
 		expect(parseConditionsEnv("{").success).toBe(false);
 		expect(parseConditionsEnv('{"network":"5g"}').success).toBe(false);
+	});
+});
+
+describe("camera suite config", () => {
+	test("a path or { path, loop } per facing", () => {
+		expect(cameraConfigSchema.safeParse({ back: "qr.png" }).success).toBe(true);
+		expect(cameraConfigSchema.safeParse({ back: "a.png", front: { path: "clip.mp4", loop: false } }).success).toBe(
+			true
+		);
+	});
+
+	test("rejects an empty camera, unknown keys, empty paths and non-boolean loop", () => {
+		expect(cameraConfigSchema.safeParse({}).success).toBe(false);
+		expect(cameraConfigSchema.safeParse({ side: "a.png" }).success).toBe(false);
+		expect(cameraConfigSchema.safeParse({ back: "" }).success).toBe(false);
+		expect(cameraConfigSchema.safeParse({ back: { path: "a.mp4", loop: "yes" } }).success).toBe(false);
+		expect(cameraConfigSchema.safeParse({ back: { path: "a.mp4", fps: 30 } }).success).toBe(false);
+	});
+
+	test("resolveCameraConfig makes paths absolute against the config dir and defaults loop to true", () => {
+		expect(
+			resolveCameraConfig({ back: "fixtures/qr.png", front: { path: "/abs/clip.mp4", loop: false } }, "/repo/app")
+		).toEqual({
+			back: { path: "/repo/app/fixtures/qr.png", loop: true },
+			front: { path: "/abs/clip.mp4", loop: false },
+		});
+		expect(resolveCameraConfig({ front: { path: "c.mp4" } }, "/repo")).toEqual({
+			front: { path: "/repo/c.mp4", loop: true },
+		});
+	});
+
+	test("parseCameraFeedsEnv round-trips and refuses bad shapes", () => {
+		const feeds = { back: { path: "/a.png", loop: true } };
+		expect(parseCameraFeedsEnv(JSON.stringify(feeds))).toEqual({ success: true, data: feeds });
+		expect(parseCameraFeedsEnv("{").success).toBe(false);
+		expect(parseCameraFeedsEnv('{"back":{"path":"/a.png"}}').success).toBe(false);
+		expect(parseCameraFeedsEnv('{"top":{"path":"/a.png","loop":true}}').success).toBe(false);
 	});
 });

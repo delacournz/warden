@@ -939,7 +939,11 @@ describe("animation scales", () => {
 		const values = scalesAt("1.0");
 		const state = memoryAndroidState();
 		const { driver, host } = await setup({ shell: [settingsRule(values)], state });
-		expect([...values.values()]).toEqual(["0", "0", "0"]);
+		expect([...values.entries()]).toEqual([
+			["window_animation_scale", "0"],
+			["transition_animation_scale", "1.0"],
+			["animator_duration_scale", "0"],
+		]);
 		expect((await state.read("emulator-5554")).animations).toEqual(ONES);
 
 		await driver.close();
@@ -950,10 +954,35 @@ describe("animation scales", () => {
 		expect((await state.read("emulator-5554")).animations).toBeUndefined();
 	});
 
+	test("reduce motion is off by default: the transition scale RN reads is the device's own, window and animator stay 0", async () => {
+		const values = scalesAt("1.0");
+		values.set("transition_animation_scale", "0.5");
+		const { driver } = await setup({ shell: [settingsRule(values)], state: memoryAndroidState() });
+		expect(values.get("transition_animation_scale")).toBe("0.5");
+		expect(values.get("window_animation_scale")).toBe("0");
+		expect(values.get("animator_duration_scale")).toBe("0");
+		await driver.close();
+		expect(values.get("transition_animation_scale")).toBe("0.5");
+	});
+
+	test("reduceMotion: true zeroes the transition scale, false and close bring the original back", async () => {
+		const values = scalesAt("1.0");
+		const { driver } = await setup({ shell: [settingsRule(values)], state: memoryAndroidState() });
+		const on = await driver.a11y({ reduceMotion: true });
+		expect(on.success && on.data.applied).toEqual(["reduceMotion"]);
+		expect(values.get("transition_animation_scale")).toBe("0");
+		await driver.a11y({ reduceMotion: false });
+		expect(values.get("transition_animation_scale")).toBe("1.0");
+		await driver.a11y({ reduceMotion: true });
+		await driver.close();
+		expect(values.get("transition_animation_scale")).toBe("1.0");
+	});
+
 	test("a scale that was never set is deleted again, not set to a guess", async () => {
 		const values = new Map<string, string>([["window_animation_scale", "0.5"]]);
 		const { driver } = await setup({ shell: [settingsRule(values)], state: memoryAndroidState() });
-		expect(values.get("transition_animation_scale")).toBe("0");
+		expect(values.has("transition_animation_scale")).toBe(false);
+		expect(values.get("animator_duration_scale")).toBe("0");
 		await driver.close();
 		expect([...values.entries()]).toEqual([["window_animation_scale", "0.5"]]);
 	});
@@ -970,7 +999,7 @@ describe("animation scales", () => {
 	test("without a store they are still restored when the driver closes", async () => {
 		const values = scalesAt("1.0");
 		const { driver } = await setup({ shell: [settingsRule(values)] });
-		expect([...values.values()]).toEqual(["0", "0", "0"]);
+		expect([...values.values()]).toEqual(["0", "1.0", "0"]);
 		await driver.close();
 		expect([...values.values()]).toEqual(["1.0", "1.0", "1.0"]);
 	});
@@ -988,10 +1017,10 @@ describe("animation scales", () => {
 			state,
 		});
 		expect(opened.success).toBe(true);
-		expect([...values.values()]).toEqual(["0", "0", "0"]);
+		expect([...values.values()]).toEqual(["0", "1.0", "0"]);
 
 		const next = await setup({ shell: [settingsRule(values)], state });
-		expect([...values.values()]).toEqual(["0", "0", "0"]);
+		expect([...values.values()]).toEqual(["0", "1.0", "0"]);
 		expect((await state.read("emulator-5554")).animations).toEqual(ONES);
 		await next.driver.close();
 		expect([...values.values()]).toEqual(["1.0", "1.0", "1.0"]);

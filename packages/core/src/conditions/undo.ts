@@ -1,10 +1,20 @@
 import { ok, type Result } from "@delacour/warden-types/result";
+import { readCameraMode, usesVideo } from "../camera-mode";
+import { resetCameraFeeds } from "../camera-placeholder";
 import { PENDING_PREFIX } from "../claim";
 import { type Exec, execError } from "../exec";
 import type { PidAlive } from "../liveness";
-import { androidTools } from "../providers/android";
+import { androidTools, forgetAndroidEmulator } from "../providers/android";
 import { type Store, wardenHome } from "../store";
 import type { Lease, Platform } from "../types";
+import {
+	androidA11yResets,
+	androidScreenReaderResets,
+	iosDefaultsDeleteArgvs,
+	iosDefaultsFields,
+	iosDefaultsMissing,
+} from "./a11y-keys";
+import { cameraFeedDir, clearCameraFeeds } from "./camera-media";
 import { activeConditions, clearCondition } from "./conditions";
 import type { ConditionArea, ConditionRecord } from "./conditions.types";
 import { injectStatePath, neutralizeInjectState } from "./inject-state";
@@ -42,11 +52,14 @@ function resetCommands(
 				return [["xcrun", "simctl", "location", serial, "clear"]];
 			case "permission":
 				return [["xcrun", "simctl", "privacy", serial, "reset", "all"]];
-			case "a11y":
+			case "a11y": {
+				const written = iosDefaultsFields(record.value);
 				return [
 					["xcrun", "simctl", "ui", serial, "content_size", "large"],
 					["xcrun", "simctl", "ui", serial, "increase_contrast", "disabled"],
+					...iosDefaultsDeleteArgvs(serial, written),
 				];
+			}
 			case "battery":
 				return [["xcrun", "simctl", "status_bar", serial, "clear"]];
 			default:
@@ -74,6 +87,8 @@ function resetCommands(
 			return [
 				[...base, "shell", "settings", "put", "system", "font_scale", "1.0"],
 				[...base, "shell", "settings", "put", "secure", "font_weight_adjustment", "0"],
+				...androidA11yResets(record.value).map((argv) => [...base, "shell", ...argv]),
+				...androidScreenReaderResets(record.value).map((argv) => [...base, "shell", ...argv]),
 			];
 		case "locale":
 			return androidLocaleResets(base, record, deps);
@@ -112,7 +127,8 @@ async function runResets(exec: Exec, cmds: readonly string[][]): Promise<string[
 	for (const cmd of cmds) {
 		try {
 			const result = await exec(cmd);
-			if (result.exitCode !== 0) failures.push(execError(cmd, result));
+			const alreadyGone = cmd[4] === "defaults" && iosDefaultsMissing(`${result.stderr}${result.stdout}`);
+			if (result.exitCode !== 0 && !alreadyGone) failures.push(execError(cmd, result));
 		} catch (error) {
 			failures.push(`${cmd.join(" ")}: ${message(error)}`);
 		}
@@ -131,6 +147,28 @@ async function releaseProxy(deps: UndoDeps, leaseId: string, record: ConditionRe
 	}
 }
 
+/**
+ * Android camera: both feeds back to the grey placeholder. An emulator launched on a video source cannot go back to
+ * images without a restart, so it is stopped and forgotten here: the next claim boots a fresh one in image mode (the
+ * emulator is warden's own; only a `+cam` device ever has a mode file). A stop that fails leaves everything for the retry.
+ */
+async function resetAndroidCamera(deps: UndoDeps, serial: string): Promise<string[]> {
+	const dir = cameraFeedDir(wardenHome(deps.env), serial);
+	const failures: string[] = [];
+	if (usesVideo(readCameraMode(dir))) {
+		const { adb } = androidTools(deps.env);
+		const stopped = await runResets(deps.exec, [[adb, "-s", serial, "emu", "kill"]]);
+		if (stopped.length > 0) return stopped;
+		forgetAndroidEmulator(deps.store, serial);
+	}
+	try {
+		resetCameraFeeds(dir);
+	} catch (error) {
+		failures.push(`reset camera feeds: ${message(error)}`);
+	}
+	return failures;
+}
+
 /** SIGTERM the live processes `record` owns; a dead pid is skipped (already gone). */
 function stopOwned(deps: UndoDeps, record: ConditionRecord): { killed: number[]; failures: string[] } {
 	const out = { killed: [] as number[], failures: [] as string[] };
@@ -142,6 +180,24 @@ function stopOwned(deps: UndoDeps, record: ConditionRecord): { killed: number[];
 		} catch (error) {
 			out.failures.push(`kill ${pid}: ${message(error)}`);
 		}
+	}
+	return out;
+}
+
+/**
+ * iOS areas the injected dylib serves: an app that is still running keeps reading its state file, so it goes back
+ * online on the real clock with blank camera feeds; the camera's staged host files are then removed.
+ */
+function resetIosInjected(deps: UndoDeps, udid: string, area: ConditionRecord["area"]): string[] {
+	if (area !== "clock" && area !== "network" && area !== "camera") return [];
+	const home = wardenHome(deps.env);
+	const failed = neutralizeInjectState(injectStatePath(home, udid));
+	const out = failed ? [failed] : [];
+	if (area !== "camera") return out;
+	try {
+		clearCameraFeeds(home, udid);
+	} catch (error) {
+		out.push(`remove camera feeds: ${message(error)}`);
 	}
 	return out;
 }
@@ -160,13 +216,12 @@ export async function resetRecord(
 	leaseId: string,
 	record: ConditionRecord
 ): Promise<ResetOutcome> {
+	if (device?.platform === "android" && record.area === "camera") {
+		return { failures: await resetAndroidCamera(deps, device.id), killed: [] };
+	}
 	const cmds = device ? resetCommands(device.platform, device.id, record, deps) : [];
 	const resets = await runResets(deps.exec, cmds);
-	// an injected iOS app that is still running keeps reading its state file: put it back online on the real clock
-	if (device?.platform === "ios" && (record.area === "clock" || record.area === "network")) {
-		const failed = neutralizeInjectState(injectStatePath(wardenHome(deps.env), device.id));
-		if (failed) resets.push(failed);
-	}
+	if (device?.platform === "ios") resets.push(...resetIosInjected(deps, device.id, record.area));
 	// iOS has no device-side timezone or locale: only the staged launch settings go
 	if (device?.platform === "ios" && record.area === "locale") {
 		const failed = writeLaunchSettings(launchSettingsPath(wardenHome(deps.env), device.id), {});

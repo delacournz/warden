@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { DevReady } from "../commands/dev-ui";
+import type { DevActionHost, DevReady } from "../commands/dev-ui";
 import { testContext } from "../testing";
 import { fakeProcess, fakeStdin, fakeStdout, replay } from "./fakes.testing";
 import { listWidth } from "./render";
@@ -484,6 +484,42 @@ describe("Metro pane and key passthrough", () => {
 		const text = (await m.screen()).join("\n");
 		expect(text).toContain("✓ Metro --clear");
 		expect(text).not.toContain("metro exited");
+		await m.ui.close();
+	});
+
+	test("ui.restartMetro (warden dev restart-metro) shows its row; the old Metro's exit is not the session's", async () => {
+		const m = withMetro();
+		const clears: boolean[] = [];
+		const host: DevActionHost = {
+			openClient: async () => ({ success: true, data: undefined }),
+			reinstall: async () => ({ success: true, data: { source: "cache", hash: "h" } }),
+			restartSim: async () => ({ success: true, data: undefined }),
+			restartMetro: async (_log, clear) => {
+				clears.push(clear);
+				m.finish(0);
+				await Bun.sleep(0);
+				return { success: true, data: "http://127.0.0.1:8101" };
+			},
+		};
+		m.ui.ready({ ...READY, actions: host });
+		expect(await m.ui.restartMetro(false, host)).toEqual({ success: true, data: "http://127.0.0.1:8101" });
+		await settle();
+		expect(clears).toEqual([false]);
+		const text = (await m.screen()).join("\n");
+		expect(text).toContain("✓ restart Metro");
+		expect(text).not.toContain("metro exited");
+		await m.ui.close();
+	});
+
+	test("ui.restartMetro before the session is ready is refused", async () => {
+		const m = withMetro();
+		const restarted = await m.ui.restartMetro(true, {
+			openClient: async () => ({ success: true, data: undefined }),
+			reinstall: async () => ({ success: true, data: { source: "cache", hash: "h" } }),
+			restartSim: async () => ({ success: true, data: undefined }),
+			restartMetro: async () => ({ success: true, data: "http://127.0.0.1:8101" }),
+		});
+		expect(restarted.success).toBe(false);
 		await m.ui.close();
 	});
 

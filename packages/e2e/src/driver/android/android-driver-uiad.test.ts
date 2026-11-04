@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { canReadA11yEvents, type ReadsA11yEvents } from "../a11y-events";
 import type { Driver, DriverResult } from "../driver.types";
 import { canDetectAlerts } from "../observation-cache";
 import { settleDetailOf } from "../settle";
@@ -409,5 +410,28 @@ describe("another UiAutomation client", () => {
 		});
 		await value(driver.tap({ x: 3, y: 4 }));
 		expect(inputs(host)).toEqual(["input tap 3 4"]);
+	});
+});
+
+describe("a11yEvents", () => {
+	test("reads the server's ring and passes the cursor back", async () => {
+		const { driver, uiad } = await setup();
+		const read = driver as Driver & ReadsA11yEvents;
+		expect(canReadA11yEvents(driver)).toBe(true);
+		const all = await value(read.a11yEvents());
+		expect(all.events.map((e) => [e.kind, e.text, e.source])).toEqual([
+			["announcement", "announced 1", "uiad"],
+			["live-region", "count 1", "uiad"],
+			["announcement", "announced 2", "uiad"],
+			["live-region", "count 2", "uiad"],
+		]);
+		expect(all.cursor).toBe(4);
+		await value(read.a11yEvents(all.cursor));
+		expect(uiad.of("a11yEvents").map((r) => r.since)).toEqual([undefined, 4]);
+	});
+
+	test("without the server there is no capability and no fake answer", async () => {
+		const { driver } = await setup({ uiad: false });
+		expect(canReadA11yEvents(driver)).toBe(false);
 	});
 });

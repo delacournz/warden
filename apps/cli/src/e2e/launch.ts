@@ -3,6 +3,7 @@ import { appSwitches } from "@delacour/warden-core/builds/app-option.schema";
 import { bundleIdFor } from "@delacour/warden-core/builds/config";
 import type { Platform } from "@delacour/warden-core/types";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
+import { devScheme } from "../commands/dev";
 import type { CommandContext } from "../context";
 import { devClientLaunchArgs } from "../metro";
 import { projectContextFor } from "../project-context";
@@ -50,4 +51,25 @@ export async function specBundleId(
 export function specLaunchArgs(plan: LaunchPlan, metroUrl: string | undefined): string[] {
 	const extra = [...plan.metroLaunchArgs, ...plan.launchArgs];
 	return metroUrl === undefined ? extra : devClientLaunchArgs(metroUrl, extra);
+}
+
+/**
+ * The dev client's url scheme (`exp+<slug>`) for an Android suite with Metro, else undefined (also when it cannot be
+ * read: the spec then launches without pointing the dev client at Metro, as before). Android launches take no args, so
+ * `app.open()` opens Metro's url as a deep link on this scheme.
+ */
+export async function specDevClientScheme(
+	ctx: CommandContext,
+	suite: Suite,
+	platform: Platform
+): Promise<string | undefined> {
+	if (platform !== "android" || !suite.config.metro?.enabled) return undefined;
+	const { variant } = appSwitches(suite.config.app);
+	const project = await projectContextFor(ctx, {
+		start: suite.projectRoot ?? suite.cwd,
+		...(variant !== undefined ? { variant, variantOptional: true } : {}),
+	});
+	if (!project.success) return undefined;
+	const scheme = await devScheme(ctx, project.data, undefined);
+	return scheme.success ? scheme.data : undefined;
 }

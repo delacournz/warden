@@ -19,6 +19,7 @@ import { type InstallOrigin, installOrigin } from "../update/install-origin";
 import type { Fetch } from "../update/npm-registry";
 import { describePackageInstall, detectPackageInstall, upgradeCommand } from "../update/package-install";
 import { type HelperDeps, helperChecks, realHelperDeps } from "./doctor-helper";
+import type { LeaseDoctorDeps } from "./doctor-leases";
 import { physicalChecks } from "./doctor-physical";
 import { xcodeChecks } from "./doctor-xcode";
 
@@ -262,6 +263,8 @@ export type DoctorDeps = {
 	helper: HelperDeps;
 	/** `--fetch-helper` downloads from GitHub releases (or `WARDEN_HELPER_URL`) */
 	fetch: Fetch;
+	/** `--leases` inventory / pid / filesystem (default: the real ones) */
+	leases?: LeaseDoctorDeps;
 };
 
 type FetchedHelperReport = { dir: string; url: string; sha256: string };
@@ -314,14 +317,32 @@ export function createDoctorCommand(deps: DoctorDeps): Command {
 		name: "doctor",
 		group: "Setup",
 		summary:
-			"check warden's setup: home, db, device tools, simulator helper, install method, PATH, Claude/Codex hooks + skill, stale leases",
+			"check warden's setup: home, db, device tools, simulator helper, install method, PATH, Claude/Codex hooks + skill, stale leases (--leases: registry drift)",
 		register: (cmd, ctx, done) => {
 			cmd
 				.option("--fetch-helper", "download warden-simd for this version into $WARDEN_HOME/simd/<version>/ first")
+				.option(
+					"--leases",
+					"check the lease registry against the machine for drift instead (exit 1 when drift remains)"
+				)
+				.option("--fix", "with --leases: delete the registry rows that are safe to (never touches a device)")
 				.option("--json", "machine-readable output")
-				.action(async (opts) =>
-					done(await doctor(ctx, deps, { json: opts.json === true, fetchHelper: opts.fetchHelper === true }))
-				);
+				.action(async (opts) => {
+					if (opts.fix === true && opts.leases !== true) {
+						ctx.err(ctx.ui.color.red("warden doctor: --fix needs --leases"));
+						return done(2);
+					}
+					if (opts.leases === true) {
+						const leases = await import("./doctor-leases");
+						return done(
+							await leases.doctorLeases(ctx, deps.leases ?? leases.realLeaseDoctorDeps(), {
+								json: opts.json === true,
+								fix: opts.fix === true,
+							})
+						);
+					}
+					return done(await doctor(ctx, deps, { json: opts.json === true, fetchHelper: opts.fetchHelper === true }));
+				});
 		},
 	});
 }

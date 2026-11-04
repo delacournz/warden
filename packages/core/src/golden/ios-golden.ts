@@ -419,7 +419,10 @@ export async function listGoldens(deps: GoldenDeps): AsyncResult<SimctlSim[]> {
  * Delete stale goldens (not current for their profile's latest runtime, older recipes included), or
  * every golden with `all`. A newer recipe's golden (another warden version's) is kept without `all`.
  */
-export async function pruneGoldens(deps: GoldenDeps, opts: { all: boolean }): AsyncResult<SimctlSim[]> {
+export async function pruneGoldens(
+	deps: GoldenDeps,
+	opts: { all: boolean; cautious?: boolean }
+): AsyncResult<SimctlSim[]> {
 	return withBuildLock(lockDeps(deps), GOLDEN_LOCK_KEY, async () => {
 		const goldens = await listGoldens(deps);
 		if (!goldens.success) return goldens;
@@ -429,6 +432,8 @@ export async function pruneGoldens(deps: GoldenDeps, opts: { all: boolean }): As
 		for (const profile of profiles) {
 			const target = await readGoldenTarget(deps, profile);
 			const mine = goldens.data.filter((s) => goldenProfile(s.name) === profile);
+			// cautious (gc): an unreadable target may be a transient simctl failure, not a removed runtime: keep its goldens
+			if (!target.success && opts.cautious) continue;
 			stale.push(...(target.success ? planGolden(mine, profile, goldenKey(target.data)).stale : mine.filter(notNewer)));
 		}
 		return deleteSims(deps, stale);

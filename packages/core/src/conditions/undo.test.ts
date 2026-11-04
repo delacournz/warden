@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { PLACEHOLDER_PNG } from "../camera-placeholder";
 import type { Exec, ExecResult } from "../exec";
 import { openStore, type Store } from "../store";
 import type { Lease, Owner } from "../types";
@@ -181,6 +182,92 @@ describe("undoConditions", () => {
 		]);
 	});
 
+	test("ios a11y deletes only the defaults keys the record holds", async () => {
+		const l = lease("ios", UDID);
+		recordCondition(store, l.id, "a11y", { reduceMotion: true, screenReader: true, contrast: "increased" }, 1);
+		await undoConditions(deps(), l);
+		expect(calls).toEqual([
+			["xcrun", "simctl", "ui", UDID, "content_size", "large"],
+			["xcrun", "simctl", "ui", UDID, "increase_contrast", "disabled"],
+			["xcrun", "simctl", "spawn", UDID, "defaults", "delete", "com.apple.Accessibility", "ReduceMotionEnabled"],
+			["xcrun", "simctl", "spawn", UDID, "defaults", "delete", "com.apple.Accessibility", "VoiceOverTouchEnabled"],
+		]);
+	});
+
+	test("ios a11y undo tolerates a defaults key that was never written", async () => {
+		const l = lease("ios", UDID);
+		recordCondition(store, l.id, "a11y", { boldText: true }, 1);
+		fail = () => false;
+		const base = deps();
+		const exec: Exec = async (cmd) =>
+			cmd[4] === "defaults"
+				? { exitCode: 1, stdout: "", stderr: "The domain/default pair of (x, y) does not exist" }
+				: base.exec(cmd);
+		const r = await undoConditions({ ...base, exec }, l);
+		expect(r.success).toBe(true);
+	});
+
+	test("android a11y resets high contrast text, inversion and the transition scale it set", async () => {
+		const l = lease("android", "emulator-5554");
+		recordCondition(store, l.id, "a11y", { highContrastText: true, colorInversion: true, reduceMotion: true }, 1);
+		await undoConditions(deps(), l);
+		expect(calls.slice(2)).toEqual([
+			[...ADB, "shell", "settings", "put", "secure", "high_text_contrast_enabled", "0"],
+			[...ADB, "shell", "settings", "put", "secure", "accessibility_display_inversion_enabled", "0"],
+			[...ADB, "shell", "settings", "put", "global", "transition_animation_scale", "1.0"],
+		]);
+	});
+
+	test("android TalkBack undo restores the exact previous services and never deletes what warden did not add", async () => {
+		const l = lease("android", "emulator-5554");
+		recordCondition(
+			store,
+			l.id,
+			"a11y",
+			{
+				screenReader: true,
+				screenReaderPrevious: { services: "com.other/com.other.Svc$Inner", enabled: "1" },
+			},
+			1
+		);
+		await undoConditions(deps(), l);
+		expect(calls.slice(2)).toEqual([
+			[
+				...ADB,
+				"shell",
+				"settings",
+				"put",
+				"secure",
+				"enabled_accessibility_services",
+				"'com.other/com.other.Svc$Inner'",
+			],
+			[...ADB, "shell", "settings", "put", "secure", "accessibility_enabled", "'1'"],
+		]);
+	});
+
+	test("android TalkBack undo deletes the keys that were unset before", async () => {
+		const l = lease("android", "emulator-5554");
+		recordCondition(
+			store,
+			l.id,
+			"a11y",
+			{ screenReader: true, screenReaderPrevious: { services: null, enabled: null } },
+			1
+		);
+		await undoConditions(deps(), l);
+		expect(calls.slice(2)).toEqual([
+			[...ADB, "shell", "settings", "delete", "secure", "enabled_accessibility_services"],
+			[...ADB, "shell", "settings", "delete", "secure", "accessibility_enabled"],
+		]);
+	});
+
+	test("a screenReader record without previous values touches no accessibility service", async () => {
+		const l = lease("android", "emulator-5554");
+		recordCondition(store, l.id, "a11y", { screenReader: true }, 1);
+		await undoConditions(deps(), l);
+		expect(calls.slice(2)).toEqual([]);
+	});
+
 	test("ios locale removes the staged launch settings", async () => {
 		const home = join(dir, "home");
 		const path = launchSettingsPath(home, UDID);
@@ -273,7 +360,28 @@ describe("undoConditions", () => {
 		recordCondition(store, l.id, "clock", { kind: "offset", ms: 86_400_000 }, 1);
 		const res = await undoConditions({ ...deps(), env: { WARDEN_HOME: home } }, l);
 		expect(res.success).toBe(true);
-		expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({ seq: 8, offline: false, clockOffsetMs: 0 });
+		expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({ seq: 8, offline: false, clockOffsetMs: 0, camera: {} });
+		expect(activeConditions(store, l.id)).toEqual([]);
+	});
+
+	test("ios camera blanks the injected app's feeds, removes the staged files and clears the row", async () => {
+		const home = join(dir, "home");
+		const path = injectStatePath(home, UDID);
+		mkdirSync(dirname(path), { recursive: true });
+		writeFileSync(
+			path,
+			JSON.stringify({ seq: 3, offline: false, clockOffsetMs: 0, camera: { back: { kind: "image", path: "/x" } } })
+		);
+		const feeds = join(home, "camera", UDID);
+		mkdirSync(feeds, { recursive: true });
+		writeFileSync(join(feeds, "back-abc.png"), "x");
+		const l = lease("ios", UDID);
+		recordCondition(store, l.id, "camera", { back: { kind: "image", path: join(feeds, "back-abc.png") } }, 1);
+		const res = await undoConditions({ ...deps(), env: { WARDEN_HOME: home } }, l);
+		expect(res).toEqual({ success: true, data: { reset: ["camera"], killed: [] } });
+		expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({ seq: 4, offline: false, clockOffsetMs: 0, camera: {} });
+		expect(existsSync(feeds)).toBe(false);
+		expect(calls).toEqual([]);
 		expect(activeConditions(store, l.id)).toEqual([]);
 	});
 
@@ -296,5 +404,60 @@ describe("undoConditions", () => {
 		);
 		await undoConditions(deps(), l);
 		expect(calls).toEqual([["xcrun", "simctl", "privacy", UDID, "reset", "all"]]);
+	});
+});
+
+describe("android camera", () => {
+	const SERIAL = "emulator-5554";
+	const feedDir = () => join(dir, "camera", SERIAL);
+	const camDeps = (): UndoDeps => ({ ...deps(), env: { WARDEN_HOME: dir } });
+
+	function stageFeeds(mode: { back?: string; front?: string }): void {
+		mkdirSync(feedDir(), { recursive: true });
+		writeFileSync(join(feedDir(), "back.png"), "scene");
+		writeFileSync(join(feedDir(), "front.png"), "scene");
+		for (const name of Object.values(mode)) writeFileSync(join(feedDir(), name), "video");
+		if (Object.keys(mode).length > 0) writeFileSync(join(feedDir(), "mode.json"), JSON.stringify(mode));
+	}
+
+	test("image mode: both feeds go back to the grey placeholder, no device command, row cleared", async () => {
+		stageFeeds({});
+		const l = lease("android", SERIAL);
+		recordCondition(store, l.id, "camera", { back: { kind: "image", path: "/x/back-1.png" } }, 1);
+		const r = await undoConditions(camDeps(), l);
+		expect(r).toEqual({ success: true, data: { reset: ["camera"], killed: [] } });
+		expect(calls).toEqual([]);
+		expect(readFileSync(join(feedDir(), "back.png")).equals(PLACEHOLDER_PNG)).toBe(true);
+		expect(readFileSync(join(feedDir(), "front.png")).equals(PLACEHOLDER_PNG)).toBe(true);
+		expect(activeConditions(store, l.id)).toEqual([]);
+	});
+
+	test("video mode: videos and mode.json removed and the emulator stopped and forgotten, so the next claim boots in image mode", async () => {
+		stageFeeds({ back: "back.mp4" });
+		store.recordDevice({ platform: "android", id: SERIAL, name: "w", profile: "pixel-10+cam" }, 1);
+		store.insertLease({ resource: { kind: "port", port: 5554 }, owner, ttlMs: 1, label: "emulator w" }, 1);
+		const l = lease("android", SERIAL);
+		recordCondition(store, l.id, "camera", { back: { kind: "video", path: "/x/back.mp4", loop: true } }, 1);
+		const r = await undoConditions(camDeps(), l);
+		expect(r.success).toBe(true);
+		expect(calls).toEqual([[...ADB, "emu", "kill"]]);
+		expect(existsSync(join(feedDir(), "mode.json"))).toBe(false);
+		expect(existsSync(join(feedDir(), "back.mp4"))).toBe(false);
+		expect(readFileSync(join(feedDir(), "back.png")).equals(PLACEHOLDER_PNG)).toBe(true);
+		expect(store.listDevices("android")).toEqual([]);
+		expect(store.findLeaseByResource({ kind: "port", port: 5554 })).toBeUndefined();
+	});
+
+	test("a failed emulator stop keeps the row and the video mode for the retry", async () => {
+		stageFeeds({ front: "front.mov" });
+		store.recordDevice({ platform: "android", id: SERIAL, name: "w", profile: "pixel-10+cam" }, 1);
+		fail = (cmd) => cmd.includes("kill");
+		const l = lease("android", SERIAL);
+		recordCondition(store, l.id, "camera", { front: { kind: "video", path: "/x/front.mov", loop: true } }, 1);
+		const r = await undoConditions(camDeps(), l);
+		expect(r.success).toBe(false);
+		expect(existsSync(join(feedDir(), "mode.json"))).toBe(true);
+		expect(store.listDevices("android")).toHaveLength(1);
+		expect(activeConditions(store, l.id)).toHaveLength(1);
 	});
 });

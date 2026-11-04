@@ -91,4 +91,25 @@ describe("deleteSims", () => {
 		expect(store.listDevices("ios").map((r) => r.id)).toEqual(["A"]);
 		expect(store.listLeases()).toEqual([]);
 	});
+
+	test("a sim whose marker names another warden instance is refused: no shutdown, no delete, record kept", async () => {
+		store.recordDevice({ platform: "ios", id: "A", name: "warden-iphone-17-1" }, NOW);
+		const host = newHost();
+		const result = await deleteSims(
+			{ ...deps(host), markerBlock: (udid) => (udid === "A" ? "A is owned by another warden instance" : undefined) },
+			[target("A"), target("B")],
+			{ label: "sims delete" }
+		);
+		expect(result.failed.map((f) => f.entry.udid)).toEqual(["A"]);
+		expect(result.failed[0]?.error).toContain("another warden");
+		expect(result.removed.map((t) => t.udid)).toEqual(["B"]);
+		expect(host.calls).not.toContain("xcrun simctl delete A");
+		expect(store.listDevices("ios").map((d) => d.id)).toEqual(["A"]);
+	});
+
+	test("no marker (backward compatible) deletes as before", async () => {
+		const host = newHost();
+		const result = await deleteSims({ ...deps(host), markerBlock: () => undefined }, [target("A")], { label: "x" });
+		expect(result.removed).toHaveLength(1);
+	});
 });

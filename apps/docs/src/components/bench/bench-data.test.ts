@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { benchSummarySchema } from "@delacour/warden-e2e-bench/src/report/summary";
 import { orderSummaries, runLabel } from "./bench-order";
 
-const dir = join(import.meta.dir, "../../../content/docs/bench/data");
+const dir = join(import.meta.dir, "../../../content/docs/e2e/bench/data");
 const reports = join(import.meta.dir, "../../../../../docs/bench");
 
 describe("committed bench summaries", () => {

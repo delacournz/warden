@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import { CLAIM_ABORTED, type ClaimInput, claimDevices, PENDING_PREFIX, QUARANTINE_TTL_MS } from "./claim";
+import { parseClaimError } from "./claim-errors";
 import { recordCondition } from "./conditions/conditions";
 import type { Exec, ExecResult } from "./exec";
 import type { MemoryPressure } from "./host";
@@ -11,8 +12,9 @@ import { createIosProvider } from "./providers/ios";
 import { simctlDevicesJson } from "./providers/ios.fixture";
 import type { BootReady, DeviceProvider } from "./providers/provider.types";
 import { PRIORITY } from "./queue";
-import { openStore, type Store } from "./store";
+import { openStore, ownerKey as ownerKeyOf, type Store } from "./store";
 import { type DeviceRequest, type InventoryDevice, type Owner, resourceKey } from "./types";
+import { saveWarmSet } from "./warm-pool";
 
 let dir: string;
 let store: Store;
@@ -210,7 +212,8 @@ describe("claimDevices", () => {
 		const result = await claimDevices(input(provider));
 		expect(result.success).toBe(false);
 		if (!result.success) {
-			expect(result.error).toBe("all 2 warden-iphone-17 devices leased; max 2 — use --wait or --max");
+			expect(result.error).toBe("NO_DEVICE: all 2 warden-iphone-17 devices leased; max 2 — use --wait or --max");
+			expect(parseClaimError(result.error)?.exit).toBe(5);
 		}
 	});
 
@@ -272,6 +275,13 @@ describe("claimDevices", () => {
 		const result = await claimDevices(input(provider, { request: request({ count: 2 }) }));
 		expect(result.success).toBe(false);
 		if (!result.success) expect(result.error).toContain("boot 2 failed");
+		expect(store.listLeases()).toEqual([]);
+	});
+
+	test("a missing runtime fails RUNTIME_MISSING", async () => {
+		const provider = fakeProvider([], { create: 'no available iOS runtime matching "iOS-99" (available: none)' });
+		const result = await claimDevices(input(provider));
+		expect(!result.success && parseClaimError(result.error)?.code).toBe("RUNTIME_MISSING");
 		expect(store.listLeases()).toEqual([]);
 	});
 
@@ -382,6 +392,7 @@ describe("claim health probe", () => {
 		const result = await claimDevices(input(provider, { request: request({ max: 9 }) }));
 		expect(result.success).toBe(false);
 		if (!result.success) expect(result.error).toContain("failed the health probe");
+		expect(!result.success && parseClaimError(result.error)?.code).toBe("HEALTH_FAILED");
 		expect(store.listLeases()).toEqual([]);
 		expect(provider.calls.filter((c) => c.startsWith("probe")).length).toBe(3);
 	});
@@ -721,6 +732,7 @@ describe("claim under host load: pool of one (ios-claim-path-R1, R2)", () => {
 		if (result.success) return;
 		expect(result.error).toContain("host overloaded (load 30.0 ≥ 8 cores); retry later");
 		expect(result.error).not.toContain("leased");
+		expect(parseClaimError(result.error)).toMatchObject({ code: "NO_CAPACITY", capacityReason: "host-load", exit: 7 });
 		expect(store.listLeases()).toEqual([]);
 		expect(store.listDevices().find((d) => d.id === "1")?.quarantinedAt).toBeUndefined();
 	});
@@ -974,7 +986,21 @@ describe("claim capacity queue", () => {
 		const result = await claimDevices(capInput(provider));
 		expect(result.success).toBe(false);
 		if (!result.success) expect(result.error).toMatch(/#1 of 1.*cpu binds/);
+		expect(!result.success && parseClaimError(result.error)).toMatchObject({
+			code: "NO_CAPACITY",
+			capacityReason: "cpu-budget",
+		});
 		expect(store.listQueue()).toEqual([]);
+		// it never waited, so the history has no `queued` event
+		expect(store.listEvents().map((e) => e.type)).not.toContain("queued");
+	});
+
+	test("a pool-full --no-wait claim logs no `queued` event (it never waited)", async () => {
+		const provider = fakeProvider([sim("1", { state: "booted" })]);
+		await claimDevices(input(provider, { owner: other, request: request({ max: 1 }) }));
+		const result = await claimDevices(capInput(provider, { request: request({ max: 1 }), waitMs: 0 }));
+		expect(!result.success && parseClaimError(result.error)?.code).toBe("NO_DEVICE");
+		expect(store.listEvents().map((e) => e.type)).not.toContain("queued");
 	});
 
 	test("a lower-priority claim waits behind a higher-priority row even when the host has room", async () => {
@@ -983,6 +1009,7 @@ describe("claim capacity queue", () => {
 		const result = await claimDevices(capInput(provider, { cpu: 4 }));
 		expect(result.success).toBe(false);
 		if (!result.success) expect(result.error).toContain("#2 of 2");
+		expect(!result.success && parseClaimError(result.error)).toMatchObject({ code: "QUEUE_TIMEOUT", exit: 6 });
 		expect(store.listQueue().map((e) => e.id)).toEqual(["rival"]);
 	});
 
@@ -1020,6 +1047,30 @@ describe("claim capacity queue", () => {
 		expect(store.listLeases().some((l) => l.label === "capacity-evict")).toBe(false);
 	});
 
+	test("the head evicts a non-warm idle device before a warm one, even when the warm one is older", async () => {
+		const provider = await fullHost([
+			sim("A", { name: "warden-ipad-1", state: "booted" }),
+			sim("B", { name: "warden-ipad-2", state: "booted" }),
+		]);
+		store.recordDevice({ platform: "ios", id: "A", name: "warden-ipad-1" }, NOW - 50 * MIN);
+		store.recordDevice({ platform: "ios", id: "B", name: "warden-ipad-2" }, NOW - 5 * MIN);
+		saveWarmSet(store, ["ios:A"], NOW);
+		const result = await claimDevices(capInput(provider, { cpu: 4 }));
+		expect(shutdownIdle).toEqual(["B"]);
+		expect(result.success).toBe(true);
+	});
+
+	test("without a warm set the older idle device goes first", async () => {
+		const provider = await fullHost([
+			sim("A", { name: "warden-ipad-1", state: "booted" }),
+			sim("B", { name: "warden-ipad-2", state: "booted" }),
+		]);
+		store.recordDevice({ platform: "ios", id: "A", name: "warden-ipad-1" }, NOW - 50 * MIN);
+		store.recordDevice({ platform: "ios", id: "B", name: "warden-ipad-2" }, NOW - 5 * MIN);
+		await claimDevices(capInput(provider, { cpu: 4 }));
+		expect(shutdownIdle).toEqual(["A"]);
+	});
+
 	test("foreign booted devices count against the budget but are never shut down", async () => {
 		const provider = fakeProvider([
 			sim("F1", { name: "iPhone 17", state: "booted" }),
@@ -1045,6 +1096,10 @@ describe("claim capacity queue", () => {
 		const held = await claimDevices(capInput(provider, { cpu: 4, pressure: "warn" }));
 		expect(held.success).toBe(false);
 		if (!held.success) expect(held.error).toContain("memory pressure warn");
+		expect(!held.success && parseClaimError(held.error)).toMatchObject({
+			code: "NO_CAPACITY",
+			capacityReason: "memory-pressure",
+		});
 		const admitted = await claimDevices(capInput(provider, { cpu: 4, pressure: "normal" }));
 		expect(admitted.success).toBe(true);
 	});
@@ -1106,6 +1161,112 @@ describe("claim capacity queue", () => {
 		const result = await claimDevices(capInput(provider, { cpu: 1, request: request({ adopt: true }) }));
 		expect(result.success && result.data.claimed[0]?.device.id).toBe("1");
 		expect(result.success && result.data.claimed[0]?.action).toBe("boot");
+	});
+
+	test("the queue row stores why: ram/cpu budget at the head, behind-earlier otherwise, kept live each round", async () => {
+		const provider = await fullHost();
+		let seen: unknown[] = [];
+		await claimDevices(
+			capInput(provider, {
+				waitMs: 10 * MIN,
+				queueId: "mine",
+				sleep: async () => {
+					seen.push(store.listQueue().find((e) => e.id === "mine")?.reason);
+					if (seen.length === 1) {
+						store.deleteLeases(store.listLeases().map((l) => l.id));
+						for (const d of provider.devices) d.state = "shutdown";
+						queueRow("rival", PRIORITY.interactive, NOW);
+					} else {
+						store.dequeue("rival");
+						seen = [...seen, "end"];
+						throw new Error("stop");
+					}
+				},
+			})
+		).catch(() => undefined);
+		expect(seen.slice(0, 2)).toEqual(["cpu-budget", "behind-earlier"]);
+	});
+
+	test("memory pressure is stored as memory-pressure and the timeout still maps to NO_CAPACITY", async () => {
+		const provider = fakeProvider([]);
+		const result = await claimDevices(capInput(provider, { cpu: 4, pressure: "critical", queueId: "mp" }));
+		expect(!result.success && parseClaimError(result.error)).toMatchObject({
+			code: "NO_CAPACITY",
+			capacityReason: "memory-pressure",
+		});
+	});
+
+	test("a claim polling a full pool holds a device-limit row that no other claim queues behind", async () => {
+		const provider = fakeProvider([sim("1", { state: "booted" })]);
+		const held = await claimDevices(input(provider, { owner: other, request: request({ max: 1 }) }));
+		expect(held.success).toBe(true);
+		let rowAtPoll: { reason?: string; units: number } | undefined;
+		let polls = 0;
+		const result = await claimDevices(
+			capInput(provider, {
+				request: request({ max: 1 }),
+				waitMs: 10 * MIN,
+				queueId: "poller",
+				sleep: async () => {
+					polls++;
+					rowAtPoll = store.listQueue().find((e) => e.id === "poller");
+					const third = await claimDevices(
+						capInput(provider, { request: request({ max: 5 }), cpu: 4, owner: other, label: "third" })
+					);
+					expect(third.success).toBe(true);
+					throw new Error("stop");
+				},
+			})
+		).catch(() => undefined);
+		expect(result).toBeUndefined();
+		expect(polls).toBe(1);
+		expect(rowAtPoll).toMatchObject({ reason: "device-limit", units: 0 });
+		expect(logs.some((l) => l.includes("[device-limit]"))).toBe(true);
+	});
+
+	test("a physical claim with no free phone stores waiting-for-device and the row goes with the claim", async () => {
+		const provider = fakeProvider([]);
+		let reason: string | undefined;
+		const result = await claimDevices(
+			capInput(provider, {
+				request: request({ platform: "android", physical: {} }),
+				waitMs: 10 * MIN,
+				queueId: "phys",
+				sleep: async () => {
+					reason = store.listQueue().find((e) => e.id === "phys")?.reason;
+					throw new Error("stop");
+				},
+			})
+		).catch(() => undefined);
+		expect(result).toBeUndefined();
+		expect(reason).toBe("waiting-for-device");
+		expect(store.listQueue()).toEqual([]);
+	});
+
+	test("a polling row turns into a gated row when the pool frees but the host is full", async () => {
+		const provider = fakeProvider([sim("1", { state: "booted" })]);
+		await claimDevices(input(provider, { owner: other, request: request({ max: 1 }) }));
+		const reasons: (string | undefined)[] = [];
+		await claimDevices(
+			capInput(provider, {
+				request: request({ max: 1 }),
+				cpu: 1,
+				waitMs: 10 * MIN,
+				queueId: "p",
+				sleep: async () => {
+					reasons.push(store.listQueue().find((e) => e.id === "p")?.reason);
+					if (reasons.length === 1) {
+						store.deleteLeases(store.listLeases().map((l) => l.id));
+						for (const d of provider.devices) d.state = "shutdown";
+						provider.devices.push(
+							sim("9", { state: "booted", name: "foreign", wardenCreated: false, profile: "other" })
+						);
+					} else throw new Error("stop");
+				},
+			})
+		).catch(() => undefined);
+		expect(reasons[0]).toBe("device-limit");
+		expect(reasons[1]).toBe("cpu-budget");
 	});
 
 	test("without capacity a full host never queues", async () => {
@@ -1338,5 +1499,191 @@ describe("claimDevices: leftover conditions of a deleted lease", () => {
 		};
 		await claimDevices(input(fakeProvider([sim("1", { state: "booted" })]), { orphans: { exec, env: {} } }));
 		expect(cmds).toEqual([]);
+	});
+});
+
+describe("claimDevices per-owner limit (LCTL-3)", () => {
+	const devices = () => [sim("1", { state: "booted" }), sim("2", { state: "booted" }), sim("3", { state: "booted" })];
+
+	test("unset limit never refuses", async () => {
+		const provider = fakeProvider(devices());
+		for (let i = 0; i < 3; i++) expect((await claimDevices(input(provider))).success).toBe(true);
+	});
+
+	test("a second claim over the limit fails REQUESTER_LIMIT naming the oldest lease", async () => {
+		const provider = fakeProvider(devices());
+		const first = await claimDevices(input(provider, { ownerLimit: 1 }));
+		expect(first.success).toBe(true);
+		if (!first.success) return;
+		const leaseId = first.data.claimed[0]?.lease.id;
+		const second = await claimDevices(input(provider, { ownerLimit: 1 }));
+		expect(second.success).toBe(false);
+		if (second.success) return;
+		const parsed = parseClaimError(second.error);
+		expect(parsed?.code).toBe("REQUESTER_LIMIT");
+		expect(parsed?.message).toContain(`warden release ${leaseId}`);
+		expect(store.listLeases()).toHaveLength(1);
+	});
+
+	test("another owner or platform is not counted", async () => {
+		const provider = fakeProvider(devices());
+		await claimDevices(input(provider, { ownerLimit: 1, owner: other }));
+		expect((await claimDevices(input(provider, { ownerLimit: 1 }))).success).toBe(true);
+	});
+
+	test("a wrapper claim of count 2 under limit 1 is unaffected, and its legs share one claim", async () => {
+		const provider = fakeProvider(devices());
+		const both = await claimDevices(
+			input(provider, { ownerLimit: 1, request: request({ count: 2 }), claimId: "wrap" })
+		);
+		expect(both.success).toBe(true);
+		const leg = await claimDevices(input(provider, { ownerLimit: 1, claimId: "wrap" }));
+		expect(leg.success).toBe(true);
+		const other2 = await claimDevices(input(provider, { ownerLimit: 1 }));
+		expect(!other2.success && parseClaimError(other2.error)?.code).toBe("REQUESTER_LIMIT");
+	});
+
+	test("a lease from an older binary without a claim id counts as one claim", async () => {
+		const provider = fakeProvider(devices());
+		store.insertLease(
+			{ resource: { kind: "device", platform: "ios", id: "old", name: "old" }, owner, ttlMs: 60_000 },
+			NOW
+		);
+		const result = await claimDevices(input(provider, { ownerLimit: 1 }));
+		expect(!result.success && parseClaimError(result.error)?.code).toBe("REQUESTER_LIMIT");
+	});
+
+	test("with wait left the claim stores requester-limit, then succeeds once the other lease is released", async () => {
+		const provider = fakeProvider(devices());
+		const first = await claimDevices(input(provider, { ownerLimit: 1 }));
+		expect(first.success).toBe(true);
+		if (!first.success) return;
+		const reasons: (string | undefined)[] = [];
+		const logs: string[] = [];
+		const result = await claimDevices(
+			input(provider, {
+				ownerLimit: 1,
+				waitMs: 10 * 60_000,
+				queueId: "lim",
+				pidAlive: (pid) => pid === process.pid,
+				log: (l) => logs.push(l),
+				capacity: {
+					budget: { memMb: 1_000_000, cpu: 4, maxUnits: Number.POSITIVE_INFINITY },
+					config: {},
+					hostInventory: async () => ok(provider.devices.map((d) => ({ ...d }))),
+				},
+				sleep: async () => {
+					reasons.push(store.listQueue().find((e) => e.id === "lim")?.reason);
+					store.deleteLeases(first.data.claimed.map((c) => c.lease.id));
+				},
+			})
+		);
+		expect(result.success).toBe(true);
+		expect(reasons).toEqual(["requester-limit"]);
+		expect(logs.some((l) => l.includes("[requester-limit]"))).toBe(true);
+		expect(store.listQueue()).toEqual([]);
+	});
+
+	test("the leases of one claim carry its claim id, create placeholders included", async () => {
+		const provider = fakeProvider([]);
+		const result = await claimDevices(input(provider, { claimId: "abc" }));
+		expect(result.success).toBe(true);
+		expect(store.listLeases().map((l) => l.claimId)).toEqual(["abc"]);
+	});
+});
+
+describe("claimDevices idempotency key", () => {
+	const keyed = (provider: DeviceProvider, key: string, overrides: Partial<ClaimInput> = {}) =>
+		input(provider, { idempotencyKey: key, ...overrides });
+	const events = () => store.listEvents().map((e) => e.type);
+
+	test("a repeat with the same key returns the same leases and takes no new device", async () => {
+		const provider = fakeProvider([sim("1", { state: "booted" }), sim("2", { state: "booted" })]);
+		const first = await claimDevices(keyed(provider, "k"));
+		const before = events();
+		const second = await claimDevices(keyed(provider, "k"));
+		expect(first.success && second.success).toBe(true);
+		if (!first.success || !second.success) return;
+		expect(second.data.claimed.map((c) => c.lease.id)).toEqual(first.data.claimed.map((c) => c.lease.id));
+		expect(second.data.claimed.map((c) => c.device.id)).toEqual(["1"]);
+		expect(second.data.claimed[0]?.device.name).toBe(first.data.claimed[0]?.device.name);
+		expect(second.data.claimed[0]?.action).toBe("reuse");
+		expect(store.listLeases()).toHaveLength(1);
+		expect(events()).toEqual(before);
+	});
+
+	test("a count of 2 repeats as the same two leases", async () => {
+		const provider = fakeProvider([sim("1", { state: "booted" }), sim("2", { state: "booted" })]);
+		const req = request({ count: 2 });
+		const first = await claimDevices(keyed(provider, "k", { request: req }));
+		const second = await claimDevices(keyed(provider, "k", { request: req }));
+		expect(first.success && second.success).toBe(true);
+		if (!first.success || !second.success) return;
+		expect(second.data.claimed.map((c) => c.lease.id).sort()).toEqual(first.data.claimed.map((c) => c.lease.id).sort());
+		expect(store.listLeases()).toHaveLength(2);
+	});
+
+	test("another owner with the same key claims an independent device", async () => {
+		const provider = fakeProvider([sim("1", { state: "booted" }), sim("2", { state: "booted" })]);
+		const a = await claimDevices(keyed(provider, "k"));
+		const b = await claimDevices(keyed(provider, "k", { owner: other }));
+		expect(a.success && b.success).toBe(true);
+		if (!a.success || !b.success) return;
+		expect(b.data.claimed[0]?.device.id).not.toBe(a.data.claimed[0]?.device.id);
+	});
+
+	test("the key is free again once the lease is released", async () => {
+		const provider = fakeProvider([sim("1", { state: "booted" }), sim("2", { state: "booted" })]);
+		const first = await claimDevices(keyed(provider, "k"));
+		if (!first.success) throw new Error(first.error);
+		store.deleteLeases(first.data.claimed.map((c) => c.lease.id));
+		const again = await claimDevices(keyed(provider, "k"));
+		expect(again.success).toBe(true);
+		if (!again.success) return;
+		expect(again.data.claimed[0]?.lease.id).not.toBe(first.data.claimed[0]?.lease.id);
+		expect(store.listLeases()).toHaveLength(1);
+	});
+
+	test("a different request under the key fails and takes nothing", async () => {
+		const provider = fakeProvider([sim("1", { state: "booted" }), sim("2", { state: "booted" })]);
+		await claimDevices(keyed(provider, "k"));
+		const clash = await claimDevices(keyed(provider, "k", { request: request({ profile: "iphone-air" }) }));
+		expect(clash.success).toBe(false);
+		if (clash.success) return;
+		expect(clash.error).toContain("idempotency key k was used for a different request");
+		expect(store.listLeases()).toHaveLength(1);
+	});
+
+	test("a failed claim frees its key", async () => {
+		const provider = fakeProvider([sim("1")], { boot: "1" });
+		expect((await claimDevices(keyed(provider, "k"))).success).toBe(false);
+		const healthy = fakeProvider([sim("1", { state: "booted" })]);
+		expect((await claimDevices(keyed(healthy, "k"))).success).toBe(true);
+	});
+
+	test("a repeat while the first claim is still starting waits, and fails when no wait is left", async () => {
+		const provider = fakeProvider([sim("1", { state: "booted" }), sim("2", { state: "booted" })]);
+		const inFlight = store.insertLease(
+			{ resource: { kind: "device", platform: "ios", id: "1", name: "n" }, owner, ttlMs: 60_000, claimId: "c-first" },
+			NOW
+		);
+		store.setClaimKey(
+			{ ownerKey: ownerKeyOf(owner), key: "k", claimId: "c-first", platform: "ios", profile: "iphone-17", count: 1 },
+			NOW
+		);
+		const second = await claimDevices(keyed(provider, "k"));
+		expect(second.success).toBe(false);
+		expect(second.success || second.error).toContain("still starting");
+		expect(store.listLeases().map((l) => l.id)).toEqual([inFlight.id]);
+		store.markClaimKeyReady("c-first");
+		const third = await claimDevices(keyed(provider, "k"));
+		expect(third.success && third.data.claimed[0]?.lease.id).toBe(inFlight.id);
+	});
+
+	test("without a key two claims take two devices", async () => {
+		const provider = fakeProvider([sim("1", { state: "booted" }), sim("2", { state: "booted" })]);
+		await claimDevices(input(provider));
+		await claimDevices(input(provider));
+		expect(store.listLeases()).toHaveLength(2);
 	});
 });

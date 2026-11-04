@@ -12,4 +12,4 @@
 .impeccable/questions/
 
 # Release notes page, produced by `bun run release-notes` from apps/cli/CHANGELOG.md + .changeset/
-/content/docs/release-notes.md
+/content/docs/releases/index.md

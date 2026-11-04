@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createImportGraph, type GraphOptions, type ImportGraph } from "./graph";
@@ -49,18 +49,24 @@ export function makeFixtureRepo(): { dir: string; write: (path: string, text: st
 	write("node_modules/react/package.json", JSON.stringify({ name: "react", main: "index.js" }));
 	write("node_modules/react/index.js", "module.exports = {};\n");
 	mkdirSync(join(dir, "node_modules/@x"), { recursive: true });
-	symlinkSync(join(dir, "packages/ui"), join(dir, "node_modules/@x/ui"));
+	symlinkSync("../../packages/ui", join(dir, "node_modules/@x/ui"));
 	return { dir, write };
 }
 
-/** Two specs + a `mobile` suite mapping them to screens, committed on `main`, checked out on `feature`. */
-export async function makeSuiteRepo(
-	suite: Record<string, unknown> = {},
-	/** extra top-level `warden.config.json` keys (e.g. `projects`) */
-	config: Record<string, unknown> = {}
-): Promise<{ dir: string; write: (path: string, text: string) => void }> {
-	const repo = makeFixtureRepo();
-	const { dir, write } = repo;
+const templates = new Map<string, string>();
+let templateRoot: string | undefined;
+
+function templateDir(): string {
+	if (templateRoot) return templateRoot;
+	templateRoot = realpathSync(mkdtempSync(join(tmpdir(), "warden-affected-tpl-")));
+	process.on("exit", () => {
+		if (templateRoot) rmSync(templateRoot, { recursive: true, force: true });
+	});
+	return templateRoot;
+}
+
+function buildSuiteRepo(suite: Record<string, unknown>, config: Record<string, unknown>): string {
+	const { dir, write } = makeFixtureRepo();
 	write("specs/chats.e2e.ts", "export {};\n");
 	write("specs/settings.e2e.ts", "export {};\n");
 	write(".gitignore", "node_modules\n");
@@ -93,7 +99,34 @@ export async function makeSuiteRepo(
 		const res = Bun.spawnSync(["git", ...args], { cwd: dir });
 		if (res.exitCode !== 0) throw new Error(res.stderr.toString());
 	}
-	return repo;
+	return dir;
+}
+
+/**
+ * Two specs + a `mobile` suite mapping them to screens, committed on `main`, checked out on `feature`.
+ * Each (suite, config) is built once per process; every call gets a fresh, independent copy of it.
+ */
+export async function makeSuiteRepo(
+	suite: Record<string, unknown> = {},
+	/** extra top-level `warden.config.json` keys (e.g. `projects`) */
+	config: Record<string, unknown> = {}
+): Promise<{ dir: string; write: (path: string, text: string) => void }> {
+	const key = JSON.stringify([suite, config], (_k, v: unknown) => (v === undefined ? "\u0000undefined" : v));
+	let template = templates.get(key);
+	if (!template) {
+		const built = buildSuiteRepo(suite, config);
+		template = join(templateDir(), String(templates.size));
+		cpSync(built, template, { recursive: true, verbatimSymlinks: true });
+		rmSync(built, { recursive: true, force: true });
+		templates.set(key, template);
+	}
+	const dir = realpathSync(mkdtempSync(join(tmpdir(), "warden-affected-")));
+	cpSync(template, dir, { recursive: true, verbatimSymlinks: true });
+	const write = (path: string, text: string) => {
+		mkdirSync(join(dir, path, ".."), { recursive: true });
+		writeFileSync(join(dir, path), text);
+	};
+	return { dir, write };
 }
 
 /** `createImportGraph`, failing the test when it is an error. */

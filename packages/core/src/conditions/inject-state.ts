@@ -12,7 +12,7 @@ export function injectStatePath(wardenHome: string, udid: string): string {
 }
 
 /**
- * Write `{ seq: previous + 1, offline: false, clockOffsetMs: 0 }` (no freeze) when a state file exists; the dylib
+ * Write `{ seq: previous + 1, offline: false, clockOffsetMs: 0, camera: {} }` (no freeze, no camera feeds) when a state file exists; the dylib
  * applies any higher `seq`. No file = no injected app was ever launched on the device: nothing to do.
  * Returns an error message, or undefined.
  */
@@ -27,7 +27,7 @@ export function neutralizeInjectState(path: string): string | undefined {
 	}
 	try {
 		const tmp = `${path}.${process.pid}.tmp`;
-		writeFileSync(tmp, JSON.stringify({ seq: seq + 1, offline: false, clockOffsetMs: 0 }));
+		writeFileSync(tmp, JSON.stringify({ seq: seq + 1, offline: false, clockOffsetMs: 0, camera: {} }));
 		renameSync(tmp, path);
 		return undefined;
 	} catch (error) {

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { type DevFeatures, serveDevControl } from "../dev-control";
 import { writeDevSession } from "../dev-session";
 import { type TestContext, testContext } from "../testing";
-import { devControl } from "./dev-control";
+import { devControl, devRestartMetro } from "./dev-control";
 
 let ctx: TestContext | undefined;
 let closeServer: (() => Promise<void>) | undefined;
@@ -17,16 +17,23 @@ afterEach(async () => {
 const alive = { isAlive: () => true };
 
 /** A dev session in a temp WARDEN_HOME, with a control socket that flips `features` (or none: `serve: false`). */
-async function withSession(options: { serve: boolean; failHud?: boolean }) {
+async function withSession(options: { serve: boolean; failHud?: boolean; failRestart?: string }) {
 	const c = testContext([]);
 	ctx = c;
 	const logDir = join(c.env.WARDEN_HOME ?? "", "dev", "L1");
 	mkdirSync(logDir, { recursive: true });
 	const features: DevFeatures = { hud: false, devtools: false };
+	const restarts: boolean[] = [];
 	const socket = join(logDir, "control.sock");
 	if (options.serve) {
 		const served = await serveDevControl(socket, async (request) => {
 			if (request.op === "status") return { ok: true, features: { ...features } };
+			if (request.op === "restart-metro") {
+				restarts.push(request.clear);
+				return options.failRestart === undefined
+					? { ok: true, features: { ...features }, metroUrl: "http://localhost:8101" }
+					: { ok: false, error: options.failRestart, features: { ...features } };
+			}
 			if (request.feature === "hud" && options.failHud)
 				return { ok: false, error: "no dashboard", features: { ...features } };
 			features[request.feature] = request.on;
@@ -48,7 +55,7 @@ async function withSession(options: { serve: boolean; failHud?: boolean }) {
 		startedAt: "2026-10-28T00:00:00.000Z",
 		...(options.serve ? { controlSocket: socket } : {}),
 	});
-	return { c, features };
+	return { c, features, restarts };
 }
 
 describe("warden dev enable|disable|status", () => {
@@ -99,5 +106,33 @@ describe("warden dev enable|disable|status", () => {
 		ctx = c;
 		expect(await devControl(c, "status", [], {}, alive)).toBe(1);
 		expect(c.stderr.join("\n")).toContain("no running `warden dev` session");
+	});
+});
+
+describe("warden dev restart-metro", () => {
+	test("restarts Metro on the running session and prints its URL", async () => {
+		const { c, restarts } = await withSession({ serve: true });
+		expect(await devRestartMetro(c, {}, alive)).toBe(0);
+		expect(restarts).toEqual([false]);
+		expect(c.stdout.join("\n")).toContain("UDID-1: Metro restarted at http://localhost:8101");
+	});
+
+	test("--clear asks for a cache reset; --json prints { udid, metroUrl, clear }", async () => {
+		const { c, restarts } = await withSession({ serve: true });
+		expect(await devRestartMetro(c, { clear: true, json: true }, alive)).toBe(0);
+		expect(restarts).toEqual([true]);
+		expect(JSON.parse(c.stdout.join(""))).toEqual({ udid: "UDID-1", metroUrl: "http://localhost:8101", clear: true });
+	});
+
+	test("a refused restart fails with the session's reason", async () => {
+		const { c } = await withSession({ serve: true, failRestart: "busy: reinstall app is still running" });
+		expect(await devRestartMetro(c, {}, alive)).toBe(1);
+		expect(c.stderr.join("\n")).toContain("busy: reinstall app is still running");
+	});
+
+	test("a session without a control socket says so", async () => {
+		const { c } = await withSession({ serve: false });
+		expect(await devRestartMetro(c, {}, alive)).toBe(1);
+		expect(c.stderr.join("\n")).toContain("no control socket");
 	});
 });

@@ -144,6 +144,7 @@ describe("actionFor", () => {
 			R: "reinstall",
 			x: "restart-sim",
 			c: "metro-clear",
+			M: "metro-restart",
 			l: "logs",
 			p: "perf",
 			P: "perf-all",

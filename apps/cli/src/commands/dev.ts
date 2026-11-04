@@ -16,6 +16,7 @@ import { readGitFacts, readGitFactsSync } from "@delacour/warden-core/git-facts"
 import { isPortFree } from "@delacour/warden-core/ports";
 import type { DeviceProvider } from "@delacour/warden-core/providers/provider.types";
 import { PRIORITY } from "@delacour/warden-core/queue";
+import { devKeepsSim } from "@delacour/warden-core/shutdown-policy";
 import { wardenHome } from "@delacour/warden-core/store";
 import type { Lease, Owner, Platform } from "@delacour/warden-core/types";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
@@ -39,6 +40,7 @@ import { releaseDevices } from "../device-lease";
 import { shutdownReleasedDevices } from "../device-shutdown";
 import { missingPackages } from "../expo-app";
 import { installModeOption, legacyCleanOption, parseInstallFlags } from "../install-flags";
+import { defaultLeaseHealthDeps } from "../lease-health";
 import {
 	childEnv,
 	claimAll,
@@ -181,7 +183,7 @@ function parseJson(text: string): unknown {
 }
 
 /** `--scheme`, else `exp+<slug>` (the scheme expo-dev-client registers) from app.json, the resolved app config, or `expo config`. */
-async function devScheme(
+export async function devScheme(
 	ctx: CommandContext,
 	context: ProjectContext,
 	override: string | undefined
@@ -406,6 +408,9 @@ async function openSession(
 		await showing;
 		if (!session.success) return session;
 		const { outcome, ports, leaseIds } = session.data;
+		// dev's sim keeps its installs and logins across sessions: never deleted as ephemeral (WARDEN_EPHEMERAL_DEV=1 opts in)
+		if (platform === "ios" && devKeepsSim(ctx.env))
+			for (const c of outcome.claimed) ctx.store().markPersistent(platform, c.device.id, ctx.now());
 		// dev's own device goes down with the session (Ctrl-C, a killed terminal, Metro exiting) unless --no-shutdown;
 		// `shutdownReleasedDevices` leaves a sim that was already running when leased alone
 		const release = async () => {
@@ -550,7 +555,7 @@ type Running = {
 /** A Metro restart in flight: `runMetro` waits for the replacement's exit, not the old one's. */
 type MetroSwap = { pending: Promise<Metro | undefined> | undefined };
 
-/** Metro's exit code; a restart (`c`) hands over to the replacement, whose exit ends the session instead. */
+/** Metro's exit code; a restart (`M` / `c` / `warden dev restart-metro`) hands over to the replacement, whose exit ends the session instead. */
 async function metroExit(first: MetroProc, swap: MetroSwap): Promise<number> {
 	let code = await first.exited;
 	while (swap.pending) {
@@ -590,10 +595,10 @@ async function restartDevice(
 }
 
 /**
- * Stop the current Metro and start another with `--clear` on the same leased port. `swap` tells `runMetro` to follow
+ * Stop the current Metro and start another (with `--clear` when `clear`) on the same leased port. `swap` tells `runMetro` to follow
  * the replacement; a replacement that does not come up leaves no Metro, and the session ends as when Metro dies.
  */
-async function restartMetro(ctx: CommandContext, r: Running, swap: MetroSwap): AsyncResult<string> {
+async function restartMetro(ctx: CommandContext, r: Running, swap: MetroSwap, clear: boolean): AsyncResult<string> {
 	if (swap.pending) return err("Metro is already restarting");
 	let settle: (metro: Metro | undefined) => void = () => undefined;
 	swap.pending = new Promise<Metro | undefined>((resolve) => {
@@ -604,9 +609,9 @@ async function restartMetro(ctx: CommandContext, r: Running, swap: MetroSwap): A
 		ctx.err("stopping Metro");
 		await r.run.launch?.stop();
 		// Expo's `--clear` is `--reset-cache` for the community CLI
-		const clear = r.project.framework === "react-native" ? "--reset-cache" : "--clear";
-		ctx.err(`starting Metro ${clear} on :${port}`);
-		r.early.start(port, deviceId, [clear]);
+		const extra = clear ? [r.project.framework === "react-native" ? "--reset-cache" : "--clear"] : [];
+		ctx.err(`starting Metro${extra.map((a) => ` ${a}`).join("")} on :${port}`);
+		r.early.start(port, deviceId, extra);
 		const started = await r.run.launch?.pending;
 		if (started?.success !== true) {
 			settle(undefined);
@@ -635,7 +640,7 @@ function devActions(ui: DevUi, deps: DevDeps, opts: DevOpts, r: Running, swap: M
 			return ensured.success ? ok({ source: ensured.data.source, hash: ensured.data.hash }) : err(ensured.error);
 		},
 		restartSim: (log) => restartDevice(scopedCtx(ctx, log), ui, r, opts.headless === true, log),
-		restartMetro: (log) => restartMetro(scopedCtx(ctx, log), r, swap),
+		restartMetro: (log, clear) => restartMetro(scopedCtx(ctx, log), r, swap, clear),
 	};
 }
 
@@ -742,20 +747,48 @@ function devExtras(ui: DevUi, deps: DevDeps, r: Running, metroUrl: string, appId
 	};
 }
 
+/** `warden dev restart-metro` on this session: through the ui, so the dashboard shows it as its restart row. */
+async function restartMetroOnRequest(
+	ui: DevUi,
+	host: DevActionHost,
+	extras: DevExtras,
+	clear: boolean
+): Promise<DevControlResponse> {
+	const restarted = await ui.restartMetro(clear, host);
+	return restarted.success
+		? { ok: true, features: extras.features(), metroUrl: restarted.data }
+		: { ok: false, error: restarted.error, features: extras.features() };
+}
+
 /**
- * Serves `warden dev enable|disable|status` for this session on `<logDir>/control.sock` and records the socket in the
- * registry. Best-effort: without it the extras stay as the flags left them. Resolves with the function that closes it.
+ * Serves `warden dev enable|disable|status|restart-metro` for this session on `<logDir>/control.sock` and records the
+ * socket in the registry. Best-effort: without it the extras stay as the flags left them and Metro restarts only from
+ * the dashboard. Resolves with the function that closes it.
  */
-async function serveDevExtras(ctx: CommandContext, r: Running, extras: DevExtras): Promise<() => Promise<void>> {
+async function serveDevExtras(
+	ui: DevUi,
+	r: Running,
+	extras: DevExtras,
+	host: DevActionHost
+): Promise<() => Promise<void>> {
+	const ctx = ui.ctx;
 	const leaseId = r.session.leaseIds[0];
 	if (leaseId === undefined) return async () => undefined;
-	const served = await serveDevControl(controlSocketPath(join(wardenHome(ctx.env), "dev", leaseId)), (request) =>
-		request.op === "status"
-			? Promise.resolve({ ok: true, features: extras.features() })
-			: extras.set(request.feature, request.on)
-	);
+	const served = await serveDevControl(controlSocketPath(join(wardenHome(ctx.env), "dev", leaseId)), (request) => {
+		switch (request.op) {
+			case "status":
+				return Promise.resolve({ ok: true, features: extras.features() });
+			case "set":
+				return extras.set(request.feature, request.on);
+			case "restart-metro":
+				return restartMetroOnRequest(ui, host, extras, request.clear);
+		}
+	});
 	if (!served.success) {
-		warn(ctx, `warden dev: no control socket (${served.error}); warden dev enable|disable won't reach this session`);
+		warn(
+			ctx,
+			`warden dev: no control socket (${served.error}); warden dev enable|disable|restart-metro won't reach this session`
+		);
 		return async () => undefined;
 	}
 	updateDevSession(ctx.env, leaseId, { controlSocket: served.data.socketPath });
@@ -769,10 +802,11 @@ async function startDevExtras(
 	opts: DevOpts,
 	r: Running,
 	metroUrl: string,
-	appId: string | undefined
+	appId: string | undefined,
+	host: DevActionHost
 ): Promise<() => Promise<void>> {
 	const extras = devExtras(ui, deps, r, metroUrl, appId);
-	const closeControl = await serveDevExtras(ui.ctx, r, extras);
+	const closeControl = await serveDevExtras(ui, r, extras, host);
 	if (opts.devtools === true) {
 		const started = await extras.set("devtools", true);
 		if (!started.ok) warn(ui.ctx, `warden dev: devtools didn't start (${started.error})`);
@@ -816,7 +850,16 @@ async function runMetro(ui: DevUi, deps: DevDeps, opts: DevOpts, r: Running): Pr
 			}
 		}
 		const bundle = bundleIdFor(r.project, r.platform);
-		closeExtras = await startDevExtras(ui, deps, opts, r, metro.data.url, bundle.success ? bundle.data : undefined);
+		const actions = devActions(ui, deps, opts, r, swap);
+		closeExtras = await startDevExtras(
+			ui,
+			deps,
+			opts,
+			r,
+			metro.data.url,
+			bundle.success ? bundle.data : undefined,
+			actions
+		);
 		// one line, not `emit`'s indented document: warden dev keeps running, so readers take the first stdout line
 		if (json)
 			ctx.out(JSON.stringify({ udid: deviceId, port, metroUrl: metro.data.url, leaseIds, source: r.project.source }));
@@ -831,7 +874,7 @@ async function runMetro(ui: DevUi, deps: DevDeps, opts: DevOpts, r: Running): Pr
 				app,
 				projectName: r.project.name,
 				...(bundle.success ? { bundleId: bundle.data } : {}),
-				actions: devActions(ui, deps, opts, r, swap),
+				actions,
 			});
 		return await metroExit(metro.data.proc, swap);
 	} finally {
@@ -1297,6 +1340,7 @@ export const defaultDevDeps: DevDeps = {
 	},
 	onSignal: processOnSignal,
 	every: intervalEvery,
+	health: defaultLeaseHealthDeps,
 	probe: (port, projectRoot) => metroOwner(bunExec, port, projectRoot),
 	sleep: (ms) => Bun.sleep(ms),
 	ensureApp: (ctx, owner, platform, deviceId, opts) =>

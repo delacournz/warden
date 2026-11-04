@@ -17,3 +17,6 @@ packages/e2e/native/ios-runner/**/xcuserdata
 
 # bench output
 .bench/
+
+packages/e2e/native/android/.cache
+packages/e2e/native/android/dist-atf

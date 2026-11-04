@@ -1,3 +1,4 @@
+import { parseClaimError } from "@delacour/warden-core/claim-errors";
 import { type PidAlive, processAlive } from "@delacour/warden-core/liveness";
 import { isEmulatorSerial } from "@delacour/warden-core/providers/android";
 import { DEVICE_LOCKED_HINT } from "@delacour/warden-core/providers/unlock-wait";
@@ -113,8 +114,16 @@ function liveShared(lease: Lease, pidAlive: PidAlive): boolean {
 	return lease.shared === true && lease.pid !== undefined && pidAlive(lease.pid);
 }
 
-/** A failed claim as a `warden ui` error: a phone that stayed locked is `device_locked` (exit 2), anything else `failed`. */
-function claimError(error: string): UiError {
+/**
+ * A failed claim as a `warden ui` error: a phone that stayed locked is `device_locked` (exit 2), a coded claim error
+ * keeps its code (`NO_DEVICE` … `LEASE_LOST`, exit 5-11), anything else `failed`.
+ */
+export function claimError(error: string): UiError {
+	const coded = parseClaimError(error);
+	if (coded) {
+		const details = coded.code === "NO_CAPACITY" ? { details: { capacityReason: coded.capacityReason } } : {};
+		return uiError(coded.code, coded.message, { hint: coded.hint, ...details });
+	}
 	return isLockedClaimError(error)
 		? uiError("device_locked", lockedClaimMessage(error), { hint: DEVICE_LOCKED_HINT })
 		: uiError("failed", `claim failed: ${error}`);

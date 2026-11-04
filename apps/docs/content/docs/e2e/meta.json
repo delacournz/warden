@@ -1,4 +1,21 @@
 {
-	"title": "e2e tests",
-	"pages": ["index", "first-test", "specs", "author-specs", "suites", "conditions", "biometrics", "affected", "debugging", "ci"]
+	"title": "E2E Tests",
+	"description": "Write specs and run them across leased devices",
+	"icon": "FlaskConical",
+	"root": true,
+	"pages": [
+		"index",
+		"how-it-works",
+		"---Write specs---",
+		"specs",
+		"author-specs",
+		"accessibility",
+		"---Run suites---",
+		"suites",
+		"affected",
+		"debugging",
+		"ci",
+		"---Benchmarks---",
+		"...bench"
+	]
 }
