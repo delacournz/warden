@@ -75,6 +75,10 @@ final class Session: @unchecked Sendable {
   let quiescence = QuiescenceHolder()
   /// The last `axbridge` read failure that was not repaired, for `health`.
   let bridgeHealth = BridgeHealth()
+  /// When the bridge last stalled (a read past `bridgeDeadline.readMs`), so the reads inside the cooldown go to `ax`.
+  let bridgeStall = BridgeStallGate()
+  /// The per-read bridge deadline and the cooldown after a stall (`WARDEN_SIMD_BRIDGE_DEADLINE_MS` / `_COOLDOWN_S`).
+  let bridgeDeadline = BridgeDeadline.configured()
   /// The pid each bundle id last resolved to, for `frontmost`.
   let bundlePids = BundlePidMemory()
   let orientationMemory = OrientationMemory()
@@ -205,6 +209,9 @@ extension WireError {
   /// `E_AX_UNAVAILABLE` / `E_APP_*`, HID failures `E_HID`, "nothing there" `E_NO_ELEMENT`.
   static func from(_ error: any Error) -> WireError {
     if let wire = error as? WireError { return wire }
+    if let stall = error as? BridgeStalled {
+      return WireError(.timeout, stall.localizedDescription, detail: ["afterMs": .int(stall.afterMs), "stage": "axbridge"])
+    }
     if error is CancellationError { return WireError(.internal, "operation cancelled") }
     if let error = error as? QuiescenceError { return from(quiescence: error) }
     if let error = error as? UIAutomationError { return from(automation: error) }
