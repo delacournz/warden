@@ -49,7 +49,7 @@ export type Faq = { q: string; a: string; proof?: Proof };
 
 export const HERO = {
 	pill: "open source · MIT · iOS + Android",
-	lede: "Your coding agents tap, type and scroll through your app on iOS simulators, Android emulators and real phones, then save what they checked as e2e tests you can rerun in parallel. Every worktree on your Mac gets its own devices, ports and builds, so agents never collide.",
+	lede: "Your coding agents drive your app on iOS simulators, Android emulators and real phones, and keep what they checked as e2e tests. Devices, ports and builds are leased per worktree, so parallel agents never collide.",
 	installNote: "Installs the CLI and the skill for every agent it finds.",
 } as const;
 
