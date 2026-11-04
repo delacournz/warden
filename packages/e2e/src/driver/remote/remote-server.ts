@@ -22,12 +22,9 @@ import {
 	type WireSnapshot,
 } from "./remote-protocol";
 
-export type ServeDriverOptions = {
+/** What every served driver takes, whatever carries the bytes. */
+type ServiceOptions = {
 	driver: Driver;
-	socketPath: string;
-	/** call `onIdle` once no client has been connected and no op has run for this long; absent or 0 = never */
-	idleMs?: number;
-	onIdle?: () => void;
 	/** a client asked for `shutdown` (it was acknowledged first) */
 	onShutdown?: () => void;
 	/** how long `stop()` waits for the op in flight before it goes on (default 5000) */
@@ -39,12 +36,33 @@ export type ServeDriverOptions = {
 	log?: Logger;
 };
 
+export type ServeDriverOptions = ServiceOptions & {
+	socketPath: string;
+	/** call `onIdle` once no client has been connected and no op has run for this long; absent or 0 = never */
+	idleMs?: number;
+	onIdle?: () => void;
+};
+
 export type RemoteServer = {
 	socketPath: string;
 	/** stop listening, drop every client, wait for the op in flight, close the driver (unless `closeDriver: false`) */
 	stop(): Promise<void>;
 	/** tests: drop every connection at once, as a crash would, without answering what is in flight */
 	drop(): void;
+};
+
+/** One client on a byte stream: requests arrive on `input`, replies go to `write` (the process's stdin / stdout). */
+export type ServeDriverStdioOptions = ServiceOptions & {
+	input: ReadableStream<Uint8Array>;
+	/** takes every byte it is given (a stdout writer); never partial */
+	write: (bytes: Uint8Array) => void;
+};
+
+export type StdioDriverServer = {
+	/** resolves when `input` ends (the client went away) or a client asked for `shutdown` */
+	finished: Promise<void>;
+	/** wait for the op in flight, close the driver (unless `closeDriver: false`) */
+	stop(): Promise<void>;
 };
 
 type Conn = { write(data: Uint8Array): number; end(): void };
@@ -98,31 +116,57 @@ function toWire(op: string, data: unknown): unknown {
 	return data;
 }
 
+/** Run one driver op for the wire: arguments from the wire, the result to it; a throw is `E_INTERNAL`. */
+async function runDriverOp(
+	driver: Driver,
+	op: string,
+	args: readonly unknown[],
+	log: Logger | undefined
+): DriverResult<unknown> {
+	const method = resolve(driver, op);
+	if (method === undefined) return badRequest(`the served driver has no \`${op}\``);
+	try {
+		const wireArgs = argsFromWire(args);
+		// readA11y takes and returns a snapshot, which crosses the wire without `flat`
+		if (op === "readA11y" && wireArgs[0] !== undefined) wireArgs[0] = snapshotFromWire(wireArgs[0] as WireSnapshot);
+		const result = await method(...wireArgs);
+		// auditNatively answers a plain NativeAuditResult (a missing engine is `skipped`, never an error)
+		if (op === "auditNatively") return { success: true, data: result };
+		return result.success ? { success: true, data: toWire(op, result.data) } : result;
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		log?.(`remote: ${op} threw: ${message}`);
+		return { success: false, error: driverError("E_INTERNAL", `${op} threw: ${message}`) };
+	}
+}
+
+type DriverService = {
+	open(conn: Conn): void;
+	data(conn: Conn, chunk: Uint8Array): void;
+	drain(conn: Conn): void;
+	close(conn: Conn): void;
+	/** live connections */
+	readonly size: number;
+	/** ops queued or running */
+	readonly inFlight: number;
+	drop(): void;
+	/** drop every client, wait for the op in flight (up to `stopWaitMs`), close the driver */
+	stop(): Promise<void>;
+};
+
 /**
- * Serve `driver` on a unix socket (see `remote-protocol.ts`). Every connection gets a `ready` event; ops from all of
- * them run one at a time, in arrival order, so two `warden ui` calls never interleave on one device. A thrown driver
- * error becomes `E_INTERNAL`. The socket file is replaced if one is there and removed by `stop`.
+ * The protocol core every transport shares: a `ready` event per connection, ops from all connections run one at a
+ * time in arrival order (two `warden ui` calls never interleave on one device), a thrown driver error is `E_INTERNAL`.
+ * `onActivity` fires whenever a connection or an op starts or ends (the socket server's idle timer).
  */
-export async function serveDriver(options: ServeDriverOptions): Promise<RemoteServer> {
-	const { driver, socketPath, log } = options;
+function driverService(options: ServiceOptions, onActivity: () => void = () => undefined): DriverService {
+	const { driver, log } = options;
 	const conns = new Set<Conn>();
 	const outboxes = new WeakMap<Conn, Outbox>();
+	const splitters = new WeakMap<Conn, ReturnType<typeof createLineSplitter>>();
 	const encoder = new TextEncoder();
 	let chain: Promise<unknown> = Promise.resolve();
 	let inFlight = 0;
-	let idleTimer: ReturnType<typeof setTimeout> | undefined;
-	let stopped = false;
-
-	const armIdle = () => {
-		if (idleTimer !== undefined) clearTimeout(idleTimer);
-		idleTimer = undefined;
-		const idleMs = options.idleMs ?? 0;
-		if (idleMs <= 0 || stopped || conns.size > 0 || inFlight > 0) return;
-		idleTimer = setTimeout(() => {
-			idleTimer = undefined;
-			if (!stopped && conns.size === 0 && inFlight === 0) options.onIdle?.();
-		}, idleMs);
-	};
 
 	const ready = (): ReadyEvent => ({
 		event: "ready",
@@ -163,21 +207,7 @@ export async function serveDriver(options: ServeDriverOptions): Promise<RemoteSe
 			queueMicrotask(() => options.onShutdown?.());
 			return { success: true, data: null };
 		}
-		const method = resolve(driver, op);
-		if (method === undefined) return badRequest(`the served driver has no \`${op}\``);
-		try {
-			const wireArgs = argsFromWire(args);
-			// readA11y takes and returns a snapshot, which crosses the wire without `flat`
-			if (op === "readA11y" && wireArgs[0] !== undefined) wireArgs[0] = snapshotFromWire(wireArgs[0] as WireSnapshot);
-			const result = await method(...wireArgs);
-			// auditNatively answers a plain NativeAuditResult (a missing engine is `skipped`, never an error)
-			if (op === "auditNatively") return { success: true, data: result };
-			return result.success ? { success: true, data: toWire(op, result.data) } : result;
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			log?.(`remote: ${op} threw: ${message}`);
-			return { success: false, error: driverError("E_INTERNAL", `${op} threw: ${message}`) };
-		}
+		return runDriverOp(driver, op, args, log);
 	};
 
 	const onLine = (conn: Conn, line: string) => {
@@ -199,7 +229,7 @@ export async function serveDriver(options: ServeDriverOptions): Promise<RemoteSe
 			return;
 		}
 		inFlight += 1;
-		armIdle();
+		onActivity();
 		const next = chain.then(async () => {
 			const result = await run(op, args);
 			send(conn, { id, result, capabilities: driver.capabilities } satisfies RemoteResponse);
@@ -207,45 +237,9 @@ export async function serveDriver(options: ServeDriverOptions): Promise<RemoteSe
 		chain = next.catch(() => undefined);
 		void next.finally(() => {
 			inFlight -= 1;
-			armIdle();
+			onActivity();
 		});
 	};
-
-	try {
-		unlinkSync(socketPath);
-	} catch {
-		// not there
-	}
-	const splitters = new WeakMap<object, ReturnType<typeof createLineSplitter>>();
-	const listener = Bun.listen({
-		unix: socketPath,
-		socket: {
-			open(socket) {
-				conns.add(socket);
-				outboxes.set(socket, { queued: new Uint8Array(0) });
-				splitters.set(socket, createLineSplitter());
-				armIdle();
-				send(socket, ready());
-			},
-			data(socket, chunk) {
-				const splitter = splitters.get(socket);
-				if (splitter === undefined) return;
-				for (const line of splitter.push(chunk)) onLine(socket, line);
-			},
-			drain(socket) {
-				flush(socket);
-			},
-			close(socket) {
-				conns.delete(socket);
-				armIdle();
-			},
-			error(socket) {
-				conns.delete(socket);
-				armIdle();
-			},
-		},
-	});
-	armIdle();
 
 	const drop = () => {
 		for (const conn of [...conns]) {
@@ -259,21 +253,141 @@ export async function serveDriver(options: ServeDriverOptions): Promise<RemoteSe
 	};
 
 	return {
-		socketPath,
+		open(conn) {
+			conns.add(conn);
+			outboxes.set(conn, { queued: new Uint8Array(0) });
+			splitters.set(conn, createLineSplitter());
+			onActivity();
+			send(conn, ready());
+		},
+		data(conn, chunk) {
+			const splitter = splitters.get(conn);
+			if (splitter === undefined) return;
+			for (const line of splitter.push(chunk)) onLine(conn, line);
+		},
+		drain: flush,
+		close(conn) {
+			conns.delete(conn);
+			onActivity();
+		},
+		get size() {
+			return conns.size;
+		},
+		get inFlight() {
+			return inFlight;
+		},
 		drop,
+		async stop() {
+			drop();
+			await Promise.race([chain, Bun.sleep(options.stopWaitMs ?? 5000)]);
+			if (options.closeDriver !== false) await driver.close();
+		},
+	};
+}
+
+/**
+ * Serve `driver` on a unix socket (see `remote-protocol.ts`): `driverService` per connection. The socket file is
+ * replaced if one is there and removed by `stop`.
+ */
+export async function serveDriver(options: ServeDriverOptions): Promise<RemoteServer> {
+	const { socketPath } = options;
+	let idleTimer: ReturnType<typeof setTimeout> | undefined;
+	let stopped = false;
+
+	const armIdle = () => {
+		if (idleTimer !== undefined) clearTimeout(idleTimer);
+		idleTimer = undefined;
+		const idleMs = options.idleMs ?? 0;
+		if (idleMs <= 0 || stopped || service.size > 0 || service.inFlight > 0) return;
+		idleTimer = setTimeout(() => {
+			idleTimer = undefined;
+			if (!stopped && service.size === 0 && service.inFlight === 0) options.onIdle?.();
+		}, idleMs);
+	};
+	const service = driverService(options, () => armIdle());
+
+	try {
+		unlinkSync(socketPath);
+	} catch {
+		// not there
+	}
+	const listener = Bun.listen({
+		unix: socketPath,
+		socket: {
+			open: (socket) => service.open(socket),
+			data: (socket, chunk) => service.data(socket, chunk),
+			drain: (socket) => service.drain(socket),
+			close: (socket) => service.close(socket),
+			error: (socket) => service.close(socket),
+		},
+	});
+	armIdle();
+
+	return {
+		socketPath,
+		drop: () => service.drop(),
 		async stop() {
 			if (stopped) return;
 			stopped = true;
 			if (idleTimer !== undefined) clearTimeout(idleTimer);
 			listener.stop(true);
-			drop();
-			await Promise.race([chain, Bun.sleep(options.stopWaitMs ?? 5000)]);
-			if (options.closeDriver !== false) await driver.close();
+			await service.stop();
 			try {
 				unlinkSync(socketPath);
 			} catch {
 				// already gone
 			}
+		},
+	};
+}
+
+/**
+ * Serve `driver` to the one client on the other end of a byte stream: `warden __driver-serve` on its stdin / stdout,
+ * reached through `ssh` by `connectRemoteDriver({ transport: stdioTransport(…) })`. Same protocol and `ready`
+ * handshake as the socket server; `finished` resolves when the input ends or the client asks for `shutdown`.
+ */
+export function serveDriverStdio(options: ServeDriverStdioOptions): StdioDriverServer {
+	let finish: () => void = () => undefined;
+	const finished = new Promise<void>((resolve) => {
+		finish = resolve;
+	});
+	const service = driverService({
+		...options,
+		onShutdown: () => {
+			options.onShutdown?.();
+			finish();
+		},
+	});
+	const conn: Conn = {
+		write(data) {
+			options.write(data);
+			return data.length;
+		},
+		end: () => finish(),
+	};
+	service.open(conn);
+	void (async () => {
+		const reader = options.input.getReader();
+		try {
+			for (;;) {
+				const { done, value } = await reader.read();
+				if (done) break;
+				service.data(conn, value);
+			}
+		} catch {
+			// the pipe broke: the client is gone
+		}
+		finish();
+	})();
+	let stopped: Promise<void> | undefined;
+	return {
+		finished,
+		stop() {
+			stopped ??= (async () => {
+				finish();
+				await service.stop();
+			})();
+			return stopped;
 		},
 	};
 }
