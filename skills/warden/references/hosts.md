@@ -60,6 +60,21 @@ Put the app on it first: `warden app ensure --lease <host lease id> [--kind <dev
 - Ends on Ctrl-C (exit 0), Metro exiting (its code), the tunnel dropping (1) or the host lease lost (`LEASE_LOST`, 1); always stops Metro, closes the tunnel and releases both leases (here and on the host).
 - Refused with `--host`: `--udid`, `--lease`, `--install-mode`, `--reset-keychain`, `--clean`, `--hud`, `--devtools`, `--physical`; a bare React Native app (Expo dev clients only).
 
+## Run a warden command there (`host run`, `--host`)
+
+`warden host run <name> -- <warden command…>` (short: `warden --host <name> <command…>`) runs one allowed command with the host's warden over ssh (a TTY when this terminal is one): its output, its exit code. ssh's own failure is `HOST_UNREACHABLE` / `HOST_AUTH`; a command the host refuses exits 2.
+
+| Runs there | Notes |
+|---|---|
+| `perf <sub> …` (every subcommand) | device-bound ones act on your own lease only: a local host lease id after `--lease` becomes the host's; no `--lease` = your only device on that host (none or several → error). `--udid`, `--serial`, `--claim`, `--force`, `--allow-mutate-foreign` refused. `report` / `query` / `diff` / `ls` / `tools` take no lease |
+| `golden ls`, `golden ensure` | `golden prune` refused |
+| `builds ls` | `builds rm` / `prune` / `import` refused |
+| `capacity`, `queue` | the host's budget and boot queue |
+
+`warden e2e` / `warden batch` are not run this way (they would run code on the host).
+
+Evidence back: `warden host fetch <name> perf <session id> [--out <dir>] [--json]` copies the session's directory (report, metrics, traces) into this machine's perf dir (`$WARDEN_HOME/perf/<id>`, so `warden perf report <id>` / `query` / `diff` read it here) or `--out`. Fetch before you release: the host sends a session only to whoever holds its device → `{ host, session, dir }`.
+
 A spec process reaches a host's device the same way when `WARDEN_HOST` (its name) and `WARDEN_HOST_DRIVER` (JSON argv of the ssh command that serves the driver) are set.
 
 ## What the granted key can do
@@ -74,6 +89,8 @@ The grant is a forced command in the host's `~/.ssh/authorized_keys`: `command="
 | `__driver-serve --lease <id>` | the driver of the caller's own device lease, on stdio |
 | `__host-recv … --json` | an app build as a tar on stdin, named by its content hash: unpacked into the host's uploads only if its content matches; `app ensure` asks first whether the host has it |
 | `port claim … --json`, `port release … --json`, `port ls --json` | the host end of `dev --host`'s forward; `port release --force` refused |
+| `perf <sub>`, `golden ls\|ensure`, `builds ls`, `capacity`, `queue` (text or `--json`) | `host run`; see above |
+| `__host-send --perf <id>` | a perf session's files as a tar, only to the holder of its device (`host fetch`) |
 | `__host-tunnel … --json` | the far end of `dev --host`'s `ssh -R`: checks Metro answers through it, holds the caller's port lease until the ssh closes, then releases it |
 
 Anything else exits 2 (`refused: …` on stderr). The owner on the host is `{kind: "host", machineId, user}` from the grant (owner key `host:<machineId>`), never from a flag or env the laptop sends: every session on that laptop is one owner there, so `WARDEN_MAX_PER_OWNER` counts per laptop. Host leases carry no pid: they live by heartbeat + TTL only.
@@ -93,4 +110,4 @@ Every call is `ssh -T -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnown
 | `HOST_VERSION_SKEW` | 14 | the host runs another warden version: `warden host setup <name>` |
 | `HOST_UNKNOWN` | 15 | no host by that name: `warden host ls` |
 
-Rows 115-124 in troubleshooting.md.
+Rows 115-125 in troubleshooting.md.

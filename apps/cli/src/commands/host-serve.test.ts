@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { putGrant } from "@delacour/warden-core/hosts/registry";
+import type { Owner } from "@delacour/warden-core/types";
 import { type TestContext, testContext } from "../testing";
 import { createHostServeCommand, type HostServeSpawn } from "./host-serve";
 
@@ -101,5 +102,27 @@ describe("warden __host-serve", () => {
 		ctx.env.SSH_ORIGINAL_COMMAND = `warden heartbeat ${mine.id} --json`;
 		expect(await run()).toBe(0);
 		expect(spawned.map((s) => s.argv[1])).toEqual(["heartbeat"]);
+	});
+
+	test("perf acts only on the caller's own --lease; session reads need none", async () => {
+		const withLease = (owner: Owner) => {
+			const h = setup(undefined);
+			const lease = h.ctx.db.insertLease(
+				{ resource: { kind: "device", platform: "ios", id: "U1", name: "iPhone" }, owner, ttlMs: 90_000 },
+				0
+			);
+			h.ctx.env.SSH_ORIGINAL_COMMAND = `warden perf metrics --lease ${lease.id}`;
+			return h;
+		};
+		expect(await withLease({ kind: "host", machineId: "m1", user: "chris" }).run()).toBe(0);
+		const foreign = withLease({ kind: "user", pid: 1, cwd: "/" });
+		expect(await foreign.run()).toBe(2);
+		expect(foreign.spawned).toHaveLength(0);
+		const none = setup("warden perf metrics");
+		expect(await none.run()).toBe(2);
+		expect(none.ctx.stderr.join("\n")).toContain("needs --lease");
+		const unknown = setup("warden perf metrics --lease nope");
+		expect(await unknown.run()).toBe(2);
+		expect(await setup("warden perf report S1 --json").run()).toBe(0);
 	});
 });

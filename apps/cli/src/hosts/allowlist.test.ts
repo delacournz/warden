@@ -61,4 +61,33 @@ describe("checkHostCommand", () => {
 		expect(!r.success && r.error).toContain("not allowed");
 		expect(!r.success && r.error).toContain("claim");
 	});
+
+	test("passthrough commands (warden host run): only their listed subcommands, --json optional", () => {
+		for (const line of [
+			"warden perf metrics --lease R1",
+			"warden perf start --lease R1 --json",
+			"warden golden ls",
+			"warden golden ensure --json",
+			"warden builds ls",
+			"warden capacity",
+			"warden queue --json",
+			"warden __host-send --perf S1",
+		]) {
+			expect(ok(line).success).toBe(true);
+		}
+		for (const line of [
+			"warden golden prune",
+			"warden builds rm abc",
+			"warden builds import /tmp/x.app",
+			"warden builds",
+			"warden perf start --udid U1",
+			"warden perf start --claim",
+			"warden perf start --lease R1 --allow-mutate-foreign",
+		]) {
+			expect(ok(line).success).toBe(false);
+		}
+		expect(ok("warden golden prune").success === false && ok("warden golden prune")).toMatchObject({
+			error: expect.stringContaining("golden prune"),
+		});
+	});
 });

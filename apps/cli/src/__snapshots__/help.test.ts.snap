@@ -66,8 +66,8 @@ Devices:
                                 devices start from (fast boots): ensure | ls |
                                 prune
   host                          drive another Mac's sims / emulators over ssh:
-                                add, setup, doctor, ls, rm (host side: grant,
-                                revoke)
+                                add, setup, doctor, run, fetch, ls, rm (host
+                                side: grant, revoke)
 
 Builds:
   app                           fingerprint an Expo app and install the matching
@@ -2003,27 +2003,31 @@ exports[`help output warden host --help (and nested subcommands) 1`] = `
 "$ warden host --help
 Usage: warden host [options] [command]
 
-drive another Mac's sims / emulators over ssh: add, setup, doctor, ls, rm (host
-side: grant, revoke)
+drive another Mac's sims / emulators over ssh: add, setup, doctor, run, fetch,
+ls, rm (host side: grant, revoke)
 
 Options:
-  -h, --help      display help for command
+  -h, --help                display help for command
 
 Commands:
-  add <name>      record a Mac to drive over ssh and pin its host key (first
-                  contact)
-  setup <name>    install this warden on the host (no sudo), fetch its helper,
-                  grant this laptop's key
-  doctor <name>   check a host: reachable, key accepted, same warden version,
-                  lease drift there
-  ls              list hosts
-  rm <name>       forget a host
-  grant           on the host: let a laptop key in, through the forced warden
-                  __host-serve
-  revoke          on the host: remove a laptop's grant and its authorized_keys
-                  line
-  grants          on the host: list the laptops granted
-  help [command]  display help for command
+  add <name>                record a Mac to drive over ssh and pin its host key
+                            (first contact)
+  setup <name>              install this warden on the host (no sudo), fetch its
+                            helper, grant this laptop's key
+  doctor <name>             check a host: reachable, key accepted, same warden
+                            version, lease drift there
+  run <name> [args...]      run one allowed warden command on the host (perf,
+                            golden ls/ensure, builds ls, capacity, queue)
+  fetch <name> <kind> <id>  copy a perf session's files back from the host (into
+                            this machine's perf dir)
+  ls                        list hosts
+  rm <name>                 forget a host
+  grant                     on the host: let a laptop key in, through the forced
+                            warden __host-serve
+  revoke                    on the host: remove a laptop's grant and its
+                            authorized_keys line
+  grants                    on the host: list the laptops granted
+  help [command]            display help for command
 
 $ warden host add --help
 Usage: warden host add [options] <name>
@@ -2078,6 +2082,35 @@ Arguments:
 Options:
   --json      machine-readable output
   -h, --help  display help for command
+
+$ warden host run --help
+Usage: warden host run [options] <name> [args...]
+
+run one allowed warden command on the host (perf, golden ls/ensure, builds ls,
+capacity, queue)
+
+Arguments:
+  name        host name
+  args        the warden command and its flags, after --
+
+Options:
+  -h, --help  display help for command
+
+$ warden host fetch --help
+Usage: warden host fetch [options] <name> <kind> <id>
+
+copy a perf session's files back from the host (into this machine's perf dir)
+
+Arguments:
+  name         host name
+  kind         perf
+  id           the perf session id
+
+Options:
+  --out <dir>  put it here instead (default: $WARDEN_HOME/perf, where warden
+               perf report reads)
+  --json       machine-readable output
+  -h, --help   display help for command
 
 $ warden host ls --help
 Usage: warden host ls [options]
@@ -4408,6 +4441,18 @@ Options:
   --check
   --json
   -h, --help       display help for command"
+`;
+
+exports[`help output warden __host-send --help (and nested subcommands) 1`] = `
+"$ warden __host-send --help
+Usage: warden __host-send [options]
+
+send a perf session's files to the laptop that holds its device, as a tar on
+stdout (internal)
+
+Options:
+  --perf <id>
+  -h, --help   display help for command"
 `;
 
 exports[`help output warden __host-serve --help (and nested subcommands) 1`] = `

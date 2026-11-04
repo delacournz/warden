@@ -45,6 +45,33 @@ function foreignLeaseIds(
 	});
 }
 
+/** `perf` subcommands that read a session, not a device: they need no lease */
+const PERF_SESSION_READS = new Set(["report", "query", "diff", "ls", "tools"]);
+
+/** Why `perf …` is refused: a device-bound subcommand must name the caller's own `--lease`. */
+function perfRefusal(ctx: CommandContext, argv: readonly string[], owner: Parameters<typeof sameOwner>[0]) {
+	if (PERF_SESSION_READS.has(argv[1] ?? "")) return undefined;
+	const at = argv.indexOf("--lease");
+	const id = at >= 0 ? argv[at + 1] : argv.find((w) => w.startsWith("--lease="))?.slice("--lease=".length);
+	if (id === undefined) return `refused: \`perf ${argv[1]}\` needs --lease <your lease id> over warden host`;
+	const lease = ctx.store().getLease(id);
+	if (lease === undefined || !sameOwner(lease.owner, owner)) return `refused: ${id} is not your lease on this host`;
+	return undefined;
+}
+
+/** Why the lease ids `argv` names are refused for `owner`: someone else's lease (release, heartbeat, perf). */
+function leaseRefusal(
+	ctx: CommandContext,
+	name: string,
+	argv: readonly string[],
+	owner: Parameters<typeof sameOwner>[0]
+): string | undefined {
+	if (name === "perf") return perfRefusal(ctx, argv, owner);
+	if (name !== "release" && name !== "heartbeat") return undefined;
+	const foreign = foreignLeaseIds(ctx, argv.slice(1), owner);
+	return foreign.length > 0 ? `refused: ${foreign.join(" ")} is held by another owner on this host` : undefined;
+}
+
 async function serve(ctx: CommandContext, deps: HostServeDeps, opts: { key?: string }): Promise<number> {
 	if (opts.key === undefined) {
 		reportError(ctx, SCOPE, "--key is required");
@@ -63,12 +90,10 @@ async function serve(ctx: CommandContext, deps: HostServeDeps, opts: { key?: str
 	const owner = { kind: "host", machineId: grant.machineId, user: grant.user } as const;
 	const { name } = checked.data;
 	const argv = [...checked.data.argv];
-	if (name === "release" || name === "heartbeat") {
-		const foreign = foreignLeaseIds(ctx, argv.slice(1), owner);
-		if (foreign.length > 0) {
-			reportError(ctx, SCOPE, `refused: ${foreign.join(" ")} is held by another owner on this host`);
-			return EXIT_REFUSED;
-		}
+	const refused = leaseRefusal(ctx, name, argv, owner);
+	if (refused !== undefined) {
+		reportError(ctx, SCOPE, refused);
+		return EXIT_REFUSED;
 	}
 	if (name === "claim" && !argv.some((w) => w === "--ttl" || w.startsWith("--ttl="))) {
 		argv.push("--ttl", ctx.env.WARDEN_REMOTE_TTL ?? DEFAULT_REMOTE_TTL);

@@ -15,10 +15,14 @@ afterEach(async () => {
 	for (const loop of loops.splice(0)) await loop.stop();
 });
 
-async function host(loop: HostLoop, argv: string[]): Promise<{ code: number; json: unknown }> {
+async function host(
+	loop: HostLoop,
+	argv: string[],
+	deps: Parameters<typeof createHostCommand>[0] = {}
+): Promise<{ code: number; json: unknown }> {
 	loop.laptop.stdout.length = 0;
 	loop.laptop.argv = argv;
-	const code = await createHostCommand().run(loop.laptop);
+	const code = await createHostCommand(deps).run(loop.laptop);
 	const text = loop.laptop.stdout.join("");
 	return { code, json: text === "" ? undefined : JSON.parse(text) };
 }
@@ -99,5 +103,29 @@ describe.skipIf(sshdSkipReason(process.env) !== undefined)("warden host over a l
 		} finally {
 			metro.stop(true);
 		}
+	}, 60_000);
+
+	test("host run: an allowed command runs there with its output and exit code; a refused one exits 2", async () => {
+		const loop = await startHostLoop();
+		loops.push(loop);
+		expect((await host(loop, loop.addArgv)).code).toBe(0);
+		const setup = await host(loop, loop.setupArgv);
+		if (setup.code !== 0) throw new Error(loop.laptop.stderr.join("\n"));
+		const outputs: string[] = [];
+		const passthrough = async (argv: readonly string[]) => {
+			const proc = Bun.spawn([...argv], { stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+			const [stdout, stderr, exitCode] = await Promise.all([
+				new Response(proc.stdout).text(),
+				new Response(proc.stderr).text(),
+				proc.exited,
+			]);
+			outputs.push(stdout);
+			return { exitCode, stderr };
+		};
+		const listed = await host(loop, ["run", "loop", "--", "builds", "ls", "--json"], { passthrough });
+		expect(listed.code).toBe(0);
+		expect(JSON.parse(outputs[0] ?? "")).toMatchObject({ builds: [] });
+		const refused = await host(loop, ["run", "loop", "--", "builds", "rm", "abc"], { passthrough });
+		expect(refused.code).toBe(2);
 	}, 60_000);
 });

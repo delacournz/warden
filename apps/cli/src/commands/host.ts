@@ -4,7 +4,9 @@ import { deleteHost, type HostRecord, listGrants, listHosts, putHost } from "@de
 import { wardenHome } from "@delacour/warden-core/store";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
+import type { FetchSpawn } from "../hosts/evidence";
 import { grantKey, revokeKey } from "../hosts/grant";
+import type { PassthroughSpawn } from "../hosts/passthrough";
 import { hostVersion, lookupHost, remoteFailure, wardenJson } from "../hosts/remote";
 import { setupHost, type UploadFile } from "../hosts/setup";
 import { formatSshTarget, hostKnownHosts, parseSshTarget } from "../hosts/ssh";
@@ -12,7 +14,11 @@ import { emit, note, reportError, success, table, warn } from "../output";
 import { reportClaimFailure } from "../physical-lock";
 
 /** What `warden host` reaches the outside world through beyond the context; tests inject the upload. */
-export type HostDeps = { upload?: UploadFile };
+export type HostDeps = {
+	upload?: UploadFile;
+	passthrough?: PassthroughSpawn;
+	fetch?: FetchSpawn;
+};
 
 const SCOPE = "host";
 const NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$/;
@@ -262,11 +268,43 @@ function grants(ctx: CommandContext, opts: { json?: true }): number {
  * `warden host`: drive the devices of another Mac over ssh. On the laptop: `add` / `ls` / `rm` / `doctor` /
  * `setup`. On the host: `grant` / `revoke` / `grants` (who may come in through the forced `__host-serve`).
  */
+async function run(ctx: CommandContext, deps: HostDeps, name: string, args: string[]): Promise<number> {
+	if (args.length === 0) {
+		reportError(ctx, "host run", "nothing to run: warden host run <name> -- <warden command…>");
+		return 1;
+	}
+	const { runPassthrough } = await import("../hosts/passthrough");
+	return runPassthrough(ctx, name, args, {
+		tty: ctx.ui.interactive,
+		...(deps.passthrough ? { spawn: deps.passthrough } : {}),
+	});
+}
+
+async function fetchEvidence(
+	ctx: CommandContext,
+	deps: HostDeps,
+	name: string,
+	kind: string,
+	id: string,
+	opts: { out?: string; json?: true }
+): Promise<number> {
+	if (kind !== "perf") {
+		reportError(ctx, "host fetch", `${kind}: only perf sessions can be fetched (warden host fetch <name> perf <id>)`);
+		return 1;
+	}
+	const { fetchPerfFromHost } = await import("../hosts/evidence");
+	const got = await fetchPerfFromHost(ctx, name, id, opts.out, deps.fetch ? { spawn: deps.fetch } : {});
+	if (!got.success) return reportClaimFailure(ctx, "host fetch", got.error);
+	emit(ctx, opts.json === true, { host: name, session: id, dir: got.data }, got.data);
+	return 0;
+}
+
 export function createHostCommand(deps: HostDeps = {}) {
 	return defineCommand({
 		name: "host",
 		group: "Devices",
-		summary: "drive another Mac's sims / emulators over ssh: add, setup, doctor, ls, rm (host side: grant, revoke)",
+		summary:
+			"drive another Mac's sims / emulators over ssh: add, setup, doctor, run, fetch, ls, rm (host side: grant, revoke)",
 		register: (cmd, ctx, done) => {
 			cmd
 				.command("add")
@@ -297,6 +335,22 @@ export function createHostCommand(deps: HostDeps = {}) {
 				.argument("<name>", "host name")
 				.option("--json", "machine-readable output")
 				.action(async (name, opts) => done(await doctor(ctx, name, opts)));
+			cmd
+				.command("run")
+				.description("run one allowed warden command on the host (perf, golden ls/ensure, builds ls, capacity, queue)")
+				.argument("<name>", "host name")
+				.argument("[args...]", "the warden command and its flags, after --")
+				.allowUnknownOption()
+				.action(async (name, args) => done(await run(ctx, deps, name, args)));
+			cmd
+				.command("fetch")
+				.description("copy a perf session's files back from the host (into this machine's perf dir)")
+				.argument("<name>", "host name")
+				.argument("<kind>", "perf")
+				.argument("<id>", "the perf session id")
+				.option("--out <dir>", "put it here instead (default: $WARDEN_HOME/perf, where warden perf report reads)")
+				.option("--json", "machine-readable output")
+				.action(async (name, kind, id, opts) => done(await fetchEvidence(ctx, deps, name, kind, id, opts)));
 			cmd
 				.command("ls")
 				.description("list hosts")
