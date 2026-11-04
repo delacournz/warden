@@ -70,6 +70,10 @@ export async function runUi(
 			...(deps.pidAlive ? { pidAlive: deps.pidAlive } : {}),
 		});
 		if (!device.success) return reportError(ctx, report, device.error);
+		if (device.data.lease.resource.kind === "host-device") {
+			const refused = (await import("../hosts/driver")).hostVerbError(command);
+			if (refused) return reportError(ctx, report, refused);
+		}
 		const info = { udid: device.data.udid, platform: device.data.platform, name: device.data.name };
 		let opened: Promise<Result<Driver, UiError>> | undefined;
 		const driver = () => {

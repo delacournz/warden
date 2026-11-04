@@ -196,6 +196,12 @@ export const COMMANDS: readonly CommandEntry[] = [
 		load: async () => (await import("./host-keepalive")).hostKeepaliveCommand,
 	},
 	{
+		name: "__host-recv",
+		summary: "receive an app build from a laptop into the host's uploads, checked against its hash (internal)",
+		hidden: true,
+		load: async () => (await import("./host-recv")).hostRecvCommand,
+	},
+	{
 		name: "__host-serve",
 		summary: "the forced command a warden host grant installs: runs one allowed warden command for a laptop (internal)",
 		hidden: true,

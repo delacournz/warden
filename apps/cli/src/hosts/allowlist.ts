@@ -14,6 +14,7 @@ const ALLOWED = {
 	ls: { json: true, refuse: [] },
 	doctor: { json: true, refuse: ["--fix", "--fetch-helper"] },
 	"__driver-serve": { json: false, refuse: [] },
+	"__host-recv": { json: true, refuse: [] },
 } as const satisfies Record<string, { json: boolean; refuse: readonly string[] }>;
 
 export type HostCommandName = keyof typeof ALLOWED;

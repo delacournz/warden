@@ -3,7 +3,14 @@ import { type PidAlive, processAlive } from "@delacour/warden-core/liveness";
 import { isEmulatorSerial } from "@delacour/warden-core/providers/android";
 import { DEVICE_LOCKED_HINT } from "@delacour/warden-core/providers/unlock-wait";
 import { PRIORITY } from "@delacour/warden-core/queue";
-import { isPhysicalIosId, type Lease, type Owner, type Platform } from "@delacour/warden-core/types";
+import {
+	describeOwner,
+	isPhysicalIosId,
+	type Lease,
+	type Owner,
+	type Platform,
+	sameOwner,
+} from "@delacour/warden-core/types";
 import { err, ok, type Result } from "@delacour/warden-types/result";
 import { claimWithFlags, leasePidFor, parseClaimFlags, parsePlatform, resolveOwner } from "../claim-flags";
 import type { CommandContext } from "../context";
@@ -64,6 +71,9 @@ function fromFlags(ctx: CommandContext, flags: UiDeviceFlags): Result<Candidate 
 	if (flags.lease !== undefined) {
 		const lease = ctx.store().getLease(flags.lease);
 		if (!lease) return fail(uiError("lease_not_found", `no lease ${flags.lease}`, { hint: "see warden ls" }));
+		if (lease.resource.kind === "host-device") {
+			return ok({ id: lease.resource.id, platform: lease.resource.platform, source: "flag" });
+		}
 		if (lease.resource.kind !== "device") {
 			return fail(uiError("usage", `lease ${flags.lease} is not a device lease`));
 		}
@@ -95,7 +105,11 @@ function callerDeviceLeases(ctx: CommandContext, owner: Owner, platform: Platfor
 	return ctx
 		.store()
 		.listLeasesByOwner(owner)
-		.filter((l) => l.resource.kind === "device" && (platform === undefined || l.resource.platform === platform));
+		.filter(
+			(l) =>
+				(l.resource.kind === "device" || l.resource.kind === "host-device") &&
+				(platform === undefined || l.resource.platform === platform)
+		);
 }
 
 /** How `open` / `close --release` name the shared `warden dev` lease a call attached to. */
@@ -187,7 +201,9 @@ function pickHeld(
 	const dev = held.filter((l) => liveShared(l, pidAlive));
 	const mine = held.length > 1 && dev.length === 1 ? dev : held;
 	if (mine.length > 1) {
-		const listing = mine.map((l) => (l.resource.kind === "device" ? `${l.resource.id} (${l.resource.name})` : l.id));
+		const listing = mine.map((l) =>
+			l.resource.kind === "device" || l.resource.kind === "host-device" ? `${l.resource.id} (${l.resource.name})` : l.id
+		);
 		return fail(
 			uiError("ambiguous_device", `several devices leased: ${listing.join(", ")}`, {
 				hint: "pick one with --udid <id> (or --serial / --lease)",
@@ -196,11 +212,48 @@ function pickHeld(
 		);
 	}
 	const first = mine[0]?.resource;
-	if (first?.kind === "device") return ok({ id: first.id, platform: first.platform, source: "lease" });
+	if (first?.kind === "device" || first?.kind === "host-device") {
+		return ok({ id: first.id, platform: first.platform, source: "lease" });
+	}
 	if (flags.claim === true) return ok("claim");
 	return fail(
 		uiError("no_device_leased", "no device leased", { hint: claimHint(platform ?? flags.platform ?? "ios") })
 	);
+}
+
+/** The live lease on a warden host's device with this udid, if any. */
+function hostLeaseOn(ctx: CommandContext, id: string): Lease | undefined {
+	return ctx
+		.store()
+		.listLeases()
+		.find((l) => l.resource.kind === "host-device" && l.resource.id === id);
+}
+
+/** A host's device: only its own lease's owner drives it (heartbeat here; the keepalive renews the host's). */
+function leaseHostDevice(
+	ctx: CommandContext,
+	owner: Owner,
+	lease: Lease,
+	source: UiDeviceSource
+): Result<UiDevice, UiError> {
+	if (lease.resource.kind !== "host-device") return fail(uiError("usage", `lease ${lease.id} is not a host device`));
+	if (!sameOwner(lease.owner, owner)) {
+		return fail(
+			uiError(
+				"device_foreign",
+				`${lease.resource.id} on ${lease.resource.host} is leased by ${describeOwner(lease.owner)}`
+			)
+		);
+	}
+	ctx.store().heartbeat([lease.id], ctx.now());
+	return ok({
+		udid: lease.resource.id,
+		platform: lease.resource.platform,
+		name: lease.resource.name,
+		lease,
+		action: "own",
+		source,
+	});
 }
 
 /** Prove the caller may use `candidate` (heartbeat / refuse / take over with `--claim`). */
@@ -293,5 +346,7 @@ export async function resolveUiDevice(
 		candidate = held.data;
 	}
 	if (candidate === "claim") return claimFresh(ctx, owner, flags);
+	const onHost = hostLeaseOn(ctx, candidate.id);
+	if (onHost) return leaseHostDevice(ctx, owner, onHost, candidate.source);
 	return leaseCandidate(ctx, owner, candidate, flags.claim === true, check);
 }
