@@ -31,6 +31,7 @@ const expoConfig: ExpoConfig = {
 				locationWhenInUsePermission: "The Location and Conditions screens show your position and a geofence.",
 			},
 		],
+		"expo-notifications",
 		[
 			"expo-camera",
 			{

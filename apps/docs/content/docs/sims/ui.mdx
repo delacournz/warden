@@ -4,6 +4,10 @@ description: "Look at and drive a leased iOS simulator or Android emulator from 
 icon: Smartphone
 ---
 
+<DemoClip src="/demos/gestures/pinch" label="warden ui gesture pinch and rotate on the example app's gesture canvas, then screen appearance light, on a leased simulator" />
+
+`warden ui gesture pinch id=gestures-canvas 1.6` and `gesture rotate id=gestures-canvas 45` move two real fingers on the canvas, then `warden ui screen appearance light` flips the system appearance.
+
 `warden ui` is how your agent looks at a device and drives it: read the screen as text, tap, type, scroll, wait, read the app's console and React tree. Use it to explore, reproduce a bug, verify a change, or get the selectors for a spec.
 
 ```bash
@@ -37,6 +41,10 @@ warden ui close --release --udid $UDID                  # 6. stop the helper and
 6. **Close.** `close --release` stops this device's helper and releases the lease. Leave the device alone only if another step of your task needs it.
 
 ## Record a session as a spec
+
+<DemoClip src="/demos/record/spec" label="warden ui record start, a hand-driven sign-in, then record stop writing a spec and replaying it on the same leased simulator" />
+
+`warden ui record start signin-demo`, then `open --relaunch`, `press` and `fill` through onboarding and sign-in, then `warden ui record stop` writes `e2e/signin-demo.e2e.ts` and replays it once on the same simulator.
 
 Between `warden ui record start <name>` and `record stop`, every action and query is journaled (`--no-record` skips one call) and `stop` writes a [spec](/docs/e2e/specs) and runs it once on the same device. While recording, `snapshot -i` marks interactive elements with no testID `[no-id]`, and `status` shows the recording. `record use <module#fn>` runs a helper on the device and records a call to it. Full workflow, route capture, lints and helpers: [Author specs by recording](/docs/e2e/author-specs).
 

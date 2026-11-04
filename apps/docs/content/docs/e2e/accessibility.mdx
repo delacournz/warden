@@ -4,6 +4,10 @@ description: Audit screens, check what a screen reader would say, read announcem
 icon: Accessibility
 ---
 
+<DemoClip src="/demos/a11y/audit" label="warden ui a11y audit flagging a broken control, passing the good screen, then warden ui a11y set growing the text on a leased simulator" />
+
+`warden ui a11y audit --rule role-in-name` flags the bad variant's “Submit button”, `warden ui a11y audit --no-native` passes the good screen, and `warden ui a11y set --text-size accessibility-large --bold` grows the text.
+
 Specs and [`warden ui`](/docs/sims/ui) can audit a screen, show the order and wording a screen reader would use, read announcements and live-region changes, and set the OS accessibility settings an app reads (bold text, reduce motion, screen reader on: [Accessibility settings](/docs/sims/conditions/accessibility)). Everything is scoped to the lease and undone on release.
 
 ## What works where

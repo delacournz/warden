@@ -4,6 +4,13 @@ description: Run the app in a worktree on a leased simulator with its own Metro 
 icon: Play
 ---
 
+<DemoReel
+  command="warden dev ios"
+  facts="dev build from cache 3.5s · Metro 3.9s · dev client 0.2s · hot reload 0.8s · real time"
+  label="warden dev's dashboard beside the iOS simulator it leased: the dev client opens, an edited string hot reloads on the phone, the HUD turns on, q releases the device and port"
+  src="/demos/dev/hero"
+/>
+
 `warden dev` replaces `expo run:ios` in a worktree: it claims a device, installs the dev build cached for your native fingerprint, starts Metro on a leased port and opens the dev client. Use it whenever you or your agent need the app running.
 
 ```bash

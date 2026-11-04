@@ -57,6 +57,22 @@ function flags(text: string): string[] {
 	return [...new Set([...text.matchAll(/(?<![\w-])--[a-z][a-z-]*/g)].map((m) => m[0]))];
 }
 
+describe("the landing's feature clips", () => {
+	const clips = LANDING.ON_THE_DEVICE.features.flatMap((f) => (f.clip ? [f.clip] : []));
+
+	test("there are some, each labelled", () => {
+		expect(clips.length).toBeGreaterThan(0);
+		expect(clips.filter((clip) => !clip.label.trim())).toEqual([]);
+	});
+
+	test("every clip has its mp4 and poster in public/", () => {
+		const missing = clips
+			.flatMap((clip) => [`${clip.src}.mp4`, `${clip.src}.jpg`])
+			.filter((file) => !existsSync(join(DOCS, "public", file)));
+		expect(missing).toEqual([]);
+	});
+});
+
 describe("the landing's claims", () => {
 	test("the code scan sees the commands and flags (a scan that finds nothing passes everything)", () => {
 		expect(commands(CODE)).toEqual(expect.arrayContaining(["claim", "ui", "e2e", "dev", "golden", "affected"]));
