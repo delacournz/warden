@@ -128,7 +128,35 @@ export async function attachViewer(
 	return exitCode;
 }
 
+/** A host's device: a browser tab on this Mac (`hosts/view-run.ts`), until Ctrl-C or the lease ends. */
+async function viewOnHost(ctx: CommandContext, arg: string | undefined, opts: ViewOpts): Promise<number | undefined> {
+	const { pickHostLease, viewHost } = await import("../hosts/view-run");
+	const lease = pickHostLease(ctx, arg);
+	if (lease === undefined) return undefined;
+	if (opts.detach) {
+		reportError(ctx, "view", "--detach is for hosted devices; a host's device is viewed while warden view runs");
+		return 1;
+	}
+	const stop = new AbortController();
+	const onSignal = () => stop.abort();
+	process.once("SIGINT", onSignal);
+	process.once("SIGTERM", onSignal);
+	try {
+		return await viewHost(
+			ctx,
+			lease,
+			{ watch: opts.watch === true, json: opts.json === true },
+			{ signal: stop.signal }
+		);
+	} finally {
+		process.off("SIGINT", onSignal);
+		process.off("SIGTERM", onSignal);
+	}
+}
+
 async function view(ctx: CommandContext, arg: string | undefined, opts: ViewOpts): Promise<number> {
+	const onHost = await viewOnHost(ctx, arg, opts);
+	if (onHost !== undefined) return onHost;
 	const { pickRemoteLease } = await import("../remote/viewer");
 	const lease = pickRemoteLease(ctx, arg);
 	if (!lease.success) {
@@ -147,10 +175,10 @@ async function view(ctx: CommandContext, arg: string | undefined, opts: ViewOpts
 export const viewCommand = defineCommand({
 	name: "view",
 	group: "Account",
-	summary: "open a hosted device in the warden viewer window",
+	summary: "watch and drive a device: hosted (the warden viewer window) or on a warden host (a browser tab)",
 	register: (cmd, ctx, done) => {
 		cmd
-			.argument("[leaseId|remoteId]", "remote lease or hosted device id (default: your only remote lease)")
+			.argument("[leaseId|remoteId]", "remote or host lease, or hosted device id (default: your only one)")
 			.option("--watch", "read-only: no taps, swipes or typing")
 			.option("--detach", "leave the window open and return (one 30 min token; the lease TTL applies)")
 			.option("--json", "machine-readable output")

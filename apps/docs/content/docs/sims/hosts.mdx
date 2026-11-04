@@ -80,6 +80,15 @@ warden ui snapshot -i
 
 `app ensure` builds or fetches the app here, sends it to the host once per content hash, and installs it there. `warden ui` runs its driver on the host over ssh. Verbs that run local tools (screenshots, rotation, network conditions, devtools) don't reach a host's device yet, and neither does `warden e2e`.
 
+To watch or drive it yourself, open it in a browser tab:
+
+```bash
+warden view            # your only device lease, or: warden view <lease id>
+warden view --watch    # read-only
+```
+
+The page is served on `127.0.0.1` behind a random link, and frames and input go through the same driver as `warden ui`. Click to tap, drag to swipe, type on the keyboard; Esc is the home button. Ctrl-C stops viewing and keeps the lease.
+
 ## Run a dev client on a host
 
 ```bash
