@@ -4,7 +4,8 @@ import { shellSplit } from "./ssh";
 /**
  * What a laptop may run on a host through its forced command (`__host-serve`). The command line arrives in
  * `SSH_ORIGINAL_COMMAND`; it is split here and run as an argv (never through a shell). Each entry names the
- * flags it refuses: `--session` / `--all` / `--udid` would reach leases that are not the caller's, `doctor --fix` writes.
+ * flags it refuses: `--session` / `--all` / `--udid` / `port --force` would reach leases that are not the caller's,
+ * `doctor --fix` writes.
  */
 const ALLOWED = {
 	version: { json: true, refuse: [] },
@@ -13,8 +14,10 @@ const ALLOWED = {
 	release: { json: true, refuse: ["--session", "--all", "--udid"] },
 	ls: { json: true, refuse: [] },
 	doctor: { json: true, refuse: ["--fix", "--fetch-helper"] },
+	port: { json: true, refuse: ["--force"] },
 	"__driver-serve": { json: false, refuse: [] },
 	"__host-recv": { json: true, refuse: [] },
+	"__host-tunnel": { json: true, refuse: [] },
 } as const satisfies Record<string, { json: boolean; refuse: readonly string[] }>;
 
 export type HostCommandName = keyof typeof ALLOWED;

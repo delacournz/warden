@@ -51,6 +51,16 @@ warden ui snapshot -i
 
 `app ensure` builds or fetches the app here, sends it to the host once per content hash, and installs it there. `warden ui` runs its driver on the host over ssh. Verbs that run local tools (screenshots, rotation, network conditions, devtools) don't reach a host's device yet, and neither does `warden e2e`.
 
+## Run a dev client on a host
+
+```bash
+warden dev ios --host mac
+```
+
+Metro and the project stay on your laptop. `warden dev --host` claims a device on the host, starts Metro here, sends and installs the dev build there, and opens one `ssh -R` so Metro answers on the host's loopback. The dev client is pointed at it, and fast refresh and devtools ride the same port. The host leases its end of the forward and frees it as soon as the ssh closes.
+
+Output is plain (no dashboard). Ctrl-C stops Metro, closes the tunnel and releases the device here and on the host. `--udid`, `--lease`, `--install-mode`, `--hud` and `--devtools` don't apply to a host run yet, and only Expo dev clients are supported.
+
 A claim that can't reach the host is tried three times with the same idempotency key, so a claim that landed before the link dropped is returned rather than made twice.
 
 ## What the laptop's key can do
@@ -61,7 +71,7 @@ The grant is a forced command in the host's `~/.ssh/authorized_keys`:
 command="/Users/me/.local/bin/warden __host-serve --key SHA256:…",restrict,port-forwarding ssh-ed25519 AAAA… warden:<machine>:<user>
 ```
 
-The key cannot open a shell. It can run `version`, `claim`, `heartbeat`, `release`, `ls` and `doctor` (all with `--json`), and serve the driver of its own leased device. Selectors that would reach other people's leases are refused, and so is a lease id another owner holds. On the host, every session from one laptop is one owner, `host:<machine>`, whose leases live by heartbeat and a short TTL (90 s by default, `WARDEN_REMOTE_TTL`): a laptop that disappears frees its devices within that.
+The key cannot open a shell. It can run `version`, `claim`, `heartbeat`, `release`, `ls`, `port` and `doctor` (all with `--json`), serve the driver of its own leased device, take an app build, and hold the far end of a `warden dev --host` forward. Selectors that would reach other people's leases are refused, and so is a lease id another owner holds. On the host, every session from one laptop is one owner, `host:<machine>`, whose leases live by heartbeat and a short TTL (90 s by default, `WARDEN_REMOTE_TTL`): a laptop that disappears frees its devices within that.
 
 Manage grants on the host itself: `warden host grants`, `warden host revoke --key SHA256:…`.
 

@@ -52,6 +52,14 @@ Put the app on it first: `warden app ensure --lease <host lease id> [--kind <dev
 
 `warden e2e` / `warden batch` on a host's devices: not yet. `close --release` releases the lease on the host too. Someone else's host lease is `device_foreign` (exit 2).
 
+## Dev client on a host's device (`warden dev --host`)
+
+`warden dev [ios|android] --host <name> [--port <from:span>] [--no-open] [--json] [-- <expo start args>]`: claims a device on the host (like `claim --host`; `--profile`, `--runtime`, `--ttl`, `--label`, `--wait`, `--priority` pass on), leases a Metro port **here** and starts Metro here, sends + installs the dev build there (as `app ensure`, while Metro warms up), then opens one `ssh -R <host port>:127.0.0.1:<port>` so Metro answers on the host's loopback, and points the dev client at it (iOS `http://127.0.0.1:<host port>`, Android `http://10.0.2.2:<host port>`). The host leases its end of the forward (`port claim` there, from 8091) and holds it only while that ssh lives. Devtools and fast refresh ride the same port.
+
+- Plain output only (no dashboard). `--json` prints one line `{ host, udid, leaseId, port, remotePort, metroUrl }` once the dev client is pointed.
+- Ends on Ctrl-C (exit 0), Metro exiting (its code), the tunnel dropping (1) or the host lease lost (`LEASE_LOST`, 1); always stops Metro, closes the tunnel and releases both leases (here and on the host).
+- Refused with `--host`: `--udid`, `--lease`, `--install-mode`, `--reset-keychain`, `--clean`, `--hud`, `--devtools`, `--physical`; a bare React Native app (Expo dev clients only).
+
 A spec process reaches a host's device the same way when `WARDEN_HOST` (its name) and `WARDEN_HOST_DRIVER` (JSON argv of the ssh command that serves the driver) are set.
 
 ## What the granted key can do
@@ -65,6 +73,8 @@ The grant is a forced command in the host's `~/.ssh/authorized_keys`: `command="
 | `heartbeat … --json`, `release … --json` | the session selector, `--all` and `--udid` refused; a lease id held by another owner refused |
 | `__driver-serve --lease <id>` | the driver of the caller's own device lease, on stdio |
 | `__host-recv … --json` | an app build as a tar on stdin, named by its content hash: unpacked into the host's uploads only if its content matches; `app ensure` asks first whether the host has it |
+| `port claim … --json`, `port release … --json`, `port ls --json` | the host end of `dev --host`'s forward; `port release --force` refused |
+| `__host-tunnel … --json` | the far end of `dev --host`'s `ssh -R`: checks Metro answers through it, holds the caller's port lease until the ssh closes, then releases it |
 
 Anything else exits 2 (`refused: …` on stderr). The owner on the host is `{kind: "host", machineId, user}` from the grant (owner key `host:<machineId>`), never from a flag or env the laptop sends: every session on that laptop is one owner there, so `WARDEN_MAX_PER_OWNER` counts per laptop. Host leases carry no pid: they live by heartbeat + TTL only.
 
@@ -83,4 +93,4 @@ Every call is `ssh -T -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnown
 | `HOST_VERSION_SKEW` | 14 | the host runs another warden version: `warden host setup <name>` |
 | `HOST_UNKNOWN` | 15 | no host by that name: `warden host ls` |
 
-Rows 115-123 in troubleshooting.md.
+Rows 115-124 in troubleshooting.md.
