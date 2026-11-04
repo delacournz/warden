@@ -174,10 +174,10 @@ function Home(): ReactElement {
 
 				<section className={`${PAGE} scroll-mt-20 pt-16`} id="demo">
 					<DemoReel
-						command="warden dev ios"
-						facts="dev build from cache 3.5s · Metro 3.9s · dev client 0.2s · hot reload 0.8s · iPhone 17 Pro simulator, real time"
-						label="warden dev's dashboard beside the iOS simulator it leased: the dev client opens, an edited string hot reloads on the phone, the HUD turns on, q releases the device and port"
-						src="/demos/dev/hero"
+						command="warden batch salient-e2e"
+						facts="37 Salient e2e specs · 5 iPhone 17 simulators · 3m25s (13m55s on one) · 37/37 passed · shown at 5× speed"
+						label="warden batch leasing five iOS simulators and running salient's end-to-end specs across them"
+						src="/demos/e2e/batch"
 					/>
 				</section>
 

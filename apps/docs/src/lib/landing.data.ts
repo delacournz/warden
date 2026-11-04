@@ -49,7 +49,7 @@ export type Faq = { q: string; a: string; proof?: Proof };
 
 export const HERO = {
 	pill: "open source · MIT · iOS + Android",
-	lede: "warden leases iOS simulators, Android emulators and real phones to your coding agents, drives the app on them and keeps what they checked as tests. Devices, ports and builds, leased across every worktree on your Mac. One CLI, free and open source.",
+	lede: "Your coding agents tap, type and scroll through your app on iOS simulators, Android emulators and real phones, then save what they checked as e2e tests you can rerun in parallel. Every worktree on your Mac gets its own devices, ports and builds, so agents never collide.",
 	installNote: "Installs the CLI and the skill for every agent it finds.",
 } as const;
 
@@ -199,6 +199,11 @@ export const ON_THE_DEVICE = {
 			],
 			link: { to: "sims/dev", text: "Dev client per worktree" },
 			sample: { label: "terminal", code: DEV_SAMPLE },
+			clip: {
+				src: "/demos/dev/hero",
+				label:
+					"warden dev's dashboard beside the iOS simulator it leased: the dev client opens, an edited string hot reloads on the phone, the HUD turns on, q releases the device and port",
+			},
 		},
 		{
 			label: "Drive it",

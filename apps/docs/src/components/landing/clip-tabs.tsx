@@ -1,11 +1,11 @@
 import { Link } from "@tanstack/react-router";
-import { type KeyboardEvent, type ReactElement, useEffect, useId, useRef, useState } from "react";
+import { type KeyboardEvent, type ReactElement, useId, useRef, useState } from "react";
 import { ExpandClip } from "@/components/landing/expand-clip";
 import { QuietVideo } from "@/components/quiet-video";
 import { RichText } from "@/components/rich-text";
 import { cn } from "@/lib/cn";
 import type { Clip } from "@/lib/landing.data";
-import { useReducedMotion } from "./demo-video";
+import { useAutoplay, useReducedMotion } from "./demo-video";
 
 /**
  * The device-control clips as tabs: each a real simulator driven by the commands its caption names. Arrow keys move
@@ -32,12 +32,7 @@ export function ClipTabs({
 	const media = useRef<HTMLDivElement>(null);
 	const clip = clips[selected] ?? clips[0];
 
-	useEffect(() => {
-		const el = video.current;
-		if (!el) return;
-		if (reduced) el.pause();
-		else void el.play().catch(() => undefined);
-	}, [reduced]);
+	useAutoplay(video, reduced, clip?.id);
 
 	const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
 		const step = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
