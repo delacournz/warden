@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import type { ClaimErrorCode } from "@delacour/warden-core/claim-errors";
 import type { HostRecord, SshTarget } from "@delacour/warden-core/hosts/registry";
@@ -12,9 +13,20 @@ export function hostControlDir(home: string): string {
 	return join(home, "hosts", "cm");
 }
 
-/** macOS caps a unix socket path at 104 bytes; `%C` expands to 40 hex characters. */
+/** macOS caps a unix socket path at 104 bytes; the name is `<8 hex>-%C`, and `%C` expands to 40 hex characters. */
 const SOCKET_PATH_MAX = 104;
-const CONTROL_NAME_LEN = 41;
+const CONTROL_NAME_LEN = 50;
+
+/**
+ * The control socket's name. `%C` hashes host, port and user but not the key, so it carries the identity too: the
+ * setup shell key's master must never carry a granted key's calls (those must go through the forced command).
+ */
+function controlName(identity: string | undefined): string {
+	return `${createHash("sha256")
+		.update(identity ?? "")
+		.digest("hex")
+		.slice(0, 8)}-%C`;
+}
 
 const HOSTNAME = /^[A-Za-z0-9._:%[\]-]+$/;
 const USER = /^[A-Za-z0-9._-]+$/;
@@ -134,7 +146,14 @@ export function sshArgv(host: HostRecord, cmd: readonly string[], opts: SshArgvO
 	if (host.identity !== undefined) argv.push("-i", host.identity, "-o", "IdentitiesOnly=yes");
 	const controlDir = hostControlDir(opts.home);
 	if (opts.control !== false && controlDir.length + 1 + CONTROL_NAME_LEN < SOCKET_PATH_MAX) {
-		argv.push("-o", "ControlMaster=auto", "-o", `ControlPath=${join(controlDir, "%C")}`, "-o", "ControlPersist=60s");
+		argv.push(
+			"-o",
+			"ControlMaster=auto",
+			"-o",
+			`ControlPath=${join(controlDir, controlName(host.identity))}`,
+			"-o",
+			"ControlPersist=60s"
+		);
 	}
 	if (host.proxyCommand !== undefined) argv.push("-o", `ProxyCommand=${host.proxyCommand}`);
 	if (host.jump !== undefined) argv.push("-J", host.jump);

@@ -1,4 +1,13 @@
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readdirSync,
+	realpathSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { bunExec } from "@delacour/warden-core/exec";
@@ -42,8 +51,11 @@ export async function startHostLoop(): Promise<HostLoop> {
 	const setupKey = await sshd.addClient({ forcedCommand: 'eval "$SSH_ORIGINAL_COMMAND"' });
 	const laptop = testContext([], { exec: bunExec });
 	laptop.env.USER = "tester";
-	const user = process.env.USER ?? "";
-	const target = `${user}@127.0.0.1:${sshd.port}`;
+	// a short laptop home, like ~/.warden: its control sockets fit macOS's 104 bytes, so the masters are exercised
+	const laptopHome = mkdtempSync("/tmp/whl-");
+	laptop.env.WARDEN_HOME = laptopHome;
+	// no user: ssh logs in as this process's own user, the one sshd lets in (USER may be unset, e.g. under turbo)
+	const target = `127.0.0.1:${sshd.port}`;
 	return {
 		sshd,
 		laptop,
@@ -65,6 +77,11 @@ export async function startHostLoop(): Promise<HostLoop> {
 			"--json",
 		],
 		async stop() {
+			const cm = join(laptopHome, "hosts", "cm");
+			for (const sock of existsSync(cm) ? readdirSync(cm) : []) {
+				Bun.spawnSync(["ssh", "-o", `ControlPath=${join(cm, sock)}`, "-O", "exit", "loop"], { stderr: "ignore" });
+			}
+			rmSync(laptopHome, { recursive: true, force: true });
 			laptop.cleanup();
 			await sshd.stop();
 			rmSync(root, { recursive: true, force: true });

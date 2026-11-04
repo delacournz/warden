@@ -45,6 +45,17 @@ describe("sshArgv", () => {
 		expect(argv.slice(argv.indexOf("--") + 1)).toEqual(["warden", "version", "--json"]);
 	});
 
+	test("one control master per key: setup's shell key never carries the granted key's calls", () => {
+		const path = (argv: string[]) => argv.find((a) => a.startsWith("ControlPath="));
+		const granted = path(sshArgv(host, [], { home: "/w" }));
+		const setupKey = path(sshArgv({ ...host, identity: "/k/setup" }, [], { home: "/w" }));
+		const { identity: _, ...bare } = host;
+		const sshDefault = path(sshArgv(bare, [], { home: "/w" }));
+		expect(granted).toMatch(/^ControlPath=\/w\/hosts\/cm\/[0-9a-f]{8}-%C$/);
+		expect(new Set([granted, setupKey, sshDefault]).size).toBe(3);
+		expect(path(sshArgv(host, [], { home: "/w" }))).toBe(granted);
+	});
+
 	test("first contact accepts and pins a new host key, never a changed one", () => {
 		const opts = sshArgv(host, [], { home: "/w", trustNew: true }).join(" ");
 		expect(opts).toContain("-o StrictHostKeyChecking=accept-new");
