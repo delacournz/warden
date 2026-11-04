@@ -12,6 +12,7 @@ import {
 	DEFAULT_UI_KIND,
 	deviceTarget,
 	kindBuildCommand,
+	kindlessIsDev,
 	projectForKind,
 	resolveKind,
 	withDeviceBundleId,
@@ -183,5 +184,43 @@ describe("device builds", () => {
 	test("withDeviceBundleId leaves a project without an override alone", () => {
 		const project = testProject();
 		expect(withDeviceBundleId(project)).toBe(project);
+	});
+});
+
+describe("kindlessIsDev", () => {
+	test("the default kind-less project builds exactly the dev kind's build", () => {
+		expect(kindlessIsDev(testProject(), "ios")).toBe(true);
+		expect(
+			kindlessIsDev(
+				testProject({
+					framework: "react-native",
+					build: {
+						ios: defaultBuildCommand("ios", "Debug", "react-native"),
+						android: defaultBuildCommand("android", "Debug", "react-native"),
+					},
+				}),
+				"android"
+			)
+		).toBe(true);
+	});
+
+	test("kinds.dev.build matching the kind-less build is still the same build", () => {
+		const project = testProject({
+			build: { ios: "my build", android: "x" },
+			kinds: { dev: { build: { ios: "my build" } } },
+		});
+		expect(kindlessIsDev(project, "ios")).toBe(true);
+		expect(kindlessIsDev(project, "android")).toBe(false);
+	});
+
+	test("any setting that makes the kind-less build differ is not the dev build", () => {
+		const own = testProject();
+		expect(kindlessIsDev({ ...own, build: { ...own.build, ios: "custom" } }, "ios")).toBe(false);
+		expect(kindlessIsDev({ ...own, buildConfiguration: "Release" }, "ios")).toBe(false);
+		expect(kindlessIsDev({ ...own, variant: "staging" }, "ios")).toBe(false);
+		expect(kindlessIsDev({ ...own, jsInputs: ["src/**"] }, "ios")).toBe(false);
+		expect(kindlessIsDev({ ...own, kind: "dev" }, "ios")).toBe(false);
+		expect(kindlessIsDev({ ...own, target: "device" }, "ios")).toBe(false);
+		expect(kindlessIsDev({ ...own, kinds: { dev: { env: { FOO: "1" } } } }, "ios")).toBe(false);
 	});
 });
