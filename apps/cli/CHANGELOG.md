@@ -1,5 +1,28 @@
 # @delacour/warden
 
+## 0.9.0
+
+### Minor Changes
+
+- [#154](https://github.com/delacournz/warden/pull/154) [`323dff6`](https://github.com/delacournz/warden/commit/323dff6c00776b61f1606cbb9c230ee1f09b0858) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - `warden builds import <App.app> --kind simulator-base [--hash <nativeFp>]`: file a Release simulator `.app` built by another CI job as the base `warden e2e` / `warden repack` clone, so a fresh runner repacks its JS in seconds instead of building the native app again. The hash defaults to warden's own fingerprint of the project. The import refuses a device build, an `.app` without a slice for this Mac, another bundle id, a Debug or expo-dev-client build, and an executable that lost its mode bits; an embedded `main.jsbundle` is left out of the cached copy (`strippedBundle` in `--json`). `--hash` is now optional with `--kind`.
+  - `warden app fingerprint [platform] --kind dev|simulator|release`: print the native fingerprint that kind's build is cached under, plus its cache hash (`hashes` in `--json`, `<fp>:base` for the simulator base).
+  - `warden golden key | export <dir> | import <dir>` (iOS): carry the golden image between machines through a CI cache. `key` prints the golden's name (Xcode build, runtime build, device type and recipe), `export` copies the golden into `<dir>/<name>/`, and `import` registers each archive that matches this machine through `simctl create`, with no CoreSimulator restart. A stale, broken or missing archive is skipped with the reason and the golden is built on first claim as before.
+
+- [#153](https://github.com/delacournz/warden/pull/153) [`ca36e38`](https://github.com/delacournz/warden/commit/ca36e38edea7da8e0173e8291a42ba2d629b18d0) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - iOS e2e and `warden ui`: when the simulator's accessibility bridge stops answering, a `snapshot` no longer times out after 10 s with `E_TIMEOUT`. The read moves to the host accessibility reader after 4 s, the next reads go straight there, and the bridge is asked again 20 s later. Seen on GitHub-hosted `macos-26` runners (3 vCPU), where every spec failed `did not become visible` and the warm-up logged `not warm: snapshot failed: E_TIMEOUT`.
+  - iOS `app.launch` waits up to 10 s (was 3 s) for the helper to follow the new process before the first read; it still returns as soon as it does. Launch spans on a slow host no longer show `rebind: "timeout"` on every launch.
+  - New `WARDEN_SIMD_BRIDGE_DEADLINE_MS` (default 4000, `0` turns the deadline off) and `WARDEN_SIMD_BRIDGE_COOLDOWN_S` (default 20, `0` never skips the bridge) tune it.
+  - The `driver.snapshot` span in `trace.jsonl` now carries `backend` and `fallback` when a read did not come from the bridge, so a CI run shows why.
+
+### Patch Changes
+
+- [#148](https://github.com/delacournz/warden/pull/148) [`7844304`](https://github.com/delacournz/warden/commit/7844304079e81c562043f32bec2ad8a27353e7b1) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - Simulated camera on iOS simulators: a video recording stopped before the encoder took its first frame (a short take, or any take on a busy host) no longer fails with "The operation could not be completed"; the recording holds the frame it started on.
+
+- [#152](https://github.com/delacournz/warden/pull/152) [`36586e8`](https://github.com/delacournz/warden/commit/36586e8f6c685da303b1466f9b46d8762b3ae411) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - `warden app ensure --kind dev` now warms the cache `warden dev` reads: one dev build per native fingerprint, keyed `<fingerprint>:dev`, shared by `warden dev`, `warden app ensure` (with or without `--kind dev`), `run|batch --app`, `warden ui open` and `warden e2e --dev`. Before, `warden dev` missed a build `app ensure --kind dev` had made and built its own copy.
+  - A dev build cached by an earlier warden under the plain `<fingerprint>` key (or found in a legacy cache dir) is reused as that build, and a device it is already installed on is not reinstalled: no rebuild after upgrading.
+  - Applies when the project's own build is the dev build (Debug, default or identical `build` command, no variant, no `fingerprint.include: "native+js"`, no `kinds.dev.env`); other projects keep their kind-less build as before. `warden app ensure` with no `--kind` reports `hash: "<fingerprint>:dev"` and `kind: "dev"` in `--json` for such projects.
+- Updated dependencies []:
+  - @delacour/warden-e2e@0.9.0
+
 ## 0.8.0
 
 ### Minor Changes
