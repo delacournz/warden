@@ -178,6 +178,12 @@ export const COMMANDS: readonly CommandEntry[] = [
 		load: async () => (await import("./android-host")).androidHostCommand,
 	},
 	{
+		name: "__driver-serve",
+		summary: "serve a leased device's driver on stdin/stdout for a remote warden (internal)",
+		hidden: true,
+		load: async () => (await import("./driver-serve")).driverServeCommand,
+	},
+	{
 		name: "__ios-runner-host",
 		summary: "resident iPhone runner host behind `warden ui` (internal)",
 		hidden: true,
