@@ -104,7 +104,12 @@ function buildSuiteRepo(suite: Record<string, unknown>, config: Record<string, u
 	};
 	// Three git processes, the rest on disk: each spawn costs seconds on a loaded CI host.
 	git("init", "-q", "-b", "main");
-	appendFileSync(join(dir, ".git/config"), "[user]\n\temail = t@t\n\tname = t\n");
+	// No auto-maintenance: `git commit` would detach a `maintenance run --auto` that creates and
+	// deletes `.git/objects/maintenance.lock` while the cpSync below walks the tree (ENOENT on lstat).
+	appendFileSync(
+		join(dir, ".git/config"),
+		"[user]\n\temail = t@t\n\tname = t\n[maintenance]\n\tauto = false\n[gc]\n\tauto = 0\n"
+	);
 	git("add", ".");
 	git("commit", "-qm", "base");
 	copyFileSync(join(dir, ".git/refs/heads/main"), join(dir, ".git/refs/heads/feature"));
