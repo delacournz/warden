@@ -6,6 +6,7 @@ import { InstallCommand } from "@/components/install-command";
 import { ClipTabs } from "@/components/landing/clip-tabs";
 import { DemoVideo } from "@/components/landing/demo-video";
 import { GlitchWord } from "@/components/landing/glitch-word";
+import { LazerLogo } from "@/components/landing/lazer-logo";
 import { RichText } from "@/components/rich-text";
 import { WardenIcon } from "@/components/warden-icon";
 import { ANALYTICS } from "@/lib/analytics/config";
@@ -114,11 +115,12 @@ const RUNS = [
 ] as const;
 
 /**
- * The landing, told around one promise: every agent gets its own simulator. The hero with one install command and the
- * recorded run, the agents it works with, how it works in three commands, the lease board (five agents on one Mac),
- * what the leasing gives you, what an agent does on its device (run, drive, debug, keep, run the suite), the device
- * conditions as recorded clips, what warden will and won't touch, the first prompt, use cases, the FAQ and a closing
- * install. Every claim is data in `landing.data.ts`, held to the code by `landing.test.ts`.
+ * The landing, told around one promise: every agent gets its own simulator. The hero with one install command, a "Used
+ * by engineers at" logo row, the recorded run, the agents it works with, how it works in three commands, the lease
+ * board (five agents on one Mac), what the leasing gives you, what an agent does on its device (run, drive, debug,
+ * keep, run the suite), the device conditions as recorded clips, what warden will and won't touch, the first prompt,
+ * use cases, the FAQ and a closing install. Every claim is data in `landing.data.ts`, held to the code by
+ * `landing.test.ts`.
  */
 function Home(): ReactElement {
 	return (
@@ -151,6 +153,22 @@ function Home(): ReactElement {
 						<PrimaryLink to="quickstart">Get started</PrimaryLink>
 						<SecondaryAnchor href="#demo">Watch the demo</SecondaryAnchor>
 					</div>
+				</section>
+
+				<section className={`${PAGE} flex flex-col items-center gap-6 pt-16 text-center`}>
+					<p className="font-mono text-[11px] text-ink-2 uppercase tracking-[0.18em]">Used by engineers at</p>
+					<ul className="flex flex-wrap items-center justify-center gap-x-12 gap-y-6">
+						<li>
+							<a
+								className="block text-ink opacity-70 transition-opacity hover:opacity-100"
+								href="https://www.lazertechnologies.com/"
+								rel="noreferrer noopener"
+								target="_blank"
+							>
+								<LazerLogo className="h-7 w-auto" />
+							</a>
+						</li>
+					</ul>
 				</section>
 
 				<section className={`${PAGE} scroll-mt-20 pt-16`} id="demo">
