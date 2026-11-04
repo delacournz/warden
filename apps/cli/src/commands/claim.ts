@@ -33,6 +33,7 @@ type ClaimOpts = ClaimFlagValues & {
 	json?: true;
 	remote?: true;
 	view?: true;
+	host?: string;
 	idempotencyKey?: string;
 };
 
@@ -58,11 +59,21 @@ function idempotencyKeyOf(ctx: CommandContext, opts: ClaimOpts): string | undefi
 	return key === "" ? undefined : key;
 }
 
+/** Flags that can't go together: `--host` is its own kind of claim, and only hosted devices have a viewer. */
+function conflictingFlags(opts: ClaimOpts): string | undefined {
+	if (opts.host !== undefined && (opts.remote || opts.view || opts.physical || opts.serial || opts.udid)) {
+		return "--host claims on a warden host; it can't be combined with --remote, --view, --physical, --serial or --udid";
+	}
+	if (opts.view && !opts.remote) return "--view needs --remote (only hosted devices have a viewer)";
+	return undefined;
+}
+
 /** Lease, then boot / create as needed; a spinner covers the (possibly minutes-long) boot. */
 async function claim(ctx: CommandContext, platformArg: string | undefined, opts: ClaimOpts): Promise<number> {
 	const { color } = ctx.ui;
-	if (opts.view && !opts.remote) {
-		reportError(ctx, "claim", "--view needs --remote (only hosted devices have a viewer)");
+	const conflict = conflictingFlags(opts);
+	if (conflict !== undefined) {
+		reportError(ctx, "claim", conflict);
 		return 1;
 	}
 	const platform = await resolvePlatform(ctx, platformArg);
@@ -78,6 +89,7 @@ async function claim(ctx: CommandContext, platformArg: string | undefined, opts:
 		return 1;
 	}
 	if (opts.remote) return claimRemoteCommand(ctx, platform.data, flags.data, owner, opts, shortLived);
+	if (opts.host !== undefined) return claimHostCommand(ctx, opts.host, platform.data, flags.data, owner, opts);
 	// before the spinner and any lease: several usable phones are asked about, or refused (ambiguous_device, exit 2)
 	const picked = await pickPhysical(ctx, owner, [flags.data], { prompt: canPrompt(ctx, { json: opts.json }) });
 	if (picked.kind !== "ok") return reportPick(ctx, "claim", picked);
@@ -233,6 +245,67 @@ async function claimRemoteCommand(
 	return attachViewer(ctx, "claim", lease, { scope: "drive", detach: false, json: opts.json === true, report: false });
 }
 
+/**
+ * `claim --host <name>`: the host's warden claims (allocation, boot and capacity are the host's), each device it
+ * leased is a local `host-device` lease, and a keepalive renews the host's short leases while the local ones live.
+ */
+async function claimHostCommand(
+	ctx: CommandContext,
+	hostName: string,
+	platform: Platform,
+	flags: ClaimFlags,
+	owner: Owner,
+	opts: ClaimOpts
+): Promise<number> {
+	const { color } = ctx.ui;
+	if (!opts.json) heading(ctx, "claim", `${platform} · host ${hostName}`);
+	const { claimOnHost, hostClaimArgs } = await import("../hosts/claim");
+	const idempotencyKey = idempotencyKeyOf(ctx, opts);
+	const pid = leasePidFor(owner);
+	const outcome = await withSpinner(ctx, `claiming on ${hostName}…`, async (sctx, spinner) => {
+		const result = await claimOnHost(sctx, {
+			host: hostName,
+			platform,
+			owner,
+			ttlMs: flags.ttlMs,
+			remoteArgs: hostClaimArgs(opts),
+			onWait: (line) => sctx.err(color.dim(`${hostName}: ${line}`)),
+			...(flags.label !== undefined ? { label: flags.label } : {}),
+			...(idempotencyKey !== undefined ? { idempotencyKey } : {}),
+			...(pid !== undefined ? { pid } : {}),
+		});
+		if (result.success)
+			spinner.succeed(`claimed ${result.data.claimed.map((c) => c.lease.resource.name).join(", ")} on ${hostName}`);
+		else spinner.fail("claim failed");
+		return result;
+	});
+	if (!outcome.success) return reportClaimFailure(ctx, "claim", outcome.error);
+	(await import("../hosts/keepalive")).ensureKeepalive(ctx, hostName);
+	const leases = outcome.data.claimed.map(({ lease, action }) => ({
+		leaseId: lease.id,
+		host: lease.resource.host,
+		remoteLeaseId: lease.resource.remoteLeaseId,
+		platform: lease.resource.platform,
+		udid: lease.resource.id,
+		name: lease.resource.name,
+		action,
+		ttlMs: lease.ttlMs,
+		...(lease.resource.expiresAt !== undefined ? { expiresAt: lease.resource.expiresAt } : {}),
+		...(lease.label !== undefined ? { label: lease.label } : {}),
+	}));
+	emit(
+		ctx,
+		opts.json === true,
+		{ leases, udids: leases.map((l) => l.udid) },
+		table(
+			ctx,
+			["LEASE", "HOST", "UDID", "NAME", "ACTION"],
+			leases.map((l) => [l.leaseId, l.host, color.bold(l.udid), l.name, color.dim(l.action)])
+		)
+	);
+	return 0;
+}
+
 export const claimCommand = defineCommand({
 	name: "claim",
 	group: "Lease",
@@ -243,6 +316,7 @@ export const claimCommand = defineCommand({
 		)
 			.option("--remote", "lease a hosted device from warden cloud (warden login first)")
 			.option("--view", "with --remote: open the device in the warden viewer and stay until it closes")
+			.option("--host <name>", "claim on a warden host (warden host add) over ssh; the host allocates and boots")
 			.option(
 				"--idempotency-key <key>",
 				"a repeat claim with this key (same owner, leases alive) returns the same leases (env WARDEN_IDEMPOTENCY_KEY)"

@@ -23,6 +23,26 @@ warden host doctor mini
 
 A host with no inbound port (behind NAT, a CI runner) is reached with `--jump <bastion>` or `--proxy-command` (for example `cloudflared access ssh --hostname %h` or `tailscale nc %h %p`).
 
+## Claim a device on a host
+
+```bash
+warden claim ios --host mac --json
+```
+
+The host's warden does the claim: its own boot queue, capacity and golden images. The laptop records one lease per device it got, and `warden ls` shows them with a `HOST` column (`warden ls --hosts` for just those). `warden heartbeat` and `warden release` (with `--shutdown`) are passed on to the host.
+
+The host's lease is short (`WARDEN_REMOTE_TTL`, 90 s by default) and a background keepalive renews it every 30 s while your local lease lives. If the laptop sleeps, crashes or loses the network, the host frees the device within that TTL.
+
+A lease on a host can also end without a release. `warden events` records it as `host_lost`, and a `warden run` or `warden dev` holding it stops with `LEASE_LOST`:
+
+| Reason | When |
+|---|---|
+| `unreachable` | three renewals in a row couldn't reach the host |
+| `remote_gone` | the host no longer holds the lease |
+| `host_expired` | a hosted Mac's session reached its end; `warden heartbeat` warns 10 minutes before |
+
+A claim that can't reach the host is tried three times with the same idempotency key, so a claim that landed before the link dropped is returned rather than made twice.
+
 ## What the laptop's key can do
 
 The grant is a forced command in the host's `~/.ssh/authorized_keys`:

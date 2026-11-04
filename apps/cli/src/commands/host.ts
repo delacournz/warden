@@ -100,6 +100,18 @@ function ls(ctx: CommandContext, opts: { json?: true }): number {
 }
 
 function rm(ctx: CommandContext, name: string, opts: { json?: true }): number {
+	const held = ctx
+		.store()
+		.listLeases()
+		.filter((l) => l.resource.kind === "host-device" && l.resource.host === name);
+	if (held.length > 0) {
+		reportError(
+			ctx,
+			SCOPE,
+			`${name} still backs ${held.length} lease(s): release them first (warden release ${held.map((l) => l.id).join(" ")})`
+		);
+		return 1;
+	}
 	if (!deleteHost(ctx.store(), name)) return reportClaimFailure(ctx, SCOPE, `HOST_UNKNOWN: no host named ${name}`);
 	rmSync(hostKnownHosts(wardenHome(ctx.env), name), { force: true });
 	emit(ctx, opts.json === true, { removed: name }, `removed ${name}`);
