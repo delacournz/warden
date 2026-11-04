@@ -18,6 +18,10 @@ export const UI_EXIT = {
 	runtimeMissing: 9,
 	healthFailed: 10,
 	leaseLost: 11,
+	hostUnreachable: 12,
+	hostAuth: 13,
+	hostVersionSkew: 14,
+	hostUnknown: 15,
 	interrupted: 130,
 } as const;
 export type UiExitCode = (typeof UI_EXIT)[keyof typeof UI_EXIT];
@@ -68,6 +72,10 @@ export const UI_ERROR_EXIT = {
 	RUNTIME_MISSING: UI_EXIT.runtimeMissing,
 	HEALTH_FAILED: UI_EXIT.healthFailed,
 	LEASE_LOST: UI_EXIT.leaseLost,
+	HOST_UNREACHABLE: UI_EXIT.hostUnreachable,
+	HOST_AUTH: UI_EXIT.hostAuth,
+	HOST_VERSION_SKEW: UI_EXIT.hostVersionSkew,
+	HOST_UNKNOWN: UI_EXIT.hostUnknown,
 } as const satisfies Record<string, UiExitCode>;
 
 export type UiErrorCode = keyof typeof UI_ERROR_EXIT;

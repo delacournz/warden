@@ -1,0 +1,52 @@
+---
+title: Hosts (another Mac)
+description: Drive the simulators and emulators of another Mac you own over ssh, with its own warden doing the leasing.
+icon: Server
+---
+
+A **host** is another Mac running its own warden: a Mac mini on your desk, one on Tailscale, an EC2 Mac, a teammate's machine. Your laptop's warden drives it over `ssh`. The host keeps its own lease store, sims, golden images and driver helper, so everything warden does locally works there too. No warden account is needed.
+
+## Set a host up
+
+```bash
+# 1. record it and pin its host key (first contact)
+warden host add mini --ssh me@mini.tail:22
+
+# 2. install this warden version there, fetch the helper, grant this laptop's key
+warden host setup mini
+
+# 3. check it
+warden host doctor mini
+```
+
+`host setup` uses your normal ssh key once, for a plain shell: it installs warden at `~/.local/bin/warden` (no sudo), runs `warden doctor --fetch-helper` there, and grants this laptop's own warden key (`~/.warden/hosts/id_ed25519`, made on first use). From then on the laptop only uses that key. Add `--golden` to also build the iOS golden image on the host. A dev or local build of warden has no release to download: pass `--binary <path>` to a warden built for the host.
+
+A host with no inbound port (behind NAT, a CI runner) is reached with `--jump <bastion>` or `--proxy-command` (for example `cloudflared access ssh --hostname %h` or `tailscale nc %h %p`).
+
+## What the laptop's key can do
+
+The grant is a forced command in the host's `~/.ssh/authorized_keys`:
+
+```text
+command="/Users/me/.local/bin/warden __host-serve --key SHA256:…",restrict,port-forwarding ssh-ed25519 AAAA… warden:<machine>:<user>
+```
+
+The key cannot open a shell. It can run `version`, `claim`, `heartbeat`, `release`, `ls` and `doctor` (all with `--json`), and serve the driver of its own leased device. Selectors that would reach other people's leases are refused, and so is a lease id another owner holds. On the host, every session from one laptop is one owner, `host:<machine>`, whose leases live by heartbeat and a short TTL (90 s by default, `WARDEN_REMOTE_TTL`): a laptop that disappears frees its devices within that.
+
+Manage grants on the host itself: `warden host grants`, `warden host revoke --key SHA256:…`.
+
+## Security
+
+- Key auth only, `BatchMode=yes`, never agent or X11 forwarding.
+- The host key is pinned per host (`~/.warden/hosts/<name>.known_hosts`); a changed key fails with `HOST_AUTH` instead of being accepted.
+- No warden-api or cloud token ever goes to the host.
+- `warden host setup` never uses sudo.
+
+## Errors
+
+| Code | Exit | Fix |
+|---|---|---|
+| `HOST_UNREACHABLE` | 12 | `warden host doctor <name>`; check the network, Remote Login, the proxy or jump host |
+| `HOST_AUTH` | 13 | run `warden host setup <name>` again, or re-pin a changed host key with `host add --host-key` |
+| `HOST_VERSION_SKEW` | 14 | `warden host setup <name>` installs this version |
+| `HOST_UNKNOWN` | 15 | `warden host ls` |

@@ -51,7 +51,13 @@ export type Resource = DeviceResource | PortResource | BuildResource | RemoteDev
 export type AgentOwner = { kind: "agent"; sessionId: string; cwd: string; repo?: string; worktree?: string };
 export type UserOwner = { kind: "user"; pid: number; tty?: string; cwd: string; repo?: string; worktree?: string };
 export type CiOwner = { kind: "ci"; runId: string };
-export type Owner = AgentOwner | UserOwner | CiOwner;
+/**
+ * A laptop driving this Mac over `warden host` (`__host-serve`): who it is comes from the SSH key it authenticated
+ * with (its `host grant`), never from a flag. Leases it holds are TTL-only (no pid) and its owner key is
+ * `host:<machineId>`, so every session on that laptop counts as one owner here.
+ */
+export type HostOwner = { kind: "host"; machineId: string; user: string };
+export type Owner = AgentOwner | UserOwner | CiOwner | HostOwner;
 
 export type Lease = {
 	id: string;
@@ -150,12 +156,14 @@ export function describeOwner(owner: Owner): string {
 			return `user pid ${owner.pid}`;
 		case "ci":
 			return `ci ${owner.runId}`;
+		case "host":
+			return `host ${owner.user}@${owner.machineId}`;
 	}
 }
 
 /** Owner location for messages: `repo/worktree` when known. */
 export function ownerLocation(owner: Owner): string | undefined {
-	if (owner.kind === "ci") return undefined;
+	if (owner.kind === "ci" || owner.kind === "host") return undefined;
 	const parts = [owner.repo, owner.worktree].filter((p): p is string => Boolean(p));
 	return parts.length > 0 ? parts.join("/") : owner.cwd;
 }
@@ -164,6 +172,7 @@ export function sameOwner(a: Owner, b: Owner): boolean {
 	if (a.kind === "agent" && b.kind === "agent") return a.sessionId === b.sessionId;
 	if (a.kind === "user" && b.kind === "user") return a.pid === b.pid;
 	if (a.kind === "ci" && b.kind === "ci") return a.runId === b.runId;
+	if (a.kind === "host" && b.kind === "host") return a.machineId === b.machineId;
 	return false;
 }
 

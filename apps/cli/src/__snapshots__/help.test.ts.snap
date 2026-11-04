@@ -65,6 +65,9 @@ Devices:
   golden                        golden iOS images / Android snapshots new
                                 devices start from (fast boots): ensure | ls |
                                 prune
+  host                          drive another Mac's sims / emulators over ssh:
+                                add, setup, doctor, ls, rm (host side: grant,
+                                revoke)
 
 Builds:
   app                           fingerprint an Expo app and install the matching
@@ -1989,6 +1992,144 @@ Options:
   --force          repack even when this JS is already cached
   --json           machine-readable output
   -h, --help       display help for command"
+`;
+
+exports[`help output warden host --help (and nested subcommands) 1`] = `
+"$ warden host --help
+Usage: warden host [options] [command]
+
+drive another Mac's sims / emulators over ssh: add, setup, doctor, ls, rm (host
+side: grant, revoke)
+
+Options:
+  -h, --help      display help for command
+
+Commands:
+  add <name>      record a Mac to drive over ssh and pin its host key (first
+                  contact)
+  setup <name>    install this warden on the host (no sudo), fetch its helper,
+                  grant this laptop's key
+  doctor <name>   check a host: reachable, key accepted, same warden version,
+                  lease drift there
+  ls              list hosts
+  rm <name>       forget a host
+  grant           on the host: let a laptop key in, through the forced warden
+                  __host-serve
+  revoke          on the host: remove a laptop's grant and its authorized_keys
+                  line
+  grants          on the host: list the laptops granted
+  help [command]  display help for command
+
+$ warden host add --help
+Usage: warden host add [options] <name>
+
+record a Mac to drive over ssh and pin its host key (first contact)
+
+Arguments:
+  name                   short name for the host
+
+Options:
+  --ssh <target>         user@host[:port]
+  --identity <file>      ssh key for the setup shell (default: ssh's own)
+  --proxy-command <cmd>  ssh ProxyCommand (cloudflared, tailscale nc, an SSM
+                         bridge)
+  --jump <host>          ssh jump host (ProxyJump), for a host with no inbound
+  --host-key <key>       pin this host key (\`ssh-ed25519 AAAA…\`) instead of
+                         trusting the first one seen
+  --json                 machine-readable output
+  -h, --help             display help for command
+
+$ warden host setup --help
+Usage: warden host setup [options] <name>
+
+install this warden on the host (no sudo), fetch its helper, grant this laptop's
+key
+
+Arguments:
+  name                      host name
+
+Options:
+  --setup-identity <file>   ssh key that opens a normal shell on the host
+                            (default: --identity)
+  --binary <file>           install this warden binary (a dev / local build)
+                            instead of the release
+  --install-dir <dir>       where warden goes on the host (default:
+                            ~/.local/bin)
+  --authorized-keys <file>  the host's authorized_keys (default:
+                            ~/.ssh/authorized_keys)
+  --golden                  also build the iOS golden image there (minutes)
+  --no-helper               skip fetching the iOS driver helper there
+  --json                    machine-readable output
+  -h, --help                display help for command
+
+$ warden host doctor --help
+Usage: warden host doctor [options] <name>
+
+check a host: reachable, key accepted, same warden version, lease drift there
+
+Arguments:
+  name        host name
+
+Options:
+  --json      machine-readable output
+  -h, --help  display help for command
+
+$ warden host ls --help
+Usage: warden host ls [options]
+
+list hosts
+
+Options:
+  --json      machine-readable output
+  -h, --help  display help for command
+
+$ warden host rm --help
+Usage: warden host rm [options] <name>
+
+forget a host
+
+Arguments:
+  name        host name
+
+Options:
+  --json      machine-readable output
+  -h, --help  display help for command
+
+$ warden host grant --help
+Usage: warden host grant [options]
+
+on the host: let a laptop key in, through the forced warden __host-serve
+
+Options:
+  --key <key>               the laptop's public key line or .pub file (comment
+                            warden:<machine>:<user>)
+  --machine <id>            machine id when the key comment has none
+  --user <name>             user name when the key comment has none
+  --authorized-keys <file>  default ~/.ssh/authorized_keys
+  --warden <path>           the warden the forced command runs (default: this
+                            one)
+  --json                    machine-readable output
+  -h, --help                display help for command
+
+$ warden host revoke --help
+Usage: warden host revoke [options]
+
+on the host: remove a laptop's grant and its authorized_keys line
+
+Options:
+  --key <key>               fingerprint (SHA256:…), public key line or .pub file
+  --authorized-keys <file>  default ~/.ssh/authorized_keys
+  --json                    machine-readable output
+  -h, --help                display help for command
+
+$ warden host grants --help
+Usage: warden host grants [options]
+
+on the host: list the laptops granted
+
+Options:
+  --json      machine-readable output
+  -h, --help  display help for command"
 `;
 
 exports[`help output warden ui --help (and nested subcommands) 1`] = `
@@ -4226,6 +4367,29 @@ Options:
   -h, --help                display help for command"
 `;
 
+exports[`help output warden __driver-serve --help (and nested subcommands) 1`] = `
+"$ warden __driver-serve --help
+Usage: warden __driver-serve [options]
+
+serve a leased device's driver on stdin/stdout for a remote warden (internal)
+
+Options:
+  --lease <id>
+  -h, --help    display help for command"
+`;
+
+exports[`help output warden __host-serve --help (and nested subcommands) 1`] = `
+"$ warden __host-serve --help
+Usage: warden __host-serve [options]
+
+the forced command a warden host grant installs: runs one allowed warden command
+for a laptop (internal)
+
+Options:
+  --key <fingerprint>
+  -h, --help           display help for command"
+`;
+
 exports[`help output warden __ios-runner-host --help (and nested subcommands) 1`] = `
 "$ warden __ios-runner-host --help
 Usage: warden __ios-runner-host [options]
@@ -4812,15 +4976,4 @@ exports[`help output unknown command suggests the closest registered one 1`] = `
 "error: unknown command 'claime'
 (Did you mean claim?)
 (add --help for usage)"
-`;
-
-exports[`help output warden __driver-serve --help (and nested subcommands) 1`] = `
-"$ warden __driver-serve --help
-Usage: warden __driver-serve [options]
-
-serve a leased device's driver on stdin/stdout for a remote warden (internal)
-
-Options:
-  --lease <id>
-  -h, --help    display help for command"
 `;
