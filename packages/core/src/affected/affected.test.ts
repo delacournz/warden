@@ -139,7 +139,8 @@ describe("computeAffected", () => {
 		} finally {
 			for (const r of [top, own, none]) rmSync(r.dir, { recursive: true, force: true });
 		}
-	});
+		// builds two fresh fixture repos (git init + commit each): slow on a loaded CI host
+	}, 20_000);
 
 	test("suite.biometrics: the suite's own, else the top-level default", async () => {
 		const top = await makeSuiteRepo({}, { biometrics: true });
@@ -153,7 +154,8 @@ describe("computeAffected", () => {
 		} finally {
 			for (const r of [top, own, none]) rmSync(r.dir, { recursive: true, force: true });
 		}
-	});
+		// builds two fresh fixture repos (git init + commit each): slow on a loaded CI host
+	}, 20_000);
 
 	test("suite.perfBudgets: the top-level budgets, each key replaced by the suite's own", async () => {
 		const merged = await makeSuiteRepo(
