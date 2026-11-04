@@ -19,6 +19,9 @@ describe("checkHostCommand", () => {
 			"warden ls --json",
 			"warden doctor --leases --json",
 			"/Users/x/.local/bin/warden ls --json",
+			"warden port claim --from 8091 --ttl 90s --json",
+			"warden port release --lease P1 --json",
+			"warden __host-tunnel --port 8091 --lease P1 --json",
 		]) {
 			expect(ok(line).success).toBe(true);
 		}
@@ -46,6 +49,8 @@ describe("checkHostCommand", () => {
 			"warden ls --json; rm -rf /",
 			"warden 'ls",
 			"warden __host-serve --key x",
+			"warden port release 8091 --force --json",
+			"warden port claim",
 		]) {
 			expect(ok(line).success).toBe(false);
 		}

@@ -7,6 +7,7 @@ import { type HostLoop, startHostLoop } from "./host-loop.testing";
 import { runOnHost } from "./remote";
 import { spawnUpload } from "./setup";
 import { sshdSkipReason } from "./sshd.testing";
+import { openTunnel } from "./tunnel";
 import { treeHash, uploadToHost } from "./upload";
 
 const loops: HostLoop[] = [];
@@ -71,5 +72,32 @@ describe.skipIf(sshdSkipReason(process.env) !== undefined)("warden host over a l
 		const again = await uploadToHost(loop.laptop, "loop", app, { upload });
 		expect(again.success && again.data).toBe(first.data);
 		expect(sends).toBe(1);
+	}, 60_000);
+
+	test("dev --host's tunnel: the host sees this Metro through ssh -R, and its port lease goes with the tunnel", async () => {
+		const loop = await startHostLoop();
+		loops.push(loop);
+		expect((await host(loop, loop.addArgv)).code).toBe(0);
+		const setup = await host(loop, loop.setupArgv);
+		if (setup.code !== 0) throw new Error(loop.laptop.stderr.join("\n"));
+		const metro = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("packager-status:running") });
+		try {
+			const tunnel = await openTunnel(loop.laptop, "loop", metro.port ?? 0);
+			if (!tunnel.success) throw new Error(tunnel.error);
+			const through = await fetch(`http://127.0.0.1:${tunnel.data.remotePort}/status`);
+			expect(await through.text()).toBe("packager-status:running");
+			const record = getHost(loop.laptop.db, "loop");
+			if (record === undefined) throw new Error("no record");
+			const ports = async () => {
+				const ls = await runOnHost(loop.laptop, record, [record.wardenPath ?? "warden", "port", "ls", "--json"]);
+				return ls.success ? ls.data.stdout : "";
+			};
+			expect(await ports()).toContain(String(tunnel.data.remotePort));
+			await tunnel.data.close();
+			await tunnel.data.exited;
+			expect(await ports()).not.toContain(`"port":${tunnel.data.remotePort}`);
+		} finally {
+			metro.stop(true);
+		}
 	}, 60_000);
 });

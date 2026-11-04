@@ -208,6 +208,12 @@ export const COMMANDS: readonly CommandEntry[] = [
 		load: async () => (await import("./host-serve")).hostServeCommand,
 	},
 	{
+		name: "__host-tunnel",
+		summary: "hold a laptop's Metro forward open on this host while its ssh lives (internal)",
+		hidden: true,
+		load: async () => (await import("./host-tunnel")).hostTunnelCommand,
+	},
+	{
 		name: "__ios-runner-host",
 		summary: "resident iPhone runner host behind `warden ui` (internal)",
 		hidden: true,

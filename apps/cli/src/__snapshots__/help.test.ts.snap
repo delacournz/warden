@@ -346,6 +346,8 @@ Options:
                               (default off: \`warden dev enable devtools\`)
   --no-open                   don't open the dev client (Metro + the leases
                               only)
+  --host <name>               run on a device of this warden host: Metro stays
+                              here, reached over ssh -R
   --no-tui                    plain output: Metro on this terminal, no dashboard
                               (also WARDEN_TUI=0; --json and pipes are always
                               plain)
@@ -4393,6 +4395,21 @@ Options:
   -h, --help     display help for command"
 `;
 
+exports[`help output warden __host-recv --help (and nested subcommands) 1`] = `
+"$ warden __host-recv --help
+Usage: warden __host-recv [options]
+
+receive an app build from a laptop into the host's uploads, checked against its
+hash (internal)
+
+Options:
+  --hash <sha256>
+  --name <name>
+  --check
+  --json
+  -h, --help       display help for command"
+`;
+
 exports[`help output warden __host-serve --help (and nested subcommands) 1`] = `
 "$ warden __host-serve --help
 Usage: warden __host-serve [options]
@@ -4403,6 +4420,19 @@ for a laptop (internal)
 Options:
   --key <fingerprint>
   -h, --help           display help for command"
+`;
+
+exports[`help output warden __host-tunnel --help (and nested subcommands) 1`] = `
+"$ warden __host-tunnel --help
+Usage: warden __host-tunnel [options]
+
+hold a laptop's Metro forward open on this host while its ssh lives (internal)
+
+Options:
+  --port <port>
+  --lease <id>
+  --json
+  -h, --help     display help for command"
 `;
 
 exports[`help output warden __ios-runner-host --help (and nested subcommands) 1`] = `
@@ -4991,19 +5021,4 @@ exports[`help output unknown command suggests the closest registered one 1`] = `
 "error: unknown command 'claime'
 (Did you mean claim?)
 (add --help for usage)"
-`;
-
-exports[`help output warden __host-recv --help (and nested subcommands) 1`] = `
-"$ warden __host-recv --help
-Usage: warden __host-recv [options]
-
-receive an app build from a laptop into the host's uploads, checked against its
-hash (internal)
-
-Options:
-  --hash <sha256>
-  --name <name>
-  --check
-  --json
-  -h, --help       display help for command"
 `;

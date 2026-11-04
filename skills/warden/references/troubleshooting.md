@@ -127,6 +127,7 @@
 | 121 | `host_lost … remote_gone` in `warden events`, or `heartbeat` warns `<host> no longer holds <id>` | The host's lease ended there: its gc expired it (the laptop slept past `WARDEN_REMOTE_TTL`) or a person released it on the host | Claim again. A laptop that sleeps often: raise the host's `WARDEN_REMOTE_TTL` |
 | 122 | `<host>'s session ends in …` warnings, then `host_lost … host_expired` | The hosted Mac's session has a hard end (`expiresAt`); the lease ends with it | A person renews or replaces the host session; then claim again. Warden never renews it on its own |
 | 123 | `warden app ensure --lease <host lease>` fails with `upload of <name> failed: … does not match …` | The build reached the host altered or cut short (the link dropped mid-send), so the host refused it and kept nothing | Run it again: only a build whose content matches its hash is kept. Again and again: `warden host doctor <name>`, then check the host's free disk |
+| 124 | `warden dev --host <name>` fails with `no Metro on 127.0.0.1:<port> through the forward` or `remote port forwarding failed for listen port <port>` | The host could not reach this Metro through `ssh -R`: the port was taken there between the lease and the forward, the host's sshd forbids TCP forwarding (`AllowTcpForwarding no`), or Metro stopped | Run it again (a fresh host port is leased). Again and again: on the host, `AllowTcpForwarding` must be `yes` (or `remote`) for the granted key; `warden host doctor <name>` |
 
 ## Code lookup
 
