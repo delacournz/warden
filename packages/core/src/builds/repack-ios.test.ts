@@ -93,6 +93,19 @@ describe("applyIosRepack", () => {
 		expect(existsSync(join(outDir, ".entitlements.plist"))).toBe(false);
 	});
 
+	test("a base that kept its own embedded bundle (an imported CI build) gets this JS, not the stale one", async () => {
+		writeFileSync(join(base, "main.jsbundle"), "OLD-EMBEDDED-JS");
+		mkdirSync(join(base, "EXUpdates.bundle"), { recursive: true });
+		writeFileSync(join(base, "EXUpdates.bundle", "app.manifest"), "{}");
+		const { res, calls } = await run();
+		expect(res.success).toBe(true);
+		const app = join(outDir, "App.app");
+		expect(readFileSync(join(app, "main.jsbundle"), "utf8")).toBe("NEW-JS");
+		expect(existsSync(join(app, "assets", "old", "gone.png"))).toBe(false);
+		expect(readFileSync(join(base, "main.jsbundle"), "utf8")).toBe("OLD-EMBEDDED-JS");
+		expect(calls.some((c) => c.includes("EXUpdatesEnabled"))).toBe(true);
+	});
+
 	test("an empty entitlements dict signs without --entitlements; a real one is passed through", async () => {
 		const empty = await run();
 		expect(empty.calls.find((c) => c[1] === "--force")).not.toContain("--entitlements");

@@ -142,6 +142,21 @@ Removed: `warmRunners` (use `warmDrivers`).
 - A project's `fingerprint.include: "native+js"` / `fingerprint.jsInputs` belong to the kind-less flow (variants, `warden app ensure` with no `--kind`): `--kind dev|simulator` warns once on stderr that they are ignored. Move them into `kinds.simulator.jsInputs`.
 - `warden builds ls` shows each build's kind, base (native fingerprint), jsKey, worktree and branch.
 
+## CI: reuse a prebuilt base and the golden
+
+A fresh runner otherwise builds the simulator base (a Release `xcodebuild`) and the iOS golden (~4 min first boot) every run.
+
+| Step | Command |
+|---|---|
+| base key (the native fp the base is filed under) | `warden app fingerprint ios --kind simulator --json` → `.fingerprints.ios`, `.hashes.ios` (`<fp>:base`). Not `@expo/fingerprint`'s hash |
+| seed the base from another job's `.app` | `warden builds import path/App.app --kind simulator-base [--hash <fp>] [--project <dir>] --json` |
+| golden cache key | `warden golden key [--profile <p>] [--runtime <r>]` → `warden-golden-<profile>-<key>-r<recipe>` (Xcode build + runtime build + device type + recipe) |
+| restore golden | `warden golden import <dir>` (exit 0; missing dir, stale or broken archive, golden already here → skipped with reason; the next claim builds it) |
+| save golden on a cache miss | `warden golden export <dir> [--profile <p>] [--runtime <r>]` (builds it first if missing) → `<dir>/<name>/{golden.json,device/}` (~2 GB) |
+
+- `--kind simulator-base` checks the `.app`: `DTPlatformName` `iphonesimulator`, a slice for this Mac (`arm64` on Apple silicon: `ARCHS=arm64`), `CFBundleIdentifier` = the project's iOS bundle id (`--bundle-id` overrides), no Debug / dev-client payload (`<exe>.debug.dylib`, `EXDevLauncher`, `EXDevMenu`). An embedded `main.jsbundle` is stripped from the cached copy (`strippedBundle: true`); every repack writes its own. Android: not supported (`--kind` is iOS only).
+- `golden import` registers a fresh `-wip` device with `simctl create`, copies the archive over its dir (not `device.plist`), re-points absolute symlinks to the new udid, checks the first-boot migration record, then renames it: no CoreSimulatorService restart, other sims untouched. `--platform android` is refused for key / export / import.
+
 ## Example config (`apps/example/warden.config.ts`)
 
 ```ts

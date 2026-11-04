@@ -122,6 +122,27 @@ describe("warden app fingerprint", () => {
 		expect(await createAppCommand(deps).run(c)).toBe(0);
 		expect(c.stdout.join("\n")).toBe(`android  ${HASH}ff`);
 	});
+
+	test("--kind simulator: the native fingerprint the simulator base is keyed on, and its cache hash", async () => {
+		const c = setup(["fingerprint", "ios", "--kind", "simulator", "--json"]);
+		expect(await createAppCommand(deps).run(c)).toBe(0);
+		const out = JSON.parse(c.stdout.join("\n"));
+		expect(out.kind).toBe("simulator");
+		expect(out.fingerprints.ios).toMatch(/^[0-9a-f]{40}$/);
+		expect(out.fingerprints.ios).not.toBe(HASH);
+		expect(out.hashes).toEqual({ ios: `${out.fingerprints.ios}:base` });
+
+		const text = setup(["fingerprint", "ios", "--kind", "simulator"]);
+		expect(await createAppCommand(deps).run(text)).toBe(0);
+		expect(text.stdout.join("\n")).toBe(`ios      ${out.fingerprints.ios}`);
+	});
+
+	test("--kind dev / release: the kind's native fingerprint and hash", async () => {
+		const c = setup(["fingerprint", "ios", "--kind", "dev", "--json"]);
+		expect(await createAppCommand(deps).run(c)).toBe(0);
+		const out = JSON.parse(c.stdout.join("\n"));
+		expect(out.hashes.ios).toBe(`${out.fingerprints.ios}:dev`);
+	});
 });
 
 describe("git facts of one command", () => {

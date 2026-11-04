@@ -91,14 +91,14 @@ async function run(deps: GoldenDeps, cmd: string[], timeoutMs?: number): AsyncRe
 	return result.exitCode === 0 ? ok(result.stdout) : err(execError(cmd, result));
 }
 
-const simctl = (deps: GoldenDeps, args: string[], timeoutMs?: number) =>
+export const simctl = (deps: GoldenDeps, args: string[], timeoutMs?: number) =>
 	run(deps, ["xcrun", "simctl", ...args], timeoutMs);
 
 function timing(deps: GoldenDeps): GoldenTiming {
 	return { ...DEFAULT_GOLDEN_TIMING, ...deps.timing };
 }
 
-const log = (deps: GoldenDeps, line: string) => deps.log?.(`golden: ${line}`);
+export const log = (deps: GoldenDeps, line: string) => deps.log?.(`golden: ${line}`);
 
 /**
  * The selected Xcode's build (`17F113`): `DEVELOPER_DIR` first, else `xcode-select` (see `readXcode`).
@@ -157,18 +157,18 @@ async function readTarget(deps: GoldenDeps, profile: string, runtime?: string): 
 	});
 }
 
-async function allSims(deps: GoldenDeps): AsyncResult<SimctlSim[]> {
+export async function allSims(deps: GoldenDeps): AsyncResult<SimctlSim[]> {
 	const out = await simctl(deps, ["list", "devices", "-j"], IOS_TIMEOUTS.listMs);
 	return out.success ? parseAllSims(out.data) : out;
 }
 
-async function readMigration(deps: GoldenDeps, udid: string): Promise<string> {
-	const plist = join(
-		deps.env.HOME ?? "~",
-		"Library/Developer/CoreSimulator/Devices",
-		udid,
-		"data/Library/Preferences/com.apple.migration.plist"
-	);
+/** `~/Library/Developer/CoreSimulator/Devices/<udid>`: the device's dir in the default device set. */
+export function simDeviceDir(env: Record<string, string | undefined>, udid: string): string {
+	return join(env.HOME ?? "~", "Library/Developer/CoreSimulator/Devices", udid);
+}
+
+export async function readMigration(deps: GoldenDeps, udid: string): Promise<string> {
+	const plist = join(simDeviceDir(deps.env, udid), "data/Library/Preferences/com.apple.migration.plist");
 	const out = await run(deps, ["plutil", "-convert", "json", "-o", "-", plist]);
 	return out.success ? out.data : "";
 }
@@ -266,9 +266,9 @@ async function waitSettled(deps: GoldenDeps, udid: string): AsyncResult<void> {
 }
 
 /** Shutdown, delete and rename: quick CoreSimulator calls, bounded like a shutdown. */
-const MUTATE_TIMEOUT_MS = IOS_TIMEOUTS.shutdownMs;
+export const MUTATE_TIMEOUT_MS = IOS_TIMEOUTS.shutdownMs;
 
-async function discard(deps: GoldenDeps, udid: string): Promise<void> {
+export async function discard(deps: GoldenDeps, udid: string): Promise<void> {
 	await simctl(deps, ["shutdown", udid], MUTATE_TIMEOUT_MS);
 	await simctl(deps, ["delete", udid], MUTATE_TIMEOUT_MS);
 }
@@ -334,7 +334,7 @@ async function buildGolden(deps: GoldenDeps, target: GoldenTarget, key: string):
 	return ok({ udid, name, built: true });
 }
 
-async function deleteSims(deps: GoldenDeps, sims: SimctlSim[]): AsyncResult<SimctlSim[]> {
+export async function deleteSims(deps: GoldenDeps, sims: SimctlSim[]): AsyncResult<SimctlSim[]> {
 	for (const sim of sims) {
 		log(deps, `deleting ${sim.name} (${sim.udid})`);
 		await simctl(deps, ["shutdown", sim.udid], MUTATE_TIMEOUT_MS);
@@ -345,7 +345,7 @@ async function deleteSims(deps: GoldenDeps, sims: SimctlSim[]): AsyncResult<Simc
 }
 
 /** Caller holds the golden lock. */
-async function ensureLocked(deps: GoldenDeps, target: GoldenTarget): AsyncResult<EnsuredGolden> {
+export async function ensureLocked(deps: GoldenDeps, target: GoldenTarget): AsyncResult<EnsuredGolden> {
 	const key = goldenKey(target);
 	const sims = await allSims(deps);
 	if (!sims.success) return sims;
@@ -363,7 +363,7 @@ async function ensureLocked(deps: GoldenDeps, target: GoldenTarget): AsyncResult
 	return ok({ udid: plan.sim.udid, name: plan.sim.name, built: false });
 }
 
-function lockDeps(deps: GoldenDeps) {
+export function lockDeps(deps: GoldenDeps) {
 	return {
 		...deps,
 		waitMs: timing(deps).lockWaitMs,

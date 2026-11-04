@@ -1,15 +1,24 @@
 import { basename, resolve } from "node:path";
 import { DEFAULT_MAX_CACHE_SIZE } from "@delacour/warden-core/builds/builds.defaults";
-import { type BuildRecord, listBuilds, storeArtifact } from "@delacour/warden-core/builds/cache";
+import {
+	type BuildRecord,
+	type KindLayout,
+	kindDir,
+	kindHash,
+	listBuilds,
+	storeArtifact,
+} from "@delacour/warden-core/builds/cache";
 import { ccacheCleanup } from "@delacour/warden-core/builds/compiler-cache";
-import { LOCAL_PROFILE } from "@delacour/warden-core/builds/ensure";
+import { LOCAL_PROFILE, type ProjectContext } from "@delacour/warden-core/builds/ensure";
+import { checkSimulatorBase, hostSimulatorArch } from "@delacour/warden-core/builds/import-base";
+import { kindFingerprints } from "@delacour/warden-core/builds/kind-key";
 import { cacheCap, formatSize, pruneBuilds } from "@delacour/warden-core/builds/prune";
 import { removeBuilds } from "@delacour/warden-core/builds/remove";
 import { formatDuration } from "@delacour/warden-core/duration";
 import { processAlive } from "@delacour/warden-core/liveness";
 import { wardenHome } from "@delacour/warden-core/store";
 import type { Platform } from "@delacour/warden-core/types";
-import { err, ok, type Result } from "@delacour/warden-types/result";
+import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { parsePlatform } from "../claim-flags";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
@@ -206,7 +215,8 @@ export function inferPlatform(path: string, flag: string | undefined): Result<Pl
 }
 
 type ImportOpts = {
-	hash: string;
+	hash?: string;
+	kind?: string;
 	platform?: string;
 	project?: string;
 	profile?: string;
@@ -214,38 +224,117 @@ type ImportOpts = {
 	json?: true;
 };
 
-async function importCmd(ctx: CommandContext, raw: string, opts: ImportOpts): Promise<number> {
+/** `--kind` values `builds import` accepts: the kind-less (legacy) row, or a simulator base repacks clone from. */
+const IMPORT_KINDS = ["simulator-base"] as const;
+type ImportKind = (typeof IMPORT_KINDS)[number];
+
+function parseImportKind(value: string | undefined): Result<ImportKind | undefined> {
+	if (value === undefined) return ok(undefined);
+	const kind = IMPORT_KINDS.find((k) => k === value);
+	return kind ? ok(kind) : err(`--kind ${value}: expected ${IMPORT_KINDS.join(" | ")}`);
+}
+
+/** `<nativeFp>` or `<nativeFp>:base` → `<nativeFp>`. */
+const baseFingerprint = (hash: string) => hash.replace(/:base$/, "");
+
+type ImportTarget = { hash: string; profile: string; layout?: KindLayout; strippedBundle?: boolean };
+
+/**
+ * A `simulator-base` import: check the `.app` (simulator slice for this Mac, the project's bundle id, Release), key it on
+ * `--hash` or warden's own simulator-kind native fingerprint of the project, and lay it out where `warden repack` /
+ * `warden e2e` look for the base.
+ */
+async function simulatorBaseTarget(
+	ctx: CommandContext,
+	project: ProjectContext,
+	artifact: string,
+	opts: ImportOpts
+): AsyncResult<ImportTarget> {
+	const bundleId = project.project.bundleId.ios;
+	if (bundleId === undefined) return err("the project has no iOS bundle id: pass --bundle-id");
+	const facts = await checkSimulatorBase(ctx.exec, artifact, { bundleId, arch: hostSimulatorArch() });
+	if (!facts.success) return facts;
+	let nativeFp = opts.hash === undefined ? undefined : baseFingerprint(opts.hash);
+	if (nativeFp === undefined) {
+		const fps = await kindFingerprints({
+			exec: ctx.exec,
+			project: project.project,
+			platform: "ios",
+			kind: "simulator",
+			env: ctx.env,
+			memo: { store: ctx.store(), now: ctx.now() },
+		});
+		if (!fps.success) return fps;
+		nativeFp = fps.data.nativeFp;
+	}
+	const key = { kind: "simulator-base", nativeFp } as const;
+	return ok({
+		hash: kindHash(key),
+		profile: `${opts.profile ?? project.project.eas?.profile ?? LOCAL_PROFILE}:simulator`,
+		layout: { dir: kindDir(ctx.env, project.projectKey, "ios", key), kind: "simulator-base" },
+		strippedBundle: facts.data.embeddedBundle,
+	});
+}
+
+/** The artifact path, its platform and `--kind`, checked against each other before any work. */
+function importArgs(
+	ctx: CommandContext,
+	raw: string,
+	opts: ImportOpts
+): Result<{ artifact: string; platform: Platform; kind: ImportKind | undefined }> {
 	const artifact = resolve(ctx.cwd, raw).replace(/\/+$/, "");
 	const platform = inferPlatform(artifact, opts.platform);
-	if (!platform.success) return fail(ctx, "import", platform.error);
+	if (!platform.success) return platform;
+	const kind = parseImportKind(opts.kind);
+	if (!kind.success) return kind;
+	if (kind.data === "simulator-base" && platform.data !== "ios")
+		return err("--kind simulator-base takes an iOS simulator .app (Android bases are built by warden)");
+	if (kind.data === undefined && opts.hash === undefined) return err("--hash <hash> is required without --kind");
+	return ok({ artifact, platform: platform.data, kind: kind.data });
+}
+
+async function importCmd(ctx: CommandContext, raw: string, opts: ImportOpts): Promise<number> {
+	const args = importArgs(ctx, raw, opts);
+	if (!args.success) return fail(ctx, "import", args.error);
+	const { artifact, platform, kind } = args.data;
 	const start = projectStart(ctx, opts.project);
 	if (!start.success) return fail(ctx, "import", start.error);
 	const bundle = opts.bundleId;
 	const project = await projectContextFor(ctx, {
 		start: start.data,
-		...(bundle !== undefined ? { bundleId: { [platform.data]: bundle } } : {}),
+		...(bundle !== undefined ? { bundleId: { [platform]: bundle } } : {}),
 	});
 	if (!project.success) return fail(ctx, "import", project.error);
+	const target: Result<ImportTarget> =
+		kind === "simulator-base"
+			? await withSpinner(ctx, `checking ${raw} and fingerprinting the project…`, (sctx) =>
+					simulatorBaseTarget(sctx, project.data, artifact, opts)
+				)
+			: ok({ hash: opts.hash ?? "", profile: opts.profile ?? project.data.project.eas?.profile ?? LOCAL_PROFILE });
+	if (!target.success) return fail(ctx, "import", target.error);
+	const { layout, strippedBundle } = target.data;
 	const stored = await withSpinner(ctx, `importing ${raw} into the build cache…`, () =>
 		storeArtifact({
 			store: ctx.store(),
 			env: ctx.env,
 			projectKey: project.data.projectKey,
-			platform: platform.data,
-			profile: opts.profile ?? project.data.project.eas?.profile ?? LOCAL_PROFILE,
-			hash: opts.hash,
+			platform,
+			profile: target.data.profile,
+			hash: target.data.hash,
 			artifact,
 			source: "import",
+			...(layout ? { layout } : {}),
 			now: ctx.now(),
 		})
 	);
 	if (!stored.success) return fail(ctx, "import", stored.error);
 	const b = stored.data;
+	const note = strippedBundle ? ctx.ui.color.dim(" · embedded main.jsbundle stripped (repacks write their own)") : "";
 	emit(
 		ctx,
 		opts.json === true,
-		b,
-		`${ctx.ui.color.green("imported")} ${b.platform} ${b.hash} → ${b.path} ${ctx.ui.color.dim(`(${formatSize(b.size)})`)}`
+		{ ...b, ...(strippedBundle !== undefined ? { strippedBundle } : {}) },
+		`${ctx.ui.color.green("imported")} ${b.platform}${b.kind ? ` ${b.kind}` : ""} ${b.hash} → ${b.path} ${ctx.ui.color.dim(`(${formatSize(b.size)})`)}${note}`
 	);
 	return 0;
 }
@@ -283,9 +372,15 @@ export const buildsCommand = defineCommand({
 			.action(async (hashes, opts) => done(await rmCmd(ctx, hashes, opts)));
 		cmd
 			.command("import")
-			.description("copy a local .app / .apk into the cache under a fingerprint hash")
+			.description(
+				"copy a local .app / .apk into the cache under a fingerprint hash (--kind simulator-base: a CI-built Release simulator .app that repacks clone from)"
+			)
 			.argument("<path>", "path.app | path.apk")
-			.requiredOption("--hash <hash>", "fingerprint hash to file it under")
+			.option(
+				"--hash <hash>",
+				"fingerprint hash to file it under (required without --kind; simulator-base: <nativeFp>, default warden's own)"
+			)
+			.option("--kind <kind>", "simulator-base: file it as the base `warden repack` / `warden e2e` reuse")
 			.option("--platform <platform>", "ios | android (default: from the extension)")
 			.option("--project <dir>", "project directory (default: cwd)")
 			.option("--profile <profile>", "build profile (default: the project's EAS profile, else local)")

@@ -120,7 +120,8 @@ export const COMMANDS: readonly CommandEntry[] = [
 	{
 		name: "golden",
 		group: "Devices",
-		summary: "golden iOS images / Android snapshots new devices start from (fast boots): ensure | ls | prune",
+		summary:
+			"golden iOS images / Android snapshots new devices start from (fast boots): ensure | ls | prune | key | export | import",
 		load: async () => (await import("./golden")).goldenCommand,
 	},
 	{
