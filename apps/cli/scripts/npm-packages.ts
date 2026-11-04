@@ -9,7 +9,8 @@
  * a missing helper an error.
  *   dist/npm/warden-e2e/       → @delacour/warden-e2e: package.json + index.mjs/preload.mjs (+ chunk) + index.d.ts/preload.d.ts
  *                                + types/ (the spec API for `warden e2e`, bundled from packages/e2e; lock-step with warden)
- * Every package also gets the repo-root LICENSE. Repository / homepage / bugs links are added only with
+ * Every package also gets the repo-root LICENSE and `homepage` (the website, from apps/cli/package.json; e2e → its docs).
+ * Repository / bugs links are added only with
  * `--repo-links` or `WARDEN_NPM_REPO_LINKS=1` (the release workflow sets it once the repo is public).
  * Publishing is the release workflow's job: platform packages first, then @delacour/warden, then @delacour/warden-e2e.
  */
@@ -47,6 +48,7 @@ const meta: PackageMeta = {
 	version: cliPackage.version,
 	description: cliPackage.description,
 	license: cliPackage.license,
+	homepage: cliPackage.homepage,
 	...(repoLinks ? { repository: DEFAULT_RELEASE_REPO } : {}),
 };
 

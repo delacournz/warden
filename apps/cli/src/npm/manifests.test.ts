@@ -4,6 +4,7 @@ import { RELEASE_TARGETS } from "./platforms";
 
 const meta: PackageMeta = { version: "0.3.0", description: "warden CLI", license: "MIT" };
 const withRepo: PackageMeta = { ...meta, repository: "delacournz/warden" };
+const withSite: PackageMeta = { ...meta, homepage: "https://warden.co.nz" };
 
 describe("platformManifest", () => {
 	test("pins os/cpu, ships the binary + LICENSE, publishes publicly", () => {
@@ -83,6 +84,17 @@ describe("mainManifest", () => {
 		expect("dependencies" in manifest).toBe(false);
 	});
 
+	test("homepage = the website when given, even without a repository; wins over the GitHub readme", () => {
+		expect(mainManifest(withSite).homepage).toBe("https://warden.co.nz");
+		expect("repository" in mainManifest(withSite)).toBe(false);
+		expect(platformManifest("linux-arm64", withSite).homepage).toBe("https://warden.co.nz");
+		expect(mainManifest({ ...withRepo, homepage: "https://warden.co.nz" })).toMatchObject({
+			repository: { type: "git", url: "git+https://github.com/delacournz/warden.git" },
+			homepage: "https://warden.co.nz",
+			bugs: { url: "https://github.com/delacournz/warden/issues" },
+		});
+	});
+
 	test("private repo (no repository) → no repository / homepage / bugs", () => {
 		const manifest = mainManifest(meta);
 		expect("repository" in manifest).toBe(false);
@@ -124,5 +136,10 @@ describe("e2eManifest", () => {
 		expect(Object.keys(manifest.dependencies)).toEqual(["zod"]);
 		expect(manifest.repository).toEqual({ type: "git", url: "git+https://github.com/delacournz/warden.git" });
 		expect("repository" in e2eManifest(meta, {})).toBe(false);
+	});
+
+	test("homepage = the e2e docs on the website when one is given", () => {
+		expect(e2eManifest(withSite, {}).homepage).toBe("https://warden.co.nz/docs/e2e");
+		expect("homepage" in e2eManifest(meta, {})).toBe(false);
 	});
 });
