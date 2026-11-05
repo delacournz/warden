@@ -1,5 +1,18 @@
 # @delacour/warden
 
+## 0.11.0
+
+### Minor Changes
+
+- [#185](https://github.com/delacournz/warden/pull/185) [`1451eae`](https://github.com/delacournz/warden/commit/1451eaed5f9cbf71bcfb6e9bbb45485b46c2ca42) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - Anonymous usage telemetry, on by default. One `command` event per run: the command (`ui press`, `e2e`), the names (never the values) of the flags you typed, `--json`, `ios` or `android`, how many suites `e2e` was asked for, how it ended, how long it took, the exit code and the class name of an error. Never source, paths, suite or test names, bundle ids, UDIDs, URLs or error messages. The first run prints a notice to stderr (held back under `--quiet`); stdout and `--json` are never touched. `hook`, `heartbeat`, `version`, completion and background workers send nothing; `dev` and `mcp` report when they start.
+  - `warden telemetry [status|enable|disable] [--json]` shows or switches it. `WARDEN_TELEMETRY_DISABLED=1`, `DELACOUR_TELEMETRY_DISABLED=1` or `DO_NOT_TRACK=1` turn it off and win over `enable`; `DELACOUR_TELEMETRY_DEBUG=1` prints the request to stderr instead of sending it. Dev and local builds never report. What is sent: [CLI reference](https://warden.co.nz/docs/reference/cli#telemetry).
+
+### Patch Changes
+
+- [#178](https://github.com/delacournz/warden/pull/178) [`0326eb2`](https://github.com/delacournz/warden/commit/0326eb2740b8520d02666b9f89b0572a8c3c80ff) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - iOS e2e and `warden ui`: when the native `settle` cannot bind the simulator's AX observer (`E_AX_UNAVAILABLE`, `AXObserverAddNotification(4002) failed with AX error -25204 (kAXErrorCannotComplete)`, seen on GitHub-hosted `xcode-27` runners while snapshots read fine by pid), that settle polls snapshot hashes instead of failing the step. After two in a row the session stops asking the helper's settle (each try cost about 3 s), with one log line. A native settle that works in between resets the count. The settle span records `nativeError: "E_AX_UNAVAILABLE"` and `via: "hash"`.
+- Updated dependencies []:
+  - @delacour/warden-e2e@0.11.0
+
 ## 0.10.0
 
 ### Minor Changes
