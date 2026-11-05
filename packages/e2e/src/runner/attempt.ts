@@ -1,6 +1,7 @@
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { conditionsOf } from "../conditions/device-conditions";
+import { formatNativeTail } from "../devtools/native-log-tail";
 import { isRecoverableLoss } from "../driver/ios/hid-recovery";
 import { E2eError } from "../errors";
 import { perfStartFor } from "../perf/device-perf";
@@ -455,6 +456,7 @@ async function captureFailureArtifacts(
 				]),
 	];
 	for (const capture of captures) {
+		for (const line of formatNativeTail(capture.tail ?? [])) session.log(line);
 		for (const file of capture.files) ctx.files.add(file);
 		for (const problem of capture.problems) {
 			ctx.trace.write({ type: "note", ts: Date.now(), kind: "note", label: `failure capture: ${problem}` });
