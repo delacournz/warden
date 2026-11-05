@@ -18,6 +18,15 @@ const READY: DevReady = {
 
 const settle = () => Bun.sleep(FRAME_MS * 3);
 
+/**
+ * Polls `cond` until it holds or `timeoutMs` passes; the assertion after it reports a miss. A bare Esc waits out
+ * `ESC_TIMEOUT_MS` on a real timer before a frame renders it, so a fixed sleep races a loaded host.
+ */
+async function until(cond: () => boolean | Promise<boolean>, timeoutMs = 2_000): Promise<void> {
+	const deadline = Date.now() + timeoutMs;
+	while (!(await cond()) && Date.now() < deadline) await Bun.sleep(5);
+}
+
 function setup(cols = 80, rows = 24) {
 	const stdin = fakeStdin();
 	const stdout = fakeStdout(cols, rows);
@@ -353,7 +362,7 @@ describe("Metro pane and key passthrough", () => {
 		const m = withMetro();
 		m.stdin.press("i");
 		m.stdin.press("\x1b\x1b");
-		await Bun.sleep(80);
+		await until(() => m.written.length > 0);
 		expect(m.written).toEqual(["\x1b"]);
 		m.stdin.press("r");
 		await settle();
@@ -390,12 +399,13 @@ describe("Metro pane and key passthrough", () => {
 		const m = withMetro();
 		m.metro.onData(new TextEncoder().encode("ab\r\ncd"));
 		m.stdin.press("i");
-		await Bun.sleep(80);
 		const col = listWidth(80) + 2 + 2 + 1;
-		expect(m.stdout.all()).toContain(`\x1b[${2 + 1 + 1};${col}H\x1b[?25h`);
+		const shown = `\x1b[${2 + 1 + 1};${col}H\x1b[?25h`;
+		await until(() => m.stdout.all().includes(shown));
+		expect(m.stdout.all()).toContain(shown);
 		m.stdout.clear();
 		m.stdin.press("\x1b");
-		await Bun.sleep(80);
+		await until(() => m.stdout.all().includes("\x1b[?25l"));
 		expect(m.stdout.all()).toContain("\x1b[?25l");
 		await m.ui.close();
 	});
@@ -403,18 +413,19 @@ describe("Metro pane and key passthrough", () => {
 	test("Shift+PgUp scrolls the pane into its history without reaching Metro; a key snaps back", async () => {
 		const m = withMetro();
 		m.metro.onData(new TextEncoder().encode(Array.from({ length: 100 }, (_, i) => `line ${i}`).join("\r\n")));
+		const text = async () => (await m.screen()).join("\n");
 		m.stdin.press("i");
-		await Bun.sleep(80);
-		expect((await m.screen()).join("\n")).toContain("line 99");
+		await until(async () => (await text()).includes("line 99"));
+		expect(await text()).toContain("line 99");
 		m.stdin.press("\x1b[5;2~");
-		await Bun.sleep(80);
+		await until(async () => !(await text()).includes("line 99"));
 		const scrolled = (await m.screen()).join("\n");
 		expect(scrolled).not.toContain("line 99");
 		expect(scrolled).toContain("line 7");
 		expect(m.written).toEqual([]);
 		m.stdin.press("x");
-		await Bun.sleep(80);
-		expect((await m.screen()).join("\n")).toContain("line 99");
+		await until(async () => (await text()).includes("line 99"));
+		expect(await text()).toContain("line 99");
 		expect(m.written).toEqual(["x"]);
 		await m.ui.close();
 	});
