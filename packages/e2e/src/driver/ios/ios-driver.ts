@@ -86,6 +86,8 @@ export type OpenIosDriverOptions = {
 	client?: SimdClient;
 	now?: () => number;
 	sleep?: (ms: number) => Promise<void>;
+	/** how long the session's first snapshot waits for an in-sim bridge that is up but silent (default 60 s); 0 tries once */
+	coldBridgeBudgetMs?: number;
 	/** for `locateHelper` / `$WARDEN_HOME/simd/<version>`; defaults read the process */
 	version?: string;
 	wardenHome?: string;
@@ -132,6 +134,16 @@ const SETTLE_MARGIN_MS = 2_000;
  * 2.4-4 s warm and 8.6-11.3 s right after boot, and a 3 s budget left every launch there unbound.
  */
 const REBIND_TIMEOUT_MS = 10_000;
+/**
+ * How long the first snapshot of a session waits for an in-sim bridge that is up but silent. A freshly cloned
+ * simulator on a loaded host can take longer than one read's budget (axbridge 4 s + AX fallback 5 s) to answer the
+ * first time, and every read after it is fast, so the first one retries while the failure says "not ready yet".
+ * Once a read or a rebind has succeeded the normal per-call budgets apply.
+ */
+export const COLD_BRIDGE_BUDGET_MS = 60_000;
+/** Waits between the cold first snapshot's tries: after the first failure, then after each later one. */
+const COLD_BRIDGE_FIRST_WAIT_MS = 2_000;
+const COLD_BRIDGE_WAIT_MS = 5_000;
 const GESTURE_MARGIN_MS = 5_000;
 /** `frontmost` is one launchd lookup; a helper that has not answered in this long is busy, and the caller carries on without. */
 const FRONTMOST_TIMEOUT_MS = 3_000;
@@ -238,6 +250,39 @@ export function noteHelperHealth(health: HealthData): void {
 	if (health.frontmost) noteSpanDetail("frontmostUnresolvedAgoMs", health.frontmost.unresolvedAgoMs);
 }
 
+/** The wait before the next cold snapshot try, or undefined once the budget is spent. */
+function coldBridgeWait(error: DriverError, attempt: number, spentMs: number, budgetMs: number): number | undefined {
+	if (!bridgeNotReady(error)) return undefined;
+	const wait = attempt === 1 ? COLD_BRIDGE_FIRST_WAIT_MS : COLD_BRIDGE_WAIT_MS;
+	return spentMs + wait >= budgetMs ? undefined : wait;
+}
+
+/** Runs `read` until it succeeds or fails for a reason other than the bridge being late, or the cold budget is spent. */
+async function retryColdSnapshot<T>(
+	read: () => DriverResult<T>,
+	ctx: { now: () => number; sleep: (ms: number) => Promise<void>; budgetMs: number; log?: Logger }
+): DriverResult<T> {
+	const started = ctx.now();
+	let waited = 0;
+	for (let attempt = 1; ; attempt++) {
+		const result = await read();
+		const spent = Math.max(ctx.now() - started, waited);
+		const wait = result.success ? undefined : coldBridgeWait(result.error, attempt, spent, ctx.budgetMs);
+		if (wait === undefined) {
+			if (attempt > 1) noteSpanDetail("coldBridgeMs", spent);
+			return result;
+		}
+		ctx.log?.(`[ios] snapshot try ${attempt} failed, the bridge is not up yet: retrying`);
+		await ctx.sleep(wait);
+		waited += wait;
+	}
+}
+
+/** A failure that says the bridge is not answering yet (timeout, degraded or silent guest), as opposed to a real error. */
+function bridgeNotReady(error: DriverError): boolean {
+	return error.code === "E_TIMEOUT" || error.code === "E_AX_UNAVAILABLE";
+}
+
 /** Leaves the helper's rebind verdict on the current span. */
 function noteRebind(data: RebindData): void {
 	noteSpanDetail("rebind", data.bound ? "bound" : (data.reason ?? "unbound"));
@@ -310,6 +355,8 @@ export function createIosDriver(
 		now: () => number;
 		sleep: (ms: number) => Promise<void>;
 		log?: Logger;
+		/** how long the first snapshot waits for a bridge that is not up yet (default {@link COLD_BRIDGE_BUDGET_MS}) */
+		coldBridgeBudgetMs?: number;
 		/** told about every successful `clock` op */
 		clockRecorder?: ClockRecorder;
 		/** device settings (`ios-settings.ts`); absent: those ops answer `E_UNSUPPORTED` */
@@ -359,6 +406,8 @@ export function createIosDriver(
 	/** Native settles in a row that could not bind the AX observer (`E_AX_UNAVAILABLE`); at 2 they stop being asked. */
 	let settleAxFailures = 0;
 	let rebindUnsupported = false;
+	/** whether this session has had a successful snapshot or a bound rebind: until then the bridge may still be coming up */
+	let bridgeProven = false;
 	let gestureUnsupported = false;
 	/** set once the helper did not know an app lifecycle op: it predates them, and `simctl` does app lifecycle */
 	let appOpsOutdated = false;
@@ -530,7 +579,10 @@ export function createIosDriver(
 	 * The first `E_AX_UNAVAILABLE` goes to the caller (it is retryable); a second one in a row means the
 	 * in-sim AX bridge went stale, so restart the helper once and retry the snapshot.
 	 */
-	async function snapshot(o?: { interactiveOnly?: boolean; backend?: Snapshot["backend"] }): DriverResult<Snapshot> {
+	async function snapshotOnce(o?: {
+		interactiveOnly?: boolean;
+		backend?: Snapshot["backend"];
+	}): DriverResult<Snapshot> {
 		const generation = swap.generation();
 		const first = await fetchSnapshot(o);
 		if (first.success) {
@@ -548,6 +600,23 @@ export function createIosDriver(
 		if (!restarted.success) return restarted;
 		axFailures = 0;
 		return fetchSnapshot(o);
+	}
+
+	/**
+	 * `snapshotOnce`, and until the session has had one success (the cold path) a bridge-not-ready failure is retried
+	 * with backoff for up to `COLD_BRIDGE_BUDGET_MS`, so the first read on a fresh simulator waits for the bridge
+	 * instead of failing the first spec. Other errors return at once. The wait is `coldBridgeMs` on the span.
+	 */
+	async function snapshot(o?: { interactiveOnly?: boolean; backend?: Snapshot["backend"] }): DriverResult<Snapshot> {
+		if (bridgeProven) return snapshotOnce(o);
+		const result = await retryColdSnapshot(() => snapshotOnce(o), {
+			now,
+			sleep,
+			budgetMs: opts.coldBridgeBudgetMs ?? COLD_BRIDGE_BUDGET_MS,
+			...(opts.log ? { log: opts.log } : {}),
+		});
+		if (result.success) bridgeProven = true;
+		return result;
 	}
 
 	async function typeText(text: string): DriverResult<void> {
@@ -622,6 +691,7 @@ export function createIosDriver(
 			return false;
 		}
 		noteRebind(reply.data);
+		if (reply.data.bound) bridgeProven = true;
 		return reply.data.bound;
 	}
 
@@ -1021,6 +1091,7 @@ export async function openIosDriver(o: OpenIosDriverOptions): DriverResult<Drive
 			now,
 			sleep,
 			log,
+			...(o.coldBridgeBudgetMs !== undefined ? { coldBridgeBudgetMs: o.coldBridgeBudgetMs } : {}),
 			...(network ? { network } : {}),
 			a11y: () => iosA11yFor(o, now, sleep),
 			nativeAudit: (ctx) => nativeAuditFor(o, exec, log, ctx),
