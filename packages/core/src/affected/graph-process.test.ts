@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { bunExec, type Exec, type ExecResult } from "../exec";
 import { findSuite } from "./affected";
-import { graphOf, makeSuiteRepo } from "./fixture.testing";
+import { graphOf, makeSuiteRepo, SUITE_REPO_HOOK_TIMEOUT_MS } from "./fixture.testing";
 import { reachable, TYPESCRIPT_UNUSABLE_EXIT } from "./graph";
 import {
 	compiledBinary,
@@ -30,7 +30,7 @@ beforeEach(async () => {
 	({ dir, write } = await makeSuiteRepo());
 	cacheDir = mkdtempSync(join(tmpdir(), "warden-graph-cache-"));
 	spawns = [];
-});
+}, SUITE_REPO_HOOK_TIMEOUT_MS);
 afterEach(() => {
 	rmSync(dir, { recursive: true, force: true });
 	rmSync(cacheDir, { recursive: true, force: true });

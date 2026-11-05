@@ -15,7 +15,7 @@ import { bunExec, type Exec } from "../exec";
 import { createGitFactsCache } from "../git-facts";
 import { computeAffected, findSuite } from "./affected";
 import { DEV_MENU_OFF_ARGS } from "./affected.defaults";
-import { makeSuiteRepo } from "./fixture.testing";
+import { makeSuiteRepo, SUITE_REPO_HOOK_TIMEOUT_MS } from "./fixture.testing";
 
 const SNAPSHOT = /^[0-9a-f]{40}-[0-9a-f]{16}\.json$/;
 
@@ -24,7 +24,7 @@ let write: (path: string, text: string) => void;
 
 beforeEach(async () => {
 	({ dir, write } = await makeSuiteRepo());
-});
+}, SUITE_REPO_HOOK_TIMEOUT_MS);
 const cleanup: string[] = [];
 afterEach(() => {
 	for (const path of [dir, ...cleanup.splice(0)]) rmSync(path, { recursive: true, force: true });

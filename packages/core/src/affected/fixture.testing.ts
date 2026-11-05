@@ -118,6 +118,12 @@ function buildSuiteRepo(suite: Record<string, unknown>, config: Record<string, u
 }
 
 /**
+ * Timeout for a hook that calls `makeSuiteRepo`: the first call in a process builds the template
+ * (git spawns + copies), which runs past bun's 5 s hook default on a loaded CI host.
+ */
+export const SUITE_REPO_HOOK_TIMEOUT_MS = 60_000;
+
+/**
  * Two specs + a `mobile` suite mapping them to screens, committed on `main`, checked out on `feature`.
  * Each (suite, config) is built once per process; every call gets a fresh, independent copy of it.
  */
