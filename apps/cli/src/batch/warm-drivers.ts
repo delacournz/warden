@@ -103,7 +103,10 @@ function pause(run: WarmRun, ms: number, stop: AbortSignal): Promise<boolean> {
 	});
 }
 
-/** Snapshot with backoff until one succeeds (undefined) or the budget or `stop` ends it (the last error). */
+/**
+ * Snapshot with backoff until one succeeds (undefined) or the budget or `stop` ends it (the last error). The
+ * budget counts the clock and, as a floor, the time slept, so a clock that stands still cannot retry forever.
+ */
 async function snapshotUntilWarm(
 	run: WarmRun,
 	helper: WarmHelper,
@@ -112,6 +115,7 @@ async function snapshotUntilWarm(
 	note: (line: string) => void
 ): Promise<string | undefined> {
 	const started = run.now();
+	let waited = 0;
 	let lastError = "";
 	for (let attempt = 1; ; attempt++) {
 		try {
@@ -123,9 +127,11 @@ async function snapshotUntilWarm(
 		}
 		const wait = attempt === 1 ? FIRST_RETRY_WAIT_MS : RETRY_WAIT_MS;
 		const detail = lastError.replace(/^snapshot failed: /, "");
-		const done = stop.signal.aborted || run.now() - started + wait >= budgetMs;
+		const spent = Math.max(run.now() - started, waited);
+		const done = stop.signal.aborted || spent + wait >= budgetMs;
 		note(`snapshot try ${attempt} failed: ${detail}; ${done ? "giving up" : "retrying"}`);
 		if (done || !(await pause(run, wait, stop.signal))) return lastError;
+		waited += wait;
 	}
 }
 
