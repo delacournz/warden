@@ -23,6 +23,7 @@ import type { SlimProfile } from "@delacour/warden-core/sims/slim.profile";
 import { wardenHome } from "@delacour/warden-core/store";
 import { isPhysicalDevice, isPhysicalIosId, type Owner, type Platform } from "@delacour/warden-core/types";
 import { ENV_NAMES } from "@delacour/warden-e2e/env";
+import type { TestResult } from "@delacour/warden-e2e/runner/results";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { stopAndroidHostsLazily } from "../agent-ui/helper-sweep";
 import { UI_ERROR_EXIT, type UiErrorCode } from "../agent-ui/output";
@@ -596,6 +597,7 @@ async function runGrid(
 		startedAt: number;
 		resultFiles: ResultFiles;
 		specs: readonly TrackedSpec[] | undefined;
+		onTest?: ((spec: string, result: TestResult) => void) | undefined;
 		/** an elastic worker is about to join: its device (put in the grid), or undefined */
 		onJoin?: (worker: number) => Device | undefined;
 		onStart?: (queue: Queue, handle: BatchHandle) => void;
@@ -606,7 +608,8 @@ async function runGrid(
 	const sized = startView(r.devices, o.total, o.startedAt, specs);
 	const screen = display(ctx, deps, args, { current: startView(rows, o.total, o.startedAt, specs) }, specs, sized);
 	const ended = new Set<string>();
-	const poller = specs ? specPoller(deps, specs, o.resultFiles, ended, screen) : undefined;
+	const sink = o.onTest ? { specs: screen.specs, tests: screen.tests, finished: o.onTest } : screen;
+	const poller = specs ? specPoller(deps, specs, o.resultFiles, ended, sink) : undefined;
 	const shown = new Set(o.ready);
 	try {
 		const summary = await runPools(pending, {
@@ -980,6 +983,8 @@ export type SessionHooks = {
 	shutdownIf?: (summary: BatchSummary) => boolean;
 	/** the specs the jobs run, tracked live from the jobs' `results.jsonl` */
 	specs?: readonly TrackedSpec[];
+	/** each test of `specs` as it finishes, read off the jobs' `results.jsonl` */
+	onTest?: (spec: string, result: TestResult) => void;
 	/** env added to one job's spawn (over the pool env, under the worker's own `WARDEN_UDID` / `WARDEN_WORKER` / `WARDEN_JOB…`) */
 	jobEnv?: (job: JobEnvInput) => Record<string, string>;
 	/**
@@ -1952,6 +1957,7 @@ async function supervise(
 				startedAt,
 				resultFiles,
 				specs: hooks.specs,
+				onTest: hooks.onTest,
 				onStart: elastic.start,
 				onJoin: elastic.join,
 			}

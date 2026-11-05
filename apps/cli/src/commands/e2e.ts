@@ -23,6 +23,7 @@ import { parseDuration } from "@delacour/warden-core/duration";
 import { resolveHeadless } from "@delacour/warden-core/headless";
 import { DEFAULT_SLIM_PROFILE, type SlimProfile, validateProfile } from "@delacour/warden-core/sims/slim.profile";
 import type { Platform } from "@delacour/warden-core/types";
+import type { TestResult } from "@delacour/warden-e2e/runner/results";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { selfCommand } from "../autogc";
 import type { DeviceSetup, DeviceSetupSpec } from "../batch/setup";
@@ -52,6 +53,7 @@ import {
 import { selectPreload } from "../e2e/e2e-runtime";
 import { attemptOut, type JobPlan, jobPlan, type ShardRuns, shardRuns } from "../e2e/jobs";
 import { type LaunchPlan, specBundleId, specDevClientScheme, specLaunchArgs } from "../e2e/launch";
+import { annotations, commonFailure, githubTarget, stepSummary, testEvent, testTotals } from "../e2e/report-output";
 import { exitGate, type RunShape, type SpecVerdict, type Verdicts, verdicts } from "../e2e/verdicts";
 import { type AppFlagValues, withLeaseOptions } from "../lease-session";
 import { emit, note, reportError, success, warn } from "../output";
@@ -77,6 +79,8 @@ export type E2eOpts = ClaimFlagValues &
 	PhysicalOptionValues &
 	Omit<AffectedOpts, "json" | "strict"> & {
 		json?: true;
+		/** `--json-lines`: stdout is one JSON event per line (each test as it finishes, then the report) */
+		jsonLines?: true;
 		port: string[];
 		retry: string;
 		passes: string;
@@ -319,12 +323,32 @@ async function metroPlan(suite: Suite, bundleId: string): Promise<Result<MetroPl
 	});
 }
 
-/** Write the report (batch dir + `--report`), print it for `--json`. */
+/** Write the report (batch dir + `--report`), print it for `--json` / as the last `--json-lines` event. */
 async function publish(ctx: CommandContext, deps: BatchDeps, opts: E2eOpts, report: E2eReport): Promise<void> {
 	const text = `${JSON.stringify(report, null, 2)}\n`;
 	if (report.batchDir) await deps.writeFile(join(report.batchDir, "e2e-report.json"), text);
 	if (opts.report) await deps.writeFile(opts.report, text);
-	if (opts.json) emit(ctx, true, report, "");
+	if (opts.jsonLines) ctx.out(`${JSON.stringify({ event: "report", report })}\n`);
+	else if (opts.json) emit(ctx, true, report, "");
+}
+
+/**
+ * Under GitHub Actions: an annotation per failed test on its spec file and line (stdout, or stderr
+ * when stdout is JSON; the runner reads both), and the run's table appended to the step summary.
+ */
+async function publishGithub(ctx: CommandContext, deps: BatchDeps, opts: E2eOpts, report: E2eReport): Promise<void> {
+	const github = githubTarget(ctx.env);
+	if (!github) return;
+	const write = jsonOut(opts) ? ctx.err : (line: string) => ctx.out(`${line}\n`);
+	for (const line of annotations(report, github.root)) write(line);
+	if (!github.summary) return;
+	const before = await deps.readFile(github.summary).catch(() => "");
+	await deps.writeFile(github.summary, `${before}${stepSummary(report)}`).catch((error: unknown) => {
+		warn(
+			ctx,
+			`warden e2e: could not write the step summary: ${error instanceof Error ? error.message : String(error)}`
+		);
+	});
 }
 
 /** ` on <device> — log <path> — screenshot <path>` for a spec that ran and failed (empty otherwise). */
@@ -359,6 +383,29 @@ function failedTests(spec: SpecVerdict): string[] {
 		});
 }
 
+/** Test counts, the error most failures share (usually the root cause) and, on failure, where the evidence is. */
+function printTotals(ctx: CommandContext, report: E2eReport): void {
+	const { color } = ctx.ui;
+	const totals = testTotals(report);
+	if (totals.passed + totals.failed + totals.skipped > 0) {
+		const failed = totals.failed > 0 ? color.red(`${totals.failed} failed`) : "0 failed";
+		ctx.err(`warden e2e: tests ${color.green(`${totals.passed} passed`)} · ${failed} · ${totals.skipped} skipped`);
+	}
+	const common = commonFailure(report);
+	if (common)
+		ctx.err(color.red(`warden e2e: ${common.count}/${common.of} failed tests share one error: ${common.message}`));
+	if (!report.ok && report.batchDir) ctx.err(`warden e2e: evidence in ${report.batchDir}`);
+}
+
+/** stdout is JSON (`--json` or `--json-lines`): no prompts, annotations go to stderr. */
+const jsonOut = (opts: E2eOpts): true | undefined => opts.json ?? opts.jsonLines;
+
+/** `--json-lines`: each finished test as one event on stdout. */
+function jsonLinesHook(ctx: CommandContext, opts: E2eOpts): { onTest?: (spec: string, result: TestResult) => void } {
+	if (!opts.jsonLines) return {};
+	return { onTest: (id, result) => ctx.out(`${JSON.stringify(testEvent(id, result))}\n`) };
+}
+
 /** Failed / not-run specs with their failing tests, any `test.only`, then the one-line gate verdict. */
 function printVerdict(ctx: CommandContext, report: E2eReport): void {
 	const { color } = ctx.ui;
@@ -369,6 +416,7 @@ function printVerdict(ctx: CommandContext, report: E2eReport): void {
 		for (const line of failedTests(spec)) ctx.err(color.red(line));
 	}
 	for (const file of report.only ?? []) ctx.err(color.red(`warden e2e: test.only left in ${file}`));
+	printTotals(ctx, report);
 	const passed = report.specs.filter((f) => f.verdict === "passed").length;
 	const line = `warden e2e: ${passed}/${report.specs.length} spec(s) passed — ${report.ok ? "gate passed" : "gate failed"}`;
 	if (report.ok) success(ctx, line);
@@ -460,7 +508,7 @@ async function e2e(
 	if (!run.success) return fail(run.error);
 	// before any lease or build: several usable phones are asked about, or refused (ambiguous_device, exit 2)
 	const picked = await pickPhysicalArgs(ctx, resolveOwner(ctx), run.data.args, {
-		prompt: canPrompt(ctx, { json: opts.json }),
+		prompt: canPrompt(ctx, { json: jsonOut(opts) }),
 	});
 	if (picked.kind !== "ok") return reportPick(ctx, "e2e", picked);
 	const { shape, plan: jobs, argvOf, spec, physical } = run.data;
@@ -477,6 +525,7 @@ async function e2e(
 			shutdown: shutsDownOnPass(suite, opts, physical),
 			physical,
 			...warmHooks(ctx, deps, suite, opts, physical && selection.platform === "ios"),
+			...jsonLinesHook(ctx, opts),
 		})
 	);
 	const result = await verdicts(specs, session, shape, {
@@ -487,6 +536,7 @@ async function e2e(
 	for (const warning of result.warnings) ctx.err(ctx.ui.color.yellow(`warden e2e: ${warning}`));
 	const report = buildReport(base, headless, shape.shardOf === undefined ? "spec" : "device", session, result);
 	await publish(ctx, deps, opts, report);
+	await publishGithub(ctx, deps, opts, report);
 	if (session.code === 130) return 130;
 	// stopped before any spec (a phone's runner would not start): the session already said why, with its own exit code
 	if (session.error) return session.code;
@@ -571,6 +621,7 @@ function sessionHooks(
 		physical: boolean;
 		warm: WarmConnect | undefined;
 		resident: ((udid: string) => Promise<string | undefined>) | undefined;
+		onTest?: (spec: string, result: TestResult) => void;
 	}
 ): SessionHooks {
 	return {
@@ -580,6 +631,7 @@ function sessionHooks(
 		warmDrivers: o.warm,
 		residentSocket: o.resident,
 		specs: trackedSpecs(specs, shape),
+		...(o.onTest ? { onTest: o.onTest } : {}),
 		// a passed gate frees the sims when asked to; a failed one always leaves them up to inspect
 		...(o.shutdown ? { shutdownIf: (summary) => exitGate(specs, summary, shape) } : {}),
 		argvFor: (_job, run) => runs.argv(run),
@@ -620,7 +672,7 @@ async function runPlan(
 	const metro = await metroPlan(suite, spec.env.bundleId);
 	if (!metro.success) return metro;
 	// --json is the e2e report here, not batch.json
-	const { json: _json, ...merged } = suiteOpts(suite, opts, passed, kind);
+	const { json: _json, jsonLines: _jsonLines, ...merged } = suiteOpts(suite, opts, passed, kind);
 	const needsApp = appFlagsWithoutApp(suite, merged);
 	if (needsApp !== undefined) return err(needsApp);
 	const batchOpts = { ...merged, ...(config.metro?.enabled ? { port: [config.metro.port, ...merged.port] } : {}) };
@@ -869,6 +921,10 @@ export function createE2eCommand(deps: BatchDeps): Command {
 				.option("--explain", "print why each spec was selected before running")
 				.option("--dry-run", "select and explain, run nothing")
 				.option("--report <file>", "also write e2e-report.json here")
+				.option(
+					"--json-lines",
+					"stdout: one JSON event per line, each test as it finishes, then the report (progress stays on stderr)"
+				)
 				.option("--devices <legs>", "which e2e.<suite>.devices legs run: default | all | <profile,…>")
 				.option(
 					"--no-shutdown",

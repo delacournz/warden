@@ -166,6 +166,7 @@ With no `e2e` suite configured (and none named), the Expo app around the cwd get
 | `--all` | run every spec of the suite (after `include` / `exclude`), no git diff |
 | `--specs <list>` | run exactly these spec ids / globs (comma-separated), no git diff; a list matching nothing fails |
 | `--report <file>` | also write `e2e-report.json` here |
+| `--json-lines` | NDJSON on stdout: one `test` event per finished test, then a `report` event |
 | `--devices <legs>` | which `devices` legs run: `default` (the default), `all`, or profile names (comma-separated) |
 | `--job-timeout <duration>` | overrides the suite's `jobTimeoutMs` (default 10 min) |
 | `--no-shutdown` | keep the devices running after the gate passes (the default locally; under CI they are shut down. Suite `shutdown` sets it, the flag wins) |
