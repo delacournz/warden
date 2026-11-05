@@ -27,6 +27,7 @@ packages/
   types/              # shared utility types (Result, AsyncResult, ok, err)
 crates/
   warden-rtc/         # Rust: H.264 RTP packetize/depacketize, reorder buffer, codec params; shared by apps/viewer and the stream publisher (WDN-STRM)
+  warden-stream/      # Rust bin: the device stream publisher (helper AU socket → H.264 over WebRTC, NDJSON signalling on stdio); see crates/warden-stream/AGENTS.md
 scripts/              # repo scripts (pre-commit biome, signoff/ = local CI gate)
 ```
 
@@ -88,7 +89,7 @@ PRs into `develop` are gated on local signoff, not GitHub Actions. Branch protec
 
 - Agents: `.claude/rules/signoff.md` is the always-on rule (sign off after `gh pr create` and after every push to an open PR), the `signoff` skill (`.claude/skills/signoff`) is the procedure, and a `PostToolUse` hook in `.claude/settings.json` reminds after a PR is opened or a head moves.
 - One-off per machine: `gh extension install basecamp/gh-signoff`.
-- With the PR open, a clean tree and HEAD pushed: `bun run signoff` (`-- --dry-run` previews the plan). It diffs against the PR base, runs every applicable check from `scripts/signoff/signoff-checks.ts` (typecheck, check, test always; `native` when `packages/e2e/native/**` changed), writes `signoff/<check>` per pass, then the `signoff` umbrella, and posts one report comment naming the actor and runner (agents show as agents).
+- With the PR open, a clean tree and HEAD pushed: `bun run signoff` (`-- --dry-run` previews the plan). It diffs against the PR base, runs every applicable check from `scripts/signoff/signoff-checks.ts` (typecheck, check, test always; `native` when `packages/e2e/native/**` changed, `viewer` for `apps/viewer/**`, `stream` for `crates/warden-stream/**`; both for `crates/warden-rtc/**`), writes `signoff/<check>` per pass, then the `signoff` umbrella, and posts one report comment naming the actor and runner (agents show as agents).
 - A status binds to a SHA: every push (or **Update branch**) drops it, so re-run.
 - Turbo caches `typecheck`, `check` and `test` (logs only), so a re-run or a one-workspace diff replays the untouched workspaces' greens. A workspace's own files and its declared workspace dependencies (the `transit` node) are hashed by default. **A test (or tsc) that reads outside its workspace must declare it in `turbo.jsonc`**: a `$TURBO_ROOT$/…` entry in `inputs` on `"<pkg>#<task>"` (keep `$TURBO_DEFAULT$`; never a bare `**` over a dir with build outputs, `**` ignores `.gitignore`), or `dependsOn: ["<pkg>#transit"]` for another package's whole source. Otherwise a stale green is replayed. Prove it: append a byte to the file, `bunx turbo run test --dry=json` must show a new hash for the task. `scripts/signoff/turbo-cache.test.ts` guards the config's shape.
 - Signoff points `TURBO_CACHE_DIR` at `$(git rev-parse --git-common-dir)/turbo-cache` so every worktree shares one cache (a caller's own `TURBO_CACHE_DIR` wins). The report marks replayed tasks `(cached)`. Never use `turbo --affected`.

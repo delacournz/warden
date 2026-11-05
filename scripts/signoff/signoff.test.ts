@@ -472,6 +472,33 @@ describe("commandLabel", () => {
 	});
 });
 
+describe("stream check", () => {
+	const stream = SIGNOFF_CHECKS.find((check) => check.context === "stream");
+
+	test("runs for the publisher crate and the shared RTP crate, not for other Rust or markdown", () => {
+		expect(applicable(["crates/warden-stream/src/publisher.rs"])).toContain("stream");
+		expect(applicable(["crates/warden-rtc/src/h264.rs"])).toContain("stream");
+		expect(applicable(["crates/warden-stream/Cargo.lock"])).toContain("stream");
+		expect(applicable(["apps/viewer/src-tauri/src/lib.rs"])).not.toContain("stream");
+		expect(applicable(["crates/warden-stream/AGENTS.md"])).not.toContain("stream");
+		expect(applicable(["apps/cli/src/cli.ts"])).not.toContain("stream");
+	});
+
+	test("cargo-tests both crates, path-gated and never required", () => {
+		expect(stream?.always).toBe(false);
+		expect(stream?.run.map((command) => command.argv.join(" "))).toEqual([
+			"cargo test --manifest-path crates/warden-rtc/Cargo.toml",
+			"cargo test --manifest-path crates/warden-stream/Cargo.toml",
+		]);
+		expect(REQUIRED_CONTEXTS).not.toContain(`${UMBRELLA_CONTEXT}/stream`);
+	});
+
+	test("the ci.yml stream job runs the same cargo tests", async () => {
+		const steps = ((await ciWorkflow()).jobs.stream?.steps ?? []).map((step) => (step.run ?? "").trim());
+		for (const command of stream?.run ?? []) expect(steps).toContain(command.argv.join(" "));
+	});
+});
+
 type Workflow = {
 	on: Record<string, { inputs?: Record<string, unknown> } | null>;
 	jobs: Record<string, { steps?: { run?: string }[] }>;
