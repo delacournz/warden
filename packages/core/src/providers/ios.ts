@@ -418,6 +418,22 @@ export function createIosProvider(deps: ProviderDeps, options: IosProviderOption
 		const prepared = await prepareOfflineSlim(id, slim, { root: disabledStoreRoot(deps.env) });
 		if (!prepared.success) note(`${target.name} offline slim skipped (${prepared.error})`);
 	};
+	/** Post the enrollment notification (set, then post); the first failure's error, else undefined. */
+	const postEnrollment = async (id: string): Promise<string | undefined> => {
+		for (const args of [
+			["-s", ENROLLMENT_NOTIFICATION, "1"],
+			["-p", ENROLLMENT_NOTIFICATION],
+		]) {
+			const out = await simctl(runner, ["spawn", id, "notifyutil", ...args], IOS_TIMEOUTS.listMs);
+			if (!out.success) return out.error;
+		}
+		return undefined;
+	};
+	/** Read the enrollment state back: true when it reads 1. */
+	const enrollmentTook = async (id: string): Promise<boolean> => {
+		const read = await simctl(runner, ["spawn", id, "notifyutil", "-g", ENROLLMENT_NOTIFICATION], IOS_TIMEOUTS.listMs);
+		return read.success && /\s1\s*$/.test(read.data);
+	};
 	/**
 	 * A biometrics sim (recorded profile `<profile>+bio`) enrolls on every boot: the simulator forgets its enrollment
 	 * when it shuts down, and a clone of a golden starts unenrolled, so there is nothing to bake. Runs before any
@@ -431,22 +447,12 @@ export function createIosProvider(deps: ProviderDeps, options: IosProviderOption
 		const rec = deps.store.listDevices("ios").find((d) => d.id === id);
 		if (!rec || isGoldenName(rec.name) || !splitBiometricProfile(rec.profile ?? "").biometrics) return;
 		for (let attempt = 1; attempt <= ENROLL_ATTEMPTS; attempt++) {
-			for (const args of [
-				["-s", ENROLLMENT_NOTIFICATION, "1"],
-				["-p", ENROLLMENT_NOTIFICATION],
-			]) {
-				const out = await simctl(runner, ["spawn", id, "notifyutil", ...args], IOS_TIMEOUTS.listMs);
-				if (!out.success) {
-					note(`${rec.name} biometrics enroll failed (${out.error})`);
-					return;
-				}
+			const failure = await postEnrollment(id);
+			if (failure !== undefined) {
+				note(`${rec.name} biometrics enroll failed (${failure})`);
+				return;
 			}
-			const read = await simctl(
-				runner,
-				["spawn", id, "notifyutil", "-g", ENROLLMENT_NOTIFICATION],
-				IOS_TIMEOUTS.listMs
-			);
-			if (read.success && /\s1\s*$/.test(read.data)) return;
+			if (await enrollmentTook(id)) return;
 			if (attempt < ENROLL_ATTEMPTS) await sleep(ENROLL_RETRY_MS);
 		}
 		note(`${rec.name} biometrics enroll did not take after ${ENROLL_ATTEMPTS} attempts`);

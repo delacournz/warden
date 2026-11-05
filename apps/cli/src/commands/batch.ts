@@ -1840,6 +1840,60 @@ function prepareOptions(
 	};
 }
 
+/** Output held back while a live grid owns the terminal: `say` queues while holding, `flush` stops holding and prints it. */
+function heldOutput(ctx: CommandContext): {
+	say: (line: string) => void;
+	flush: () => void;
+	hold: (on: boolean) => void;
+} {
+	const held: string[] = [];
+	let holding = false;
+	return {
+		say: (line) => {
+			if (holding) held.push(line);
+			else ctx.err(line);
+		},
+		flush: () => {
+			holding = false;
+			for (const line of held.splice(0)) ctx.err(line);
+		},
+		hold: (on) => {
+			holding = on;
+		},
+	};
+}
+
+/** Workers are done: serve first, then the recordings (the contract's stop order), Metro last. */
+async function teardownServices(deps: BatchDeps, services: Services): Promise<void> {
+	const { serve, metro, recordings, warm } = services;
+	const helpers: WarmHelper[] = [];
+	services.serve = undefined;
+	services.metro = undefined;
+	services.recordings = [];
+	services.warm = undefined;
+	if (warm) {
+		// stop waiting for warm-ups still under way, close every helper that came up (bar those closed already)
+		warm.abort();
+		helpers.push(...(await warm.settled()).helpers.filter((h) => !services.closed.has(h)));
+	}
+	if (serve) await stopServe(deps, serve);
+	await Promise.all(recordings.map((rec) => rec.stop()));
+	await Promise.all(helpers.map((helper) => helper.close().catch(() => {})));
+	await metro?.stop();
+}
+
+/** A phone's jobs reach its runner only through the warm socket: no runner, no specs. Undefined when nothing stopped. */
+async function warmGateOf(r: RunContext, warm: EarlyWarm | undefined): Promise<Awaited<ReturnType<typeof warmGate>>> {
+	if (!warm) return undefined;
+	const phones = r.devices.map((d) => d.udid).filter(isPhysicalIosId);
+	return phones.length > 0 ? await warmGate(phones, warm) : undefined;
+}
+
+/** A warm-gate stop exits with the code its error maps to, unless the run was interrupted (130). */
+function warmStopResult(failed: SessionResult, stopCode: string): SessionResult {
+	return failed.code === 130 ? failed : { ...failed, code: warmStopExit(stopCode) };
+}
+
 /** Everything after the claim: Metro → serve → recordings → setup → jobs → stop serve / recordings / Metro → batch.json → release. */
 async function supervise(
 	ctx: CommandContext,
@@ -1879,36 +1933,14 @@ async function supervise(
 	/** elastic workers: the background claims (awaited before the release) and what they prepared */
 	let elastic = NO_ELASTIC;
 	// a live grid owns the terminal: what a pool still preparing (or a warm-up) says waits until it ends
-	const held: string[] = [];
-	let holding = false;
-	const say = (line: string) => (holding ? held.push(line) : ctx.err(line));
-	const flush = () => {
-		holding = false;
-		for (const line of held.splice(0)) ctx.err(line);
-	};
+	const output = heldOutput(ctx);
+	const { say, flush } = output;
 	const pctx: CommandContext = { ...ctx, err: say };
 	const fail = (message: string, extra: Partial<SessionResult> = {}): SessionResult => {
 		reportError(ctx, r.name, message);
 		return { code: r.interrupted() ? 130 : 1, ...extra };
 	};
-	/** workers are done: serve first, then the recordings (the contract's stop order), Metro last */
-	const teardown = async () => {
-		const { serve, metro, recordings, warm } = services;
-		const helpers: WarmHelper[] = [];
-		services.serve = undefined;
-		services.metro = undefined;
-		services.recordings = [];
-		services.warm = undefined;
-		if (warm) {
-			// stop waiting for warm-ups still under way, close every helper that came up (bar those closed already)
-			warm.abort();
-			helpers.push(...(await warm.settled()).helpers.filter((h) => !services.closed.has(h)));
-		}
-		if (serve) await stopServe(deps, serve);
-		await Promise.all(recordings.map((rec) => rec.stop()));
-		await Promise.all(helpers.map((helper) => helper.close().catch(() => {})));
-		await metro?.stop();
-	};
+	const teardown = () => teardownServices(deps, services);
 	try {
 		await deps.mkdir(logDir);
 		const up = await startServices(ctx, deps, args, r, runEnv(session, args, batchDir), services, run.metro);
@@ -1923,11 +1955,12 @@ async function supervise(
 			return fail(`setup failed on every device (logs: ${failedLogs.join(", ")})`, { batchDir, setups });
 		}
 		// a phone's jobs reach its runner only through the warm socket: no runner, no specs
-		const phones = run.warm ? r.devices.map((d) => d.udid).filter(isPhysicalIosId) : [];
-		const stopped = run.warm && phones.length > 0 ? await warmGate(phones, run.warm) : undefined;
+		const stopped = await warmGateOf(r, run.warm);
 		if (stopped) {
-			const failed = fail(`${stopped.udid}: ${stopped.code}: ${stopped.message}`, { batchDir, error: stopped });
-			return failed.code === 130 ? failed : { ...failed, code: warmStopExit(stopped.code) };
+			return warmStopResult(
+				fail(`${stopped.udid}: ${stopped.code}: ${stopped.message}`, { batchDir, error: stopped }),
+				stopped.code
+			);
 		}
 		const socketFor = deviceSockets(ctx, r, run.warm, run.warm ? undefined : hooks.residentSocket, say);
 		const toQueue = queueMaker(ctx, deps, args, r, {
@@ -1943,7 +1976,7 @@ async function supervise(
 		});
 		const total = r.pools.length * jobs.length;
 		const startedAt = ctx.now();
-		holding = args.tui && deps.terminal.isTTY;
+		output.hold(args.tui && deps.terminal.isTTY);
 		if (run.elastic) elastic = elasticRun(pctx, deps, args, r, session, run, prepare, startedAt);
 		const { summary, screen } = await runGrid(
 			ctx,

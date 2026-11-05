@@ -1079,6 +1079,19 @@ function scrollGaveUp(target: Locator, absent: boolean, effort: string, screen: 
 	return new E2eError("NOT_ACTIONABLE", `${target} is still not on screen after ${effort}`, screen);
 }
 
+/** One scroll step toward `scrollUntilVisible`'s target: the driver's own element scroll when it has one, else a swipe. */
+async function scrollOnce(
+	rt: Runtime,
+	observed: Awaited<ReturnType<Runtime["observe"]>>,
+	direction: NonNullable<ScrollOptions["direction"]>,
+	momentum: ScrollOptions["momentum"]
+): Promise<void> {
+	const vector = swipeVector(direction, screenRect(observed.snapshot.screen), momentum);
+	const scrolled =
+		canActOnElements(observed.driver) && rt.drive("scrollUntilVisible", await observed.driver.scrollElement(direction));
+	if (!scrolled) rt.drive("scrollUntilVisible", await observed.driver.swipe(vector.from, vector.to, vector.options));
+}
+
 /**
  * Swipes the screen in `direction` (the way the content moves) until `target` has exactly one match that is on screen.
  * Gives up after `maxSwipes` swipes or the action timeout.
@@ -1101,12 +1114,7 @@ export async function scrollUntilVisible(rt: Runtime, target: Locator, options: 
 			if (swipes >= maxSwipes || budget.remaining() <= 0) {
 				throw scrollGaveUp(target, entry === undefined, `${swipes} swipes ${direction}`, rt.excerpt(observed.snapshot));
 			}
-			const vector = swipeVector(direction, screenRect(observed.snapshot.screen), options.momentum);
-			const scrolled =
-				canActOnElements(observed.driver) &&
-				rt.drive("scrollUntilVisible", await observed.driver.scrollElement(direction));
-			if (!scrolled)
-				rt.drive("scrollUntilVisible", await observed.driver.swipe(vector.from, vector.to, vector.options));
+			await scrollOnce(rt, observed, direction, options.momentum);
 			await observed.driver.settle(SCROLL_SETTLE);
 		}
 	});

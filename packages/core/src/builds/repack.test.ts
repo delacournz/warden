@@ -67,28 +67,31 @@ afterEach(() => {
 
 type Host = { exec: Exec; calls: string[][] };
 
+/** hermesc: fails, or writes bytecode (with bad magic when asked) plus its map at `out` */
+function fakeHermesc(over: { hermescFails?: boolean; hermescBadMagic?: boolean }, out: string): ExecResult {
+	if (over.hermescFails) return { exitCode: 1, stdout: "", stderr: "hermesc boom" };
+	writeFileSync(out, over.hermescBadMagic ? new Uint8Array(10) : HBC);
+	writeFileSync(`${out}.map`, "{}");
+	return { exitCode: 0, stdout: "", stderr: "" };
+}
+
 /** git is real; the project's fingerprint command, the bundler, hermesc and the compose script are fake */
 function host(over: { bundleFails?: boolean; hermescFails?: boolean; hermescBadMagic?: boolean } = {}): Host {
 	const calls: string[][] = [];
 	const done: ExecResult = { exitCode: 0, stdout: "", stderr: "" };
+	const flagOf = (args: string[], name: string) => args[args.indexOf(name) + 1] ?? "";
 	const exec: Exec = async (cmd, opts) => {
 		const [bin = "", ...args] = cmd;
 		if (cmd.join(" ") === "sh -c fp") return { ...done, stdout: '{"hash":"native-1"}' };
 		if (bin === "git") return bunExec(cmd, opts);
 		calls.push([...cmd]);
-		const flag = (name: string) => args[args.indexOf(name) + 1] ?? "";
 		if (bin.endsWith("/.bin/expo") || bin.endsWith("/.bin/react-native")) {
 			if (over.bundleFails) return { exitCode: 1, stdout: "", stderr: "metro exploded" };
-			writeFileSync(flag("--bundle-output"), "JS");
-			writeFileSync(flag("--sourcemap-output"), "{}");
+			writeFileSync(flagOf(args, "--bundle-output"), "JS");
+			writeFileSync(flagOf(args, "--sourcemap-output"), "{}");
 			return done;
 		}
-		if (bin.endsWith("/hermesc")) {
-			if (over.hermescFails) return { exitCode: 1, stdout: "", stderr: "hermesc boom" };
-			writeFileSync(flag("-out"), over.hermescBadMagic ? new Uint8Array(10) : HBC);
-			writeFileSync(`${flag("-out")}.map`, "{}");
-			return done;
-		}
+		if (bin.endsWith("/hermesc")) return fakeHermesc(over, flagOf(args, "-out"));
 		if (bin === "node") {
 			writeFileSync(args[args.indexOf("-o") + 1] ?? "", "{}");
 			return done;

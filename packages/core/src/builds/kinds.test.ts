@@ -137,7 +137,7 @@ describe("device builds", () => {
 		expect(cmd).toContain(
 			'&& cd ios && ws="$(ls -d *.xcworkspace | head -n 1)" && RCT_NO_LAUNCH_PACKAGER=1 xcodebuild'
 		);
-		expect(cmd).toContain('-workspace "$ws" -scheme "${ws%.xcworkspace}" -configuration Release');
+		expect(cmd).toContain(`-workspace "$ws" -scheme "\${ws%.xcworkspace}" -configuration Release`);
 		expect(cmd).toContain("-destination generic/platform=iOS -derivedDataPath build -allowProvisioningUpdates");
 		expect(cmd).toContain("CODE_SIGN_STYLE=Automatic DEVELOPMENT_TEAM=ABCDE12345 build");
 		expect(cmd).not.toContain("PRODUCT_BUNDLE_IDENTIFIER");

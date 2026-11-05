@@ -88,6 +88,17 @@ function resolve(driver: Driver, op: string): Callable | undefined {
 	return undefined;
 }
 
+/** Call a served `method` for `op` with wire `args`; its data goes back in wire form. */
+async function invoke(method: Callable, op: string, args: readonly unknown[]): DriverResult<unknown> {
+	const wireArgs = argsFromWire(args);
+	// readA11y takes and returns a snapshot, which crosses the wire without `flat`
+	if (op === "readA11y" && wireArgs[0] !== undefined) wireArgs[0] = snapshotFromWire(wireArgs[0] as WireSnapshot);
+	const result = await method(...wireArgs);
+	// auditNatively answers a plain NativeAuditResult (a missing engine is `skipped`, never an error)
+	if (op === "auditNatively") return { success: true, data: result };
+	return result.success ? { success: true, data: toWire(op, result.data) } : result;
+}
+
 /** What crosses the wire for `op`'s data: snapshots without `flat`, screenshots as base64. */
 function toWire(op: string, data: unknown): unknown {
 	if (data === undefined || data === null || typeof data !== "object") return data;
@@ -166,13 +177,7 @@ export async function serveDriver(options: ServeDriverOptions): Promise<RemoteSe
 		const method = resolve(driver, op);
 		if (method === undefined) return badRequest(`the served driver has no \`${op}\``);
 		try {
-			const wireArgs = argsFromWire(args);
-			// readA11y takes and returns a snapshot, which crosses the wire without `flat`
-			if (op === "readA11y" && wireArgs[0] !== undefined) wireArgs[0] = snapshotFromWire(wireArgs[0] as WireSnapshot);
-			const result = await method(...wireArgs);
-			// auditNatively answers a plain NativeAuditResult (a missing engine is `skipped`, never an error)
-			if (op === "auditNatively") return { success: true, data: result };
-			return result.success ? { success: true, data: toWire(op, result.data) } : result;
+			return await invoke(method, op, args);
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			log?.(`remote: ${op} threw: ${message}`);

@@ -343,6 +343,25 @@ function withBuildOutput(ui: DevUi, opts: EnsureOptions, task: DevTaskHandle): E
 	return ui.metro.kind === "pty" ? { ...opts, buildOutput: (line) => task.log(line) } : opts;
 }
 
+/** What the ui shows was installed; `claimAll` / `noteInstall` run the install, so its result is read off the way in. */
+type InstallTracker = { noteInstall: RunEnsureApp; installed: () => Session["app"] };
+
+/** A `ensureApp` wrapper that puts the install on the dashboard and remembers what was installed. */
+function trackInstall(ui: DevUi, deps: DevDeps): InstallTracker {
+	let installedApp: Session["app"];
+	const noteInstall: RunEnsureApp = async (...args) => {
+		const appTask = ui.task("app", "dev build");
+		args[4] = withBuildOutput(ui, args[4], appTask);
+		const result = await deps.ensureApp(...args);
+		if (result.success) {
+			installedApp = { source: result.data.source, hash: result.data.hash };
+			appTask.ok(`${result.data.source} ${result.data.hash.slice(0, 8)}`);
+		} else appTask.fail(result.error);
+		return result;
+	};
+	return { noteInstall, installed: () => installedApp };
+}
+
 /** Lease the Metro port (+ a device unless one is held) and ensure the app on the device. */
 async function openSession(
 	ctx: CommandContext,
@@ -356,81 +375,104 @@ async function openSession(
 ): AsyncResult<Session> {
 	const held = heldDevice(ctx, owner, platform, opts);
 	if (!held.success) return held;
-	// the ui shows what was installed; claimAll runs the install, so its result is read off the way in
-	let installedApp: Session["app"];
-	const installed = () => installedApp;
-	const noteInstall: RunEnsureApp = async (...args) => {
-		const appTask = ui.task("app", "dev build");
-		args[4] = withBuildOutput(ui, args[4], appTask);
-		const result = await deps.ensureApp(...args);
-		if (result.success) {
-			installedApp = { source: result.data.source, hash: result.data.hash };
-			appTask.ok(`${result.data.source} ${result.data.hash.slice(0, 8)}`);
-		} else appTask.fail(result.error);
-		return result;
-	};
-	if (held.data === undefined) {
-		// only an explicit --headless: dev ignores config `headless` and WARDEN_HEADLESS
-		// the device lease names its holder in `warden ls` and `warden ui`'s busy / sharing messages
-		const flags = parseClaimFlags(
-			platform,
-			{ ...opts, headless: opts.headless === true, label: opts.label ?? DEV_LEASE_LABEL },
-			undefined,
-			undefined,
-			PRIORITY.high
-		);
-		if (!flags.success) return flags;
-		if (flags.data.request.count !== 1) return err("warden dev runs on one device (drop --count)");
-		let showing: Promise<void> | undefined;
-		const session = await claimAll(
-			ctx,
-			{ ...deps, ensureApp: noteInstall },
-			owner,
-			{
-				flags: flags.data,
-				ports: [opts.port],
-				app,
-				onPorts: (leased) => {
-					const first = leased[0]?.port;
-					if (first !== undefined) early.start(first, undefined);
-				},
-				// before the install (minutes): `warden ui` from this session attaches to the device instead of `device_busy`,
-				// and the person sees the sim come up
-				onLeased: (outcome) => {
-					ctx.store().markShared(outcome.claimed.map((c) => c.lease.id));
-					const first = outcome.claimed[0]?.device.id;
-					if (first !== undefined) showing = showDevice(ctx, ui, platform, first, opts.headless === true);
-				},
-				aborted: early.aborted,
+	const tracker = trackInstall(ui, deps);
+	if (held.data === undefined) return openClaimedSession(ctx, ui, deps, owner, platform, opts, app, early, tracker);
+	return openHeldSession(ctx, ui, deps, owner, platform, opts, app, early, tracker, held.data);
+}
+
+/** No device held: claim one (+ the Metro port) for this session and install the app on it. */
+async function openClaimedSession(
+	ctx: CommandContext,
+	ui: DevUi,
+	deps: DevDeps,
+	owner: Owner,
+	platform: Platform,
+	opts: DevOpts,
+	app: EnsureOptions,
+	early: EarlyMetro,
+	tracker: InstallTracker
+): AsyncResult<Session> {
+	// only an explicit --headless: dev ignores config `headless` and WARDEN_HEADLESS
+	// the device lease names its holder in `warden ls` and `warden ui`'s busy / sharing messages
+	const flags = parseClaimFlags(
+		platform,
+		{ ...opts, headless: opts.headless === true, label: opts.label ?? DEV_LEASE_LABEL },
+		undefined,
+		undefined,
+		PRIORITY.high
+	);
+	if (!flags.success) return flags;
+	if (flags.data.request.count !== 1) return err("warden dev runs on one device (drop --count)");
+	let showing: Promise<void> | undefined;
+	const session = await claimAll(
+		ctx,
+		{ ...deps, ensureApp: tracker.noteInstall },
+		owner,
+		{
+			flags: flags.data,
+			ports: [opts.port],
+			app,
+			onPorts: (leased) => {
+				const first = leased[0]?.port;
+				if (first !== undefined) early.start(first, undefined);
 			},
-			"dev"
-		);
-		await showing;
-		if (!session.success) return session;
-		const { outcome, ports, leaseIds } = session.data;
-		// dev's sim keeps its installs and logins across sessions: never deleted as ephemeral (WARDEN_EPHEMERAL_DEV=1 opts in)
-		if (platform === "ios" && devKeepsSim(ctx.env))
-			for (const c of outcome.claimed) ctx.store().markPersistent(platform, c.device.id, ctx.now());
-		// dev's own device goes down with the session (Ctrl-C, a killed terminal, Metro exiting) unless --no-shutdown;
-		// `shutdownReleasedDevices` leaves a sim that was already running when leased alone
-		const release = async () => {
-			if (opts.shutdown)
-				await shutdownDevices(
-					ctx,
-					owner,
-					outcome.claimed.map((c) => c.lease)
-				);
-			await session.data.release();
-		};
-		const deviceId = outcome.claimed[0]?.device.id;
-		const port = ports[0]?.port;
-		if (deviceId === undefined || port === undefined) {
-			await release();
-			return err("claim returned no device / port");
-		}
-		return ok({ deviceId, deviceName: outcome.claimed[0]?.device.name, app: installed(), port, leaseIds, release });
+			// before the install (minutes): `warden ui` from this session attaches to the device instead of `device_busy`,
+			// and the person sees the sim come up
+			onLeased: (outcome) => {
+				ctx.store().markShared(outcome.claimed.map((c) => c.lease.id));
+				const first = outcome.claimed[0]?.device.id;
+				if (first !== undefined) showing = showDevice(ctx, ui, platform, first, opts.headless === true);
+			},
+			aborted: early.aborted,
+		},
+		"dev"
+	);
+	await showing;
+	if (!session.success) return session;
+	const { outcome, ports, leaseIds } = session.data;
+	// dev's sim keeps its installs and logins across sessions: never deleted as ephemeral (WARDEN_EPHEMERAL_DEV=1 opts in)
+	if (platform === "ios" && devKeepsSim(ctx.env))
+		for (const c of outcome.claimed) ctx.store().markPersistent(platform, c.device.id, ctx.now());
+	// dev's own device goes down with the session (Ctrl-C, a killed terminal, Metro exiting) unless --no-shutdown;
+	// `shutdownReleasedDevices` leaves a sim that was already running when leased alone
+	const release = async () => {
+		if (opts.shutdown)
+			await shutdownDevices(
+				ctx,
+				owner,
+				outcome.claimed.map((c) => c.lease)
+			);
+		await session.data.release();
+	};
+	const deviceId = outcome.claimed[0]?.device.id;
+	const port = ports[0]?.port;
+	if (deviceId === undefined || port === undefined) {
+		await release();
+		return err("claim returned no device / port");
 	}
-	const deviceId = held.data;
+	return ok({
+		deviceId,
+		deviceName: outcome.claimed[0]?.device.name,
+		app: tracker.installed(),
+		port,
+		leaseIds,
+		release,
+	});
+}
+
+/** A device already held: lease only the Metro port, boot the device if needed and install the app. */
+async function openHeldSession(
+	ctx: CommandContext,
+	ui: DevUi,
+	deps: DevDeps,
+	owner: Owner,
+	platform: Platform,
+	opts: DevOpts,
+	app: EnsureOptions,
+	early: EarlyMetro,
+	tracker: InstallTracker,
+	deviceId: string
+): AsyncResult<Session> {
 	const ports = await claimRunPorts(ctx, owner, [opts.port], deps.pid, deps.isPortFree, "warden dev");
 	if (!ports.success) return ports;
 	const leaseIds = ports.data.map((p) => p.leaseId);
@@ -447,7 +489,7 @@ async function openSession(
 		return booted;
 	}
 	const showing = showDevice(ctx, ui, platform, deviceId, opts.headless === true);
-	const ensured = await noteInstall(ctx, owner, platform, deviceId, app);
+	const ensured = await tracker.noteInstall(ctx, owner, platform, deviceId, app);
 	await showing;
 	if (!ensured.success) {
 		await release();
@@ -458,7 +500,7 @@ async function openSession(
 		.store()
 		.listDevices(platform)
 		.find((d) => d.id === deviceId)?.name;
-	return ok({ deviceId, deviceName, app: installed(), port, leaseIds, release });
+	return ok({ deviceId, deviceName, app: tracker.installed(), port, leaseIds, release });
 }
 
 /**

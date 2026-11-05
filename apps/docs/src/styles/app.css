@@ -529,32 +529,6 @@ figure.shiki {
 	border-color: var(--color-hairline);
 }
 
-#nd-nav ul a {
-	gap: 6px;
-	color: var(--color-ink-2);
-	font-size: 0.875rem;
-	letter-spacing: -0.01em;
-	font-variation-settings:
-		"wdth" 112,
-		"wght" 540;
-
-	&:hover {
-		color: var(--color-ink);
-	}
-
-	&[data-active="true"] {
-		color: var(--color-ink);
-	}
-
-	&[data-active="true"]::before {
-		content: "";
-		width: 6px;
-		height: 6px;
-		border-radius: 9999px;
-		background: var(--color-lamp);
-	}
-}
-
 /*
  * Docs top tabs (Getting Started, Agents & Simulators, E2E Tests, Reference, Releases): one strip
  * under the header's hairline. Labels speak in the nav's human voice, Ink 2 at rest; the current
@@ -587,6 +561,7 @@ figure.shiki {
 			color 150ms ease-out,
 			border-color 150ms ease-out;
 
+		/* biome-ignore lint/style/noDescendingSpecificity: header tabs never sit inside .prose, so its link :hover never competes */
 		&:hover {
 			color: var(--color-ink);
 			border-color: var(--color-hairline);
@@ -619,5 +594,31 @@ figure.shiki {
 
 	&::-webkit-scrollbar {
 		display: none;
+	}
+}
+
+#nd-nav ul a {
+	gap: 6px;
+	color: var(--color-ink-2);
+	font-size: 0.875rem;
+	letter-spacing: -0.01em;
+	font-variation-settings:
+		"wdth" 112,
+		"wght" 540;
+
+	&:hover {
+		color: var(--color-ink);
+	}
+
+	&[data-active="true"] {
+		color: var(--color-ink);
+	}
+
+	&[data-active="true"]::before {
+		content: "";
+		width: 6px;
+		height: 6px;
+		border-radius: 9999px;
+		background: var(--color-lamp);
 	}
 }

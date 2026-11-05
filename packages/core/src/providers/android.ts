@@ -51,33 +51,50 @@ export type AdbListEntry =
 export function parseAdbDeviceList(stdout: string): AdbListEntry[] {
 	const entries: AdbListEntry[] = [];
 	for (const raw of stdout.split("\n")) {
-		const line = raw.trim();
-		const row = /^(\S+)\s+(.+)$/.exec(line);
-		if (!row?.[1] || !row[2] || line.startsWith("List of devices") || line.startsWith("*")) continue;
-		const serial = row[1];
-		const rest = row[2];
-		const noPermissions = rest.startsWith("no permissions");
-		const state = noPermissions ? "no permissions" : (rest.split(/\s+/)[0] ?? "");
-		const emulator = /^emulator-(\d+)$/.exec(serial);
-		if (emulator?.[1]) {
-			entries.push({ kind: "emulator", serial, port: Number(emulator[1]), state });
-			continue;
-		}
-		const attributes = noPermissions ? rest.slice(rest.lastIndexOf("]") + 1) : rest.slice(state.length);
-		const attr = (key: string): string | undefined => new RegExp(`(?:^|\\s)${key}:(\\S+)`).exec(attributes)?.[1];
-		const networked = /^[^:\s]+:\d+$|_adb-tls-/.test(serial);
-		const model = attr("model");
-		const product = attr("product");
-		entries.push({
-			kind: "other",
-			serial,
-			state,
-			transport: networked ? "wifi" : "usb",
-			...(model !== undefined ? { model } : {}),
-			...(product !== undefined ? { product } : {}),
-		});
+		const entry = parseAdbRow(raw.trim());
+		if (entry) entries.push(entry);
 	}
 	return entries;
+}
+
+/** One trimmed `adb devices -l` line as an entry; undefined for the header, daemon notices and blank lines. */
+function parseAdbRow(line: string): AdbListEntry | undefined {
+	const row = /^(\S+)\s+(.+)$/.exec(line);
+	if (!row?.[1] || !row[2] || line.startsWith("List of devices") || line.startsWith("*")) return undefined;
+	const serial = row[1];
+	const rest = row[2];
+	const noPermissions = rest.startsWith("no permissions");
+	const state = noPermissions ? "no permissions" : (rest.split(/\s+/)[0] ?? "");
+	const emulator = /^emulator-(\d+)$/.exec(serial);
+	if (emulator?.[1]) return { kind: "emulator", serial, port: Number(emulator[1]), state };
+	const attributes = noPermissions ? rest.slice(rest.lastIndexOf("]") + 1) : rest.slice(state.length);
+	const attr = (key: string): string | undefined => new RegExp(`(?:^|\\s)${key}:(\\S+)`).exec(attributes)?.[1];
+	const networked = /^[^:\s]+:\d+$|_adb-tls-/.test(serial);
+	const model = attr("model");
+	const product = attr("product");
+	return {
+		kind: "other",
+		serial,
+		state,
+		transport: networked ? "wifi" : "usb",
+		...(model !== undefined ? { model } : {}),
+		...(product !== undefined ? { product } : {}),
+	};
+}
+
+/** The `physical` facts of a phone's adb row. */
+function physicalOf(
+	entry: Extract<AdbListEntry, { kind: "other" }>,
+	model: string | undefined,
+	hwSerial: string | undefined
+): NonNullable<InventoryDevice["physical"]> {
+	return {
+		platform: "android",
+		transport: entry.transport,
+		adbState: entry.state,
+		...(hwSerial !== undefined ? { hwSerial } : {}),
+		...(model !== undefined ? { model } : {}),
+	};
 }
 
 /** Parse `adb devices -l`, keeping only `emulator-<port>` serials (phones and network emulators ignored). */
@@ -586,14 +603,7 @@ export function createAndroidProvider(deps: ProviderDeps, options: AndroidProvid
 		if (info?.sdk !== undefined) device.runtime = `android-${info.sdk}`;
 		if (info?.emulator) return device;
 		if (model !== undefined) device.profile = profileSlug(model);
-		const hwSerial = info?.hwSerial;
-		device.physical = {
-			platform: "android",
-			transport: entry.transport,
-			adbState: entry.state,
-			...(hwSerial !== undefined ? { hwSerial } : {}),
-			...(model !== undefined ? { model } : {}),
-		};
+		device.physical = physicalOf(entry, model, info?.hwSerial);
 		return device;
 	}
 
@@ -777,6 +787,41 @@ export function createAndroidProvider(deps: ProviderDeps, options: AndroidProvid
 		return attempt(undefined);
 	}
 
+	/** `boot` on a non-emulator serial: never boots it, says why. */
+	async function refuseBootingPhone(id: string): AsyncResult<void> {
+		const listed = await listAdbDevices(deps);
+		const state = listed.success ? listed.data.find((e) => e.serial === id)?.state : undefined;
+		if (state === "unauthorized")
+			return err(`${id} is unauthorized: accept the USB debugging prompt on the phone, then retry`);
+		return err(`${id} is a physical device: warden never boots one (state: ${state ?? "not connected"})`);
+	}
+
+	/** Poll adb until `id` is listed (true) or `polls` re-reads passed (false). */
+	async function pollRegistered(id: string, polls: number): AsyncResult<boolean> {
+		for (let i = 0; ; i++) {
+			const emulators = await listEmulators(deps);
+			if (!emulators.success) return emulators;
+			if (emulators.data.some((e) => e.serial === id)) return ok(true);
+			if (i >= polls) return ok(false);
+			await sleep(REGISTER_POLL_MS);
+		}
+	}
+
+	/** Poll adb until `id` is no longer listed; an error naming the kill failure (if any) at the deadline. */
+	async function pollGone(id: string, killError: string | undefined): AsyncResult<void> {
+		const deadline = deps.now() + RELAUNCH_GONE_TIMEOUT_MS;
+		for (;;) {
+			const listed = await listEmulators(deps);
+			if (listed.success && !listed.data.some((e) => e.serial === id)) return ok(undefined);
+			if (deps.now() >= deadline) {
+				return err(
+					`${id} did not shut down within ${RELAUNCH_GONE_TIMEOUT_MS / 1000}s${killError === undefined ? "" : `: ${killError}`}`
+				);
+			}
+			await sleep(REGISTER_POLL_MS);
+		}
+	}
+
 	return {
 		platform: "android",
 
@@ -839,23 +884,13 @@ export function createAndroidProvider(deps: ProviderDeps, options: AndroidProvid
 		},
 
 		async boot(id) {
-			if (!isEmulatorSerial(id)) {
-				const listed = await listAdbDevices(deps);
-				const state = listed.success ? listed.data.find((e) => e.serial === id)?.state : undefined;
-				if (state === "unauthorized")
-					return err(`${id} is unauthorized: accept the USB debugging prompt on the phone, then retry`);
-				return err(`${id} is a physical device: warden never boots one (state: ${state ?? "not connected"})`);
-			}
+			if (!isEmulatorSerial(id)) return refuseBootingPhone(id);
 			// A warden emulator `create` just launched may not have reached the adb server yet: poll for it.
 			const launched = deps.store.listDevices("android").some((d) => d.id === id);
 			const polls = launched ? Math.ceil(REGISTER_TIMEOUT_MS / REGISTER_POLL_MS) : 0;
-			for (let i = 0; ; i++) {
-				const emulators = await listEmulators(deps);
-				if (!emulators.success) return emulators;
-				if (emulators.data.some((e) => e.serial === id)) return ok(undefined);
-				if (i >= polls) break;
-				await sleep(REGISTER_POLL_MS);
-			}
+			const registered = await pollRegistered(id, polls);
+			if (!registered.success) return registered;
+			if (registered.data) return ok(undefined);
 			return launched
 				? err(`${id} did not register with adb within ${REGISTER_TIMEOUT_MS / 1000}s of its launch`)
 				: err(`${id} is not running — android devices are created, not booted`);
@@ -899,17 +934,8 @@ export function createAndroidProvider(deps: ProviderDeps, options: AndroidProvid
 			const resolved = await resolveLaunchTarget(recorded.profile ?? "");
 			if (!resolved.success) return resolved;
 			const killed = await run(deps, adb(id, "emu", "kill"), { timeoutMs: EMU_CONSOLE_TIMEOUT_MS });
-			const deadline = deps.now() + RELAUNCH_GONE_TIMEOUT_MS;
-			for (;;) {
-				const listed = await listEmulators(deps);
-				if (listed.success && !listed.data.some((e) => e.serial === id)) break;
-				if (deps.now() >= deadline) {
-					return err(
-						`${id} did not shut down within ${RELAUNCH_GONE_TIMEOUT_MS / 1000}s${killed.success ? "" : `: ${killed.error}`}`
-					);
-				}
-				await sleep(REGISTER_POLL_MS);
-			}
+			const gone = await pollGone(id, killed.success ? undefined : killed.error);
+			if (!gone.success) return gone;
 			// the old qemu process outlives its adb entry for a moment and still holds the console port
 			await sleep(RELAUNCH_PORT_SETTLE_MS);
 			const launched = await launchOrColdBoot(resolved.data.avdName, port, id, undefined, true);

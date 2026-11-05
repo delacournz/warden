@@ -590,6 +590,18 @@ export function createIosDriver(
 		}
 	}
 
+	/** After a successful launch: remember the bundle, rebind the stream, then confirm the injected libraries loaded. */
+	async function settleAfterLaunch(bundleId: string): Promise<DriverError | undefined> {
+		lastLaunched = bundleId;
+		launchedBundle = bundleId;
+		if (await rebind(bundleId)) launchedBundle = undefined;
+		const loaded = await net?.confirmLoaded();
+		if (loaded && !loaded.success) return loaded.error;
+		const a11yLoaded = await a11y?.confirmLoaded();
+		if (a11yLoaded && !a11yLoaded.success) return a11yLoaded.error;
+		return undefined;
+	}
+
 	/**
 	 * Right after `simctl launch` the helper's quiescence stream still reports on the previous frontmost app; the first
 	 * AX read then fails with `did not respond` and the repair costs seconds. `rebind` makes the helper wait (briefly,
@@ -858,16 +870,9 @@ export function createIosDriver(
 					() => simctl.launch(bundleId, o),
 					(data) => noteSpanDetail("pid", data.pid)
 				);
-				if (launched.success) {
-					lastLaunched = bundleId;
-					launchedBundle = bundleId;
-					if (await rebind(bundleId)) launchedBundle = undefined;
-					const loaded = await net?.confirmLoaded();
-					if (loaded && !loaded.success) return loaded;
-					const a11yLoaded = await a11y?.confirmLoaded();
-					if (a11yLoaded && !a11yLoaded.success) return a11yLoaded;
-				}
-				return launched;
+				if (!launched.success) return launched;
+				const unconfirmed = await settleAfterLaunch(bundleId);
+				return unconfirmed ? { success: false, error: unconfirmed } : launched;
 			},
 			terminate: async (bundleId) => {
 				const viaHelper = await appOp("terminate", { bundleId }, APP_OP_TIMEOUT_MS);
@@ -945,6 +950,43 @@ async function connect(o: OpenIosDriverOptions, log: Logger): Promise<Result<Sim
 	});
 }
 
+/** The native audit runner `openIosDriver` hands to the driver. */
+function nativeAuditFor(
+	o: OpenIosDriverOptions,
+	exec: Exec,
+	log: Logger,
+	ctx: { lastBundle: () => string | undefined }
+): IosNativeAudit {
+	return createIosNativeAudit({
+		udid: o.udid,
+		exec,
+		bundleId: () => o.bundleId ?? ctx.lastBundle(),
+		...(o.wardenHome ? { wardenHome: o.wardenHome } : {}),
+		...(o.version ? { version: o.version } : {}),
+		...(o.runnerSources ? { runnerSources: o.runnerSources } : {}),
+		...(o.nativeAudit ?? {}),
+		...(o.debug ? { log } : {}),
+	});
+}
+
+/** The simulator settings store `openIosDriver` hands to the driver. */
+function settingsFor(o: OpenIosDriverOptions, exec: Exec, ctx: { lastBundle: () => string | undefined }): IosSettings {
+	return createIosSettings({
+		udid: o.udid,
+		exec,
+		lastBundle: ctx.lastBundle,
+		...(o.bundleId ? { defaultBundle: o.bundleId } : {}),
+		staged: o.stagedSettings ?? stagedSettingsFor(o.wardenHome ?? resolveWardenHome(), o.udid),
+	});
+}
+
+/** `E_HELPER_MISSING` before any other work, when nothing can supply a helper: no client, no socket and no binary. */
+function helperPreflight(o: OpenIosDriverOptions): { success: false; error: DriverError } | undefined {
+	if (o.client || (o.socketPath ?? o.env?.simdSocket)) return undefined;
+	const helper = resolveHelper(o);
+	return helper.success ? undefined : helper;
+}
+
 /**
  * Open the iOS driver for `udid`. Writes `AutomationEnabled` (best effort) while the helper starts.
  * `E_HELPER_MISSING` (with the `warden doctor` hint) when no helper binary can be found.
@@ -956,12 +998,10 @@ export async function openIosDriver(o: OpenIosDriverOptions): DriverResult<Drive
 	const simctl = createSimctl({ udid: o.udid, exec, ...(o.devicesRoot ? { devicesRoot: o.devicesRoot } : {}) });
 	// a driver that cannot start (no socket, no helper binary) fails before any simctl call: the AutomationEnabled
 	// write takes seconds on a cold machine and would only delay the E_HELPER_MISSING answer
-	if (!o.client && !(o.socketPath ?? o.env?.simdSocket)) {
-		const helper = resolveHelper(o);
-		if (!helper.success) return helper;
-	}
-	const connecting: Promise<Result<SimdClient, DriverError>> = o.client
-		? Promise.resolve({ success: true, data: o.client })
+	const preflight = helperPreflight(o);
+	if (preflight) return preflight;
+	const connecting = o.client
+		? Promise.resolve<Result<SimdClient, DriverError>>({ success: true, data: o.client })
 		: connect(o, log);
 	const [client, automation] = await Promise.all([connecting, simctl.enableAutomation()]);
 	if (!automation.success) log(`[ios] could not enable AX automation: ${automation.error.message}`);
@@ -983,25 +1023,8 @@ export async function openIosDriver(o: OpenIosDriverOptions): DriverResult<Drive
 			log,
 			...(network ? { network } : {}),
 			a11y: () => iosA11yFor(o, now, sleep),
-			nativeAudit: (ctx) =>
-				createIosNativeAudit({
-					udid: o.udid,
-					exec,
-					bundleId: () => o.bundleId ?? ctx.lastBundle(),
-					...(o.wardenHome ? { wardenHome: o.wardenHome } : {}),
-					...(o.version ? { version: o.version } : {}),
-					...(o.runnerSources ? { runnerSources: o.runnerSources } : {}),
-					...(o.nativeAudit ?? {}),
-					...(o.debug ? { log } : {}),
-				}),
-			settings: (ctx) =>
-				createIosSettings({
-					udid: o.udid,
-					exec,
-					lastBundle: ctx.lastBundle,
-					...(o.bundleId ? { defaultBundle: o.bundleId } : {}),
-					staged: o.stagedSettings ?? stagedSettingsFor(o.wardenHome ?? resolveWardenHome(), o.udid),
-				}),
+			nativeAudit: (ctx) => nativeAuditFor(o, exec, log, ctx),
+			settings: (ctx) => settingsFor(o, exec, ctx),
 			...(o.clockRecorder ? { clockRecorder: o.clockRecorder } : {}),
 		}),
 	};

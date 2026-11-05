@@ -45,8 +45,19 @@ describe("wizard screens", () => {
 	});
 });
 
+type Script = { enrolledAfterTouches: number };
+
+/** `dumpsys fingerprint`: enrolled once enough touches landed. */
+function fingerprintDump(touches: number, script: Script): string {
+	return touches >= script.enrolledAfterTouches ? ENROLLED : EMPTY;
+}
+
+/** The wizard's n-th screen dump: the PIN entry first, then the Next button. */
+function wizardScreen(n: number): string {
+	return n === 1 ? screen(node("", "[0,0][1,1]", "id/password_entry")) : screen(node("Next", "[10,10][30,30]"));
+}
+
 describe("enrollFingerprint", () => {
-	type Script = { enrolledAfterTouches: number };
 	function fake(script: Script) {
 		const calls: string[][] = [];
 		let touches = 0;
@@ -54,16 +65,14 @@ describe("enrollFingerprint", () => {
 		const exec: Exec = async (cmd) => {
 			calls.push([...cmd]);
 			const line = cmd.join(" ");
-			if (line.endsWith("dumpsys fingerprint")) return out(touches >= script.enrolledAfterTouches ? ENROLLED : EMPTY);
+			if (line.endsWith("dumpsys fingerprint")) return out(fingerprintDump(touches, script));
 			if (line.includes("emu finger touch")) {
 				touches++;
 				return out("OK");
 			}
 			if (line.endsWith("shell cat /sdcard/warden-ui.xml")) {
 				screens++;
-				return out(
-					screens === 1 ? screen(node("", "[0,0][1,1]", "id/password_entry")) : screen(node("Next", "[10,10][30,30]"))
-				);
+				return out(wizardScreen(screens));
 			}
 			return out("");
 		};

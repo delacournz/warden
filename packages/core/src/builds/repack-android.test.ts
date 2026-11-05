@@ -68,6 +68,35 @@ const RESOURCES = `Package name=nz.co.app id=7f
       () (file) res/P1.ttf
 `;
 
+/** `unzip -Z1` lists the base's entries, or (for the repacked apk) those plus the new bundle */
+function fakeUnzip(options: FakeOptions, cmd: readonly string[]): ExecResult {
+	const listed = options.entries ?? BASE_ENTRIES;
+	const entries = cmd.at(-1) === base ? listed : [...listed, "assets/index.android.bundle"];
+	return { ...ok, stdout: `${entries.join("\n")}\n` };
+}
+
+/** `zipalign -p` copies in to out */
+function fakeZipalign(cmd: readonly string[]): ExecResult {
+	if (cmd[1] !== "-p") return ok;
+	copyFileSync(String(cmd.at(-2)), String(cmd.at(-1)));
+	return ok;
+}
+
+/** `apksigner sign` copies the input to `--out` */
+function fakeApksigner(cmd: readonly string[]): ExecResult {
+	if (cmd[1] !== "sign") return ok;
+	const out = cmd[cmd.indexOf("--out") + 1];
+	copyFileSync(String(cmd.at(-1)), String(out));
+	return ok;
+}
+
+/** `aapt2 dump resources` prints RESOURCES; other aapt2 calls print the badging */
+function fakeAapt2(options: FakeOptions, cmd: readonly string[]): ExecResult {
+	if (cmd[1] === "dump" && cmd[2] === "resources") return { ...ok, stdout: RESOURCES };
+	const badging = options.badging ?? (() => "package: name='nz.co.app' versionCode='1'\n");
+	return { ...ok, stdout: badging(String(cmd.at(-1))) };
+}
+
 /** A fake host: `unzip -Z1` lists `entries`, `zipalign` copies, `apksigner sign` writes `--out`; everything is recorded. */
 function fakeExec(options: FakeOptions = {}): { exec: Exec; calls: Call[] } {
 	const calls: Call[] = [];
@@ -75,25 +104,10 @@ function fakeExec(options: FakeOptions = {}): { exec: Exec; calls: Call[] } {
 		calls.push({ cmd, cwd: opts?.cwd });
 		const tool = basename(cmd[0] ?? "");
 		if (options.failTool === tool) return { exitCode: 1, stdout: "", stderr: `${tool} exploded` };
-		if (tool === "unzip") {
-			const listed = options.entries ?? BASE_ENTRIES;
-			const entries = cmd.at(-1) === base ? listed : [...listed, "assets/index.android.bundle"];
-			return { ...ok, stdout: `${entries.join("\n")}\n` };
-		}
-		if (tool === "zipalign" && cmd[1] === "-p") {
-			copyFileSync(String(cmd.at(-2)), String(cmd.at(-1)));
-			return ok;
-		}
-		if (tool === "apksigner" && cmd[1] === "sign") {
-			const out = cmd[cmd.indexOf("--out") + 1];
-			copyFileSync(String(cmd.at(-1)), String(out));
-			return ok;
-		}
-		if (tool === "aapt2" && cmd[1] === "dump" && cmd[2] === "resources") return { ...ok, stdout: RESOURCES };
-		if (tool === "aapt2") {
-			const badging = options.badging ?? (() => "package: name='nz.co.app' versionCode='1'\n");
-			return { ...ok, stdout: badging(String(cmd.at(-1))) };
-		}
+		if (tool === "unzip") return fakeUnzip(options, cmd);
+		if (tool === "zipalign") return fakeZipalign(cmd);
+		if (tool === "apksigner") return fakeApksigner(cmd);
+		if (tool === "aapt2") return fakeAapt2(options, cmd);
 		return ok;
 	};
 	return { exec, calls };

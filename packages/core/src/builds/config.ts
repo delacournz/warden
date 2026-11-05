@@ -533,17 +533,23 @@ export function dynamicAppConfigDir(
 	if (overlayDir !== undefined && CONFIG_FILES.some((f) => existsSync(join(overlayDir, f)))) return undefined;
 	if (bundleOverride.ios !== undefined || bundleOverride.android !== undefined) return undefined;
 	for (const dir of ancestors(resolve(start), stopAt ? resolve(stopAt) : undefined)) {
-		const dynamic = APP_CONFIG_FILES.find((f) => existsSync(join(dir, f)));
-		const appJsonPath = join(dir, "app.json");
-		const hasAppJson = existsSync(appJsonPath);
-		if (!hasAppJson && dynamic === undefined) continue;
-		if (dynamic === undefined) return undefined;
-		const info = hasAppJson ? readAppJson(appJsonPath) : undefined;
-		if (info !== undefined && !info.success) return undefined;
-		const ids = info?.data.bundleId ?? {};
-		return ids.ios === undefined && ids.android === undefined ? dir : undefined;
+		const verdict = dynamicConfigVerdict(dir);
+		if (verdict !== "continue") return verdict;
 	}
 	return undefined;
+}
+
+/** One directory's answer for `dynamicAppConfigDir`: "continue" when it holds no app config at all. */
+function dynamicConfigVerdict(dir: string): string | undefined | "continue" {
+	const dynamic = APP_CONFIG_FILES.find((f) => existsSync(join(dir, f)));
+	const appJsonPath = join(dir, "app.json");
+	const hasAppJson = existsSync(appJsonPath);
+	if (!hasAppJson && dynamic === undefined) return "continue";
+	if (dynamic === undefined) return undefined;
+	const info = hasAppJson ? readAppJson(appJsonPath) : undefined;
+	if (info !== undefined && !info.success) return undefined;
+	const ids = info?.data.bundleId ?? {};
+	return ids.ios === undefined && ids.android === undefined ? dir : undefined;
 }
 
 /** `start` and its parents, up to and including `stop` (or the filesystem root). */
