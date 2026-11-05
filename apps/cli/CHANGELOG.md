@@ -1,5 +1,19 @@
 # @delacour/warden
 
+## 0.12.0
+
+### Minor Changes
+
+- [#189](https://github.com/delacournz/warden/pull/189) [`87f4caf`](https://github.com/delacournz/warden/commit/87f4caf773c0f173cdb1a2f5ca7781d5cc64f2f8) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - `warden e2e` prints a tail of the app's native log (at most 20 lines, errors and faults first, unresolved `<compose failure>` lines skipped) under a failed test; the full `native.log` stays in the evidence folder.
+  - iOS `native.log` now includes info and debug lines, and warden makes sure the simulator keeps private values readable (`log config --mode private_data:on`) before the app runs. `WARDEN_NATIVE_LOG_PRIVATE=0` opts out.
+  - A `native.log` whose messages mostly could not be resolved (`<compose failure>`) is noted in the trace as `native log: N of M messages unresolved`.
+
+### Patch Changes
+
+- [#192](https://github.com/delacournz/warden/pull/192) [`8813a2b`](https://github.com/delacournz/warden/commit/8813a2ba9850559ea1e09ea204bde422b3126ff8) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - Building an iOS golden simulator writes `AutomationEnabled` into the shut-down golden's plist on the host instead of running `simctl spawn defaults write` in the booted sim. The in-sim write timed out on the iOS 27 runtime on CI, which failed `warden golden export` and made `warden claim` fall back from a clone to a fresh boot. Existing recipe-2 goldens are still reused.
+- Updated dependencies []:
+  - @delacour/warden-e2e@0.12.0
+
 ## 0.11.0
 
 ### Minor Changes
