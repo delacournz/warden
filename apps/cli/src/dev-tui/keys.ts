@@ -138,10 +138,22 @@ export type Action =
 	/** run a warden action; the host does the work (`actions.ts`), the reducer ignores it */
 	| { type: "run"; action: ActionId };
 
+/** Help overlay sections a list-mode binding is shown under. */
+export type KeyGroup = "navigate" | "app" | "metro" | "perf";
+
+export const KEY_GROUP_TITLES: Record<KeyGroup, string> = {
+	navigate: "navigate",
+	app: "app & device",
+	metro: "Metro",
+	perf: "perf",
+};
+
 export type Binding = {
 	/** keycaps for the help overlay */
 	label: string;
 	desc: string;
+	/** the help overlay section; list-mode bindings only */
+	group?: KeyGroup;
 	match(key: Key): boolean;
 	action: Action;
 	/** left out of the help overlay (the second half of a pair) */
@@ -160,37 +172,56 @@ const ctrl =
 const QUIT: Binding = {
 	label: "q ctrl-c",
 	desc: "quit, release",
+	group: "navigate",
 	match: (k) => named("q")(k) || ctrl("c")(k),
 	action: { type: "quit" },
 };
-const REDRAW: Binding = { label: "ctrl-l", desc: "redraw", match: ctrl("l"), action: { type: "redraw" } };
+const REDRAW: Binding = {
+	label: "ctrl-l",
+	desc: "redraw",
+	group: "navigate",
+	match: ctrl("l"),
+	action: { type: "redraw" },
+};
 
-function run(keyName: string, desc: string, action: ActionId): Binding {
-	return { label: keyName, desc, match: named(keyName), action: { type: "run", action } };
+function run(group: KeyGroup, keyName: string, desc: string, action: ActionId): Binding {
+	return { label: keyName, desc, group, match: named(keyName), action: { type: "run", action } };
 }
 
 /** List mode. */
 export const LIST_BINDINGS: readonly Binding[] = [
-	{ label: "↑ ↓ j k", desc: "select task", match: named("up", "k"), action: { type: "select", delta: -1 } },
+	{
+		label: "↑ ↓ j k",
+		desc: "select task",
+		group: "navigate",
+		match: named("up", "k"),
+		action: { type: "select", delta: -1 },
+	},
 	{ label: "", desc: "", match: named("down", "j"), action: { type: "select", delta: 1 }, hidden: true },
-	{ label: "enter i", desc: "interact Metro", match: named("enter", "i"), action: { type: "interact" } },
-	{ label: "tab", desc: "focus log", match: named("tab"), action: { type: "mode", mode: "log" } },
-	run("r", "reload app", "reload"),
-	run("d", "show sim", "show"),
-	run("o", "open client", "open"),
-	run("s", "screenshot", "screenshot"),
-	run("R", "reinstall app", "reinstall"),
-	run("x", "restart sim", "restart-sim"),
-	run("M", "restart Metro", "metro-restart"),
-	run("c", "Metro --clear", "metro-clear"),
-	run("l", "device logs", "logs"),
-	run("p", "perf on/off", "perf"),
-	run("P", "perf all", "perf-all"),
-	run("m", "perf mark", "mark"),
-	run("f", "frames", "frames"),
-	run("g", "perf report", "report"),
-	{ label: "h", desc: "toggle HUD", match: named("h"), action: { type: "hud" } },
-	{ label: "?", desc: "help", match: named("?"), action: { type: "mode", mode: "help" } },
+	{
+		label: "enter i",
+		desc: "interact Metro",
+		group: "navigate",
+		match: named("enter", "i"),
+		action: { type: "interact" },
+	},
+	{ label: "tab", desc: "focus log", group: "navigate", match: named("tab"), action: { type: "mode", mode: "log" } },
+	{ label: "h", desc: "toggle HUD", group: "navigate", match: named("h"), action: { type: "hud" } },
+	{ label: "?", desc: "help", match: named("?"), action: { type: "mode", mode: "help" }, hidden: true },
+	run("app", "r", "reload app", "reload"),
+	run("app", "d", "show sim", "show"),
+	run("app", "o", "open client", "open"),
+	run("app", "s", "screenshot", "screenshot"),
+	run("app", "R", "reinstall app", "reinstall"),
+	run("app", "x", "restart sim", "restart-sim"),
+	run("app", "l", "device logs", "logs"),
+	run("metro", "M", "restart Metro", "metro-restart"),
+	run("metro", "c", "Metro --clear", "metro-clear"),
+	run("perf", "p", "perf on/off", "perf"),
+	run("perf", "P", "perf all", "perf-all"),
+	run("perf", "m", "perf mark", "mark"),
+	run("perf", "f", "frames", "frames"),
+	run("perf", "g", "perf report", "report"),
 	QUIT,
 	REDRAW,
 ];
@@ -271,11 +302,22 @@ export const EXPO_KEYS: ReadonlyArray<{ label: string; desc: string }> = [
 	{ label: "?", desc: "all commands" },
 ];
 
-/** Footer hint per mode. */
-export function footerHint(mode: Mode): string {
+/** List-mode hint: the essentials always, the common action keys while they fit. */
+const LIST_HINT = {
+	core: ["↑↓ select", "enter interact"],
+	extras: ["r reload", "s shot", "M metro", "p perf"],
+	tail: ["? keys", "q quit"],
+};
+
+/** Footer hint per mode; `width` (default: no limit) drops list mode's action keys from the end until it fits. */
+export function footerHint(mode: Mode, width = Number.POSITIVE_INFINITY): string {
 	switch (mode) {
-		case "list":
-			return "↑↓ select · enter interact · tab log · ? help · q quit";
+		case "list": {
+			const join = (extras: readonly string[]): string => [...LIST_HINT.core, ...extras, ...LIST_HINT.tail].join(" · ");
+			let extras = LIST_HINT.extras;
+			while (extras.length > 0 && join(extras).length > width) extras = extras.slice(0, -1);
+			return join(extras);
+		}
 		case "log":
 			return "↑↓ scroll · pgup/pgdn page · g/G top/bottom · tab back · q quit";
 		case "interact":
