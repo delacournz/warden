@@ -24,6 +24,8 @@ on:
 
 permissions:
   contents: read
+  # bun install pulls @delacournz/* from GitHub Packages with the job token.
+  packages: read
 
 # One run per branch, newest wins. A signoff binds to a SHA, so once a branch moves on (a second
 # merge into develop re-pushes the version PR head seconds after the first; a maintainer dispatches
@@ -83,9 +85,13 @@ jobs:
         with:
           cache: bun
 
-      # No NPM_TOKEN: `@delacournz/*` (GitHub Packages) is only apps/docs' optional OpenTelemetry, which
-      # nothing here uses. The 401 is a warning, and this proves a tokenless clone installs.
+      # `@delacournz/cli-telemetry` (GitHub Packages, private) is a hard dependency of apps/cli, so the
+      # install needs a read token. bunfig.toml reads NPM_TOKEN; the job token works because the package
+      # grants this repo Actions read access (package settings > Manage Actions access). apps/docs'
+      # optional OpenTelemetry packages ride on the same token.
       - run: bun install --frozen-lockfile
+        env:
+          NPM_TOKEN: ${{ github.token }}
       - run: bun run typecheck
       - run: bun run check
       - run: bun run test
@@ -143,9 +149,13 @@ jobs:
             packages/e2e/native/ios/.build
             packages/e2e/native/ios-runner/RunnerCore/.build
 
-      # No NPM_TOKEN: `@delacournz/*` (GitHub Packages) is only apps/docs' optional OpenTelemetry, which
-      # nothing here uses. The 401 is a warning, and this proves a tokenless clone installs.
+      # `@delacournz/cli-telemetry` (GitHub Packages, private) is a hard dependency of apps/cli, so the
+      # install needs a read token. bunfig.toml reads NPM_TOKEN; the job token works because the package
+      # grants this repo Actions read access (package settings > Manage Actions access). apps/docs'
+      # optional OpenTelemetry packages ride on the same token.
       - run: bun install --frozen-lockfile
+        env:
+          NPM_TOKEN: ${{ github.token }}
       - run: bun run --cwd packages/e2e native:deps
       - run: bun run --cwd packages/e2e native:build
       - run: swift test --package-path packages/e2e/native/ios
