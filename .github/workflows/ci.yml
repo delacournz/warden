@@ -83,6 +83,10 @@ jobs:
         with:
           cache: bun
 
+      # Namespace remote cache for turbo (sets TURBO_API / TURBO_TEAM / TURBO_TOKEN from the instance
+      # credentials). Same task hashes as a local signoff, so a re-dispatch replays untouched greens.
+      - uses: namespace-actions/setup-turbocache@3b82149ffb545cab670093f13bc0bad156917e18 # v0.0.4
+
       # No NPM_TOKEN: `@delacournz/*` (GitHub Packages) is only apps/docs' optional OpenTelemetry, which
       # nothing here uses. The 401 is a warning, and this proves a tokenless clone installs.
       - run: bun install --frozen-lockfile
@@ -134,10 +138,13 @@ jobs:
           xcodebuild -version
           swift --version
 
-      # Namespace cache volume (keyless, persists across runs): idb tarball/source + SwiftPM build products
+      # Namespace cache volume (keyless, persists across runs): bun + SwiftPM caches, idb tarball/source + SwiftPM build products
       # (idb's library package compiles for minutes). SwiftPM's incremental build handles stale products.
       - uses: namespacelabs/nscloud-cache-action@1124a6f3ce44e5cf84cc22111530961f4d2a15f9 # v1.7.0
         with:
+          cache: |
+            bun
+            swiftpm
           path: |
             ~/Library/Caches/warden-idb
             packages/e2e/native/ios/.build
