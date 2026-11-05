@@ -34,7 +34,11 @@ pub struct Received {
     pub rtp_timestamp: u32,
     pub key: bool,
     pub data: Vec<u8>,
+    /// When the assembler released it: the arrival of the next unit's first packet, since it
+    /// groups by timestamp (so this trails the network by up to one frame interval).
     pub at: Instant,
+    /// When its last (marker) packet arrived: the network arrival time.
+    pub marker_at: Option<Instant>,
 }
 
 /// What the peer reports, in order.
@@ -104,10 +108,17 @@ impl PeerConnectionEventHandler for Handler {
         tokio::spawn(async move {
             let mut assembler = Assembler::new();
             let mut last_pli: Option<Instant> = None;
+            let mut markers: std::collections::VecDeque<(u32, Instant)> = Default::default();
             while let Some(event) = track.poll().await {
                 let TrackRemoteEvent::OnRtpPacket(packet) = event else {
                     continue;
                 };
+                if packet.header.marker {
+                    markers.push_back((packet.header.timestamp, Instant::now()));
+                    if markers.len() > 64 {
+                        markers.pop_front();
+                    }
+                }
                 let pushed = assembler.push(
                     packet.header.sequence_number,
                     packet.header.timestamp,
@@ -120,6 +131,10 @@ impl PeerConnectionEventHandler for Handler {
                         key: unit.key,
                         data: unit.data,
                         at,
+                        marker_at: markers
+                            .iter()
+                            .find(|(ts, _)| *ts == unit.timestamp)
+                            .map(|(_, t)| *t),
                     }));
                 }
                 if pushed.request_keyframe

@@ -97,6 +97,15 @@ Remote candidates that arrive before `answer` are held and applied after it. Std
 
 `cargo test --manifest-path crates/warden-stream/Cargo.toml` (and `crates/warden-rtc`): signoff check `stream`, CI job `stream`, path-gated on `crates/warden-stream/**` + `crates/warden-rtc/**`. Measured on loopback (M-series, 2026-11-05): connected 210 ms after the offer, 119/119 units byte-identical, 59.9 fps, arrival gap p50 16.8 ms.
 
+Live bench (`examples/live.rs`: publisher + test peer in one process, one clock): `--au-socket <helper socket> --helper-stdin <helper's stdin fifo>` relays each `keyframe-request` as `stream.keyframe`, as the real caller must (without it a socket source never resumes after the pre-connect IDR is dropped). iOS sim, 588×1280, app animating (2026-11-05):
+
+| | connect | send → last packet p50 / p95 | rtt | path |
+|---|---|---|---|---|
+| `--ice lan` (loopback) | 221 ms | 0.13 / 0.19 ms | 0.2 ms | host, loopback |
+| `--ice turn` both sides (Cloudflare) | 1.5 s | 24 / 106 ms | 125 ms | relay, `relayedBytes` = `bytesSent` |
+
+The assembler emits a unit when the next one starts, so the decoder sees it one frame later (+16.7 ms at 60 fps; more on an idle screen, where the helper sends 1 fps). Flush on the marker bit is a follow-up in `warden-rtc`.
+
 ## Packaging (not done)
 
 Stage it like `warden-simd`: build `--release` per darwin target in the release workflow, copy into the `@delacour/warden-darwin-<arch>` package next to `warden-simd` (`apps/cli/src/npm/helper-stage.ts`), add to the GitHub Release assets and `SHA256SUMS`. Release build ≈ a few MB (lto, strip).
