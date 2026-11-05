@@ -144,6 +144,40 @@ describe("exportGolden", () => {
 		expect(again.success && again.data.built).toBe(false);
 		expect(existsSync(join(archive, GOLDEN, "device/stale"))).toBe(false);
 	});
+
+	test("a golden this export just built that never settled → not exported, kept on the machine", async () => {
+		const logs: string[] = [];
+		const host = fakeHost({ migrationPolls: 0, cpu: [300] });
+		seedDevice("NEW-1");
+		const result = await exportGolden(deps(host, logs), "iphone-17", undefined, archive);
+		expect(result.success).toBe(false);
+		if (result.success) return;
+		expect(result.error).toContain("did not settle");
+		expect(existsSync(join(archive, GOLDEN))).toBe(false);
+		expect(host.sims).toEqual([{ udid: "NEW-1", name: GOLDEN, state: "Shutdown" }]);
+		expect(store.listLeases()).toEqual([]);
+	});
+
+	test("an unsettled golden a claim built earlier → a later export (another process) still refuses it", async () => {
+		const host = fakeHost({ migrationPolls: 0, cpu: [300] });
+		seedDevice("NEW-1");
+		const claimed = await ensureGolden(deps(host), "iphone-17");
+		expect(claimed.success && claimed.data).toMatchObject({ built: true, unsettled: true });
+		const reused = await ensureGolden(deps(host), "iphone-17");
+		expect(reused.success && reused.data).toMatchObject({ built: false, unsettled: true });
+		const exported = await exportGolden(deps(host), "iphone-17", undefined, archive);
+		expect(exported.success).toBe(false);
+		expect(existsSync(join(archive, GOLDEN))).toBe(false);
+	});
+
+	test("a settled golden reused later → no unsettled mark, exported", async () => {
+		const host = fakeHost({ migrationPolls: 0 });
+		seedDevice("NEW-1");
+		await ensureGolden(deps(host), "iphone-17");
+		const exported = await exportGolden(deps(host), "iphone-17", undefined, archive);
+		expect(exported.success).toBe(true);
+		expect(existsSync(join(archive, GOLDEN, "device", "warden-golden-unsettled"))).toBe(false);
+	});
 });
 
 describe("importGoldens", () => {
@@ -200,6 +234,18 @@ describe("importGoldens", () => {
 		if (!result.success) return;
 		expect(result.data[0]).toMatchObject({ name: GOLDEN, imported: false });
 		expect(JSON.stringify(result.data[0])).toContain("migration");
+		expect(host.sims).toEqual([]);
+		expect(existsSync(deviceDir("NEW-1"))).toBe(false);
+	});
+
+	test("the copied data has no AutomationEnabled → the new device is deleted, skipped", async () => {
+		writeManifest(GOLDEN);
+		const host = fakeHost({ migrationPolls: 0, automationMissing: "all" });
+		const result = await importGoldens(deps(host), archive);
+		expect(result.success).toBe(true);
+		if (!result.success) return;
+		expect(result.data[0]).toMatchObject({ name: GOLDEN, imported: false });
+		expect(JSON.stringify(result.data[0])).toContain("AutomationEnabled");
 		expect(host.sims).toEqual([]);
 		expect(existsSync(deviceDir("NEW-1"))).toBe(false);
 	});
