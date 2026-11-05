@@ -1,20 +1,25 @@
-import { join } from "node:path";
-import { wardenHome } from "@delacour/warden-core/store";
 import { ok } from "@delacour/warden-types/result";
 import type { DevMetroMode, DevReady, DevTaskHandle, DevTaskId, DevUi, MetroTerminal } from "../commands/dev-ui";
 import type { CommandContext } from "../context";
-import type { MetricsTarget } from "../perf/metrics-sampler";
 import type { Spinner } from "../ui";
 import { createActions } from "./actions";
 import { createActionEffects } from "./actions.effects";
-import { HUD_DEFAULT_INTERVAL_MS, type Hud, type HudDeps, startHud } from "./hud";
-import { actionFor, createKeyParser, type Key, promptEdit } from "./keys";
+import type { HudDeps } from "./hud";
+import { createKeyRouter } from "./key-router";
+import { createKeyParser } from "./keys";
 import { createMetroPane } from "./metro-pane";
 import { initialState, type Size } from "./model";
 import { reduce, type TuiEvent } from "./reducer";
-import { listWidth, paneCursor, type RenderPane, render } from "./render";
-import { createScreen, type ScreenInput, type ScreenOutput, type ScreenProcess } from "./screen";
-import { openSessionLog } from "./session-log";
+import { listWidth, paneCursor, type RenderPane, render, tickInterval } from "./render";
+import {
+	createScreen,
+	nodeProcess,
+	nodeStdin,
+	type ScreenInput,
+	type ScreenOutput,
+	type ScreenProcess,
+} from "./screen";
+import { createSession } from "./session";
 
 export type DevTuiDeps = {
 	/** the command context; the returned `ctx` is a copy whose output lands in the task rows */
@@ -31,47 +36,26 @@ export type DevTuiDeps = {
 	hudSeams?: Pick<HudDeps, "sampler" | "fps" | "schedule" | "fpsEvery">;
 };
 
-/** `DevUi` plus what the Metro pane (TUI-4) and the actions (TUI-5) plug into. */
+/** `DevUi` plus what the Metro pane and the action keys plug into. */
 export type DevTui = DevUi & {
-	/** every raw Metro PTY chunk so far, undecoded (the TUI-4 pane feeds them to xterm) */
+	/** every raw Metro PTY chunk so far, undecoded (the pane feeds them to xterm) */
 	metroChunks(): readonly Uint8Array[];
 	/** the Metro PTY handle once `metro.attach` ran: key forwarding and resize */
 	metroTerminal(): MetroTerminal | undefined;
 };
 
-/** Frames are painted at most this often; events in between coalesce. */
 /** warden lines the dashboard keeps for the terminal after a failure; the tail of them after a Metro death. */
 const TRANSCRIPT_LINES = 400;
 const TRANSCRIPT_TAIL = 20;
 
+/** Frames are painted at most this often; events in between coalesce. */
 export const FRAME_MS = 16;
 
 /** Smallest PTY Metro is given, however small the terminal is. */
 const MIN_PTY = { cols: 20, rows: 5 };
 
-/** Esc twice inside this window sends a literal Esc to Expo. */
-const DOUBLE_ESC_MS = 300;
-const LITERAL_ESC = String.fromCharCode(27);
-
-function processAdapter(): ScreenProcess {
-	return {
-		on: (event, listener) => process.on(event, listener),
-		off: (event, listener) => process.off(event, listener),
-		listenerCount: (event) => process.listenerCount(event),
-		exit: (code) => process.exit(code),
-	};
-}
-
-function stdinAdapter(): ScreenInput {
-	return {
-		isTTY: process.stdin.isTTY,
-		setRawMode: (raw) => process.stdin.setRawMode?.(raw),
-		on: (event, listener) => process.stdin.on(event, listener),
-		off: (event, listener) => process.stdin.off(event, listener),
-		resume: () => process.stdin.resume(),
-		pause: () => process.stdin.pause(),
-	};
-}
+/** Rows above and below the Metro pane: header, the pane's title row, footer. */
+const PANE_CHROME_ROWS = 3;
 
 /**
  * The dashboard behind `DevUi`: task list, the selected task's log, footer hints, help overlay. Takes the terminal
@@ -80,9 +64,9 @@ function stdinAdapter(): ScreenInput {
 export function createDevTui(deps: DevTuiDeps): DevTui {
 	const now = deps.now ?? (() => Date.now());
 	const screen = createScreen({
-		stdin: deps.stdin ?? stdinAdapter(),
+		stdin: deps.stdin ?? nodeStdin(),
 		stdout: deps.stdout ?? process.stdout,
-		proc: deps.proc ?? processAdapter(),
+		proc: deps.proc ?? nodeProcess(),
 		...(deps.size ? { size: deps.size } : {}),
 	});
 
@@ -96,16 +80,14 @@ export function createDevTui(deps: DevTuiDeps): DevTui {
 	const metroChunks: Uint8Array[] = [];
 	let metroTerminal: MetroTerminal | undefined;
 
-	// --- TUI-4: Metro pane + key passthrough (the pane, interact-mode keys, resize) ---
 	const paneSize = (): { cols: number; rows: number } => {
 		const { cols, rows } = screen.size();
 		return {
 			cols: Math.max(MIN_PTY.cols, cols - listWidth(cols) - 3),
-			rows: Math.max(MIN_PTY.rows, rows - 2),
+			rows: Math.max(MIN_PTY.rows, rows - PANE_CHROME_ROWS),
 		};
 	};
 	const pane = createMetroPane(paneSize());
-	let leftInteractAt: number | undefined;
 
 	/** The pane as the renderer takes it; only built while the metro row is on screen. */
 	const livePane = (): RenderPane | undefined =>
@@ -116,60 +98,6 @@ export function createDevTui(deps: DevTuiDeps): DevTui {
 		pane.resize(size.cols, size.rows);
 		metroTerminal?.resize(size.cols, size.rows);
 	};
-
-	/** A key in interact mode that belongs to Expo or the pane; false when it is warden's (Esc). */
-	const interactKey = (key: Key): boolean => {
-		const action = actionFor("interact", key);
-		if (action?.type === "forward") {
-			pane.scrollToBottom();
-			metroTerminal?.write(key.seq);
-		} else if (action?.type === "pane-scroll") {
-			pane.scroll(-action.dir * Math.max(1, paneSize().rows - 1));
-		} else return false;
-		schedule();
-		return true;
-	};
-
-	/** Esc right after leaving interact mode: a literal Esc for Expo when it comes inside the double-Esc window. */
-	const literalEsc = (at: number): boolean => {
-		const quick = leftInteractAt !== undefined && at - leftInteractAt <= DOUBLE_ESC_MS;
-		leftInteractAt = undefined;
-		if (!quick) return false;
-		metroTerminal?.write(LITERAL_ESC);
-		dispatch({ type: "mode", mode: "interact" });
-		return true;
-	};
-
-	/**
-	 * Interact mode hands every key but Esc and Shift+PgUp/PgDn to Expo (Ctrl-C included: only the PTY's exit ends
-	 * Metro). Esc leaves; a second Esc inside the window sends a literal Esc to Expo and stays in interact mode.
-	 */
-	const handleKey = (key: Key): void => {
-		const at = now();
-		if (state.mode === "interact") {
-			if (interactKey(key)) return;
-			leftInteractAt = at;
-		} else if (key.name === "escape" && state.mode === "list") {
-			if (literalEsc(at)) return;
-		} else leftInteractAt = undefined;
-		dispatch({ type: "key", key, at });
-	};
-
-	/** TUI-5: the footer prompt takes every key; in list mode an action key runs its action. Anything else is TUI-4's. */
-	const routeKey = (key: Key): void => {
-		if (state.mode === "prompt") {
-			promptKey(key);
-			return;
-		}
-		const action = state.mode === "list" ? actionFor("list", key) : undefined;
-		if (action?.type !== "run") {
-			handleKey(key);
-			return;
-		}
-		leftInteractAt = undefined;
-		void actions.run(action.action);
-	};
-	// --- end TUI-4 ---
 
 	const paint = (): void => {
 		timer = undefined;
@@ -190,65 +118,47 @@ export function createDevTui(deps: DevTuiDeps): DevTui {
 		timer = setTimeout(paint, FRAME_MS);
 	};
 
-	const dispatch = (event: TuiEvent): void => {
+	/** The clock: ticks only while something on screen follows it (a spinner, a running duration, a flash). */
+	let clock: { handle: ReturnType<typeof setInterval>; ms: number } | undefined;
+	const syncClock = (): void => {
+		const ms = closed ? undefined : tickInterval(state);
+		if (clock !== undefined && clock.ms === ms) return;
+		if (clock !== undefined) clearInterval(clock.handle);
+		clock = undefined;
+		if (ms === undefined) return;
+		const handle = setInterval(() => dispatch({ type: "tick", at: now() }), ms);
+		(handle as { unref?: () => void }).unref?.();
+		clock = { handle, ms };
+	};
+
+	const session = createSession({
+		ctx: deps.ctx,
+		now,
+		hudIntervalMs: deps.hud?.intervalMs,
+		hudSeams: deps.hudSeams,
+		onSample: (sample, fps) => dispatch({ type: "hud:sample", sample, fps, at: now() }),
+	});
+
+	function dispatch(event: TuiEvent): void {
 		const before = state;
 		state = reduce(state, event);
 		if (!before.quitting && state.quitting) quitHandler?.();
-		if (before.hud.visible !== state.hud.visible) syncHud();
-		recordEvent(event);
+		if (before.hud.visible !== state.hud.visible) session.syncHud(state.hud.visible && !closed);
+		session.record(event);
+		syncClock();
 		schedule();
-	};
+	}
 
-	// TUI-6 begin: the HUD ticker and the session log on disk (`$WARDEN_HOME/dev/<leaseId>/`)
-	const sessionLog = openSessionLog(undefined, { now });
-	let hudTarget: MetricsTarget | undefined;
-	/** the sampler runs exactly while the HUD is visible: `h`, `setHud` and `warden dev enable hud` all flip `visible` */
-	let hudTicker: Hud | undefined;
-	const syncHud = (): void => {
-		const want = state.hud.visible && !closed;
-		if (want && hudTicker === undefined) {
-			hudTicker = startHud({
-				ctx: deps.ctx,
-				target: () => hudTarget,
-				intervalMs: deps.hud?.intervalMs ?? HUD_DEFAULT_INTERVAL_MS,
-				onSample: (sample, fps) => dispatch({ type: "hud:sample", sample, fps, at: now() }),
-				now,
-				...deps.hudSeams,
-			});
-		} else if (!want && hudTicker !== undefined) {
-			hudTicker.stop();
-			hudTicker = undefined;
-		}
-	};
 	state = { ...state, hud: { ...state.hud, visible: deps.hud?.enabled === true } };
-	syncHud();
-	function recordEvent(event: TuiEvent): void {
-		if (event.type === "task:log") sessionLog.line(event.id, event.line);
-		else if (event.type === "task:fail") sessionLog.line(event.id, `failed: ${event.error}`);
-		else if (event.type === "task:ok" && event.detail) sessionLog.line(event.id, event.detail);
-	}
-	let logDir: string | undefined;
-	function sessionReady(info: DevReady): void {
-		const lease = info.leaseIds[0];
-		if (lease !== undefined) {
-			logDir = join(wardenHome(deps.ctx.env), "dev", lease);
-			sessionLog.attach(logDir);
-		}
-		if (info.bundleId !== undefined) hudTarget = { udid: info.deviceId, platform: info.platform, app: info.bundleId };
-	}
-	function stopSessionExtras(): void {
-		syncHud();
-		sessionLog.close();
-	}
-	// TUI-6 end
+	session.syncHud(state.hud.visible);
 
-	// TUI-5 begin: the warden action keys (`actions.ts`), with real effects and a footer prompt for `m`
+	/** `M` / `c` / `warden dev restart-metro` end the old Metro on purpose: that exit is not the session's. */
 	let metroSwap = false;
 	const effects = createActionEffects({
 		ctx: deps.ctx,
 		host: () => state.ready?.actions,
 		metroTerminal: () => metroTerminal,
-		shotsDir: () => sessionLog.shotsDir(),
+		shotsDir: () => session.shotsDir(),
 	});
 	const actions = createActions({
 		now,
@@ -278,18 +188,18 @@ export function createDevTui(deps: DevTuiDeps): DevTui {
 			return () => clearInterval(handle);
 		},
 	});
-	function promptKey(key: Key): void {
-		const edit = promptEdit(key);
-		if (edit === undefined) return;
-		if (edit.op === "submit" || edit.op === "cancel") {
-			const text = state.prompt?.text ?? "";
-			dispatch({ type: "prompt:close" });
-			if (edit.op === "submit") void actions.submitMark(text);
-			return;
-		}
-		dispatch({ type: "prompt:edit", edit });
-	}
-	// TUI-5 end
+
+	const routeKey = createKeyRouter({
+		state: () => state,
+		now,
+		dispatch,
+		schedule,
+		metroTerminal: () => metroTerminal,
+		pane,
+		paneRows: () => paneSize().rows,
+		run: (action) => void actions.run(action),
+		submitPrompt: (text) => void actions.submitMark(text),
+	});
 
 	const parser = createKeyParser(routeKey);
 	screen.onInput((chunk) => parser.feed(chunk));
@@ -347,12 +257,11 @@ export function createDevTui(deps: DevTuiDeps): DevTui {
 		size: paneSize,
 		onData: (chunk) => {
 			metroChunks.push(chunk);
-			sessionLog.metro(chunk);
+			session.metro(chunk);
 			if (!closed) void pane.write(chunk).then(publishBundle).then(schedule);
 		},
 		attach: (terminal, exited) => {
 			metroTerminal = terminal;
-			// a restart (`M` / `c` / `warden dev restart-metro`) ends the old Metro on purpose: that exit is not the session's
 			void exited.then(
 				(code) => {
 					if (!metroSwap) dispatch({ type: "metro:exit", code, at: now() });
@@ -389,7 +298,7 @@ export function createDevTui(deps: DevTuiDeps): DevTui {
 		},
 		ready(info: DevReady): void {
 			dispatch({ type: "ready", info, at: now() });
-			sessionReady(info);
+			session.ready(info);
 		},
 		onQuit(handler) {
 			quitHandler = handler;
@@ -398,14 +307,15 @@ export function createDevTui(deps: DevTuiDeps): DevTui {
 			if (state.hud.visible !== on) dispatch({ type: "hud:visible", on });
 			return ok(undefined);
 		},
-		hudOn: () => hudTicker !== undefined,
+		hudOn: () => session.hudOn(),
 		restartMetro: (clear) => actions.restartMetro(clear),
 		async close() {
 			if (closed) return;
 			if (timer !== undefined) clearTimeout(timer);
 			closed = true;
+			syncClock();
 			actions.dispose();
-			stopSessionExtras();
+			session.close();
 			pane.dispose();
 			screen.close();
 			replayFailure();
@@ -423,6 +333,7 @@ export function createDevTui(deps: DevTuiDeps): DevTui {
 		if (quit || (!neverReady && !metroDied)) return;
 		const lines = neverReady ? transcript : transcript.slice(-TRANSCRIPT_TAIL);
 		for (const line of lines) deps.ctx.err(line);
+		const logDir = session.logDir();
 		if (logDir !== undefined) deps.ctx.err(`session log: ${logDir}`);
 	}
 }

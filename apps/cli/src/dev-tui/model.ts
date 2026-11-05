@@ -14,7 +14,7 @@ export type Task = {
 	scroll: number;
 };
 
-/** list: warden's keys; log: the log pane has focus; interact: every key goes to Metro (TUI-4); help: overlay; prompt: the footer takes a line of text (`m` asks for a mark label). */
+/** list: warden's keys; log: the log pane has focus; interact: every key goes to Metro; help: overlay; prompt: the footer takes a line of text (`m` asks for a mark label). */
 export type Mode = "list" | "log" | "interact" | "help" | "prompt";
 
 /** What a list-mode key runs (`actions.ts`); each has its own task row, except `reload` which logs on the Metro row. */
@@ -39,6 +39,12 @@ export type Prompt = { label: string; text: string };
 
 export type Size = { cols: number; rows: number };
 
+/** The footer's short-lived note after a warden action ended: what ran and how it went. */
+export type Flash = { kind: "ok" | "fail"; text: string; at: number };
+
+/** How long a flash stays in the footer. */
+export const FLASH_MS = 3000;
+
 /** One HUD reading: the app is not up yet, not running, or sampled. Memory is RSS on iOS, PSS on Android. */
 export type HudSample =
 	| { kind: "waiting" }
@@ -58,7 +64,7 @@ export type HudFps = { fps: number; jankPct: number };
 /** Metro's last bundle: set by the Metro pane from its output. */
 export type HudBundle = { ms: number; modules: number };
 
-/** A recording `warden perf` session: set by the perf keys (TUI-5) while one records. */
+/** A recording `warden perf` session: set by the perf keys while one records. */
 export type HudPerf = { startedAt: number; marks: number };
 
 export type HudState = {
@@ -82,6 +88,8 @@ export type TuiState = {
 	mode: Mode;
 	/** set while `mode` is `prompt` */
 	prompt: Prompt | undefined;
+	/** the last action's outcome, shown in the footer until `FLASH_MS` after `at` */
+	flash: Flash | undefined;
 	size: Size;
 	ready: DevReady | undefined;
 	hud: HudState;
@@ -116,6 +124,7 @@ export function initialState(size: Size, now: number): TuiState {
 		autoFollow: true,
 		mode: "list",
 		prompt: undefined,
+		flash: undefined,
 		size,
 		ready: undefined,
 		hud: {

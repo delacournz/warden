@@ -62,7 +62,7 @@ describe("createDevTui", () => {
 		const text = (await screen()).join("\n");
 		expect(text).toContain("✓ claiming ios");
 		expect(text).toContain("1.3s");
-		expect(text).toContain("▶ building");
+		expect(text).toMatch(/[\u2800-\u28ff] building/);
 		expect(text).toContain("· metro");
 		await ui.close();
 	});
@@ -116,7 +116,7 @@ describe("createDevTui", () => {
 		spinner.update("installing…");
 		await settle();
 		const text = (await screen()).join("\n");
-		expect(text).toContain("▶ installing…");
+		expect(text).toMatch(/[\u2800-\u28ff] installing…/);
 		expect(text).toContain("preparing the ios dev build…");
 		expect(text).toContain("fingerprint abc");
 		await ui.close();
@@ -130,7 +130,7 @@ describe("createDevTui", () => {
 		expect(rows[0]).toContain("warden dev · ios · example");
 		expect(rows[0]).toContain("warden-iphone-17-5 · :8101 · http://localhost:8101");
 		const text = rows.join("\n");
-		expect(text).toContain("▶ session");
+		expect(text).toContain("● session");
 		expect(text).toContain("holding the device and port");
 		await ui.close();
 	});
@@ -158,7 +158,7 @@ describe("createDevTui", () => {
 		await settle();
 		expect(calls).toBe(1);
 		const text = (await screen()).join("\n");
-		expect(text).toContain("▶ stopping…");
+		expect(text).toMatch(/[\u2800-\u28ff] stopping…/);
 		expect(text).toContain("stopping… waiting for Metro");
 		await ui.close();
 	});
@@ -272,7 +272,7 @@ describe("createDevTui", () => {
 		const { ui, stdin, screen } = setup();
 		const { metro } = ui;
 		if (metro.kind !== "pty") throw new Error("expected pty");
-		expect(metro.size()).toEqual({ cols: 80 - 26 - 3, rows: 22 });
+		expect(metro.size()).toEqual({ cols: 80 - 26 - 3, rows: 21 });
 		const chunk = new Uint8Array([0xe2, 0x96]);
 		metro.onData(chunk);
 		expect(ui.metroChunks()).toEqual([chunk]);
@@ -392,7 +392,7 @@ describe("Metro pane and key passthrough", () => {
 		m.stdin.press("i");
 		await Bun.sleep(80);
 		const col = listWidth(80) + 2 + 2 + 1;
-		expect(m.stdout.all()).toContain(`\x1b[${1 + 1 + 1};${col}H\x1b[?25h`);
+		expect(m.stdout.all()).toContain(`\x1b[${2 + 1 + 1};${col}H\x1b[?25h`);
 		m.stdout.clear();
 		m.stdin.press("\x1b");
 		await Bun.sleep(80);
@@ -424,7 +424,7 @@ describe("Metro pane and key passthrough", () => {
 		m.stdout.resize(120, 40);
 		m.process.emit("SIGWINCH");
 		await settle();
-		expect(m.resizes).toEqual([[120 - 32 - 3, 38]]);
+		expect(m.resizes).toEqual([[120 - 32 - 3, 37]]);
 		await m.ui.close();
 	});
 

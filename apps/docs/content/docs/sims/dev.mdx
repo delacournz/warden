@@ -55,6 +55,12 @@ When a failure happens after the dashboard opened (the claim, the build, Metro d
 
 On an interactive terminal `warden dev` draws a dashboard instead of printing lines. Tasks are listed on the left: claim device, show simulator, dev build, metro, dev client, session. Every key you press adds a row of its own (a screenshot, a reinstall). The right side shows the live output of the selected row. The metro row shows Metro's real terminal, so Expo's QR code and key menu look the same as outside warden. When the terminal is at least 100 columns wide a HUD box sits at the top right.
 
+- A running row spins and counts its time up; a finished one keeps how long it took. The session row is a green dot with the session's age.
+- The selected row is a highlight bar while the list has focus, and a `›` marker once the log or Metro has it.
+- The first line of the right side names the row, its state (`running 12s`, `✓ done 1.3s`, `✗ failed`) and, in the log, how far it is scrolled up.
+- When a key's row finishes, the footer shows its outcome for 3 seconds (`✓ screenshot · …/shots/1.png`, `✗ reinstall · …`).
+- If Metro exits, the header shows `✗ metro exited (<code>)`.
+
 ```bash
 warden dev            # dashboard on a terminal
 warden dev --no-tui   # plain output, Metro on this terminal
