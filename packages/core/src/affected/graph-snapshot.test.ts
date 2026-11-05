@@ -12,7 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { bunExec } from "../exec";
-import { makeSuiteRepo } from "./fixture.testing";
+import { makeSuiteRepo, SUITE_REPO_HOOK_TIMEOUT_MS } from "./fixture.testing";
 import {
 	type GraphDoc,
 	type GraphRequest,
@@ -87,7 +87,7 @@ describe("snapshotKey", () => {
 	let write: (path: string, text: string) => void;
 	beforeEach(async () => {
 		({ dir, write } = await makeSuiteRepo());
-	});
+	}, SUITE_REPO_HOOK_TIMEOUT_MS);
 	afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
 	const request = (extra: Partial<GraphRequest> = {}): GraphRequest => ({
