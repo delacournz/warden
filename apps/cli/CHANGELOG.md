@@ -1,5 +1,35 @@
 # @delacour/warden
 
+## 0.10.0
+
+### Minor Changes
+
+- [#176](https://github.com/delacournz/warden/pull/176) [`8690beb`](https://github.com/delacournz/warden/commit/8690beb4f61b42ba2cfa8786c54e47217d8197c7) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - `warden e2e` under GitHub Actions annotates each failed test on its spec file at the line it failed (`::error`, `::warning` for an optional spec) and appends a table of failed tests to the job's step summary
+  - `warden e2e --json-lines` streams NDJSON on stdout: a `test` event as each test finishes, then a `report` event with the whole report
+  - `warden e2e` ends with test totals, the error most failed tests share, and where the evidence is
+  - `e2e-report.json`: a failed test carries `line`, where it failed in the spec
+
+- [#171](https://github.com/delacournz/warden/pull/171) [`4b17786`](https://github.com/delacournz/warden/commit/4b177863f4a284806f93475eb3b08fc31f8bd96b) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - iOS e2e and `warden ui`: when the simulator cannot name its frontmost app (seen on GitHub-hosted `macos-26` runners: every snapshot failed with `The simulator's accessibility service did not answer a frontmost request` or `named no frontmost application` while the app drew fine), snapshots are read by pid instead: the app warden launched, else SpringBoard. Before, the host fallback asked the same lookup and failed too.
+  - New `WARDEN_SIMD_FRONTMOST_COOLDOWN_S` (default 20, `0` always asks first) sets how long snapshots skip the frontmost lookup after it failed (doubling while it keeps failing, up to 5 min), and `WARDEN_SIMD_FRONTMOST_METHOD` (`window-server` default, `running-board`, `center-point`) sets how the in-sim bridge finds the frontmost app. On GitHub-hosted `macos-26` runners `running-board` makes the first read fast.
+  - These accessibility failures are now retryable `E_TIMEOUT` / `E_AX_UNAVAILABLE` instead of `E_INTERNAL`, so a locator keeps polling.
+  - `trace.jsonl`: every `driver.snapshot` span names its reader (`backend`). A pid read adds `targetPid` / `targetSource`. A failed snapshot records both readers' errors (`bridgeError`, `axError`, `axReason`) and the helper's state once per failure run: `bridge`, `bridgeLastError`, `hostXcode`, `helperXcode`, `coreSimulator`.
+
+### Patch Changes
+
+- [#172](https://github.com/delacournz/warden/pull/172) [`a708b7b`](https://github.com/delacournz/warden/commit/a708b7be434f90456672323311b31729066b9565) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - `warden dev` dashboard: a running row spins and counts its time up, and the session row is a green dot with the session's age.
+  - The selected row is a highlight bar while the list has focus; the right side's first line names the row, its state (`running 12s`, `✓ done 1.3s`, `✗ failed`) and how far the log is scrolled.
+  - When a key's row finishes (`s`, `R`, `M` …) the footer shows its outcome for 3 seconds; the header shows `✗ metro exited (<code>)` once Metro dies.
+  - The `?` overlay groups warden's keys under navigate, app & device, Metro and perf, and the list footer names `r`, `s`, `M` and `p` while they fit.
+
+- [#173](https://github.com/delacournz/warden/pull/173) [`1f8f46c`](https://github.com/delacournz/warden/commit/1f8f46c1b42fe7026c9092384a9e6f1d2973389a) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - iOS goldens: a build is promoted only when `AutomationEnabled` is on disk in the shut-down golden's Accessibility preferences. The in-sim `defaults write` can exit 0 before it is flushed. A golden already on the machine without it is deleted and rebuilt, and `warden golden import` skips an archive without it.
+  - `warden golden export` refuses (exit 1) a golden that was still busy when its first boot's settle wait ran out (`not settled after 300s … using it anyway`). That golden stays usable on the machine, but a CI cache no longer carries it to every later run. The mark lives in the golden's device dir, so an export in a later process sees it too.
+
+- [#167](https://github.com/delacournz/warden/pull/167) [`48fad71`](https://github.com/delacournz/warden/commit/48fad7171aa295db5d8fb5355223e4d6c600a85e) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - `@delacour/warden` and its platform packages now link to [warden.co.nz](https://warden.co.nz) as their npm homepage, and `@delacour/warden-e2e` links to the e2e docs.
+
+- [#170](https://github.com/delacournz/warden/pull/170) [`f1742de`](https://github.com/delacournz/warden/commit/f1742dee3abc5a0dc76a3166329ad845cc9c8237) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - The `@delacour/warden` and `@delacour/warden-e2e` npm pages carry descriptions and keywords for iOS simulators, Android emulators, AI coding agents and React Native / Expo e2e testing, so npm search finds them.
+- Updated dependencies []:
+  - @delacour/warden-e2e@0.10.0
+
 ## 0.9.0
 
 ### Minor Changes
