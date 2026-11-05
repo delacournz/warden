@@ -6,7 +6,7 @@ import { auditSnapshot } from "@delacour/warden-e2e/device-a11y";
 import { canReadA11yEvents } from "@delacour/warden-e2e/driver/a11y-events";
 import { canReadA11y } from "@delacour/warden-e2e/driver/a11y-read";
 import type { Driver, DriverError, Element, Snapshot } from "@delacour/warden-e2e/driver/driver.types";
-import { canDriveScreenReader } from "@delacour/warden-e2e/driver/screen-reader";
+import { canDriveScreenReader, type DrivesScreenReader } from "@delacour/warden-e2e/driver/screen-reader";
 import { indexSnapshot } from "@delacour/warden-e2e/screen/nodes";
 import { ok, type Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
@@ -18,7 +18,7 @@ import { type UiError, type UiSuccess, uiError } from "./output";
 import { runUi, type UiOptionValues, type UiRunEnv } from "./run";
 import { parseTextSizeArg } from "./settings-parse";
 import { readLastSnapshot, readState } from "./state";
-import { findInFresh, parseTarget, pickBySelector, resolveTarget } from "./target";
+import { findInFresh, parseTarget, pickBySelector, resolveTarget, type Target } from "./target";
 
 /** Flags of the read-side `warden ui a11y` verbs (`audit`, `order`, `speak`, `announcements`, `focus`, `spoken`). */
 export type A11yVerbOptions = UiOptionValues & {
@@ -154,6 +154,32 @@ async function order(device: UiDevice, env: UiRunEnv): Promise<Result<UiSuccess,
 	});
 }
 
+/** Resolves an `@eN` ref against the last snapshot, then re-finds it in a fresh a11y read. */
+async function locateRef(
+	ctx: CommandContext,
+	device: UiDevice,
+	driver: Driver,
+	target: Extract<Target, { kind: "ref" }>
+): Promise<Result<{ element: Element; read: A11yRead }, UiError>> {
+	const resolved = await resolveTarget(target, {
+		lastSnapshot: readLastSnapshot(ctx, device.udid),
+		now: ctx.now(),
+		verify: false,
+		driver,
+	});
+	if (!resolved.success) return resolved;
+	const wanted = resolved.data.element;
+	const read = await readA11ySnapshot(driver);
+	if (!read.success) return read;
+	const fresh = indexSnapshot(read.data.snapshot);
+	const was = resolved.data.snapshot ? indexSnapshot(resolved.data.snapshot).byId.get(wanted?.id ?? "") : undefined;
+	const now = was ? findInFresh(was, fresh) : undefined;
+	const element = now?.element ?? wanted;
+	return element === undefined
+		? fail(uiError("stale_ref", `${target.ref} is no longer on screen`))
+		: ok({ element, read: read.data });
+}
+
 /** The element a locator (`@eN`, `id=… label=…`) names, taken from a snapshot that carries the a11y facts. */
 async function locate(
 	ctx: CommandContext,
@@ -164,25 +190,7 @@ async function locate(
 	const target = parseTarget(words.join(" "));
 	if (!target.success) return target;
 	if (target.data.kind === "point") return usage("a11y speak takes a locator (@eN or a selector), not coordinates");
-	if (target.data.kind === "ref") {
-		const resolved = await resolveTarget(target.data, {
-			lastSnapshot: readLastSnapshot(ctx, device.udid),
-			now: ctx.now(),
-			verify: false,
-			driver,
-		});
-		if (!resolved.success) return resolved;
-		const wanted = resolved.data.element;
-		const read = await readA11ySnapshot(driver);
-		if (!read.success) return read;
-		const fresh = indexSnapshot(read.data.snapshot);
-		const was = resolved.data.snapshot ? indexSnapshot(resolved.data.snapshot).byId.get(wanted?.id ?? "") : undefined;
-		const now = was ? findInFresh(was, fresh) : undefined;
-		const element = now?.element ?? wanted;
-		return element === undefined
-			? fail(uiError("stale_ref", `${target.data.ref} is no longer on screen`))
-			: ok({ element, read: read.data });
-	}
+	if (target.data.kind === "ref") return locateRef(ctx, device, driver, target.data);
 	const read = await readA11ySnapshot(driver);
 	if (!read.success) return read;
 	const picked = pickBySelector(indexSnapshot(read.data.snapshot), target.data.selector);
@@ -270,6 +278,34 @@ function focusText(step: FocusStep, said: Announcement | undefined): string {
 	return step === "status" ? "no element holds screen-reader focus" : "end of screen (no further element)";
 }
 
+type DeviceInfo = ReturnType<typeof deviceInfo>;
+
+/** `a11y focus activate`: taps the element holding screen-reader focus. */
+async function focusActivate(reader: DrivesScreenReader, info: DeviceInfo): Promise<Result<UiSuccess, UiError>> {
+	const done = await reader.screenReaderActivate();
+	if (!done.success) return fail(a11yDriverError(done.error, TALKBACK_HINT));
+	return ok({
+		device: info,
+		result: { action: "a11y-focus", step: "activate", activated: true },
+		text: "activated the focused element",
+	});
+}
+
+/** `a11y focus status`: the screen-reader state plus the focused element. */
+async function focusStatus(
+	reader: DrivesScreenReader,
+	info: DeviceInfo,
+	said: Announcement | undefined
+): Promise<Result<UiSuccess, UiError>> {
+	const state = await reader.screenReaderState();
+	if (!state.success) return fail(a11yDriverError(state.error, TALKBACK_HINT));
+	return ok({
+		device: info,
+		result: { action: "a11y-focus", step: "status", screenReader: state.data, focused: said ?? null },
+		text: `screen reader ${state.data.mode === "off" ? "off" : `${state.data.mode} (${state.data.engine})`}\n${focusText("status", said)}`,
+	});
+}
+
 /** `warden ui a11y focus next|prev|activate|status`: TalkBack's accessibility focus, driven like a user's swipes. */
 async function focus(device: UiDevice, env: UiRunEnv, words: readonly string[]): Promise<Result<UiSuccess, UiError>> {
 	const step = parseFocusStep(words[0]);
@@ -280,15 +316,7 @@ async function focus(device: UiDevice, env: UiRunEnv, words: readonly string[]):
 	if (!canDriveScreenReader(reader))
 		return fail(uiError("unsupported", "no real screen reader on this device", { hint: TALKBACK_HINT }));
 	const info = deviceInfo(device);
-	if (step.data === "activate") {
-		const done = await reader.screenReaderActivate();
-		if (!done.success) return fail(a11yDriverError(done.error, TALKBACK_HINT));
-		return ok({
-			device: info,
-			result: { action: "a11y-focus", step: "activate", activated: true },
-			text: "activated the focused element",
-		});
-	}
+	if (step.data === "activate") return focusActivate(reader, info);
 	const moved =
 		step.data === "next"
 			? await reader.screenReaderNext()
@@ -304,13 +332,7 @@ async function focus(device: UiDevice, env: UiRunEnv, words: readonly string[]):
 			text: focusText(step.data, said),
 		});
 	}
-	const state = await reader.screenReaderState();
-	if (!state.success) return fail(a11yDriverError(state.error, TALKBACK_HINT));
-	return ok({
-		device: info,
-		result: { action: "a11y-focus", step: "status", screenReader: state.data, focused: said ?? null },
-		text: `screen reader ${state.data.mode === "off" ? "off" : `${state.data.mode} (${state.data.engine})`}\n${focusText("status", said)}`,
-	});
+	return focusStatus(reader, info, said);
 }
 
 /** The read-side verbs of `warden ui a11y …`. `set`, `reset` and `status` are `settings.ts`'s. */

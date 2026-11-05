@@ -142,6 +142,25 @@ export function createUiadOps(deps: UiadOpsDeps): UiadOps {
 		return neverSent(error) && canRetry ? "retry" : "surface";
 	}
 
+	/** One try of `call`: its outcome (`undefined` = do it the old way), or a request to go round once more. */
+	async function attemptCall<T>(
+		op: string,
+		use: (server: UiadClient) => DriverResult<T>,
+		idempotent: boolean,
+		surfaceRefusals: boolean,
+		canRetry: boolean
+	): Promise<{ retry: true } | { retry: false; outcome: Awaited<Maybe<T>> }> {
+		const server = await backend.server();
+		if (server === undefined) return { retry: false, outcome: undefined };
+		const res = await use(server);
+		if (res.success) return { retry: false, outcome: res };
+		// a screen-reader op that is refused has an answer for the caller ("nothing is focused"), not a way to do it otherwise
+		if (surfaceRefusals && REFUSALS.has(res.error.code)) return { retry: false, outcome: res };
+		const verdict = await judge(op, res.error, canRetry);
+		if (verdict === "retry") return { retry: true };
+		return { retry: false, outcome: verdict === "surface" && !idempotent ? res : undefined };
+	}
+
 	/** One request that has an effect or a read-back, with the fallback rules in the header. */
 	async function call<T>(
 		op: string,
@@ -150,15 +169,8 @@ export function createUiadOps(deps: UiadOpsDeps): UiadOps {
 		surfaceRefusals = false
 	): Maybe<T> {
 		for (let attempt = 0; attempt < 2; attempt++) {
-			const server = await backend.server();
-			if (server === undefined) return undefined;
-			const res = await use(server);
-			if (res.success) return res;
-			// a screen-reader op that is refused has an answer for the caller ("nothing is focused"), not a way to do it otherwise
-			if (surfaceRefusals && REFUSALS.has(res.error.code)) return res;
-			const verdict = await judge(op, res.error, attempt === 0);
-			if (verdict === "surface" && !idempotent) return res;
-			if (verdict !== "retry") return undefined;
+			const tried = await attemptCall(op, use, idempotent, surfaceRefusals, attempt === 0);
+			if (!tried.retry) return tried.outcome;
 		}
 		return undefined;
 	}

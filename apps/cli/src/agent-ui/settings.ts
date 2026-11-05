@@ -16,7 +16,7 @@ import { ok, type Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import type { A11yVerbOptions } from "./a11y";
 import { deviceInfo, fail, recordOf, resolveDeps, withPort } from "./conditions";
-import type { ConditionsDeps } from "./conditions-types";
+import type { ConditionsDeps, ConditionsPort } from "./conditions-types";
 import type { UiDevice } from "./device";
 import { driverUiError, fromDriver, type UiDeps } from "./driver";
 import type { UiError, UiSuccess } from "./output";
@@ -130,6 +130,33 @@ async function permissionSet(
 	});
 }
 
+type Grants = PermissionCondition["grants"];
+
+/** Sets every recorded permission of each bundle back to `unset`; an app that does not declare one has nothing to reset. */
+async function resetBundleGrants(
+	port: ConditionsPort,
+	grants: Grants,
+	bundles: readonly string[]
+): Promise<Result<undefined, UiError>> {
+	for (const bundleId of bundles) {
+		const back: Partial<Record<PermissionName, PermissionState>> = {};
+		for (const g of grants) if (g.bundleId === bundleId) back[g.permission] = "unset";
+		const done = await port.permissions(back, { bundleId });
+		if (!done.success && done.error.code !== "E_UNSUPPORTED")
+			return { success: false, error: driverUiError(done.error) };
+	}
+	return ok(undefined);
+}
+
+/** Stores the grants that remain after a reset, or forgets the area when none do. */
+function keepGrants(ctx: CommandContext, device: UiDevice, rest: Grants): Result<undefined, UiError> {
+	if (rest.length === 0) {
+		forget(ctx, device, "permission");
+		return ok(undefined);
+	}
+	return save(ctx, device, "permission", { grants: rest });
+}
+
 async function permissionReset(
 	ctx: CommandContext,
 	deps: Deps,
@@ -144,20 +171,11 @@ async function permissionReset(
 		(b) => opts.app === undefined || b === opts.app
 	);
 	return withPort<UiSuccess>(ctx, deps, device, async (port) => {
-		for (const bundleId of bundles) {
-			const back: Partial<Record<PermissionName, PermissionState>> = {};
-			for (const g of record.value.grants) if (g.bundleId === bundleId) back[g.permission] = "unset";
-			const done = await port.permissions(back, { bundleId });
-			// an app that does not declare the permission has nothing to reset
-			if (!done.success && done.error.code !== "E_UNSUPPORTED")
-				return { success: false, error: driverUiError(done.error) };
-		}
+		const reset = await resetBundleGrants(port, record.value.grants, bundles);
+		if (!reset.success) return reset;
 		const rest = record.value.grants.filter((g) => !bundles.includes(g.bundleId));
-		if (rest.length === 0) forget(ctx, device, "permission");
-		else {
-			const saved = save(ctx, device, "permission", { grants: rest });
-			if (!saved.success) return saved;
-		}
+		const kept = keepGrants(ctx, device, rest);
+		if (!kept.success) return kept;
 		return success(device, "permission-reset", `permissions reset for ${bundles.join(", ")}`, {
 			changed: true,
 			bundles,
@@ -214,6 +232,29 @@ function saveLocale(ctx: CommandContext, device: UiDevice, value: LocaleConditio
 	return save(ctx, device, "locale", value);
 }
 
+type TimezoneApplied = { previous?: string | undefined; appliesOnLaunch?: boolean | undefined };
+
+/** The locale record after a timezone change (`reset` drops the timezone and its remembered previous value). */
+function timezoneRecord(record: LocaleCondition, arg: string, applied: TimezoneApplied): LocaleCondition {
+	const { timezone: _drop, previousTimezone: before, ...rest } = record;
+	if (arg === "reset") return rest;
+	const previousTimezone = before ?? applied.previous;
+	return { ...rest, timezone: arg, ...(previousTimezone === undefined ? {} : { previousTimezone }) };
+}
+
+/** The `timezone set|reset` success payload. */
+function timezoneSuccess(device: UiDevice, arg: string, applied: TimezoneApplied): Result<UiSuccess, UiError> {
+	const resetting = arg === "reset";
+	const staged = applied.appliesOnLaunch === true;
+	return success(
+		device,
+		resetting ? "timezone-reset" : "timezone-set",
+		resetting ? "timezone reset" : `timezone ${arg}${staged ? " (next launch)" : ""}`,
+		{ timezone: resetting ? null : arg, staged, previous: applied.previous ?? null },
+		staged ? ["staged: a simulator has no device timezone; the app launched next gets it (`open --relaunch`)"] : []
+	);
+}
+
 async function timezoneApply(
 	ctx: CommandContext,
 	deps: Deps,
@@ -230,21 +271,9 @@ async function timezoneApply(
 			)
 		);
 		if (!applied.success) return applied;
-		const { timezone: _drop, previousTimezone: before, ...rest } = record;
-		const previousTimezone = before ?? applied.data.previous;
-		const next: LocaleCondition = resetting
-			? rest
-			: { ...rest, timezone: arg, ...(previousTimezone === undefined ? {} : { previousTimezone }) };
-		const saved = saveLocale(ctx, device, next);
+		const saved = saveLocale(ctx, device, timezoneRecord(record, arg, applied.data));
 		if (!saved.success) return saved;
-		const staged = applied.data.appliesOnLaunch === true;
-		return success(
-			device,
-			resetting ? "timezone-reset" : "timezone-set",
-			resetting ? "timezone reset" : `timezone ${arg}${staged ? " (next launch)" : ""}`,
-			{ timezone: resetting ? null : arg, staged, previous: applied.data.previous ?? null },
-			staged ? ["staged: a simulator has no device timezone; the app launched next gets it (`open --relaunch`)"] : []
-		);
+		return timezoneSuccess(device, arg, applied.data);
 	});
 }
 
@@ -261,6 +290,29 @@ export function uiTimezone(ctx: CommandContext, deps: UiDeps, arg: string, opts:
 	});
 }
 
+type LocaleApplied = { bundleId?: string | undefined; appliesOnLaunch?: boolean | undefined };
+
+/** The locale record after a locale change (`reset` drops the locale and its app). */
+function localeRecord(record: LocaleCondition, arg: string, applied: LocaleApplied): LocaleCondition {
+	const { locale: _drop, bundleId: _app, ...rest } = record;
+	if (arg === "reset") return rest;
+	const bundleId = applied.bundleId;
+	return { ...rest, locale: arg, ...(bundleId === undefined ? {} : { bundleId }) };
+}
+
+/** The `locale set|reset` success payload. */
+function localeSuccess(device: UiDevice, arg: string, applied: LocaleApplied): Result<UiSuccess, UiError> {
+	const resetting = arg === "reset";
+	const staged = applied.appliesOnLaunch === true;
+	return success(
+		device,
+		resetting ? "locale-reset" : "locale-set",
+		resetting ? "locale reset" : `locale ${arg}${staged ? " (next launch)" : ""}`,
+		{ locale: resetting ? null : arg, bundleId: applied.bundleId ?? null, staged },
+		staged ? ["staged: the app launched next gets it (`open --relaunch`)"] : []
+	);
+}
+
 async function localeApply(
 	ctx: CommandContext,
 	deps: Deps,
@@ -275,21 +327,9 @@ async function localeApply(
 			await port.locale(resetting ? null : arg, appOf(ctx, device, opts.app ?? record.bundleId))
 		);
 		if (!applied.success) return applied;
-		const { locale: _drop, bundleId: _app, ...rest } = record;
-		const bundleId = applied.data.bundleId;
-		const next: LocaleCondition = resetting
-			? rest
-			: { ...rest, locale: arg, ...(bundleId === undefined ? {} : { bundleId }) };
-		const saved = saveLocale(ctx, device, next);
+		const saved = saveLocale(ctx, device, localeRecord(record, arg, applied.data));
 		if (!saved.success) return saved;
-		const staged = applied.data.appliesOnLaunch === true;
-		return success(
-			device,
-			resetting ? "locale-reset" : "locale-set",
-			resetting ? "locale reset" : `locale ${arg}${staged ? " (next launch)" : ""}`,
-			{ locale: resetting ? null : arg, bundleId: bundleId ?? null, staged },
-			staged ? ["staged: the app launched next gets it (`open --relaunch`)"] : []
-		);
+		return localeSuccess(device, arg, applied.data);
 	});
 }
 
@@ -430,6 +470,22 @@ function screenReaderOf(record: A11yCondition | undefined, platform: UiDevice["p
 		: ({ mode: "simulated", engine: "voiceover" } as const);
 }
 
+/** `warden ui a11y status`: the recorded condition plus what it leaves the screen reader doing. */
+function a11yStatus(ctx: CommandContext, device: UiDevice): Result<UiSuccess, UiError> {
+	const record = recordOf(ctx, device.lease.id, "a11y")?.value;
+	const screenReader = screenReaderOf(record, device.platform);
+	const reader =
+		screenReader.mode === "off"
+			? ""
+			: `\nscreen reader  ${screenReader.mode} (${screenReader.engine}${screenReader.mode === "simulated" ? ": a flag the app reads, not VoiceOver" : ""})`;
+	return success(
+		device,
+		"a11y-status",
+		record === undefined ? "a11y  not changed" : `a11y  ${JSON.stringify(record)}${reader}`,
+		{ a11y: record ?? null, screenReader }
+	);
+}
+
 /**
  * `warden ui a11y set [--text-size <name|scale>] [--bold] [--contrast increased|normal] [--reduce-motion]
  * [--screen-reader] [--reduce-transparency] [--button-shapes] [--differentiate-without-color] [--on-off-labels]
@@ -454,20 +510,8 @@ export async function uiA11y(
 				return a11ySet(ctx, await resolveDeps(deps), device, opts);
 			case "reset":
 				return a11yReset(ctx, await resolveDeps(deps), device);
-			case "status": {
-				const record = recordOf(ctx, device.lease.id, "a11y")?.value;
-				const screenReader = screenReaderOf(record, device.platform);
-				const reader =
-					screenReader.mode === "off"
-						? ""
-						: `\nscreen reader  ${screenReader.mode} (${screenReader.engine}${screenReader.mode === "simulated" ? ": a flag the app reads, not VoiceOver" : ""})`;
-				return success(
-					device,
-					"a11y-status",
-					record === undefined ? "a11y  not changed" : `a11y  ${JSON.stringify(record)}${reader}`,
-					{ a11y: record ?? null, screenReader }
-				);
-			}
+			case "status":
+				return a11yStatus(ctx, device);
 			default:
 				return fail("usage", `unknown a11y action "${action}"`, `set, reset, status, ${A11Y_VERBS.join(", ")}`);
 		}

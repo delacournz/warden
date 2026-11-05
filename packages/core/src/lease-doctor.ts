@@ -240,42 +240,65 @@ export function applyLeaseFixes(
 	return outcome;
 }
 
+type Finding<K extends LeaseFinding["kind"]> = Extract<LeaseFinding, { kind: K }>;
+
+/** Delete a lease whose device is gone (logging `expired`) or a stale placeholder; false when it no longer matches. */
+function fixLeaseRow(
+	store: Store,
+	f: Finding<"lease_missing_device"> | Finding<"stale_placeholder">,
+	now: number
+): boolean {
+	const lease = store.getLease(f.leaseId);
+	if (lease === undefined || lease.resource.kind !== "device") return false;
+	if (f.kind === "stale_placeholder" && !lease.resource.id.startsWith(PENDING_PREFIX)) return false;
+	if (f.kind === "lease_missing_device" && lease.resource.id !== f.deviceId) return false;
+	return store.deleteLeases([f.leaseId], f.kind === "lease_missing_device" ? { type: "expired", now } : undefined) > 0;
+}
+
+/** Drop a queue row whose waiter is dead. */
+function fixDeadQueueRow(store: Store, f: Finding<"dead_queue_row">, pidAlive: PidAlive): boolean {
+	const row = store.listQueue().find((e) => e.id === f.queueId);
+	return row?.pid !== undefined && !pidAlive(row.pid) && store.dequeue(f.queueId);
+}
+
+/** Forget a device record nothing holds a lease on. */
+function fixDeviceMissing(store: Store, f: Finding<"device_missing">): boolean {
+	const held = store.listLeases().some((l) => resourceKey(l.resource) === `device:${f.platform}:${f.deviceId}`);
+	if (held) return false;
+	store.forgetDevice(f.platform, f.deviceId);
+	return true;
+}
+
+/** Delete an idempotency key whose claim has no lease and no queue row left. */
+function fixStaleClaimKey(store: Store, f: Finding<"stale_claim_key">): boolean {
+	const live =
+		store.listLeases().some((l) => l.claimId === f.claimId) || store.listQueue().some((q) => q.claimId === f.claimId);
+	if (live) return false;
+	store.deleteClaimKey(f.ownerKey, f.key);
+	return true;
+}
+
+/** Delete reclaim state kept for a device that no longer exists. */
+function fixOrphanReclaim(store: Store, f: Finding<"orphan_reclaim_state">): boolean {
+	const orphan = orphanReclaimKeys(store).find((o) => o.platform === f.platform && o.deviceId === f.deviceId);
+	if (orphan === undefined) return false;
+	store.deleteMeta(orphan.key);
+	return true;
+}
+
 function fixOne(store: Store, f: LeaseFinding, now: number, pidAlive: PidAlive): boolean {
 	switch (f.kind) {
 		case "lease_missing_device":
-		case "stale_placeholder": {
-			const lease = store.getLease(f.leaseId);
-			if (lease === undefined || lease.resource.kind !== "device") return false;
-			if (f.kind === "stale_placeholder" && !lease.resource.id.startsWith(PENDING_PREFIX)) return false;
-			if (f.kind === "lease_missing_device" && lease.resource.id !== f.deviceId) return false;
-			return (
-				store.deleteLeases([f.leaseId], f.kind === "lease_missing_device" ? { type: "expired", now } : undefined) > 0
-			);
-		}
-		case "dead_queue_row": {
-			const row = store.listQueue().find((e) => e.id === f.queueId);
-			return row?.pid !== undefined && !pidAlive(row.pid) && store.dequeue(f.queueId);
-		}
-		case "device_missing": {
-			const held = store.listLeases().some((l) => resourceKey(l.resource) === `device:${f.platform}:${f.deviceId}`);
-			if (held) return false;
-			store.forgetDevice(f.platform, f.deviceId);
-			return true;
-		}
-		case "stale_claim_key": {
-			const live =
-				store.listLeases().some((l) => l.claimId === f.claimId) ||
-				store.listQueue().some((q) => q.claimId === f.claimId);
-			if (live) return false;
-			store.deleteClaimKey(f.ownerKey, f.key);
-			return true;
-		}
-		case "orphan_reclaim_state": {
-			const orphan = orphanReclaimKeys(store).find((o) => o.platform === f.platform && o.deviceId === f.deviceId);
-			if (orphan === undefined) return false;
-			store.deleteMeta(orphan.key);
-			return true;
-		}
+		case "stale_placeholder":
+			return fixLeaseRow(store, f, now);
+		case "dead_queue_row":
+			return fixDeadQueueRow(store, f, pidAlive);
+		case "device_missing":
+			return fixDeviceMissing(store, f);
+		case "stale_claim_key":
+			return fixStaleClaimKey(store, f);
+		case "orphan_reclaim_state":
+			return fixOrphanReclaim(store, f);
 		case "untracked_booted":
 		case "marker_mismatch":
 		case "marker_missing":

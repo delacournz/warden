@@ -386,6 +386,30 @@ export type ComposeOptions = {
 const usage =
 	'usage: bun scripts/demo/compose.ts <record-dir> <out-dir> [--duration 45] [--width 1920] [--hold 3] [--height 1080] [--name parallel] [--command "warden e2e example"]';
 
+/** `--duration`, `--width` and `--hold` (positive numbers, defaults 45 / 1920 / 3), `--hold` shorter than `--duration`. */
+function parseNumbers(
+	values: Partial<Record<"duration" | "width" | "hold", string>>
+): Result<Record<"duration" | "width" | "hold", number>> {
+	const numbers: Record<"duration" | "width" | "hold", number> = { duration: 45, width: 1920, hold: 3 };
+	for (const key of ["duration", "width", "hold"] as const) {
+		const raw = values[key];
+		if (raw === undefined) continue;
+		const v = Number(raw);
+		if (!Number.isFinite(v) || v <= 0) return { success: false, error: `--${key} must be a positive number\n${usage}` };
+		numbers[key] = v;
+	}
+	if (numbers.hold >= numbers.duration) return { success: false, error: "--hold must be shorter than --duration" };
+	return ok(numbers);
+}
+
+/** `--height`: absent is fine, otherwise a positive number. */
+function parseHeight(raw: string | undefined): Result<number | undefined> {
+	const height = raw === undefined ? undefined : Number(raw);
+	if (height !== undefined && (!Number.isFinite(height) || height <= 0))
+		return { success: false, error: `--height must be a positive number\n${usage}` };
+	return ok(height);
+}
+
 export function parseCli(argv: string[]): Result<ComposeOptions> {
 	let parsed: ReturnType<typeof parseArgs<{ options: Record<string, { type: "string" }>; allowPositionals: true }>>;
 	try {
@@ -406,27 +430,19 @@ export function parseCli(argv: string[]): Result<ComposeOptions> {
 	}
 	const [recordDir, outDir] = parsed.positionals;
 	if (!recordDir || !outDir) return { success: false, error: usage };
-	const numbers: Record<"duration" | "width" | "hold", number> = { duration: 45, width: 1920, hold: 3 };
-	for (const key of ["duration", "width", "hold"] as const) {
-		const raw = parsed.values[key];
-		if (raw === undefined) continue;
-		const v = Number(raw);
-		if (!Number.isFinite(v) || v <= 0) return { success: false, error: `--${key} must be a positive number\n${usage}` };
-		numbers[key] = v;
-	}
-	if (numbers.hold >= numbers.duration) return { success: false, error: "--hold must be shorter than --duration" };
-	const height = parsed.values.height === undefined ? undefined : Number(parsed.values.height);
-	if (height !== undefined && (!Number.isFinite(height) || height <= 0))
-		return { success: false, error: `--height must be a positive number\n${usage}` };
+	const numbers = parseNumbers(parsed.values);
+	if (!numbers.success) return numbers;
+	const height = parseHeight(parsed.values.height);
+	if (!height.success) return height;
 	const name = parsed.values.name;
 	if (name !== undefined && !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(name))
 		return { success: false, error: `--name must be lower-case words joined by hyphens\n${usage}` };
 	return ok({
 		recordDir,
 		outDir,
-		...numbers,
+		...numbers.data,
 		maxBytes: 6_000_000,
-		...(height !== undefined ? { height } : {}),
+		...(height.data !== undefined ? { height: height.data } : {}),
 		...(name !== undefined ? { name } : {}),
 		...(parsed.values.command !== undefined ? { command: parsed.values.command } : {}),
 	});

@@ -278,68 +278,99 @@ const SWITCHES = [
 	["colorInversion", "secure", "accessibility_display_inversion_enabled"],
 ] as const;
 
+/** What an a11y request has applied so far, filled by the step functions. */
+interface A11yRun {
+	applied: string[];
+	notes: string[];
+	screenReader?: ScreenReaderState;
+	screenReaderPrevious?: A11yState["screenReaderPrevious"];
+}
+
+type A11yFailure = Extract<Awaited<ReturnType<Driver["a11y"]>>, { success: false }>;
+
+/** One a11y setting: runs when the request is a reset (`null`) or names the setting, and returns a failure to stop. */
+type A11yStep = (c: Ctx, op: A11yOp | null, run: A11yRun) => Promise<A11yFailure | undefined>;
+
+const stepFontScale: A11yStep = async (c, op, run) => {
+	if (op !== null && op.textSize === undefined) return undefined;
+	const font = fontScaleOf(op?.textSize);
+	if ("success" in font) return font;
+	run.notes = font.notes;
+	const done = await c.putSetting("system", "font_scale", String(font.scale));
+	if (!done.success) return done;
+	run.applied.push("textSize");
+	return undefined;
+};
+
+const stepBoldText: A11yStep = async (c, op, run) => {
+	if (op !== null && op.boldText === undefined) return undefined;
+	const done = await c.putSetting(
+		"secure",
+		"font_weight_adjustment",
+		String(op?.boldText === true ? BOLD_TEXT_ADJUSTMENT : 0)
+	);
+	if (!done.success) return done;
+	run.applied.push("boldText");
+	return undefined;
+};
+
+const stepSwitches: A11yStep = async (c, op, run) => {
+	for (const [field, table, key] of SWITCHES) {
+		if (op !== null && op[field] === undefined) continue;
+		const done = await c.putSetting(table, key, op?.[field] === true ? "1" : "0");
+		if (!done.success) return done;
+		if (op !== null) run.applied.push(field);
+	}
+	return undefined;
+};
+
+const stepReduceMotion: A11yStep = async (c, op, run) => {
+	if (op !== null && op.reduceMotion === undefined) return undefined;
+	const done = await c.putSetting(
+		"global",
+		"transition_animation_scale",
+		op?.reduceMotion === true ? "0" : transitionOff(c)
+	);
+	if (!done.success) return done;
+	if (op !== null) run.applied.push("reduceMotion");
+	return undefined;
+};
+
+// null resets everything warden set, TalkBack included (a no-op when warden never turned it on)
+const stepScreenReader: A11yStep = async (c, op, run) => {
+	if (op !== null && op.screenReader === undefined) return undefined;
+	const done = await (op?.screenReader === true ? c.talkback.enable() : c.talkback.disable());
+	if (!done.success) return done;
+	if (op !== null) {
+		run.screenReader = done.data;
+		run.applied.push("screenReader");
+		run.screenReaderPrevious = c.talkback.previous();
+	}
+	return undefined;
+};
+
+/** The a11y steps, in the order they are applied. */
+const A11Y_STEPS: readonly A11yStep[] = [stepFontScale, stepBoldText, stepSwitches, stepReduceMotion, stepScreenReader];
+
 function a11yOp(c: Ctx): Driver["a11y"] {
 	return async (op) => {
-		const applied: string[] = [];
-		const skipped: { setting: string; reason: string }[] = [];
-		let notes: string[] = [];
-		if (op === null || op.textSize !== undefined) {
-			const font = fontScaleOf(op?.textSize);
-			if ("success" in font) return font;
-			notes = font.notes;
-			const done = await c.putSetting("system", "font_scale", String(font.scale));
-			if (!done.success) return done;
-			applied.push("textSize");
+		const run: A11yRun = { applied: [], notes: [] };
+		for (const step of A11Y_STEPS) {
+			const failed = await step(c, op, run);
+			if (failed) return failed;
 		}
-		if (op === null || op.boldText !== undefined) {
-			const done = await c.putSetting(
-				"secure",
-				"font_weight_adjustment",
-				String(op?.boldText === true ? BOLD_TEXT_ADJUSTMENT : 0)
-			);
-			if (!done.success) return done;
-			applied.push("boldText");
-		}
-		for (const [field, table, key] of SWITCHES) {
-			if (op === null || op[field] !== undefined) {
-				const done = await c.putSetting(table, key, op?.[field] === true ? "1" : "0");
-				if (!done.success) return done;
-				if (op !== null) applied.push(field);
-			}
-		}
-		if (op === null || op.reduceMotion !== undefined) {
-			const done = await c.putSetting(
-				"global",
-				"transition_animation_scale",
-				op?.reduceMotion === true ? "0" : transitionOff(c)
-			);
-			if (!done.success) return done;
-			if (op !== null) applied.push("reduceMotion");
-		}
-		let screenReader: ScreenReaderState | undefined;
-		let screenReaderPrevious: A11yState["screenReaderPrevious"];
-		// null resets everything warden set, TalkBack included (a no-op when warden never turned it on)
-		if (op === null || op.screenReader !== undefined) {
-			const done = await (op?.screenReader === true ? c.talkback.enable() : c.talkback.disable());
-			if (!done.success) return done;
-			if (op !== null) {
-				screenReader = done.data;
-				applied.push("screenReader");
-				screenReaderPrevious = c.talkback.previous();
-			}
-		}
-		skipped.push(...a11ySkips(op));
-		if (applied.length === 0 && skipped.length > 0) {
+		const skipped = a11ySkips(op);
+		if (run.applied.length === 0 && skipped.length > 0) {
 			return unsupported(skipped.map((s) => ({ name: s.setting, reason: s.reason })));
 		}
 		return {
 			success: true,
 			data: {
-				applied,
+				applied: run.applied,
 				skipped,
-				notes,
-				...(screenReader === undefined ? {} : { screenReader }),
-				...(screenReaderPrevious === undefined ? {} : { screenReaderPrevious }),
+				notes: run.notes,
+				...(run.screenReader === undefined ? {} : { screenReader: run.screenReader }),
+				...(run.screenReaderPrevious === undefined ? {} : { screenReaderPrevious: run.screenReaderPrevious }),
 			} satisfies A11yState,
 		};
 	};
@@ -353,6 +384,15 @@ function batteryRequestProblem(op: BatteryOp) {
 		: undefined;
 }
 
+/** Applies a battery request's `dumpsys battery` commands in order, stopping at the first failure. */
+async function applyBattery(c: Ctx, op: BatteryOp) {
+	for (const cmd of batteryArgvs(op)) {
+		const done = await c.must(cmd);
+		if (!done.success) return done;
+	}
+	return undefined;
+}
+
 function batteryOp(c: Ctx): Driver["battery"] {
 	return async (op) => {
 		if (!c.serial.startsWith("emulator-")) {
@@ -364,10 +404,8 @@ function batteryOp(c: Ctx): Driver["battery"] {
 		}
 		const bad = batteryRequestProblem(op);
 		if (bad) return bad;
-		for (const cmd of batteryArgvs(op)) {
-			const done = await c.must(cmd);
-			if (!done.success) return done;
-		}
+		const failed = await applyBattery(c, op);
+		if (failed) return failed;
 		return {
 			success: true,
 			data: {

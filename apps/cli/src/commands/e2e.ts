@@ -126,15 +126,9 @@ export type E2eReport = {
 	error?: { code: string; message: string; udid: string };
 };
 
-/** The suite's run settings as option values (CLI flags passed explicitly win). */
-function suiteOpts(
-	{ config: suite, cwd, projectRoot }: Suite,
-	opts: E2eOpts,
-	passed: ReadonlySet<string>,
-	run: RunKind
-): E2eOpts {
-	const app = appSwitches(suite.app);
-	const fromSuite: Partial<E2eOpts> = {
+/** The suite's retry / passes and device request (count, profile, biometrics, camera, ports) as option values. */
+function suiteDeviceOpts(suite: Suite["config"]): Partial<E2eOpts> {
+	return {
 		retry: String(suite.retry),
 		passes: String(suite.passes),
 		...(suite.count !== undefined ? { count: String(suite.count) } : {}),
@@ -142,12 +136,39 @@ function suiteOpts(
 		...(suite.biometrics === true ? { biometrics: true as const } : {}),
 		...(suite.camera !== undefined ? { camera: true as const } : {}),
 		...(suite.ports ? { port: suite.ports } : {}),
+	};
+}
+
+/** The suite's `serve` command and its readiness settings as option values. */
+function suiteServeOpts(suite: Suite["config"], cwd: string): Partial<E2eOpts> {
+	return {
 		...(suite.serve !== undefined ? { serve: suite.serve } : {}),
 		...(suite.serveReady !== undefined ? { serveReady: readySpec(suite.serveReady, cwd) } : {}),
 		...(suite.serveTimeout !== undefined ? { serveTimeout: suite.serveTimeout } : {}),
+	};
+}
+
+/** The suite's `app` block as option values. */
+function suiteAppOpts(suite: Suite["config"], projectRoot: string | undefined): Partial<E2eOpts> {
+	const app = appSwitches(suite.app);
+	return {
 		...(app.app ? { app: true as const, ...(projectRoot ? { project: projectRoot } : {}) } : {}),
 		...(app.installMode !== undefined ? { installMode: app.installMode } : {}),
 		...(app.resetKeychain ? { resetKeychain: true as const } : {}),
+	};
+}
+
+/** The suite's run settings as option values (CLI flags passed explicitly win). */
+function suiteOpts(
+	{ config: suite, cwd, projectRoot }: Suite,
+	opts: E2eOpts,
+	passed: ReadonlySet<string>,
+	run: RunKind
+): E2eOpts {
+	const fromSuite: Partial<E2eOpts> = {
+		...suiteDeviceOpts(suite),
+		...suiteServeOpts(suite, cwd),
+		...suiteAppOpts(suite, projectRoot),
 	};
 	const cli = Object.fromEntries(Object.entries(opts).filter(([key]) => passed.has(key)));
 	const { kind: _kind, variant: _variant, ...merged } = { ...opts, ...fromSuite, ...cli };
@@ -462,6 +483,28 @@ async function plan(ctx: CommandContext, suiteName: string | undefined, opts: E2
 	return ok({ affected: affected.data, selection: selection.data, specs });
 }
 
+/** Nothing to run (no affected specs, or `--dry-run`): every selected spec is reported `not-run`. */
+async function publishNotRun(
+	ctx: CommandContext,
+	deps: BatchDeps,
+	suite: Suite,
+	specs: readonly SelectedSpec[],
+	opts: E2eOpts,
+	passed: ReadonlySet<string>,
+	base: Pick<E2eReport, "suite" | "platform" | "base">,
+	headless: boolean
+): Promise<void> {
+	if (specs.length === 0) success(ctx, "warden e2e: no affected specs — nothing to run");
+	const notRun = specs.map((f): SpecVerdict => ({ ...f, verdict: "not-run", attempts: 0 }));
+	await publish(ctx, deps, opts, {
+		...base,
+		isolate: runIsolation(suite.config, opts, passed),
+		ok: true,
+		headless,
+		specs: notRun,
+	});
+}
+
 /**
  * `warden e2e [suite]`: the specs the change needs (see `warden affected`), run on leased devices
  * like `warden batch`, each `passes` times. Once the gate passes, the devices warden created (or
@@ -493,15 +536,7 @@ async function e2e(
 		...(affected.base !== undefined ? { base: affected.base } : {}),
 	};
 	if (specs.length === 0 || opts.dryRun) {
-		if (specs.length === 0) success(ctx, "warden e2e: no affected specs — nothing to run");
-		const notRun = specs.map((f): SpecVerdict => ({ ...f, verdict: "not-run", attempts: 0 }));
-		await publish(ctx, deps, opts, {
-			...base,
-			isolate: runIsolation(suite.config, opts, passed),
-			ok: true,
-			headless,
-			specs: notRun,
-		});
+		await publishNotRun(ctx, deps, suite, specs, opts, passed, base, headless);
 		return 0;
 	}
 	const run = await preparedRun(ctx, deps, suite, selection.platform, specs, { ...opts, headless }, passed, kind.data);
@@ -537,13 +572,21 @@ async function e2e(
 	const report = buildReport(base, headless, shape.shardOf === undefined ? "spec" : "device", session, result);
 	await publish(ctx, deps, opts, report);
 	await publishGithub(ctx, deps, opts, report);
-	if (session.code === 130) return 130;
-	// stopped before any spec (a phone's runner would not start): the session already said why, with its own exit code
-	if (session.error) return session.code;
-	// no device was claimed: a phone that stayed locked (`device_locked`, already reported) ends the run with exit 2
-	if (session.code === 2) return 2;
+	const early = earlyExit(session);
+	if (early !== undefined) return early;
 	printVerdict(ctx, report);
 	return result.ok ? 0 : 1;
+}
+
+/**
+ * The exit code of a session that ended before there were verdicts to print, else undefined: interrupted (130), stopped
+ * before any spec (a phone's runner would not start: the session already said why, with its own exit code), or no
+ * device claimed (a phone that stayed locked, `device_locked`, already reported: exit 2).
+ */
+function earlyExit(session: SessionResult): number | undefined {
+	if (session.code === 130) return 130;
+	if (session.error) return session.code;
+	return session.code === 2 ? 2 : undefined;
 }
 
 /** `e2e-report.json` from the session and its verdicts. */
@@ -818,12 +861,8 @@ export async function specPlan(
 	if (!perf.success) return perf;
 	const devClientScheme = await specDevClientScheme(ctx, suite, platform);
 	const { spec } = suite.config;
-	const timeoutMs = specDuration("timeout", spec?.timeout, DEFAULT_SPEC_TIMEOUT);
-	if (!timeoutMs.success) return timeoutMs;
-	const actionTimeoutMs = specDuration("actionTimeout", spec?.actionTimeout, DEFAULT_SPEC_ACTION_TIMEOUT);
-	if (!actionTimeoutMs.success) return actionTimeoutMs;
-	const assertionTimeoutMs = specDuration("assertionTimeout", spec?.assertionTimeout, DEFAULT_SPEC_ASSERTION_TIMEOUT);
-	if (!assertionTimeoutMs.success) return assertionTimeoutMs;
+	const timeouts = specTimeouts(spec);
+	if (!timeouts.success) return timeouts;
 	return ok({
 		bun,
 		preload: preload.data.path,
@@ -835,11 +874,7 @@ export async function specPlan(
 			platform,
 			bundleId: bundleId.data,
 			...(devClientScheme === undefined ? {} : { devClientScheme }),
-			timeouts: {
-				timeoutMs: timeoutMs.data,
-				actionTimeoutMs: actionTimeoutMs.data,
-				assertionTimeoutMs: assertionTimeoutMs.data,
-			},
+			timeouts: timeouts.data,
 			specsDir: resolve(suite.configDir, suite.config.specsDir),
 			helperDir: ctx.env.WARDEN_HELPER_DIR ?? deps.helperDir(),
 			version,
@@ -849,17 +884,43 @@ export async function specPlan(
 				: {}),
 			...netproxyEnv(),
 			...(perf.data === undefined ? {} : { perf: perf.data }),
-			...(suite.perfBudgets === undefined ? {} : { perfBudgets: suite.perfBudgets }),
-			...(suite.conditions === undefined ? {} : { conditions: suite.conditions }),
-			...(suite.biometrics === true || opts.biometrics === true ? { biometrics: true } : {}),
-			...(suite.a11y === undefined ? {} : { a11yAudit: suite.a11y }),
-			// the injected library reads hint / actions / order / announcements on iOS: loaded only for a suite that asks (`a11y` key or `--a11y`)
-			...(platform === "ios" && (suite.a11y !== undefined || opts.a11y === true) ? { a11y: true } : {}),
-			...(suite.config.camera === undefined
-				? {}
-				: { cameraFeeds: resolveCameraConfig(suite.config.camera, suite.configDir) }),
+			...suiteSpecEnv(suite, platform, opts),
 		},
 	});
+}
+
+/** The suite's spec timeouts (`e2e.spec.timeout` / `actionTimeout` / `assertionTimeout`), each defaulted and parsed. */
+function specTimeouts(spec: Suite["config"]["spec"]): Result<SpecPlan["env"]["timeouts"]> {
+	const timeoutMs = specDuration("timeout", spec?.timeout, DEFAULT_SPEC_TIMEOUT);
+	if (!timeoutMs.success) return timeoutMs;
+	const actionTimeoutMs = specDuration("actionTimeout", spec?.actionTimeout, DEFAULT_SPEC_ACTION_TIMEOUT);
+	if (!actionTimeoutMs.success) return actionTimeoutMs;
+	const assertionTimeoutMs = specDuration("assertionTimeout", spec?.assertionTimeout, DEFAULT_SPEC_ASSERTION_TIMEOUT);
+	if (!assertionTimeoutMs.success) return assertionTimeoutMs;
+	return ok({
+		timeoutMs: timeoutMs.data,
+		actionTimeoutMs: actionTimeoutMs.data,
+		assertionTimeoutMs: assertionTimeoutMs.data,
+	});
+}
+
+/** The spec env fields the suite (and `--biometrics` / `--a11y`) switch on: budgets, conditions, biometrics, a11y, camera feeds. */
+function suiteSpecEnv(
+	suite: Suite,
+	platform: Platform,
+	opts: Pick<E2eOpts, "biometrics" | "a11y">
+): Partial<SpecPlan["env"]> {
+	return {
+		...(suite.perfBudgets === undefined ? {} : { perfBudgets: suite.perfBudgets }),
+		...(suite.conditions === undefined ? {} : { conditions: suite.conditions }),
+		...(suite.biometrics === true || opts.biometrics === true ? { biometrics: true } : {}),
+		...(suite.a11y === undefined ? {} : { a11yAudit: suite.a11y }),
+		// the injected library reads hint / actions / order / announcements on iOS: loaded only for a suite that asks (`a11y` key or `--a11y`)
+		...(platform === "ios" && (suite.a11y !== undefined || opts.a11y === true) ? { a11y: true } : {}),
+		...(suite.config.camera === undefined
+			? {}
+			: { cameraFeeds: resolveCameraConfig(suite.config.camera, suite.configDir) }),
+	};
 }
 
 /** One claim per picked device leg. */

@@ -156,6 +156,24 @@ async function fetchSnapshot(
 	}
 }
 
+/** An interactive element without a testID, when the request asks for those to be marked. */
+function lacksMarkedId(request: SnapshotRequest, entry: NodeEntry): boolean {
+	return (
+		request.markMissingIds === true &&
+		request.interactiveOnly &&
+		isInteractiveRole(entry.role) &&
+		(entry.element.identifier === undefined || entry.element.identifier === "")
+	);
+}
+
+/** The hint line telling the author to add a testID to the `missing` marked elements. */
+function missingIdHints(missing: number): string[] {
+	if (missing === 0) return [];
+	return [
+		`# ${missing} interactive element${missing === 1 ? "" : "s"} marked ${NO_ID_MARK}: add testID + accessible in the component, reload, \`record undo\` and redo — a text selector breaks with the copy`,
+	];
+}
+
 /**
  * Take a snapshot of the device, give it the next generation and `@eN` refs, store it as the device's
  * `last-snapshot.json` and render it. With `settle`, polls until the screen hash stays equal for 250 ms
@@ -187,11 +205,7 @@ export async function takeSnapshot(
 	});
 	const entries = indexSnapshot(view).entries;
 	const listed = (request.interactiveOnly ? entries.filter(isListed) : entries).slice(0, rendered.shown);
-	const unmarked = (entry: NodeEntry): boolean =>
-		request.markMissingIds === true &&
-		request.interactiveOnly &&
-		isInteractiveRole(entry.role) &&
-		(entry.element.identifier === undefined || entry.element.identifier === "");
+	const unmarked = (entry: NodeEntry): boolean => lacksMarkedId(request, entry);
 	const lines = rendered.lines.map((line, at) => {
 		const entry = listed[at];
 		return entry !== undefined && unmarked(entry) ? `${line} ${NO_ID_MARK}` : line;
@@ -214,12 +228,7 @@ export async function takeSnapshot(
 			...elementJson(entry, refs.byId.get(entry.element.id), request.a11y === true),
 			...(unmarked(entry) ? { noId: true as const } : {}),
 		})),
-		hints:
-			missing === 0
-				? []
-				: [
-						`# ${missing} interactive element${missing === 1 ? "" : "s"} marked ${NO_ID_MARK}: add testID + accessible in the component, reload, \`record undo\` and redo — a text selector breaks with the copy`,
-					],
+		hints: missingIdHints(missing),
 		total: rendered.total,
 		shown: rendered.shown,
 		omitted: rendered.omitted,

@@ -31,6 +31,10 @@ export type AndroidCameraDeps = {
 /** One file to put in the feed dir: written next to its final name, then renamed over it. */
 type Staged = { tmp: string; final: string };
 
+type CameraFacing = (typeof CAMERA_FACINGS)[number];
+type CameraFeed = NonNullable<CameraCondition[CameraFacing]>;
+type CameraFailure = ReturnType<typeof driverErr>;
+
 function message(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
@@ -58,40 +62,89 @@ export function createAndroidCamera(deps: AndroidCameraDeps): Driver["camera"] {
 		const staged: Staged[] = [];
 		const mode: CameraMode = {};
 		for (const facing of CAMERA_FACINGS) {
-			const feed = feeds[facing];
-			const png = join(dir, `${facing}.png`);
-			const tmpPng = join(dir, `.${facing}.png.tmp-${process.pid}`);
-			if (feed === undefined || feed.kind === "video") {
-				staged.push({ tmp: tmpPng, final: png });
-				writeFileSync(tmpPng, PLACEHOLDER_PNG);
-			}
-			if (feed === undefined) continue;
-			const sniffed = sniffCameraMedia(feed.path);
-			if (!sniffed.success) return driverErr("E_BAD_REQUEST", sniffed.error.message);
-			if (sniffed.data.kind !== feed.kind) {
-				return driverErr("E_BAD_REQUEST", `${feed.path} is ${sniffed.data.kind} media, not a ${feed.kind} feed`);
-			}
-			if (feed.kind === "video") {
-				const name = `${facing}${extname(feed.path).toLowerCase() || ".mp4"}`;
-				const tmp = join(dir, `.${name}.tmp-${process.pid}`);
-				copyFileSync(feed.path, tmp);
-				staged.push({ tmp, final: join(dir, name) });
-				mode[facing] = name;
-				continue;
-			}
-			staged.push({ tmp: tmpPng, final: png });
-			if (sniffed.data.ext === "png") {
-				copyFileSync(feed.path, tmpPng);
-				continue;
-			}
-			const converted = await reencode(feed.path, tmpPng);
-			if (!converted.success) return converted;
+			const failed = await prepareFacing(facing, feeds[facing], staged, mode);
+			if (failed) return failed;
 		}
 		return { success: true, data: { staged, mode } };
 	}
 
+	/** Stages one facing's files: a placeholder PNG under a video or no feed, the feed itself otherwise. */
+	async function prepareFacing(
+		facing: CameraFacing,
+		feed: CameraFeed | undefined,
+		staged: Staged[],
+		mode: CameraMode
+	): Promise<CameraFailure | undefined> {
+		const png = join(dir, `${facing}.png`);
+		const tmpPng = join(dir, `.${facing}.png.tmp-${process.pid}`);
+		if (feed === undefined || feed.kind === "video") {
+			staged.push({ tmp: tmpPng, final: png });
+			writeFileSync(tmpPng, PLACEHOLDER_PNG);
+		}
+		if (feed === undefined) return undefined;
+		const sniffed = sniffCameraMedia(feed.path);
+		if (!sniffed.success) return driverErr("E_BAD_REQUEST", sniffed.error.message);
+		if (sniffed.data.kind !== feed.kind) {
+			return driverErr("E_BAD_REQUEST", `${feed.path} is ${sniffed.data.kind} media, not a ${feed.kind} feed`);
+		}
+		if (feed.kind === "video") return stageVideo(facing, feed.path, staged, mode);
+		staged.push({ tmp: tmpPng, final: png });
+		if (sniffed.data.ext === "png") {
+			copyFileSync(feed.path, tmpPng);
+			return undefined;
+		}
+		const converted = await reencode(feed.path, tmpPng);
+		return converted.success ? undefined : converted;
+	}
+
+	/** Copies a video feed next to its final name and records the file in the mode. */
+	function stageVideo(facing: CameraFacing, path: string, staged: Staged[], mode: CameraMode): undefined {
+		const name = `${facing}${extname(path).toLowerCase() || ".mp4"}`;
+		const tmp = join(dir, `.${name}.tmp-${process.pid}`);
+		copyFileSync(path, tmp);
+		staged.push({ tmp, final: join(dir, name) });
+		mode[facing] = name;
+		return undefined;
+	}
+
 	function discard(staged: readonly Staged[]): void {
 		for (const { tmp } of staged) rmSync(tmp, { force: true });
+	}
+
+	/** Makes the staged files visible to the emulator and drops the old feed files the new mode no longer names. */
+	function commit(before: CameraMode, staged: readonly Staged[], mode: CameraMode): CameraFailure | undefined {
+		try {
+			for (const { tmp, final } of staged) renameSync(tmp, final);
+			for (const facing of CAMERA_FACINGS) {
+				const old = before[facing];
+				if (old !== undefined && old !== mode[facing]) rmSync(join(dir, old), { force: true });
+			}
+			writeCameraMode(dir, mode);
+			return undefined;
+		} catch (error) {
+			discard(staged);
+			return driverErr("E_IO", `camera feed: ${message(error)}`);
+		}
+	}
+
+	/** `prepare` with its throws (filesystem) turned into `E_IO`. */
+	async function prepareGuarded(feeds: CameraCondition): Promise<Awaited<ReturnType<typeof prepare>>> {
+		try {
+			mkdirSync(dir, { recursive: true });
+			return await prepare(feeds);
+		} catch (error) {
+			return driverErr("E_IO", `camera feed: ${message(error)}`);
+		}
+	}
+
+	/** Restarts the emulator for a change of source type; a failure is `E_NOT_BOOTED`. */
+	async function relaunchForMode(before: CameraMode, mode: CameraMode): Promise<CameraFailure | undefined> {
+		const restarted = await deps.relaunch();
+		if (restarted.success) return undefined;
+		return driverErr(
+			"E_NOT_BOOTED",
+			`restarting ${deps.serial} to switch its camera between ${usesVideo(before) ? "video" : "image"} and ${usesVideo(mode) ? "video" : "image"} failed: ${restarted.error}`
+		);
 	}
 
 	return async (op) => {
@@ -105,41 +158,20 @@ export function createAndroidCamera(deps: AndroidCameraDeps): Driver["camera"] {
 		// `null` arrives as `undefined` through `warden __android-host` (the wire drops null arguments): same meaning
 		const feeds: CameraCondition = op ?? {};
 		const before = readCameraMode(dir);
-		let prepared: Awaited<ReturnType<typeof prepare>>;
-		try {
-			mkdirSync(dir, { recursive: true });
-			prepared = await prepare(feeds);
-		} catch (error) {
-			return driverErr("E_IO", `camera feed: ${message(error)}`);
-		}
+		const prepared = await prepareGuarded(feeds);
 		if (!prepared.success) {
 			rmTemps(dir);
 			return prepared;
 		}
 		const { staged, mode } = prepared.data;
-		try {
-			for (const { tmp, final } of staged) renameSync(tmp, final);
-			for (const facing of CAMERA_FACINGS) {
-				const old = before[facing];
-				if (old !== undefined && old !== mode[facing]) rmSync(join(dir, old), { force: true });
-			}
-			writeCameraMode(dir, mode);
-		} catch (error) {
-			discard(staged);
-			return driverErr("E_IO", `camera feed: ${message(error)}`);
-		}
+		const committed = commit(before, staged, mode);
+		if (committed) return committed;
 		deps.record?.(feeds);
 		const state: CameraState = { feeds };
 		if (sameCameraMode(before, mode))
 			return { success: true, data: { ...state, appliesOnCameraOpen: true, rebooted: false } };
-		const restarted = await deps.relaunch();
-		if (!restarted.success) {
-			return driverErr(
-				"E_NOT_BOOTED",
-				`restarting ${deps.serial} to switch its camera between ${usesVideo(before) ? "video" : "image"} and ${usesVideo(mode) ? "video" : "image"} failed: ${restarted.error}`
-			);
-		}
-		return { success: true, data: { ...state, rebooted: true } };
+		const restarted = await relaunchForMode(before, mode);
+		return restarted ?? { success: true, data: { ...state, rebooted: true } };
 	};
 }
 

@@ -100,7 +100,10 @@ describe("ensureAtfJar", () => {
 			adb: "adb",
 			serial: "s",
 			jar,
-			push: async (a) => (pushed.push(a), { exitCode: 0, output: "" }),
+			push: async (a) => {
+				pushed.push(a);
+				return { exitCode: 0, output: "" };
+			},
 		});
 		expect(res).toEqual({ success: true, data: "/data/local/tmp/warden-atf-abcdef01.jar" });
 		expect(pushed).toHaveLength(0);

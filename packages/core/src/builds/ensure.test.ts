@@ -109,14 +109,18 @@ describe("ensureApp on a physical iPhone", () => {
 			read: async (path: string) => files.get(path) ?? "",
 			remove: async () => {},
 		};
+		/** applies one devicectl verb to the phone and writes its json output file */
+		const devicectl = (verb: string | undefined, out: string) => {
+			if (verb === "uninstall") apps = [];
+			if (verb === "install") apps = [{ bundleIdentifier: "com.x.app", bundleVersion: "7" }];
+			files.set(out, JSON.stringify({ result: verb === "info" ? { apps } : {} }));
+		};
 		const exec: Exec = async (cmd) => {
 			calls.push(cmd.join(" "));
 			if (cmd[0] === "plutil") return { exitCode: 0, stdout: "7\n", stderr: "" };
 			const out = cmd[cmd.indexOf("--json-output") + 1];
 			if (cmd[1] === "devicectl" && out !== undefined) {
-				if (cmd[3] === "uninstall") apps = [];
-				if (cmd[3] === "install") apps = [{ bundleIdentifier: "com.x.app", bundleVersion: "7" }];
-				files.set(out, JSON.stringify({ result: cmd[3] === "info" ? { apps } : {} }));
+				devicectl(cmd[3], out);
 				return { exitCode: 0, stdout: "", stderr: "" };
 			}
 			return { exitCode: 127, stdout: "", stderr: cmd.join(" ") };

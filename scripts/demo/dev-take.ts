@@ -205,6 +205,96 @@ export async function stopRecording(
 	return "killed";
 }
 
+/** What a take learns about its device as it goes; the signal handler and the cleanup read it. */
+type TakeState = { udid: string | undefined; videoStarted: boolean; restoreAppearance: string | undefined };
+
+type TakeContext = {
+	def: DevDemoDefinition;
+	deps: RecordDeps;
+	run: RunWarden;
+	sh: (cmd: readonly string[]) => ReturnType<RecordDeps["exec"]>;
+	label: string;
+	takePath: string;
+	state: TakeState;
+};
+
+/** Once `warden dev` has claimed: appearance, status bar, uninstall, then the simulator video. */
+async function prepareDevice(
+	ctx: TakeContext & { at: () => number; frame: () => string[] }
+): Promise<{ udid: string; videoStartS: number }> {
+	const { def, deps, run, sh, label, at, takePath, state } = ctx;
+	const found = await waitForDeviceLease(run, label, at, deps.sleep, ctx.frame);
+	state.udid = found.udid;
+	deps.log(`warden dev claimed ${found.udid} (lease ${found.leaseId}) at ${at().toFixed(1)}s`);
+	if (def.app.appearance) {
+		const was = await sh(["xcrun", "simctl", "ui", found.udid, "appearance"]);
+		state.restoreAppearance = was.stdout.trim() || "light";
+		await sh(["xcrun", "simctl", "ui", found.udid, "appearance", def.app.appearance]);
+	}
+	// a script claims and boots the simulator itself. A video started while it boots recorded 4 frames and stopped
+	// (a run that started it the same way by hand recorded fine, cause not found), so the video starts after the boot.
+	if (def.script) await sh(["xcrun", "simctl", "bootstatus", found.udid]);
+	await sh(["xcrun", "simctl", "status_bar", found.udid, "override", ...STATUS_BAR]);
+	if (def.uninstallFirst && !def.script) await sh(["xcrun", "simctl", "uninstall", found.udid, def.app.bundleId]);
+	if (def.rawVideo) {
+		await sh(rawRecordArgv(found.udid, takePath));
+		await deps.sleep(1000);
+	} else await startVideo(run, found.udid, takePath, at, deps.sleep);
+	state.videoStarted = true;
+	return { udid: found.udid, videoStartS: at() };
+}
+
+/** Screenshots the simulator until it shows more than the boot logo, or throws after {@link BOOT_WAIT_S}. */
+async function waitForBoot(
+	sh: TakeContext["sh"],
+	deps: RecordDeps,
+	id: string,
+	shot: string,
+	at: () => number
+): Promise<void> {
+	const deadline = at() + BOOT_WAIT_S;
+	while (at() < deadline) {
+		await sh(["xcrun", "simctl", "io", id, "screenshot", shot]);
+		// the boot logo is a few KB of PNG, a home screen is far larger
+		if ((await stat(shot)).size > HOME_SCREEN_MIN_BYTES) return;
+		await deps.sleep(1000);
+	}
+	throw new Error(`simulator ${id} still shows the boot logo after ${BOOT_WAIT_S}s`);
+}
+
+/** A failed take leaves the error and the last TUI frame next to its output. */
+async function writeFailureFrame(outDir: string, error: unknown, pty: Pty | undefined): Promise<void> {
+	const frame = pty?.frame().join("\n") ?? "(no tui)";
+	await writeFile(
+		join(outDir, "failure-frame.txt"),
+		`${error instanceof Error ? error.message : String(error)}\n\n${frame}\n`
+	);
+}
+
+/** Take teardown: video, dev child, edit reverts, status bar and appearance, then the lease. */
+async function cleanupTake(
+	ctx: TakeContext & { pty: Pty | undefined; restores: (() => Promise<void>)[] }
+): Promise<void> {
+	const { def, deps, run, sh, label, takePath, state, pty, restores } = ctx;
+	const { udid, restoreAppearance } = state;
+	// the video first: killing the dev child releases the lease, after which `warden ui` refuses to stop it
+	if (udid && state.videoStarted)
+		deps.log(`video ${await stopRecording(run, sh, udid, takePath, def.rawVideo === true)}`);
+	pty?.kill();
+	for (const restore of restores.reverse())
+		await restore().catch((e: unknown) => deps.log(`REVERT FAILED: ${String(e)}`));
+	if (udid) {
+		await sh(["xcrun", "simctl", "status_bar", udid, "clear"]).catch(() => undefined);
+		if (restoreAppearance)
+			await sh(["xcrun", "simctl", "ui", udid, "appearance", restoreAppearance]).catch(() => undefined);
+	}
+	// a claimed simulator is ours alone (warden creates and deletes it): shut it down so the next take clones again
+	const rel = await run(["release", "--mine", "--label", label, ...(def.script ? ["--shutdown"] : [])]);
+	deps.log(rel.code === 0 ? `released --mine --label ${label}` : `release failed: ${rel.stderr.trim()}`);
+	// a command that ends its own lease (a failed `warden e2e` keeps its simulator booted) leaves a warden-made simulator behind
+	if (def.script && udid) await run(["sims", "delete", udid, "--yes"]).catch(() => undefined);
+}
+
 /** Called with each recorded beat while the take runs (before the beat's pause). */
 export type DevTakeHooks = { onBeat?: (beat: RecordedBeat) => Promise<void> };
 
@@ -238,14 +328,12 @@ export async function recordDev(
 		: [...cli, "dev", def.platform, "--label", label, ...def.devArgs];
 	if (!def.script && def.claim.profile) devArgv.push("--profile", def.claim.profile);
 	const restores: (() => Promise<void>)[] = [];
-	let udid: string | undefined;
-	let videoStarted = false;
+	const state: TakeState = { udid: undefined, videoStarted: false, restoreAppearance: undefined };
 	let pty: Pty | undefined;
-	let restoreAppearance: string | undefined;
 	/** Ctrl-C / kill mid-take: stop the video, kill the dev child, release by label, then exit. */
 	const onSignal = () => {
 		void (async () => {
-			if (udid && videoStarted) await stopRecording(run, sh, udid, takePath, def.rawVideo === true);
+			if (state.udid && state.videoStarted) await stopRecording(run, sh, state.udid, takePath, def.rawVideo === true);
 			pty?.kill();
 			await run(["release", "--mine", "--label", label]);
 			process.exit(130);
@@ -262,28 +350,7 @@ export async function recordDev(
 		);
 		const livePty = pty;
 
-		/** Once `warden dev` has claimed: appearance, status bar, uninstall, then the simulator video. */
-		const device = (async () => {
-			const found = await waitForDeviceLease(run, label, at, deps.sleep, livePty.frame);
-			udid = found.udid;
-			deps.log(`warden dev claimed ${found.udid} (lease ${found.leaseId}) at ${at().toFixed(1)}s`);
-			if (def.app.appearance) {
-				const was = await sh(["xcrun", "simctl", "ui", found.udid, "appearance"]);
-				restoreAppearance = was.stdout.trim() || "light";
-				await sh(["xcrun", "simctl", "ui", found.udid, "appearance", def.app.appearance]);
-			}
-			// a script claims and boots the simulator itself. A video started while it boots recorded 4 frames and stopped
-			// (a run that started it the same way by hand recorded fine, cause not found), so the video starts after the boot.
-			if (def.script) await sh(["xcrun", "simctl", "bootstatus", found.udid]);
-			await sh(["xcrun", "simctl", "status_bar", found.udid, "override", ...STATUS_BAR]);
-			if (def.uninstallFirst && !def.script) await sh(["xcrun", "simctl", "uninstall", found.udid, def.app.bundleId]);
-			if (def.rawVideo) {
-				await sh(rawRecordArgv(found.udid, takePath));
-				await deps.sleep(1000);
-			} else await startVideo(run, found.udid, takePath, at, deps.sleep);
-			videoStarted = true;
-			return { udid: found.udid, videoStartS: at() };
-		})();
+		const device = prepareDevice({ def, deps, run, sh, label, at, frame: livePty.frame, takePath, state });
 		device.catch(() => undefined);
 
 		const io: BeatIo = {
@@ -297,20 +364,9 @@ export async function recordDev(
 				const { udid: id } = await device;
 				if (def.rawVideo) await stopRecording(run, sh, id, takePath, true);
 				else await must(["ui", "screen", "video", "stop", "--udid", id]);
-				videoStarted = false;
+				state.videoStarted = false;
 			},
-			waitBoot: async () => {
-				const { udid: id } = await device;
-				const shot = join(outDir, "boot-probe.png");
-				const deadline = at() + BOOT_WAIT_S;
-				while (at() < deadline) {
-					await sh(["xcrun", "simctl", "io", id, "screenshot", shot]);
-					// the boot logo is a few KB of PNG, a home screen is far larger
-					if ((await stat(shot)).size > HOME_SCREEN_MIN_BYTES) return;
-					await deps.sleep(1000);
-				}
-				throw new Error(`simulator ${id} still shows the boot logo after ${BOOT_WAIT_S}s`);
-			},
+			waitBoot: async () => waitForBoot(sh, deps, (await device).udid, join(outDir, "boot-probe.png"), at),
 			edit: async (edit) => {
 				restores.push(await applyEdit(join(repoRoot, edit.file), edit));
 			},
@@ -333,7 +389,7 @@ export async function recordDev(
 		await writeFile(join(outDir, "tui.cast"), castText(held, def.cols, def.rows));
 		const take: DevTake = {
 			name: def.name,
-			udid: udid ?? "",
+			udid: state.udid ?? "",
 			startedAtS: t0,
 			beats,
 			recordedS,
@@ -344,29 +400,11 @@ export async function recordDev(
 		await writeFile(join(outDir, "dev.json"), `${JSON.stringify(take, null, "\t")}\n`);
 		return take;
 	} catch (error) {
-		const frame = pty?.frame().join("\n") ?? "(no tui)";
-		await writeFile(
-			join(outDir, "failure-frame.txt"),
-			`${error instanceof Error ? error.message : String(error)}\n\n${frame}\n`
-		);
+		await writeFailureFrame(outDir, error, pty);
 		throw error;
 	} finally {
 		process.removeListener("SIGINT", onSignal);
 		process.removeListener("SIGTERM", onSignal);
-		// the video first: killing the dev child releases the lease, after which `warden ui` refuses to stop it
-		if (udid && videoStarted) deps.log(`video ${await stopRecording(run, sh, udid, takePath, def.rawVideo === true)}`);
-		pty?.kill();
-		for (const restore of restores.reverse())
-			await restore().catch((e: unknown) => deps.log(`REVERT FAILED: ${String(e)}`));
-		if (udid) {
-			await sh(["xcrun", "simctl", "status_bar", udid, "clear"]).catch(() => undefined);
-			if (restoreAppearance)
-				await sh(["xcrun", "simctl", "ui", udid, "appearance", restoreAppearance]).catch(() => undefined);
-		}
-		// a claimed simulator is ours alone (warden creates and deletes it): shut it down so the next take clones again
-		const rel = await run(["release", "--mine", "--label", label, ...(def.script ? ["--shutdown"] : [])]);
-		deps.log(rel.code === 0 ? `released --mine --label ${label}` : `release failed: ${rel.stderr.trim()}`);
-		// a command that ends its own lease (a failed `warden e2e` keeps its simulator booted) leaves a warden-made simulator behind
-		if (def.script && udid) await run(["sims", "delete", udid, "--yes"]).catch(() => undefined);
+		await cleanupTake({ def, deps, run, sh, label, takePath, state, pty, restores });
 	}
 }

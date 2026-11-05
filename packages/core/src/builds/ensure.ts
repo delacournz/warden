@@ -75,14 +75,14 @@ export type ProjectContextInput = {
 	git?: GitFactsCache;
 };
 
-/** Load the project for `start` (bounded by its git toplevel) and compute its project key. */
-export async function projectContext(input: ProjectContextInput): AsyncResult<ProjectContext> {
-	const facts = await readGitFacts(input.exec, input.start, input.git);
-	const stopAt = facts?.toplevel;
-	const overlay = await overlayDirUnlessRepoConfig(input.exec, input.start, stopAt, input.env, input.git);
-	// a monorepo root with one app below it: look the project up from that app
-	const start = appStart(input.start, stopAt, overlay);
-	const load = {
+/** The `loadProject` options for a `projectContext` call. */
+function loadOptions(
+	input: ProjectContextInput,
+	start: string,
+	stopAt: string | undefined,
+	overlay: string | undefined
+) {
+	return {
 		start,
 		env: input.env,
 		...(stopAt ? { stopAt } : {}),
@@ -92,28 +92,50 @@ export async function projectContext(input: ProjectContextInput): AsyncResult<Pr
 		...(input.variant !== undefined ? { variant: input.variant } : {}),
 		...(input.variantOptional ? { variantOptional: true } : {}),
 	};
-	let appConfig: ProjectContext["appConfig"];
-	let project = loadProject(load);
-	if (!project.success) {
-		const dynamicDir = dynamicAppConfigDir(start, stopAt, input.bundleId, overlay);
-		if (dynamicDir === undefined) return project;
-		// the app's config is code: only Expo can resolve it, so ask Expo once and detect again with its answer
-		const read = await readExpoConfig(input.exec, dynamicDir);
-		if (!read.success) return err(`${project.error}; ${read.error}`);
-		appConfig = {
-			...(read.data.slug ? { slug: read.data.slug } : {}),
-			...(read.data.scheme ? { scheme: read.data.scheme } : {}),
-		};
-		project = loadProject({
-			...load,
-			bundleId: { ...read.data.bundleId, ...input.bundleId },
-			...(read.data.slug ? { appName: read.data.slug } : {}),
-		});
-		if (!project.success) return project;
-	}
-	const key = await readProjectKey(input.exec, project.data.root, input.git);
+}
+
+/** `loadProject`; when it fails on a dynamic app config, ask Expo once and detect again with its answer. */
+async function loadWithExpoFallback(
+	input: ProjectContextInput,
+	load: ReturnType<typeof loadOptions>,
+	start: string,
+	stopAt: string | undefined,
+	overlay: string | undefined
+): AsyncResult<{ project: Project; appConfig: ProjectContext["appConfig"] }> {
+	const first = loadProject(load);
+	if (first.success) return ok({ project: first.data, appConfig: undefined });
+	const dynamicDir = dynamicAppConfigDir(start, stopAt, input.bundleId, overlay);
+	if (dynamicDir === undefined) return first;
+	// the app's config is code: only Expo can resolve it, so ask Expo once and detect again with its answer
+	const read = await readExpoConfig(input.exec, dynamicDir);
+	if (!read.success) return err(`${first.error}; ${read.error}`);
+	const appConfig = {
+		...(read.data.slug ? { slug: read.data.slug } : {}),
+		...(read.data.scheme ? { scheme: read.data.scheme } : {}),
+	};
+	const second = loadProject({
+		...load,
+		bundleId: { ...read.data.bundleId, ...input.bundleId },
+		...(read.data.slug ? { appName: read.data.slug } : {}),
+	});
+	if (!second.success) return second;
+	return ok({ project: second.data, appConfig });
+}
+
+/** Load the project for `start` (bounded by its git toplevel) and compute its project key. */
+export async function projectContext(input: ProjectContextInput): AsyncResult<ProjectContext> {
+	const facts = await readGitFacts(input.exec, input.start, input.git);
+	const stopAt = facts?.toplevel;
+	const overlay = await overlayDirUnlessRepoConfig(input.exec, input.start, stopAt, input.env, input.git);
+	// a monorepo root with one app below it: look the project up from that app
+	const start = appStart(input.start, stopAt, overlay);
+	const load = loadOptions(input, start, stopAt, overlay);
+	const loaded = await loadWithExpoFallback(input, load, start, stopAt, overlay);
+	if (!loaded.success) return loaded;
+	const { project, appConfig } = loaded.data;
+	const key = await readProjectKey(input.exec, project.root, input.git);
 	if (!key.success) return key;
-	return ok({ project: project.data, projectKey: key.data, ...(appConfig ? { appConfig } : {}) });
+	return ok({ project, projectKey: key.data, ...(appConfig ? { appConfig } : {}) });
 }
 
 export type EnsureInput = ProjectContext & {
@@ -471,58 +493,70 @@ export async function ensureApp(input: EnsureInput): AsyncResult<EnsureResult> {
 	if (deviceId !== undefined) {
 		const bundleId = bundleIdFor(project, platform);
 		if (!bundleId.success) return bundleId;
-		const target = { platform, deviceId, ...(input.physical === true ? { physical: true } : {}) };
-		const deps = {
-			exec: input.exec,
-			env,
-			...(input.fileSize ? { fileSize: input.fileSize } : {}),
-			...(input.deviceIo ? { deviceIo: input.deviceIo } : {}),
-			...(input.fileDigest ? { fileDigest: input.fileDigest } : {}),
-		};
-		steps.device = {
-			installedHash: () => installedAt(getInstall(store, platform, deviceId, bundleId.data)?.hash),
-			confirm: () => probeApp(deps, target, bundleId.data),
-			matches: async (cachedPath, installed) => {
-				// a phone has no container to stat: the install record named this build, devicectl names its version
-				if (isPhoneIos(target)) return ok(await phoneAppMatches(input.exec, cachedPath, installed));
-				// the container this process recorded at install, executable untouched: that install (17-7, no plutil)
-				const record = getInstall(store, platform, deviceId, bundleId.data);
-				const container = installed.container;
-				if (container !== undefined && record?.container === container && record.exeStamp !== undefined) {
-					if ((await executableStamp(container, input.fileStamp)) === record.exeStamp) return ok(true);
-				}
-				return appMatchesArtifact(deps, target, bundleId.data, cachedPath, container);
-			},
-			uninstall: async () => {
-				input.log(`uninstalling ${bundleId.data} from ${deviceId} (${input.installMode ?? "reinstall"})`);
-				const gone = await uninstallApp(deps, target, bundleId.data);
-				return gone.success && input.resetKeychain ? resetSimKeychain(deps, target) : gone;
-			},
-			reset: () => {
-				input.log(`resetting ${bundleId.data} data on ${deviceId} (clean)`);
-				const fs = input.resetFs ?? nodeResetFs;
-				return resetAppData({ ...deps, fs }, target, bundleId.data, { keychain: input.resetKeychain === true });
-			},
-			install: async (appPath) => {
-				input.log(`installing ${appPath} on ${deviceId}`);
-				const done = await installAndProbe(deps, target, appPath, bundleId.data);
-				if (!done.success) return done;
-				const { container } = done.data;
-				const exeStamp = container === undefined ? undefined : await executableStamp(container, input.fileStamp);
-				recordInstall(store, {
-					platform,
-					deviceId,
-					bundleId: bundleId.data,
-					hash: installKey,
-					installedAt: input.now(),
-					...(container !== undefined ? { container } : {}),
-					...(exeStamp !== undefined ? { exeStamp } : {}),
-				});
-				return ok(undefined);
-			},
-		};
+		steps.device = deviceStep(input, deviceId, bundleId.data, installedAt, () => installKey);
 	}
 	return resolveApp(steps);
+}
+
+/** The install-side steps of `resolveApp` for one device: probe, match the cached build, uninstall / reset, install. */
+function deviceStep(
+	input: EnsureInput,
+	deviceId: string,
+	bundleId: string,
+	installedAt: (recorded: string | undefined) => string | undefined,
+	installKey: () => string
+): NonNullable<ResolveSteps["device"]> {
+	const { store, env, platform } = input;
+	const target = { platform, deviceId, ...(input.physical === true ? { physical: true } : {}) };
+	const deps = {
+		exec: input.exec,
+		env,
+		...(input.fileSize ? { fileSize: input.fileSize } : {}),
+		...(input.deviceIo ? { deviceIo: input.deviceIo } : {}),
+		...(input.fileDigest ? { fileDigest: input.fileDigest } : {}),
+	};
+	return {
+		installedHash: () => installedAt(getInstall(store, platform, deviceId, bundleId)?.hash),
+		confirm: () => probeApp(deps, target, bundleId),
+		matches: async (cachedPath, installed) => {
+			// a phone has no container to stat: the install record named this build, devicectl names its version
+			if (isPhoneIos(target)) return ok(await phoneAppMatches(input.exec, cachedPath, installed));
+			// the container this process recorded at install, executable untouched: that install (17-7, no plutil)
+			const record = getInstall(store, platform, deviceId, bundleId);
+			const container = installed.container;
+			if (container !== undefined && record?.container === container && record.exeStamp !== undefined) {
+				if ((await executableStamp(container, input.fileStamp)) === record.exeStamp) return ok(true);
+			}
+			return appMatchesArtifact(deps, target, bundleId, cachedPath, container);
+		},
+		uninstall: async () => {
+			input.log(`uninstalling ${bundleId} from ${deviceId} (${input.installMode ?? "reinstall"})`);
+			const gone = await uninstallApp(deps, target, bundleId);
+			return gone.success && input.resetKeychain ? resetSimKeychain(deps, target) : gone;
+		},
+		reset: () => {
+			input.log(`resetting ${bundleId} data on ${deviceId} (clean)`);
+			const fs = input.resetFs ?? nodeResetFs;
+			return resetAppData({ ...deps, fs }, target, bundleId, { keychain: input.resetKeychain === true });
+		},
+		install: async (appPath) => {
+			input.log(`installing ${appPath} on ${deviceId}`);
+			const done = await installAndProbe(deps, target, appPath, bundleId);
+			if (!done.success) return done;
+			const { container } = done.data;
+			const exeStamp = container === undefined ? undefined : await executableStamp(container, input.fileStamp);
+			recordInstall(store, {
+				platform,
+				deviceId,
+				bundleId,
+				hash: installKey(),
+				installedAt: input.now(),
+				...(container !== undefined ? { container } : {}),
+				...(exeStamp !== undefined ? { exeStamp } : {}),
+			});
+			return ok(undefined);
+		},
+	};
 }
 
 /** The device target a kind key was made for, if any (only `dev` / `release` have one). */
