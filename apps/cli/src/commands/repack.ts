@@ -1,4 +1,4 @@
-import { type RepackResult, repackApp } from "@delacour/warden-core/builds/repack";
+import { type RepackReason, type RepackResult, repackApp } from "@delacour/warden-core/builds/repack";
 import type { Platform } from "@delacour/warden-core/types";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import { resolveOwner, resolvePlatform } from "../claim-flags";
@@ -21,6 +21,8 @@ export type RepackReport =
 			jsKey: string;
 			artifact: string;
 			bundleMs?: number;
+			/** why a cached repack was rebuilt (`repacked` only) */
+			reason?: RepackReason;
 	  }
 	| { result: "fallback"; platform: Platform; reason: string };
 
@@ -34,6 +36,7 @@ function report(platform: Platform, result: RepackResult): RepackReport {
 		jsKey: result.jsKey,
 		artifact: result.artifact,
 		...(result.bundleMs !== undefined ? { bundleMs: result.bundleMs } : {}),
+		...(result.reason ? { reason: result.reason } : {}),
 	};
 }
 
@@ -65,7 +68,7 @@ function text(ctx: CommandContext, r: RepackReport): string {
 	}
 	const took = r.bundleMs !== undefined ? ` in ${(r.bundleMs / 1000).toFixed(1)}s` : "";
 	return [
-		`${color.green(r.result)}${r.result === "repacked" ? took : ""}: ${r.artifact}`,
+		`${color.green(r.result)}${r.result === "repacked" ? took : ""}${r.reason ? ` (${r.reason})` : ""}: ${r.artifact}`,
 		color.dim(`base ${r.baseHash} · jsKey ${r.jsKey} · hash ${r.hash}`),
 	].join("\n");
 }
