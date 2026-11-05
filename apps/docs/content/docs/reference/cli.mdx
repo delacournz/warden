@@ -386,7 +386,7 @@ Set an Expo app up for `warden dev` / `warden e2e`, in the app's root (`--projec
 
 ### `warden repack <ios|android>`
 
-Bundle this worktree's JS into the cached simulator build (building that base once per native fingerprint) without installing it. `--project <dir>`, `--force` (repack even when this JS is cached), `--json` → `{ result: "reused" | "repacked" | "fallback", platform, baseHash, hash, jsKey, artifact, bundleMs }` (`fallback` carries `reason`). Exit 0 on a repack, 1 on an error or a fallback (Android images changed). See [App builds](/docs/sims/app-builds).
+Bundle this worktree's JS into the cached simulator build (building that base once per native fingerprint) without installing it. `--project <dir>`, `--force` (repack even when this JS is cached), `--json` → `{ result: "reused" | "repacked" | "fallback", platform, baseHash, hash, jsKey, artifact, bundleMs }` (`fallback` carries `reason`; a `repacked` over a cached repack that could not be reused carries `reason: "base-changed"`, the simulator base was replaced since, or `"base-unrecorded"`, the repack predates base tracking). Exit 0 on a repack, 1 on an error or a fallback (Android images changed). See [App builds](/docs/sims/app-builds).
 
 ### `warden builds ls | rm | prune | import`
 

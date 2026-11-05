@@ -17,7 +17,17 @@ import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import type { Exec } from "../exec";
 import { findNodeBin } from "../node-bin";
 import type { Platform } from "../types";
-import { diskSize, findRepack, findSimulatorBase, kindHash, recordRepack, repackDir, touchBuild } from "./cache";
+import { baseIdentity } from "./base-identity";
+import {
+	diskSize,
+	findRepack,
+	findSimulatorBase,
+	forgetInstallsAt,
+	kindHash,
+	recordRepack,
+	repackDir,
+	touchBuild,
+} from "./cache";
 import { type EnsureKindInput, ensureKindBuild, LOCAL_PROFILE } from "./ensure";
 import { type GitContext, gitContext, readRepackMeta, writeRepackMeta } from "./js-key";
 import { computeKindKey, type KindKeys } from "./kind-key";
@@ -27,10 +37,18 @@ import type { ApplyRepack, BundleOutput } from "./repack.types";
 /** The first bytes of Hermes bytecode (`0x1f1903c103bc1fc6` little-endian). */
 const HBC_MAGIC = Uint8Array.from([0xc6, 0x1f, 0xbc, 0x03, 0xc1, 0x03, 0x19, 0x1f]);
 
+/**
+ * Why a cached repack was not reused: its simulator base was replaced since (`base-changed`), or it was made before
+ * warden recorded which base it came from (`base-unrecorded`, once).
+ */
+export type RepackReason = "base-changed" | "base-unrecorded";
+
 /** What `repackApp` produced: a cached repack (reused or just made), or why a full simulator build is needed instead. */
 export type RepackResult =
 	| {
 			kind: "reused" | "repacked";
+			/** `repacked` over a cached repack that could not be reused; absent on a first repack or a `force` */
+			reason?: RepackReason;
 			/** the repacked `.app` / `.apk` */
 			artifact: string;
 			/** the cache / install hash of the repack (`kindHash`) */
@@ -275,11 +293,21 @@ export async function repackApp(input: RepackInput): AsyncResult<RepackResult> {
 	const query = { projectKey, platform, nativeFp: repack.nativeFp, jsKey: repack.jsKey };
 	const startedAt = input.now();
 
+	let reason: RepackReason | undefined;
 	const reuse = async (): Promise<RepackResult | undefined> => {
 		const hit = findRepack(store, query);
 		if (!hit || (input.force && hit.createdAt < startedAt)) return undefined;
-		touchBuild(store, projectKey, platform, hit.hash, input.now());
 		const meta = await readRepackMeta(dirname(hit.path));
+		const base = findSimulatorBase(store, { projectKey, platform, nativeFp: repack.nativeFp });
+		// a repack is valid over the exact base it was cloned from; a pruned base cannot be compared, the repack stays usable
+		if (base && existsSync(base.path)) {
+			const current = await baseIdentity(platform, base.path);
+			if (current !== undefined && meta?.baseId !== current) {
+				reason = meta?.baseId === undefined ? "base-unrecorded" : "base-changed";
+				return undefined;
+			}
+		}
+		touchBuild(store, projectKey, platform, hit.hash, input.now());
 		return {
 			kind: "reused",
 			artifact: hit.path,
@@ -318,7 +346,7 @@ export async function repackApp(input: RepackInput): AsyncResult<RepackResult> {
 	return withBuildLock(lock, buildLockKey(projectKey, platform, repack.jsKey), async () => {
 		const again = await reuse();
 		if (again) return ok(again);
-		return makeRepack(input, { keys: keys.data, repack, flags, entry, hash, baseHash, baseArtifact });
+		return makeRepack(input, { keys: keys.data, repack, flags, entry, hash, baseHash, baseArtifact, reason });
 	});
 }
 
@@ -330,6 +358,7 @@ type Made = {
 	hash: string;
 	baseHash: string;
 	baseArtifact: string;
+	reason: RepackReason | undefined;
 };
 
 /** The `simulator-repack` row of a repack that is in its final dir. */
@@ -366,6 +395,7 @@ async function makeRepack(input: RepackInput, made: Made): AsyncResult<RepackRes
 		mkdirSync(scratchRoot, { recursive: true });
 		scratch = mkdtempSync(join(scratchRoot, "warden-repack-"));
 		staging = mkdtempSync(join(dirname(finalDir), ".staging-"));
+		const baseId = await baseIdentity(platform, baseArtifact);
 		const git = await gitContext(exec, project.root, input.git);
 		if (!git.success) return git;
 		const hermes = await (input.hermes ?? detectHermes)(exec, platform, baseArtifact);
@@ -400,11 +430,22 @@ async function makeRepack(input: RepackInput, made: Made): AsyncResult<RepackRes
 			head: git.data.head,
 			createdAt: input.now(),
 			bundleMs,
+			...(baseId !== undefined ? { baseId } : {}),
 		});
+		// devices that ran the repack this one replaces must install the new one, not trust their record of the old
+		if (existsSync(finalDir)) forgetInstallsAt(input.store, platform, [hash]);
 		rmSync(finalDir, { recursive: true, force: true });
 		renameSync(staging, finalDir);
 		recordMade(input, made, git.data, artifact);
-		return ok({ kind: "repacked", artifact, hash, baseHash, jsKey: repack.jsKey, bundleMs });
+		return ok({
+			kind: "repacked",
+			artifact,
+			hash,
+			baseHash,
+			jsKey: repack.jsKey,
+			bundleMs,
+			...(made.reason ? { reason: made.reason } : {}),
+		});
 	} catch (error) {
 		return err(`repack: ${error instanceof Error ? error.message : String(error)}`);
 	} finally {

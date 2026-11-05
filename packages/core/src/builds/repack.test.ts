@@ -6,6 +6,7 @@ import {
 	mkdirSync,
 	mkdtempSync,
 	readdirSync,
+	readFileSync,
 	realpathSync,
 	rmSync,
 	writeFileSync,
@@ -16,7 +17,7 @@ import { err, ok } from "@delacour/warden-types/result";
 import { bunExec, type Exec, type ExecResult } from "../exec";
 import { openStore, type Store } from "../store";
 import { fakeApp, testProject } from "./builds.testing";
-import { findRepack, getBuild, kindDir, kindHash, storeArtifact } from "./cache";
+import { findRepack, getBuild, getInstall, kindDir, kindHash, recordInstall, storeArtifact } from "./cache";
 import { computeKindKey } from "./kind-key";
 import {
 	bundlerFlags,
@@ -121,7 +122,7 @@ function applier(applied: Applied, over: { fail?: boolean; fallback?: string } =
 	};
 }
 
-async function seedBase(): Promise<void> {
+async function seedBase(binary = "binary!"): Promise<void> {
 	const keys = await computeKindKey({
 		exec: host().exec,
 		project: testProject({ root, fingerprintCommand: "fp" }),
@@ -131,6 +132,7 @@ async function seedBase(): Promise<void> {
 	});
 	if (!keys.success) throw new Error(keys.error);
 	const app = fakeApp(join(dir, "src"));
+	writeFileSync(join(app, "App"), binary);
 	mkdirSync(join(app, "Frameworks", "hermesvm.framework"), { recursive: true });
 	const stored = await storeArtifact({
 		store,
@@ -267,6 +269,68 @@ describe("repackApp", () => {
 		writeFileSync(join(root, "node_modules", "hermes-compiler", "hermesc", "osx-bin", "hermesc"), "");
 		await repackApp(input(h, applied));
 		expect(applied.bundles).toEqual([true]);
+	});
+
+	test("the same base again: the repack is reused", async () => {
+		await seedBase();
+		const h = host();
+		const applied = fresh();
+		await repackApp(input(h, applied, { hermes: async () => false }));
+		await seedBase();
+		const again = await repackApp(input(h, applied, { hermes: async () => false }));
+		expect(again).toMatchObject({ success: true, data: { kind: "reused" } });
+		expect(applied.count).toBe(1);
+	});
+
+	test("a base replaced under the same native fingerprint: the repack is rebuilt (base-changed)", async () => {
+		await seedBase("base A");
+		const h = host();
+		const applied = fresh();
+		const first = await repackApp(input(h, applied, { hermes: async () => false }));
+		if (!first.success || first.data.kind !== "repacked") throw new Error(JSON.stringify(first));
+		expect(first.data.reason).toBeUndefined();
+		await seedBase("base B, other signature");
+		const second = await repackApp(input(h, applied, { hermes: async () => false }));
+		expect(second).toMatchObject({ success: true, data: { kind: "repacked", reason: "base-changed" } });
+		expect(applied.count).toBe(2);
+		const third = await repackApp(input(h, applied, { hermes: async () => false }));
+		expect(third).toMatchObject({ success: true, data: { kind: "reused" } });
+		expect(applied.count).toBe(2);
+	});
+
+	test("a repack without a recorded base identity (made by an older warden) is rebuilt once", async () => {
+		await seedBase();
+		const h = host();
+		const applied = fresh();
+		const first = await repackApp(input(h, applied, { hermes: async () => false }));
+		if (!first.success || first.data.kind !== "repacked") throw new Error(JSON.stringify(first));
+		const metaFile = join(dirname(first.data.artifact), "meta.json");
+		const meta = JSON.parse(readFileSync(metaFile, "utf8")) as Record<string, unknown>;
+		const { baseId: _baseId, ...legacy } = meta;
+		writeFileSync(metaFile, JSON.stringify(legacy));
+		const second = await repackApp(input(h, applied, { hermes: async () => false }));
+		expect(second).toMatchObject({ success: true, data: { kind: "repacked", reason: "base-unrecorded" } });
+		const third = await repackApp(input(h, applied, { hermes: async () => false }));
+		expect(third).toMatchObject({ success: true, data: { kind: "reused" } });
+		expect(applied.count).toBe(2);
+	});
+
+	test("a rebuilt repack forgets the installs of the old one, so devices install the new one", async () => {
+		await seedBase("base A");
+		const h = host();
+		const applied = fresh();
+		const first = await repackApp(input(h, applied, { hermes: async () => false }));
+		if (!first.success || first.data.kind !== "repacked") throw new Error(JSON.stringify(first));
+		recordInstall(store, {
+			platform: "ios",
+			deviceId: "SIM-1",
+			bundleId: "com.x.app",
+			hash: first.data.hash,
+			installedAt: 1,
+		});
+		await seedBase("base B");
+		await repackApp(input(h, applied, { hermes: async () => false }));
+		expect(getInstall(store, "ios", "SIM-1", "com.x.app")).toBeUndefined();
 	});
 
 	test("force rebuilds a cached repack", async () => {
