@@ -71,8 +71,10 @@ function Content({ path, markdownUrl }: { path: string; markdownUrl: string }) {
 	const { toc } = use(page.load());
 	const MDX = page.body;
 
+	// In-app browsers (X, Threads, LinkedIn) float a toolbar over the page bottom that no safe-area inset reports,
+	// so phones get extra bottom room to scroll the footer nav clear of it.
 	return (
-		<DocsPage toc={toc}>
+		<DocsPage className="max-md:pb-28" toc={toc}>
 			<DocsTitle>{page.title}</DocsTitle>
 			<DocsDescription>{page.description}</DocsDescription>
 			<DocsToolbar markdownUrl={markdownUrl} path={path} />
