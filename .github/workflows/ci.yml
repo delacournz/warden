@@ -83,9 +83,12 @@ jobs:
         with:
           cache: bun
 
-      # No NPM_TOKEN: `@delacournz/*` (GitHub Packages) is only apps/docs' optional OpenTelemetry, which
-      # nothing here uses. The 401 is a warning, and this proves a tokenless clone installs.
+      # NPM_TOKEN (read:packages) installs the optional `@delacournz/*` design systems, which the apps
+      # that render one need to typecheck and test. The native job below installs without it, which
+      # keeps proving a tokenless clone installs.
       - run: bun install --frozen-lockfile
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_READ_TOKEN }}
       - run: bun run typecheck
       - run: bun run check
       - run: bun run test

@@ -44,6 +44,17 @@ scripts/              # repo scripts (pre-commit biome, signoff/ = local CI gate
 
 PostHog only, off unless `VITE_POSTHOG_TOKEN` (`phc_…`) and `VITE_POSTHOG_HOST` (`https://i.delacour.co.nz`) are set at **build** time; Railway sets them per environment (prod `warden.co.nz`, staging `staging.warden.co.nz`). delacour-monorepo declares them (`wardenAnalyticsEnv` in `.railway/analytics.ts`, used by `apps/warden/infra/railway.ts`, with a per-env `DEPLOY_ENV` so prod and staging never share an image): the same token every Delacour app uses, so each environment's PostHog project (cookieless mode enabled) holds every site: warden's events carry `site: "warden"` and `surface: "web"|"server"` (`SUPER_PROPERTIES` in `posthog.ts`). `i.delacour.co.nz` is PostHog's managed reverse proxy (DNS-only CNAME, attached to no Railway service); from `warden.co.nz` it is third-party, so strict blocker modes may drop events (PostHog's proxy limit rules out an `i.warden.co.nz`). Dev and CI set neither and render no analytics. `turbo.jsonc` lists `VITE_*` on `build` (strict env mode) and a test holds it to that. Cookieless until the visitor accepts the banner (`cookieless_mode: "on_reject"` + `opt_out_capturing_by_default`); Accept turns on the cookie, local storage and session replay (inputs masked, recorder bundled from `posthog-js/dist/recorder`, never loaded from outside). Heatmaps on; autocapture and surveys off in code (`apps/docs/src/lib/analytics/posthog.ts`). One stored answer (`consent.analytics` in localStorage) in `consent.ts`, the banner in `components/consent-banner.tsx`, reopened by the footer's cookie settings. `/privacy` renders `src/lib/privacy.ts`, and `privacy.test.ts` holds its claims to the code (installed packages, the SDK options, the CLI's update hosts). Events: `$pageview`, `$$heatmap`, `$snapshot`, `outbound`, `download`, `copy`, `search` from the browser, and `agent-fetch` from the server for `/llms*.txt` and `.md` reads (`src/lib/analytics/server.ts`, called from `start.ts`). Only counted hosts report, so a prod build on `localhost` sends nothing.
 
+## Design systems (`@delacournz/ui`, `@delacournz/apogee`)
+
+`apps/docs` lists both design systems from delacour-monorepo as optionalDependencies (GitHub Packages, `@delacournz` scope in `bunfig.toml`; CI installs with the `NPM_READ_TOKEN` secret, a tokenless clone skips them). **Installed, not yet used** — nothing imports their CSS or components.
+
+- `@delacournz/ui` — the "site" design system (Base UI + shadcn base-lyra, Tailwind v4). CSS: `@import "@delacournz/ui/styles";`
+- `@delacournz/apogee` — the "app" design system (coss on Base UI, Orbit palettes, Phosphor icons, Tailwind v4). CSS: `@import "@delacournz/apogee/styles.css";`
+- **Never load both in one document**: they define the same shadcn tokens (`--primary`, `.dark`, …) with different values. Pick one per page/app.
+- The CSS entry declares its own `@source`, so the single `@import` in the Tailwind v4 stylesheet (`apps/docs/src/styles/app.css`) is all a migration needs.
+- Peers: `react` / `react-dom` ^19.2, `tailwindcss` ^4. Web (React DOM) only — never add them to `apps/example` (Expo) or the CLI/packages.
+- Until a migration is planned, the docs site's current UI (`fumadocs-ui` + `apps/docs/src/components`) stays the source of truth, and `apps/example/src/components/ui` (React Native) is unaffected.
+
 ## File Naming
 
 | Type | Pattern |
