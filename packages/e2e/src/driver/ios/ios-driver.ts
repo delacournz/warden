@@ -356,6 +356,8 @@ export function createIosDriver(
 	const nativeSettle = ready.ax.default === "axbridge" && ready.ax.bridge === "available";
 	const bridgeUp = ready.ax.bridge === "available";
 	let settleUnsupported = !nativeSettle;
+	/** Native settles in a row that could not bind the AX observer (`E_AX_UNAVAILABLE`); at 2 they stop being asked. */
+	let settleAxFailures = 0;
 	let rebindUnsupported = false;
 	let gestureUnsupported = false;
 	/** set once the helper did not know an app lifecycle op: it predates them, and `simctl` does app lifecycle */
@@ -611,8 +613,23 @@ export function createIosDriver(
 		return reply.data.bound;
 	}
 
+	/** A native settle that could not bind the AX observer: poll hashes for it; two in a row stop asking the helper. */
+	function noteSettleAxFailure(message: string): undefined {
+		settleAxFailures += 1;
+		noteSpanDetail("nativeError", "E_AX_UNAVAILABLE");
+		if (settleAxFailures >= 2) {
+			settleUnsupported = true;
+			opts.log?.(
+				`[ios] native settle could not bind the AX observer twice in a row, polling snapshot hashes: ${message}`
+			);
+		}
+		return undefined;
+	}
+
 	/**
-	 * The helper's own settle, or undefined when it is unsupported (the caller falls back to polling snapshot hashes).
+	 * The helper's own settle, or undefined when the caller should poll snapshot hashes instead: it is unsupported, or
+	 * it could not bind the simulator's AX observer (`E_AX_UNAVAILABLE`, seen on GitHub-hosted runners while snapshots
+	 * read fine). Two of those in a row stop asking for the session: each one costs seconds before it fails.
 	 * The helper's budget is `settleTimeoutMs`; the envelope `timeoutMs` is only our padded transport timer.
 	 */
 	async function settleViaHelper(quietMs: number, timeoutMs: number): Promise<DriverResult<SettleDetail> | undefined> {
@@ -623,6 +640,7 @@ export function createIosDriver(
 			{ timeoutMs: timeoutMs + SETTLE_MARGIN_MS }
 		);
 		if (native.success) {
+			settleAxFailures = 0;
 			// a mismatch means the app never came to the front: keep asking for it on the next settle
 			if (expected !== undefined && native.data.reason !== "frontmost_mismatch") launchedBundle = undefined;
 			return { success: true, data: nativeDetail(native.data) };
@@ -635,6 +653,7 @@ export function createIosDriver(
 				data: { quiet: false, waitedMs: timeoutMs + SETTLE_MARGIN_MS, reason: "helper_timeout" },
 			};
 		}
+		if (native.error.code === "E_AX_UNAVAILABLE") return noteSettleAxFailure(native.error.message);
 		if (native.error.code !== "E_UNSUPPORTED") return native;
 		settleUnsupported = true;
 		opts.log?.("[ios] native settle unsupported, polling snapshot hashes");

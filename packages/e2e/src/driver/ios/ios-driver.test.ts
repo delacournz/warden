@@ -1094,6 +1094,64 @@ describe("settle", () => {
 		expect(helper.of("settle")).toHaveLength(1);
 	});
 
+	/** A driver whose native settle answers from `settles` in order (last repeats), with snapshots that never change. */
+	async function settleSequence(settles: Array<"ax" | "quiet">) {
+		let t = 0;
+		let asked = 0;
+		const opened = await open(
+			(request) => {
+				if (request.op === "settle") {
+					const answer = settles[Math.min(asked++, settles.length - 1)];
+					return answer === "ax"
+						? {
+								error: {
+									code: "E_AX_UNAVAILABLE",
+									message:
+										"The axbridge guest reader could not bind the simulator's accessibility runtime: AXObserverAddNotification(4002) failed with AX error -25204 (kAXErrorCannotComplete)",
+								},
+							}
+						: { data: { quiet: true, waitedMs: 5 } };
+				}
+				if (request.op === "snapshot") return { data: snapshotData };
+				return undefined;
+			},
+			{
+				now: () => t,
+				sleep: async (ms) => {
+					t += ms;
+				},
+			}
+		);
+		return opened;
+	}
+
+	test("E_AX_UNAVAILABLE from the native settle falls back to snapshot-hash polling for that settle", async () => {
+		const { driver, helper } = await settleSequence(["ax"]);
+		const notes: SpanDetail = {};
+		const result = await collectSpanDetail(notes, () => unwrapped(driver.settle({ quietMs: 100, timeoutMs: 2000 })));
+		expect(result).toMatchObject({ quiet: true, via: "hash" });
+		expect(notes.via).toBe("hash");
+		expect(helper.of("settle")).toHaveLength(1);
+		expect(helper.of("snapshot").length).toBeGreaterThanOrEqual(3);
+	});
+
+	test("two native settles in a row that cannot bind the AX observer: the helper's settle is not asked again", async () => {
+		const { driver, helper, logs } = await settleSequence(["ax"]);
+		await unwrapped(driver.settle({ quietMs: 100, timeoutMs: 2000 }));
+		await unwrapped(driver.settle({ quietMs: 100, timeoutMs: 2000 }));
+		expect(helper.of("settle")).toHaveLength(2);
+		const third = await unwrapped(driver.settle({ quietMs: 100, timeoutMs: 2000 }));
+		expect(third).toMatchObject({ via: "hash" });
+		expect(helper.of("settle")).toHaveLength(2);
+		expect(logs.filter((line) => line.includes("native settle")).length).toBe(1);
+	});
+
+	test("a native settle that works between two AX failures keeps the helper's settle", async () => {
+		const { driver, helper } = await settleSequence(["ax", "quiet", "ax", "quiet"]);
+		for (let i = 0; i < 4; i++) await unwrapped(driver.settle({ quietMs: 100, timeoutMs: 2000 }));
+		expect(helper.of("settle")).toHaveLength(4);
+	});
+
 	test("a UI that keeps changing times out with quiet:false", async () => {
 		let t = 0;
 		let n = 0;
