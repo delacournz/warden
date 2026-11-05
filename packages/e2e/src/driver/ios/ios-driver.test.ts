@@ -318,11 +318,90 @@ describe("Driver methods over the helper", () => {
 		expect(notes).toEqual({ backend: "ax", fallback: reason });
 	});
 
-	test("a snapshot read on the bridge leaves its span alone", async () => {
+	test("a snapshot read on the bridge names its reader on the span", async () => {
 		const { driver } = await open(() => ({ data: snapshotData }));
 		const notes: SpanDetail = {};
 		await collectSpanDetail(notes, () => unwrapped(driver.snapshot()));
-		expect(notes).toEqual({});
+		expect(notes).toEqual({ backend: "axbridge" });
+	});
+
+	test("a snapshot read by pid because the frontmost app was unresolved says so on its span", async () => {
+		const reason = "frontmost unresolved: did not answer a frontmost request; read pid 42 (launched)";
+		const { driver } = await open(() => ({
+			data: {
+				...snapshotData,
+				fallback: { from: "axbridge", to: "axbridge", reason },
+				target: { pid: 42, source: "launched" },
+			},
+		}));
+		const notes: SpanDetail = {};
+		await collectSpanDetail(notes, () => unwrapped(driver.snapshot()));
+		expect(notes).toEqual({ backend: "axbridge", fallback: reason, targetPid: 42, targetSource: "launched" });
+	});
+
+	test("a failed snapshot records both readers' errors and the helper's toolchain on its span", async () => {
+		const health = {
+			version: "0.1.0",
+			udid: UDID,
+			hid: { transport: "indigo" },
+			ax: { default: "axbridge", bridge: "degraded", lastError: { message: "window-server frontmost", agoMs: 10 } },
+			screen: { width: 402, height: 874, scale: 3 },
+			xcode: "26.6 (17F113)",
+			builtWith: { xcode: "27.1 (27A9275)", idb: "v1.7.7" },
+			coreSimulatorVersion: "1051.55",
+		};
+		const { driver } = await open((request) =>
+			request.op === "health"
+				? { data: health }
+				: {
+						error: {
+							code: "E_TIMEOUT",
+							message: "did not answer a frontmost request within 5.0s",
+							retryable: true,
+							detail: {
+								stage: "ax",
+								reason: "frontmost_unresolved",
+								request: "frontmost",
+								bridgeError: "window-server frontmost returned no application object",
+								axError: "did not answer a frontmost request within 5.0s",
+							},
+						},
+					}
+		);
+		const notes: SpanDetail = {};
+		const result = await collectSpanDetail(notes, () => driver.snapshot());
+		expect(result.success).toBe(false);
+		expect(notes).toEqual({
+			axStage: "ax",
+			axReason: "frontmost_unresolved",
+			axRequest: "frontmost",
+			bridgeError: "window-server frontmost returned no application object",
+			axError: "did not answer a frontmost request within 5.0s",
+			bridge: "degraded",
+			bridgeLastError: "window-server frontmost",
+			hostXcode: "26.6 (17F113)",
+			helperXcode: "27.1 (27A9275)",
+			coreSimulator: "1051.55",
+		});
+	});
+
+	test("the helper's health is asked once per failure streak, not on every failed read", async () => {
+		const { driver, helper } = await open((request) =>
+			request.op === "health"
+				? {
+						data: {
+							version: "0.1.0",
+							udid: UDID,
+							hid: { transport: "indigo" },
+							ax: { default: "axbridge", bridge: "available" },
+							screen: { width: 1, height: 1, scale: 1 },
+						},
+					}
+				: { error: { code: "E_TIMEOUT", message: "silent", retryable: true } }
+		);
+		await driver.snapshot();
+		await driver.snapshot();
+		expect(helper.of("health")).toHaveLength(1);
 	});
 
 	test("snapshot without options sends no null params", async () => {
@@ -1414,7 +1493,13 @@ describe("bridge-stale recovery", () => {
 
 		const second = await unwrapped(driver.snapshot());
 		expect(second.flat.length).toBeGreaterThan(0);
-		expect(helper.requests.map((request) => request.op)).toEqual(["snapshot", "snapshot", "shutdown", "snapshot"]);
+		expect(helper.requests.map((request) => request.op)).toEqual([
+			"snapshot",
+			"health",
+			"snapshot",
+			"shutdown",
+			"snapshot",
+		]);
 		expect(helper.spawns).toHaveLength(2);
 		expect(logs.some((line) => line.includes("AX bridge looks stale"))).toBe(true);
 	});
@@ -1518,7 +1603,7 @@ describe("bridge-stale recovery", () => {
 			await driver.snapshot();
 			const recovered = await unwrapped(driver.snapshot());
 			expect(recovered.flat.length).toBeGreaterThan(0);
-			expect(seen).toEqual(["snapshot", "snapshot", "shutdown"]);
+			expect(seen).toEqual(["snapshot", "health", "snapshot", "shutdown"]);
 			expect(helper.spawns).toHaveLength(1);
 		} finally {
 			server.stop(true);

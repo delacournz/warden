@@ -109,14 +109,17 @@ extension Session {
   func launch(_ request: LaunchRequest) async throws -> JSON {
     bundlePids.remember(nil, for: request.bundleId)
     let launched = try await simulator.application.launch(request.configuration)
-    bundlePids.remember(launched.processIdentifier, for: request.bundleId)
+    bundlePids.rememberLaunch(launched.processIdentifier, for: request.bundleId)
     return LaunchRequest.reply(pid: launched.processIdentifier)
   }
 
   /// Ends the app's process. A bundle with no running process answers `terminated: false`: either launchd said so
   /// outright, or the kill failed and a lookup afterwards finds no process either.
   func terminate(_ request: TerminateRequest) async throws -> JSON {
-    defer { bundlePids.remember(nil, for: request.bundleId) }
+    defer {
+      bundlePids.remember(nil, for: request.bundleId)
+      bundlePids.forgetLaunch(of: request.bundleId)
+    }
     do {
       try await simulator.application.kill(bundleID: request.bundleId)
     } catch {

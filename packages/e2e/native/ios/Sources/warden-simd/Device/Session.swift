@@ -79,6 +79,10 @@ final class Session: @unchecked Sendable {
   let bridgeStall = BridgeStallGate()
   /// The per-read bridge deadline and the cooldown after a stall (`WARDEN_SIMD_BRIDGE_DEADLINE_MS` / `_COOLDOWN_S`).
   let bridgeDeadline = BridgeDeadline.configured()
+  /// When the frontmost lookup last failed, so reads go by pid for `frontmostPolicy.cooldownSeconds`.
+  let frontmostGate = FrontmostLookupGate()
+  /// The guest's frontmost strategy and the pid-read cooldown (`WARDEN_SIMD_FRONTMOST_METHOD` / `_COOLDOWN_S`).
+  let frontmostPolicy = FrontmostPolicy.configured()
   /// The pid each bundle id last resolved to, for `frontmost`.
   let bundlePids = BundlePidMemory()
   let orientationMemory = OrientationMemory()
@@ -146,7 +150,8 @@ final class Session: @unchecked Sendable {
     } else {
       do {
         bridgeReader = try simulator.uiAutomation(
-          backend: .axBridge(persistence: .exclusive, frontmostMethod: .windowServer, automationMode: true))
+          backend: .axBridge(
+            persistence: .exclusive, frontmostMethod: FrontmostPolicy.configured().method, automationMode: true))
       } catch {
         bridge = .failed(error.localizedDescription)
       }
@@ -209,6 +214,14 @@ extension WireError {
   /// `E_AX_UNAVAILABLE` / `E_APP_*`, HID failures `E_HID`, "nothing there" `E_NO_ELEMENT`.
   static func from(_ error: any Error) -> WireError {
     if let wire = error as? WireError { return wire }
+    if let both = error as? AXReadersFailed {
+      let host = from(both.host)
+      var fields = host.detail?.objectValue ?? [:]
+      fields["bridgeError"] = .string(both.bridgeReason)
+      if fields["axError"] == nil { fields["axError"] = .string(host.message) }
+      return WireError(host.code, both.localizedDescription, retryable: host.retryable, detail: .object(fields))
+    }
+    if let error = error as? AccessibilityError { return from(accessibility: error) }
     if let stall = error as? BridgeStalled {
       return WireError(.timeout, stall.localizedDescription, detail: ["afterMs": .int(stall.afterMs), "stage": "axbridge"])
     }
@@ -251,6 +264,34 @@ extension WireError {
       return WireError(.internal, message)
     @unknown default:
       return WireError(.internal, message)
+    }
+  }
+
+  /// The host translator (`ax`). A silent service is a retryable timeout; a missing frontmost app says so in
+  /// `detail.reason` (`frontmost_unresolved`), which the TS driver records on the snapshot span.
+  private static func from(accessibility error: AccessibilityError) -> WireError {
+    let message = error.localizedDescription
+    var fields: [String: JSON] = ["stage": "ax", "axError": .string(message)]
+    if Session.isFrontmostUnresolved(error) { fields["reason"] = "frontmost_unresolved" }
+    switch error {
+    case let .serviceNotAnswering(silence, elapsed, behind):
+      switch silence {
+      case let .request(kind, _): fields["request"] = .string(kind)
+      case .query: fields["request"] = "query"
+      @unknown default: break
+      }
+      fields["elapsedMs"] = .int(Int(elapsed * 1000))
+      if behind > 0 { fields["behindAbandoned"] = .int(Int(behind)) }
+      return WireError(.timeout, message, detail: .object(fields))
+    case .noTranslationObject, .springBoardRestarting, .springBoardNotRunning, .accessibilityUnavailable,
+      .dispatcherUnavailable:
+      return WireError(.axUnavailable, message, detail: .object(fields))
+    case .simulatorNotBooted:
+      return WireError(.notBooted, message)
+    case .elementNotFound:
+      return WireError(.noElement, message)
+    default:
+      return WireError(.internal, message, detail: .object(fields))
     }
   }
 
