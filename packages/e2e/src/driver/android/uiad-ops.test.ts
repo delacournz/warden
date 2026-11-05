@@ -436,3 +436,59 @@ describe("audit", () => {
 		expect(res).toEqual({ success: false, error });
 	});
 });
+
+describe("live touch", () => {
+	const down = { data: { down: 1 } };
+
+	test("each op is one touch.* request with the point and pointer", async () => {
+		const { ops, fake } = setup({ handle: (r) => (r.op.startsWith("touch.") ? down : undefined) });
+		await value(ops.touch("down", { x: 10, y: 20 }, 0));
+		await value(ops.touch("move", { x: 11, y: 30 }, 1));
+		await value(ops.touch("up", undefined, 1));
+		await value(ops.touch("cancel"));
+		expect(
+			fake.requests.filter((r) => r.op.startsWith("touch.")).map(({ op, x, y, pointer }) => ({ op, x, y, pointer }))
+		).toEqual([
+			{ op: "touch.down", x: 10, y: 20, pointer: 0 },
+			{ op: "touch.move", x: 11, y: 30, pointer: 1 },
+			{ op: "touch.up", x: undefined, y: undefined, pointer: 1 },
+			{ op: "touch.cancel", x: undefined, y: undefined, pointer: undefined },
+		]);
+	});
+
+	test("a state error is the answer and the server stays up", async () => {
+		const { ops, fake } = setup({
+			handle: (r) =>
+				r.op === "touch.move" ? { error: wire("E_BAD_REQUEST", "pointer 0 is not down (not_down)") } : undefined,
+		});
+		const result = await ops.touch("move", { x: 1, y: 1 }, 0);
+		expect(result?.success === false && result.error.code).toBe("E_BAD_REQUEST");
+		await value(ops.snapshot());
+		expect(fake.commands).toHaveLength(1);
+	});
+
+	test("a server that predates the ops is helper_outdated once, then nothing more is sent", async () => {
+		const { ops, fake } = setup({
+			handle: (r) => (r.op.startsWith("touch.") ? { error: wire("E_BAD_REQUEST", `unknown op: ${r.op}`) } : undefined),
+		});
+		const first = await ops.touch("down", { x: 1, y: 1 }, 0);
+		expect(first?.success === false && first.error).toMatchObject({
+			code: "E_UNSUPPORTED",
+			detail: { reason: "helper_outdated" },
+		});
+		const second = await ops.touch("move", { x: 1, y: 2 }, 0);
+		expect(second?.success === false && second.error.code).toBe("E_UNSUPPORTED");
+		expect(fake.of("touch.down")).toHaveLength(1);
+		expect(fake.of("touch.move")).toHaveLength(0);
+		expect(fake.commands).toHaveLength(1);
+	});
+
+	test("an injection refusal is surfaced, not done another way", async () => {
+		const { ops } = setup({
+			handle: (r) =>
+				r.op === "touch.down" ? { error: wire("E_HID", "injectInputEvent refused the event") } : undefined,
+		});
+		const result = await ops.touch("down", { x: 1, y: 1 }, 0);
+		expect(result?.success === false && result.error.code).toBe("E_HID");
+	});
+});
