@@ -78,6 +78,8 @@ final class Session: @unchecked Sendable {
   /// The pid each bundle id last resolved to, for `frontmost`.
   let bundlePids = BundlePidMemory()
   let orientationMemory = OrientationMemory()
+  /// `stream.*`: the live H.264 stream of the display, if one is running.
+  let streams = StreamHolder()
 
   init(
     udid: String, simulator: Simulator, hid: SimulatorHIDSession, hidTransport: String, axDefault: String,
@@ -157,6 +159,7 @@ final class Session: @unchecked Sendable {
   }
 
   func close() async {
+    _ = streams.stop()
     await quiescence.stop()
     await hid.close()
   }
