@@ -116,8 +116,12 @@ extension Session {
       reason = "axbridge reader unavailable (bridge \(bridgeName))"
     }
     log("axbridge -> ax fallback: \(reason)")
-    let value = try await host!()
-    return AXOutcome(value: value, backend: .ax, fallback: Fallback(reason: reason))
+    do {
+      let value = try await host!()
+      return AXOutcome(value: value, backend: .ax, fallback: Fallback(reason: reason))
+    } catch {
+      throw AXReadersFailed(bridgeReason: reason, host: error)
+    }
   }
 
   /// `read`, failing with `BridgeStalled` after `deadlineMs` (nil = wait as long as it takes). The stalled read is

@@ -246,11 +246,20 @@ extension Session {
     var options = AccessibilityRequestOptions(format: .complete, keys: request.keys)
     options.filter = .all
     let readOptions = options
-    let query: AccessibilityElementQuery = request.pid.map { .application(pid: $0) } ?? .frontmost
-    var outcome = try await withAX(backend: request.backend, op: "snapshot") { reader in
-      try await reader.describe(query, options: readOptions).document
+    var target: PidTarget?
+    var outcome: AXOutcome<AccessibilityDocument>
+    if let pid = request.pid {
+      outcome = try await withAX(backend: request.backend, op: "snapshot") { reader in
+        try await reader.describe(.application(pid: pid), options: readOptions).document
+      }
+    } else {
+      let targeted = try await withFrontmostAX(backend: request.backend, op: "snapshot") { reader, query in
+        try await reader.describe(query, options: readOptions).document
+      }
+      outcome = targeted.outcome
+      target = targeted.target
     }
-    if request.backend == nil, outcome.backend == .axbridge, Session.isEmptyRoot(outcome.value) {
+    if request.backend == nil, target == nil, outcome.backend == .axbridge, Session.isEmptyRoot(outcome.value) {
       outcome = try await recoverEmptyRoot(first: outcome, options: readOptions)
     }
     let document = outcome.value
@@ -259,7 +268,12 @@ extension Session {
       document: document, backend: outcome.backend, screen: screen, interactiveOnly: request.interactiveOnly,
       maxDepth: request.maxDepth, maxNodes: request.maxNodes)
     if let fallback = outcome.fallback {
-      data["fallback"] = ["from": "axbridge", "to": "ax", "reason": .string(fallback.reason)]
+      data["fallback"] = [
+        "from": "axbridge", "to": .string(outcome.backend.rawValue), "reason": .string(fallback.reason),
+      ]
+    }
+    if let target {
+      data["target"] = ["pid": .int(Int(target.pid)), "source": .string(target.source.rawValue)]
     }
     if request.raw, let encoded = try? JSONEncoder().encode(document),
       let raw = try? JSONDecoder().decode(JSON.self, from: encoded)
@@ -628,6 +642,7 @@ extension Session {
 final class BundlePidMemory: @unchecked Sendable {
   private let lock = NSLock()
   private var pids: [String: pid_t] = [:]
+  private var launched: (bundleId: String, pid: pid_t)?
 
   func pid(for bundleId: String) -> pid_t? { lock.withLock { pids[bundleId] } }
 
@@ -635,4 +650,18 @@ final class BundlePidMemory: @unchecked Sendable {
   func remember(_ pid: pid_t?, for bundleId: String) {
     lock.withLock { pids[bundleId] = pid }
   }
+
+  /// The pid `launch` last started (the frontmost-rescue candidate); a later `remember(nil)` of that bundle clears it.
+  func rememberLaunch(_ pid: pid_t, for bundleId: String) {
+    lock.withLock {
+      pids[bundleId] = pid
+      launched = (bundleId, pid)
+    }
+  }
+
+  func forgetLaunch(of bundleId: String) {
+    lock.withLock { if launched?.bundleId == bundleId { launched = nil } }
+  }
+
+  var lastLaunched: pid_t? { lock.withLock { launched?.pid } }
 }

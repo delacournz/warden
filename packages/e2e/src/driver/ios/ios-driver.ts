@@ -211,6 +211,33 @@ function nativeDetail(data: SettleData): SettleDetail {
 	return detail;
 }
 
+/** The fields of a failed snapshot's `detail` the helper sets (which reader, why, both readers' errors), on its span. */
+export function noteSnapshotError(detail: unknown): void {
+	if (typeof detail !== "object" || detail === null) return;
+	const fields: Record<string, string> = {
+		stage: "axStage",
+		reason: "axReason",
+		request: "axRequest",
+		bridgeError: "bridgeError",
+		axError: "axError",
+	};
+	for (const [from, to] of Object.entries(fields)) {
+		const value: unknown = (detail as Record<string, unknown>)[from];
+		if (typeof value === "string") noteSpanDetail(to, value);
+	}
+}
+
+/** What the helper says about itself after a failed read: bridge state, host vs build Xcode, CoreSimulator. */
+export function noteHelperHealth(health: HealthData): void {
+	noteSpanDetail("bridge", health.ax.bridge);
+	if (health.ax.lastError) noteSpanDetail("bridgeLastError", health.ax.lastError.message);
+	if (health.ax.error) noteSpanDetail("bridgeLastError", health.ax.error);
+	if (health.xcode) noteSpanDetail("hostXcode", health.xcode);
+	if (health.builtWith?.xcode) noteSpanDetail("helperXcode", health.builtWith.xcode);
+	if (health.coreSimulatorVersion) noteSpanDetail("coreSimulator", health.coreSimulatorVersion);
+	if (health.frontmost) noteSpanDetail("frontmostUnresolvedAgoMs", health.frontmost.unresolvedAgoMs);
+}
+
 /** Leaves the helper's rebind verdict on the current span. */
 function noteRebind(data: RebindData): void {
 	noteSpanDetail("rebind", data.bound ? "bound" : (data.reason ?? "unbound"));
@@ -469,14 +496,30 @@ export function createIosDriver(
 		return okVoid;
 	}
 
+	/** Whether the helper's health was already noted for the current run of failed snapshots. */
+	let failureDiagnosed = false;
+
 	const fetchSnapshot = async (o?: { interactiveOnly?: boolean; backend?: Snapshot["backend"] }) => {
 		const result = await request("snapshot", params({ interactiveOnly: o?.interactiveOnly, backend: o?.backend }));
-		if (!result.success) return result;
-		const { fallback } = result.data;
+		if (!result.success) {
+			noteSnapshotError(result.error.detail);
+			if (!failureDiagnosed) {
+				failureDiagnosed = true;
+				const health = await request("health", {});
+				if (health.success) noteHelperHealth(health.data);
+			}
+			return result;
+		}
+		failureDiagnosed = false;
+		const { fallback, target } = result.data;
+		noteSpanDetail("backend", result.data.backend);
 		if (fallback) {
 			opts.log?.(`[ios] snapshot fell back ${fallback.from} -> ${fallback.to}: ${fallback.reason}`);
-			noteSpanDetail("backend", fallback.to);
 			noteSpanDetail("fallback", fallback.reason);
+		}
+		if (target) {
+			noteSpanDetail("targetPid", target.pid);
+			noteSpanDetail("targetSource", target.source);
 		}
 		return { success: true, data: toSnapshot(result.data, now()) } as const;
 	};

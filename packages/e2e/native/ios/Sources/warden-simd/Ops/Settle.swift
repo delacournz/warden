@@ -834,6 +834,9 @@ extension Session {
     await monitor.start()
   }
 
+  /// The stream's monitor if a stream was ever opened; never opens one.
+  func existingQuiescenceMonitor() -> QuiescenceMonitor? { quiescence.existing }
+
   func quiescenceMonitor() throws -> QuiescenceMonitor {
     guard let reader = axBridgeReader else {
       throw WireError(.unsupported, "settle needs the axbridge backend (bridge: \(bridge.name))")
