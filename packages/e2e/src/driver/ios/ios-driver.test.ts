@@ -66,6 +66,7 @@ async function open(
 		helperPath: "/opt/warden-simd",
 		exists: () => false,
 		log: (line) => logs.push(line),
+		coldBridgeBudgetMs: 0,
 		...extra,
 	});
 	if (!result.success) throw new Error(`${result.error.code}: ${result.error.message}`);
@@ -80,6 +81,94 @@ const unwrapped = async <T>(
 	if (!result.success) throw new Error(`${result.error.code}: ${result.error.message}`);
 	return result.data;
 };
+
+describe("cold bridge", () => {
+	const TIMEOUT = { error: { code: "E_TIMEOUT", message: "silent", retryable: true } } as const;
+
+	/** a driver on a fake clock whose sleeps advance it; the helper answers `replies` in order, then `snapshotData` */
+	async function coldOpen(replies: Array<"timeout" | "ok" | { code: string }>) {
+		let t = 0;
+		const sleeps: number[] = [];
+		const script = [...replies];
+		const made = await open(
+			(request) => {
+				if (request.op !== "snapshot") return undefined;
+				const step = script.shift() ?? "ok";
+				if (step === "ok") return { data: snapshotData };
+				if (step === "timeout") return TIMEOUT;
+				return { error: { code: step.code, message: "x" } };
+			},
+			{
+				coldBridgeBudgetMs: 60_000,
+				now: () => t,
+				sleep: async (ms) => {
+					sleeps.push(ms);
+					t += ms;
+				},
+			}
+		);
+		return { ...made, sleeps };
+	}
+
+	test("the first snapshot times out twice, waits for the bridge, then passes, and the span says how long", async () => {
+		const { driver, helper, sleeps } = await coldOpen(["timeout", "timeout"]);
+		const notes: SpanDetail = {};
+		const result = await collectSpanDetail(notes, () => driver.snapshot());
+		expect(result.success).toBe(true);
+		expect(helper.of("snapshot")).toHaveLength(3);
+		expect(sleeps).toEqual([2_000, 5_000]);
+		expect(notes.coldBridgeMs).toBe(7_000);
+	});
+
+	test("after one success a failed snapshot gets the normal budget: one try, no waiting", async () => {
+		const { driver, helper, sleeps } = await coldOpen(["ok", "timeout"]);
+		await unwrapped(driver.snapshot());
+		const second = await driver.snapshot();
+		expect(!second.success && second.error.code).toBe("E_TIMEOUT");
+		expect(helper.of("snapshot")).toHaveLength(2);
+		expect(sleeps).toEqual([]);
+	});
+
+	test("a bound rebind also proves the bridge", async () => {
+		let t = 0;
+		const { driver, helper } = await open(
+			(request) => {
+				if (request.op === "rebind") return { data: { bound: true, waitedMs: 700, pid: 4242, restarts: 0 } };
+				if (request.op === "snapshot") return TIMEOUT;
+				return lifecycle(request);
+			},
+			{
+				coldBridgeBudgetMs: 60_000,
+				now: () => t,
+				sleep: async (ms) => {
+					t += ms;
+				},
+			}
+		);
+		await unwrapped(driver.app.launch(BUNDLE));
+		const result = await driver.snapshot();
+		expect(!result.success && result.error.code).toBe("E_TIMEOUT");
+		expect(helper.of("snapshot")).toHaveLength(1);
+	});
+
+	test("an error that is not the bridge being late is not retried", async () => {
+		const { driver, helper, sleeps } = await coldOpen([{ code: "E_APP_UNAVAILABLE" }]);
+		const result = await driver.snapshot();
+		expect(!result.success && result.error.code).toBe("E_APP_UNAVAILABLE");
+		expect(helper.of("snapshot")).toHaveLength(1);
+		expect(sleeps).toEqual([]);
+	});
+
+	test("a bridge that never comes up fails with its error once the cold budget is spent", async () => {
+		const { driver, helper } = await coldOpen(Array(40).fill("timeout"));
+		const notes: SpanDetail = {};
+		const result = await collectSpanDetail(notes, () => driver.snapshot());
+		expect(!result.success && result.error.code).toBe("E_TIMEOUT");
+		expect(helper.of("snapshot").length).toBeGreaterThan(3);
+		expect(helper.of("snapshot").length).toBeLessThan(40);
+		expect(Number(notes.coldBridgeMs)).toBeGreaterThanOrEqual(50_000);
+	});
+});
 
 describe("openIosDriver", () => {
 	test("spawns the helper with --udid, enables AX automation and reports capabilities from ready", async () => {
