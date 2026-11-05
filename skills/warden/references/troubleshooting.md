@@ -157,6 +157,8 @@ Other codes:
 | `warden check` | exit 2 when another owner holds the device |
 | batch job | exit 124 = job killed for exceeding its timeout |
 
+`native.log` full of `<compose failure [shared UUID]>` (iOS 27 runtime, CI): the sim's shared cache could not be read back. The trace notes `native log: N of M messages unresolved`; the console tail skips those lines. Read the readable lines, `.ips` reports, then `xcrun simctl spawn <udid> log show --last 5m` on a leased sim.
+
 On a spec failure read `screen-at-failure.txt` and `failure.png` in the test's evidence folder (see `specs.md`).
 
 ## Helper

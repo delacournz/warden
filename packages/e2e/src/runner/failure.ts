@@ -34,6 +34,8 @@ const SPENT = "skipped, the post-deadline budget is used up";
 export type FailureCapture = {
 	/** files written into `dir`, relative to it */
 	files: string[];
+	/** readable lines to print next to the failure (native log tail); absent for captures that have none */
+	tail?: string[];
 	/** what could not be captured, for the trace */
 	problems: string[];
 };

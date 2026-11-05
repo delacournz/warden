@@ -412,3 +412,56 @@ describe("devtoolsTarget", () => {
 		expect(devtoolsTarget(envIn("/o"))).toEqual({ appId: "com.acme.app" });
 	});
 });
+
+describe("Session native log private data", () => {
+	const open = async (opts: { platform?: "ios" | "android"; physical?: boolean; env?: string }) => {
+		const calls: string[] = [];
+		const platform = opts.platform ?? "ios";
+		const fake = scriptedDriver({ platform, screens: [] });
+		const previous = process.env.WARDEN_NATIVE_LOG_PRIVATE;
+		if (opts.env === undefined) delete process.env.WARDEN_NATIVE_LOG_PRIVATE;
+		else process.env.WARDEN_NATIVE_LOG_PRIVATE = opts.env;
+		try {
+			const session = createSession({
+				env: {
+					...envIn(tmp()),
+					platform,
+					...(opts.physical ? { deviceKind: "physical" as const } : {}),
+				},
+				driverFactory: async () => ({ success: true, data: fake }),
+				nativeLog: {
+					exec: async (cmd) => {
+						calls.push(cmd.join(" "));
+						return { exitCode: 0, stdout: "", stderr: "" };
+					},
+					adb: "adb",
+					fs: { listReports: () => [], copy: () => {}, write: () => {} },
+					reportsDir: "/r",
+				},
+				exitHook: false,
+			});
+			await session.driver();
+			await session.driver();
+		} finally {
+			if (previous === undefined) delete process.env.WARDEN_NATIVE_LOG_PRIVATE;
+			else process.env.WARDEN_NATIVE_LOG_PRIVATE = previous;
+		}
+		return calls;
+	};
+
+	test("an iOS simulator gets private_data:on once, when the driver opens", async () => {
+		expect(await open({})).toEqual([
+			"xcrun simctl spawn U1 log config --status",
+			"xcrun simctl spawn U1 log config --mode private_data:on",
+		]);
+	});
+
+	test("WARDEN_NATIVE_LOG_PRIVATE=0 opts out", async () => {
+		expect(await open({ env: "0" })).toEqual([]);
+	});
+
+	test("Android and a physical iPhone are left alone", async () => {
+		expect(await open({ platform: "android" })).toEqual([]);
+		expect(await open({ physical: true })).toEqual([]);
+	});
+});

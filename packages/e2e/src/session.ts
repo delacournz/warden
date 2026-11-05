@@ -9,7 +9,7 @@ import { mkdirSync, writeSync } from "node:fs";
 import { resolve } from "node:path";
 import { type DevtoolsFacet, type DevtoolsResult, devtoolsErr } from "./devtools/devtools.types";
 import { openDevtoolsFacet } from "./devtools/facet";
-import type { NativeLogDeps } from "./devtools/native-log";
+import { enableNativePrivateData, NATIVE_PRIVATE_DATA_ENV, type NativeLogDeps } from "./devtools/native-log";
 import type { Driver, DriverResult } from "./driver/driver.types";
 import {
 	type HidRecoveryDeps,
@@ -322,6 +322,19 @@ export function createSession(opts: SessionOptions = {}): Session {
 		return driver;
 	}
 
+	/**
+	 * Private data on in a simulator's logd before the app runs, so `native.log` shows `%{private}` values: what
+	 * logd redacts when it writes cannot be recovered when it is read. Simulators only (a physical iPhone's logd
+	 * is not ours to configure); `WARDEN_NATIVE_LOG_PRIVATE=0` opts out. Best effort, noted on failure.
+	 */
+	async function nativePrivateData(): Promise<void> {
+		const deps = opts.nativeLog ?? defaultNativeLog;
+		if (deps === undefined || resolved.platform !== "ios" || resolved.deviceKind === "physical") return;
+		if (process.env[NATIVE_PRIVATE_DATA_ENV] === "0") return;
+		const problem = await enableNativePrivateData(resolved.udid, deps.exec);
+		if (problem !== undefined) note(problem);
+	}
+
 	const session: Session = {
 		env: resolved,
 		out,
@@ -355,7 +368,10 @@ export function createSession(opts: SessionOptions = {}): Session {
 						throw new E2eError("DRIVER", `${code}: ${message}`);
 					}
 					current = cacheObservations(traceDriver(result.data, { trace: () => attempt?.trace }));
-					return reenroll(current);
+					return reenroll(current).then(async (driver) => {
+						await nativePrivateData();
+						return driver;
+					});
 				},
 				(cause: unknown) => {
 					opened = undefined;
