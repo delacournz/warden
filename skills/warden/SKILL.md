@@ -78,6 +78,7 @@ Open the reference file for details before acting; this file only routes.
 | setup / helper problems | `warden doctor [--fetch-helper]` |
 | lease registry drift | `warden doctor --leases [--fix] [--json]` (exit 1 on drift; `--fix` deletes registry rows only; suites.md "Lease drift") |
 | version / channel | `warden version [--json]` |
+| anonymous usage telemetry (on by default; command and flag names only) | `warden telemetry [status\|enable\|disable] [--json]`; off with `WARDEN_TELEMETRY_DISABLED=1` or `DO_NOT_TRACK=1` |
 | install / update | `npm i -g @delacour/warden && warden install` · `warden update [--check]` · skill: `warden skill install` · `warden skill show` |
 
 By hand, specs need the preload: `bun test --preload @delacour/warden-e2e/preload <file>` (by hand needs bun; `warden e2e` / `ui record stop` don't).

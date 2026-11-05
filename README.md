@@ -94,6 +94,7 @@ warden ls                                        # leases: resource, state, owne
 warden clone <udid|name> [--name x]              # duplicate a shut-down sim into the pool (seconds, no first boot)
 warden golden ensure|ls|prune [--all]            # golden iOS images / Android snapshots new devices start from
 warden arrange                                   # tile warden simulator windows in name order (macOS; also runs after iOS claims)
+warden telemetry [status|enable|disable]         # anonymous usage telemetry: on by default, commands + flag names only; off with WARDEN_TELEMETRY_DISABLED=1 / DO_NOT_TRACK=1
 warden doctor [--json]                           # check home, db, device tools, helper, install method, hooks, stale leases
 warden devices [ios|android]                     # every sim/emulator (booted or not) + AVDs, warden-owned?, leased by (alias: list)
 warden sims [--max-size 40G]                     # disk audit: every sim + runtime, size, owner, lease, what can go

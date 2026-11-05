@@ -48,6 +48,7 @@ With `--json`, stdout holds exactly one JSON document, success or failure, and e
 | the agent skill | `warden skill show` · `warden skill install` |
 | setup problems | `warden doctor` |
 | update warden | `warden update` (`--check` to only look) |
+| see or switch off usage telemetry | `warden telemetry` · `warden telemetry disable` ([what is sent](#telemetry)) |
 
 ## Devices
 
@@ -775,3 +776,65 @@ Check home, db, device tools, the iOS simulator helper, install method (and its 
 ### `warden version`
 
 Print the version and build channel (`dev` / `local` / `release`).
+
+### `warden telemetry [status|enable|disable]`
+
+Show whether [anonymous usage telemetry](#telemetry) is on and why, or switch it. `--json` prints the status as one document. It is never counted itself.
+
+## Telemetry
+
+`warden` sends anonymous usage data so we can see which commands get used, on which platforms and in which setups (a person at a terminal, a coding agent, CI), and which commands fail. It is **on by default** and takes one command to turn off. The first time it would send anything it prints a notice to stderr saying so; under `--quiet` the notice waits for a run that is not.
+
+```bash
+warden telemetry            # is it on, and why
+warden telemetry disable    # turn it off, for every project on this machine
+warden telemetry enable
+```
+
+### What is sent
+
+One `command` event per run, in one request made as the command ends. Commands that run on every agent tool call or every 30 seconds (`hook`, `heartbeat`), `version`, shell completion and warden's own background workers send nothing. `dev` and `mcp`, which may run for hours, send theirs when they start.
+
+| | |
+|---|---|
+| The run | The command (`ui press`, `e2e`, `claim`), the **names** of the flags you typed (`--json`, `--platform`), how it ended (success, error or cancelled), how long it took, the exit code, and the **class name** of an error |
+| The device | Whether it was for `ios` or `android`, when you said so |
+| The suite | For `e2e` and `affected`, how many suites you named, never their names |
+| The output | Whether you passed `--json` |
+| This machine | The operating system family and kernel release, the CPU architecture, and the Bun or Node version |
+| How it ran | warden's version and build channel, whether stdin and stdout are terminals, whether it was started by `npx`, `bunx`, `pnpm dlx`, `yarn dlx` or an installed `warden` |
+| CI and agents | Whether it ran in CI, and in which one, and which coding agent started it, from the variables those set (`GITHUB_ACTIONS`, `CLAUDECODE`, `CODEX_SANDBOX`, …): only whether they are set, never their values |
+| Identity | A random machine ID, made the first time and kept in `~/.config/delacour/telemetry.json` (shared with other Delacour tools); a random ID for this run; and a project ID |
+
+The project ID is a SHA-256 hash of your repository's `origin` remote with the scheme, credentials and `.git` removed, so the same project has the same ID on a laptop and in CI. A folder with no remote is hashed with a random salt that stays in that same file. It cannot be reversed into a URL or a path, and it is how we count projects instead of runs.
+
+Events go to `telemetry.delacour.co.nz`, Delacour's own server. It works out a country from the request, discards the IP address, and forwards the event to PostHog for dashboards.
+
+### What is never sent
+
+Source code, file contents, file names and paths, spec, suite and test names, bundle identifiers, simulator UDIDs and emulator serials, app names, URLs, the URL of your git remote, environment variable values, flag values, positional arguments, error messages, usernames, hostnames and your IP address. `warden telemetry` itself is never counted.
+
+### `--json`, agents and CI
+
+Telemetry never touches stdout: the first-run notice goes to stderr, and a `--json` document is the only thing on stdout as before. The request is made with a 1.5 second ceiling and is dropped, never retried, when it cannot be sent, so a command never fails or waits longer because of it.
+
+### Turning it off
+
+Any one of these does it. The environment variables win over the stored choice, and over `warden telemetry enable`.
+
+| | |
+|---|---|
+| `warden telemetry disable` | Stored in `~/.config/delacour/telemetry.json` and kept until you run `enable` |
+| `DO_NOT_TRACK=1` | The [Console Do Not Track](https://consoledonottrack.com) convention, honoured by every Delacour tool |
+| `DELACOUR_TELEMETRY_DISABLED=1` | Every Delacour command-line tool |
+| `WARDEN_TELEMETRY_DISABLED=1` | `warden` only |
+
+It is also off when `NODE_ENV=test` and in dev and local builds (`warden version`). `DELACOUR_CONFIG_DIR` and `XDG_CONFIG_HOME` move the config file.
+
+### See exactly what would be sent
+
+```bash
+DELACOUR_TELEMETRY_DEBUG=1 warden ls
+```
+
+prints the request body to stderr and sends nothing. The rest of what warden sends is on the [privacy policy](/privacy#the-cli).
