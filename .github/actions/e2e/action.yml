@@ -1,0 +1,328 @@
+name: warden e2e
+description: Run a warden e2e suite on a macOS runner with the build, repack and golden-simulator caches, retries, and failure evidence wired up.
+
+# Composite on purpose: it only uses GitHub-owned actions (cache, upload-artifact), so an organisation
+# that allowlists actions needs nothing beyond `actions/*`. bun comes from npm, not oven-sh/setup-bun, for
+# the same reason. Call it from a job on a macOS runner after `actions/checkout`:
+#
+#   - uses: delacournz/warden/.github/actions/e2e@<sha>
+#     with: { suite: example, working-directory: apps/example }
+
+inputs:
+  working-directory:
+    description: Directory of the project's warden.config.ts, relative to the workspace.
+    default: .
+  suite:
+    description: "`e2e.<suite>` in warden.config.ts. Empty when the config has one suite."
+    default: ""
+  profile:
+    description: Simulator profile (`warden golden key --profile`, `--profile` of the run). Empty means the suite's own, else warden's default.
+    default: ""
+  count:
+    description: Simulators to run in parallel (`--count`). Empty means the suite's own. A 3-core runner gains nothing from 2, so 1 is the safe CI default.
+    default: ""
+  retry:
+    description: Reruns of a failed spec on the same worker (`--retry`). Empty means the suite's own.
+    default: ""
+  args:
+    description: Extra arguments for `warden e2e`, as one line (`--all`, `--base origin/main`, `--specs a,b`).
+    default: ""
+  app-path:
+    description: A simulator `.app` built earlier in this workflow, imported as the base (`warden builds import --kind simulator-base`) instead of building one. Build it with `CODE_SIGN_IDENTITY=-`, not `CODE_SIGNING_ALLOWED=NO`.
+    default: ""
+  warden-version:
+    description: Release tag to install (`v0.12.2`), `latest`, or `none` when warden is already on PATH.
+    default: latest
+  warden-repo:
+    description: Repo that publishes the warden releases.
+    default: delacournz/warden
+  bun-version:
+    description: bun to install from npm when none is on PATH (`1.4.3`). Empty reads `packageManager` from the root package.json. `none` never installs.
+    default: ""
+  install-command:
+    description: Run in `install-working-directory` before warden. Empty skips it.
+    default: bun install --frozen-lockfile
+  install-working-directory:
+    description: Where `install-command` runs, relative to the workspace.
+    default: .
+  npm-token:
+    description: Exported as NPM_TOKEN for `install-command` (private registries read it from bunfig.toml / .npmrc).
+    default: ${{ github.token }}
+  xcode-path:
+    description: Xcode to use (`/Applications/Xcode_27.2.app`); sets DEVELOPER_DIR for every later step. Empty keeps the runner's default.
+    default: ""
+  report-path:
+    description: Where the e2e-report.json goes, relative to the workspace.
+    default: warden-e2e-report.json
+  cache-prefix:
+    description: Prefix of every cache key. Change it to throw all caches away.
+    default: warden-e2e-v1
+  js-inputs:
+    description: Newline-separated git pathspecs (relative to `working-directory`) whose content is the JS bundle's input. Keys the repack cache; mirror `kinds.simulator.jsInputs`.
+    default: |
+      src
+      assets
+      app.config.ts
+      index.ts
+      metro.config.js
+      package.json
+  save-cache:
+    description: Save the build, repack and golden caches after a green run (true on the default branch, false on pull requests).
+    default: "true"
+  retention-days:
+    description: Days the evidence artifact is kept.
+    default: "3"
+  artifact-name:
+    description: Name of the evidence artifact. Give each call in a job its own.
+    default: warden-e2e
+
+outputs:
+  report-path:
+    description: Absolute path of e2e-report.json.
+    value: ${{ steps.run.outputs.report-path }}
+  passed:
+    description: "`true` when the gate passed, `false` when a required spec failed or the run broke."
+    value: ${{ steps.run.outputs.passed }}
+
+runs:
+  using: composite
+  steps:
+    - name: Prepare the runner
+      shell: bash
+      env:
+        XCODE_PATH: ${{ inputs.xcode-path }}
+      run: |
+        set -euo pipefail
+        {
+          echo "WARDEN_TELEMETRY_DISABLED=1"
+          echo "DO_NOT_TRACK=1"
+          echo "CI=true"
+        } >> "$GITHUB_ENV"
+        if [ -n "$XCODE_PATH" ]; then
+          [ -d "$XCODE_PATH" ] || { echo "xcode-path $XCODE_PATH does not exist; installed: $(ls -d /Applications/Xcode*.app | tr '\n' ' ')" >&2; exit 1; }
+          echo "DEVELOPER_DIR=$XCODE_PATH/Contents/Developer" >> "$GITHUB_ENV"
+          export DEVELOPER_DIR="$XCODE_PATH/Contents/Developer"
+        fi
+        xcodebuild -version
+        xcrun simctl list runtimes | sed -n '1,12p'
+        echo "cores: $(sysctl -n hw.ncpu), memory: $(( $(sysctl -n hw.memsize) / 1073741824 )) GB"
+
+    - name: Install bun
+      shell: bash
+      env:
+        BUN_VERSION: ${{ inputs.bun-version }}
+      run: |
+        set -euo pipefail
+        if [ "$BUN_VERSION" = none ]; then exit 0; fi
+        if [ -z "$BUN_VERSION" ] && command -v bun > /dev/null; then bun --version; exit 0; fi
+        if [ -z "$BUN_VERSION" ] && [ -f package.json ]; then
+          BUN_VERSION=$(node -e 'const p=require("./package.json").packageManager||"";process.stdout.write(p.startsWith("bun@")?p.slice(4):"")')
+        fi
+        if [ -z "$BUN_VERSION" ]; then echo "no bun on PATH and no packageManager bun@<version>: set the bun-version input" >&2; exit 1; fi
+        npm install --global --no-audit --no-fund "bun@$BUN_VERSION"
+        bun --version
+
+    - name: Install dependencies
+      if: inputs.install-command != ''
+      shell: bash
+      working-directory: ${{ inputs.install-working-directory }}
+      env:
+        NPM_TOKEN: ${{ inputs.npm-token }}
+        INSTALL: ${{ inputs.install-command }}
+      run: bash -c "$INSTALL"
+
+    - name: Install warden
+      if: inputs.warden-version != 'none'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        WARDEN_VERSION: ${{ inputs.warden-version }}
+        WARDEN_REPO: ${{ inputs.warden-repo }}
+      run: |
+        set -euo pipefail
+        case "$(uname -s)-$(uname -m)" in
+          Darwin-arm64) target=darwin-arm64 ;;
+          Darwin-x86_64) target=darwin-x64 ;;
+          *) echo "warden e2e needs macOS, got $(uname -s)-$(uname -m)" >&2; exit 1 ;;
+        esac
+        dir="$RUNNER_TEMP/warden-dl"
+        mkdir -p "$dir" "$HOME/.local/bin"
+        tag_args=()
+        if [ "$WARDEN_VERSION" != latest ]; then tag_args=("$WARDEN_VERSION"); fi
+        gh release download "${tag_args[@]}" --repo "$WARDEN_REPO" --dir "$dir" \
+          --pattern "warden-$target" --pattern checksums.txt --clobber
+        (cd "$dir" && grep " warden-$target\$" checksums.txt | shasum -a 256 -c -)
+        install -m 0755 "$dir/warden-$target" "$HOME/.local/bin/warden"
+        echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+    - name: Check the host (warden doctor)
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        warden --version
+        warden doctor --fetch-helper
+
+    - name: Key the caches
+      id: keys
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        PREFIX: ${{ inputs.cache-prefix }}
+        PROFILE: ${{ inputs.profile }}
+        JS_INPUTS: ${{ inputs.js-inputs }}
+      run: |
+        set -euo pipefail
+        fp=$(warden app fingerprint ios --kind simulator --json | node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8"));process.stdout.write(d.fingerprints.ios)')
+        [ -n "$fp" ] || { echo "warden app fingerprint printed no ios fingerprint" >&2; exit 1; }
+        specs=()
+        while IFS= read -r line; do [ -n "$line" ] && specs+=("$line"); done <<< "$JS_INPUTS"
+        js=$(git ls-files -s -- "${specs[@]}" | shasum -a 256 | cut -c1-16)
+        profile_args=()
+        if [ -n "$PROFILE" ]; then profile_args=(--profile "$PROFILE"); fi
+        golden=$(warden golden key "${profile_args[@]}")
+        runner="$RUNNER_OS-$RUNNER_ARCH"
+        {
+          echo "fingerprint=$fp"
+          echo "js=$js"
+          echo "golden=$golden"
+          echo "builds=$PREFIX-builds-$runner-$fp"
+          echo "repack=$PREFIX-repack-$runner-$fp-$js"
+          echo "golden-key=$PREFIX-$runner-$golden"
+        } >> "$GITHUB_OUTPUT"
+        echo "native fingerprint $fp, js $js, golden $golden"
+
+    # Restore and save are separate steps so a failed run never saves: a half-built base or an unsettled
+    # golden would be restored by every later run. The repack directories are cached on their own key (the
+    # native fingerprint plus the JS inputs); the builds cache excludes them.
+    - name: Restore the native build cache
+      id: builds-cache
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          ~/.warden/builds
+          !~/.warden/builds/*/ios/*/simulator/repacks
+        key: ${{ steps.keys.outputs.builds }}
+
+    - name: Restore the JS repack cache
+      id: repack-cache
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.warden/builds/*/ios/*/simulator/repacks
+        key: ${{ steps.keys.outputs.repack }}
+
+    - name: Restore the golden simulator
+      id: golden-cache
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/warden-goldens
+        key: ${{ steps.keys.outputs.golden-key }}
+
+    - name: Import the golden and the prebuilt app
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        APP_PATH: ${{ inputs.app-path }}
+        WORKSPACE: ${{ github.workspace }}
+      run: |
+        set -euo pipefail
+        warden golden import ~/warden-goldens
+        if [ -n "$APP_PATH" ]; then
+          case "$APP_PATH" in /*) app="$APP_PATH" ;; *) app="$WORKSPACE/$APP_PATH" ;; esac
+          warden builds import "$app" --kind simulator-base
+        fi
+
+    - name: Run the suite
+      id: run
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        SUITE: ${{ inputs.suite }}
+        PROFILE: ${{ inputs.profile }}
+        COUNT: ${{ inputs.count }}
+        RETRY: ${{ inputs.retry }}
+        EXTRA: ${{ inputs.args }}
+        REPORT: ${{ inputs.report-path }}
+        WORKSPACE: ${{ github.workspace }}
+      run: |
+        set -uo pipefail
+        case "$REPORT" in /*) report="$REPORT" ;; *) report="$WORKSPACE/$REPORT" ;; esac
+        args=(e2e)
+        if [ -n "$SUITE" ]; then args+=("$SUITE"); fi
+        if [ -n "$PROFILE" ]; then args+=(--profile "$PROFILE"); fi
+        if [ -n "$COUNT" ]; then args+=(--count "$COUNT"); fi
+        if [ -n "$RETRY" ]; then args+=(--retry "$RETRY"); fi
+        args+=(--report "$report")
+        # shellcheck disable=SC2206
+        extra=($EXTRA)
+        started=$(date +%s)
+        warden "${args[@]}" "${extra[@]}"
+        code=$?
+        {
+          echo "report-path=$report"
+          echo "exit-code=$code"
+          echo "passed=$([ "$code" -eq 0 ] && echo true || echo false)"
+          echo "seconds=$(( $(date +%s) - started ))"
+        } >> "$GITHUB_OUTPUT"
+        echo "warden e2e exited $code after $(( $(date +%s) - started )) s"
+
+    - name: Print failure evidence
+      if: always() && steps.run.outputs.passed != 'true'
+      shell: bash
+      run: bash "$GITHUB_ACTION_PATH/evidence.sh"
+
+    - name: Upload the report and evidence
+      if: always()
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: |
+          ${{ steps.run.outputs.report-path || format('{0}/{1}', github.workspace, inputs.report-path) }}
+          ~/.warden/batches
+        if-no-files-found: warn
+        retention-days: ${{ inputs.retention-days }}
+
+    - name: Export the golden simulator
+      if: steps.run.outputs.passed == 'true' && inputs.save-cache == 'true' && steps.golden-cache.outputs.cache-hit != 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        PROFILE: ${{ inputs.profile }}
+      run: |
+        profile_args=()
+        if [ -n "$PROFILE" ]; then profile_args=(--profile "$PROFILE"); fi
+        warden golden export ~/warden-goldens "${profile_args[@]}"
+
+    - name: Save the golden simulator
+      if: steps.run.outputs.passed == 'true' && inputs.save-cache == 'true' && steps.golden-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/warden-goldens
+        key: ${{ steps.keys.outputs.golden-key }}
+
+    - name: Save the native build cache
+      if: steps.run.outputs.passed == 'true' && inputs.save-cache == 'true' && steps.builds-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          ~/.warden/builds
+          !~/.warden/builds/*/ios/*/simulator/repacks
+        key: ${{ steps.keys.outputs.builds }}
+
+    - name: Save the JS repack cache
+      if: steps.run.outputs.passed == 'true' && inputs.save-cache == 'true' && steps.repack-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.warden/builds/*/ios/*/simulator/repacks
+        key: ${{ steps.keys.outputs.repack }}
+
+    - name: Gate on the suite
+      if: always()
+      shell: bash
+      env:
+        PASSED: ${{ steps.run.outputs.passed }}
+        CODE: ${{ steps.run.outputs.exit-code }}
+      run: |
+        if [ "$PASSED" != true ]; then
+          echo "::error title=warden e2e failed::exit code ${CODE:-unknown}; see the evidence above and the ${{ inputs.artifact-name }} artifact"
+          exit "${CODE:-1}"
+        fi
