@@ -22,6 +22,7 @@ warden e2e example --specs todos,settings  # exactly these ids / globs
 | `--required-only` | only specs with `required: true` |
 | `--explain` / `--dry-run` | print why each spec was selected / select, run nothing |
 | `--report <file>` | also write `e2e-report.json` there |
+| `--json-lines` | stdout is NDJSON: `{"event":"test",spec,file,title[],status,durationMs,error?,code?,line?,artifacts?,device}` per test as it finishes, then `{"event":"report",report}`. Progress stays on stderr |
 | `--devices default\|all\|<profile,...>` | which `devices` legs run |
 | `--no-shutdown` | keep devices up after a pass (default: shut down those warden created, locally and under CI; suite `shutdown`) |
 | `--dev` | the dev client (kind `dev`) on a Metro warden starts: the suite's `metro` block, or the defaults when it has none. Not with `--kind` / `--variant` |
@@ -34,6 +35,10 @@ warden e2e example --specs todos,settings  # exactly these ids / globs
 | batch flags | `--retry --passes --serve --serve-ready --serve-timeout --job-timeout --record <dir> --logs <dir> --no-tui` |
 
 Suite settings are defaults. A flag passed on the command line wins.
+
+**Verdict (stderr):** failed specs with their tests, then `warden e2e: tests <n> passed · <n> failed · <n> skipped`, `<k>/<n> failed tests share one error: <msg>` when 2+ do (usually the root cause, not the specs), `evidence in <batchDir>`, then `<k>/<n> spec(s) passed — gate passed|failed`.
+
+**GitHub Actions** (`GITHUB_ACTIONS=true`, automatic): one `::error` per failed test on its spec file at the line it failed (`::warning` for an optional spec; a spec with no results is annotated on the file), paths relative to `GITHUB_WORKSPACE`; on stdout, on stderr with `--json` / `--json-lines`. A markdown table of failed tests is appended to `$GITHUB_STEP_SUMMARY`.
 
 **Exit codes:** `0` every required spec passed (or nothing affected, or dry-run). `1` the gate failed or an error. `130` interrupted.
 
@@ -236,7 +241,7 @@ e2e/<w>-<seq>[-p<N>]/results.jsonl        (-pN: pass N+1 of an attempt, with pas
 e2e/<w>-<seq>[-p<N>]/<specId>/<title>-<hash6>/   trace.jsonl screenshots/ failure.png screen-at-failure.txt console.jsonl network.jsonl perf/ (with --perf)
 ```
 
-`e2e-report.json`: `{ suite, platform, base?, isolate, ok, headless, batchDir?, specs[], only?, setup? }`. Each spec has `verdict`, `attempts`, `tests[]`.
+`e2e-report.json`: `{ suite, platform, base?, isolate, ok, headless, batchDir?, specs[], only?, setup? }`. Each spec has `verdict`, `attempts`, `tests[]`; a failed test carries `line` (where it failed in the spec, from the stack) when the spec is on its stack.
 
 `batch.json` jobs (one per attempt) may carry `logDrainMs`: ms spent draining the job's log pipes after it exited, summed over its `passes`.
 

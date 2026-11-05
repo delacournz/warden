@@ -48,7 +48,8 @@ Every run writes under a batch directory, `$WARDEN_HOME/batches/<id>` (the `--re
 
 | What | Where |
 |---|---|
-| verdict per spec, and per test (`tests[]`) | stdout, and `e2e-report.json` (`--json` prints it, `--report <file>` copies it) |
+| verdict per spec, and per test (`tests[]`) | stderr, and `e2e-report.json` (`--json` prints it, `--report <file>` copies it, `--json-lines` streams each test then the report) |
+| failures on the PR (GitHub Actions) | an `::error` annotation per failed test at its spec line, and a table in the job's step summary, both automatic |
 | every test's status, duration and error | `e2e/<worker>-<seq>/results.jsonl` (`WARDEN_E2E_OUT`) |
 | a failed test's evidence | `e2e/<worker>-<seq>/<spec>/<test>-<hash>/` |
 | a spec process's output | `logs/<worker>-<seq>-<job>.log` (`<job>` is `shard-<k>` under device isolation, the spec id with `isolate: "spec"`), screenshot next to it |

@@ -91,6 +91,7 @@ With one suite the name is optional. `warden e2e` is [`warden batch`](/docs/sims
 | `--serve`, `--serve-ready`, `--serve-timeout`, `--port <from:span>` | a local service and leased ports for the run |
 | `--headless`, `--no-headless` | close or keep Simulator.app windows ([Headless](/docs/sims/headless)) |
 | `--record <dir>`, `--logs <dir>`, `--no-tui`, `--json`, `--report <file>` | record every simulator and the TUI (iOS); job logs dir; plain lines instead of the live grid; JSON output; also write `e2e-report.json` here |
+| `--json-lines` | NDJSON on stdout: a `test` event as each test finishes, then a `report` event with the whole `e2e-report.json` |
 | `--no-shutdown`, `--no-warm`, `--adopt` | keep devices up after a pass; skip the iOS driver pre-warm; allow foreign devices |
 
 Exit 0: every required spec passed (or nothing was selected, in which case no device is claimed). Exit 1: a required spec failed, or setup failed. Exit 130: interrupted. `required: false` specs are reported but never fail the gate.
