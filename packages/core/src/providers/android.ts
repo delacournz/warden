@@ -12,8 +12,10 @@ import { cameraFeedDir, clearCameraFeeds } from "../conditions/camera-media";
 import { DEFAULT_TTL_MS } from "../config.defaults";
 import { type Exec, type ExecOptions, execError } from "../exec";
 import { type PidAlive, processAlive } from "../liveness";
+import { isPortFree as probePortFree } from "../ports";
 import { type Store, wardenHome } from "../store";
 import type { InventoryDevice, Lease } from "../types";
+import { forgetGrpcPort, grpcArgv, grpcEnabled, leaseGrpcPort } from "./android-grpc";
 import type { DeviceProvider, ProviderDeps } from "./provider.types";
 
 /** Emulator console ports: even, 5554–5584; the adb port is console + 1. */
@@ -211,6 +213,8 @@ export type AndroidProviderOptions = {
 	snapshotFailed?: (avd: string, snapshot: string) => AsyncResult<unknown>;
 	/** The emulator launched from `snapshot` of `avd` and reached ready with no load failure logged. */
 	snapshotLoaded?: (avd: string, snapshot: string) => void;
+	/** bind probe for the gRPC port (default: `ports.ts` `isPortFree`) */
+	isPortFree?: (port: number) => Promise<boolean>;
 };
 
 /** How often, and how long, `boot` looks for a just-launched warden emulator in `adb devices`. */
@@ -288,9 +292,19 @@ export function createSpawnDetached(earlyExitMs = 1_500): SpawnDetached {
 	};
 }
 
-/** Cheap headless flags every warden emulator gets: no audio backend (unless `WARDEN_EMULATOR_AUDIO=1`), no usage metrics. */
+/**
+ * Cheap headless flags every warden emulator gets: no audio backend (unless `WARDEN_EMULATOR_AUDIO=1`), no usage
+ * metrics, and `-gpu <mode>` when `WARDEN_EMULATOR_GPU` names one (`host`, `swiftshader_indirect`, …; a headless
+ * emulator's own `auto` picks the software renderer). They are part of the quick-boot snapshot key, which a renderer
+ * change must invalidate.
+ */
 export function headlessEmulatorFlags(env: Record<string, string | undefined>): string[] {
-	return [...(env.WARDEN_EMULATOR_AUDIO === "1" ? [] : ["-no-audio"]), "-no-metrics"];
+	const gpu = env.WARDEN_EMULATOR_GPU;
+	return [
+		...(env.WARDEN_EMULATOR_AUDIO === "1" ? [] : ["-no-audio"]),
+		"-no-metrics",
+		...(gpu !== undefined && /^[a-z][a-z0-9_-]*$/.test(gpu) ? ["-gpu", gpu] : []),
+	];
 }
 
 /** An early exit whose message says the emulator does not know one of its options (an older emulator). */
@@ -308,7 +322,9 @@ export function claimEmulatorArgv(
 	/** `false` leaves out `headlessEmulatorFlags` (an emulator that rejected them) */
 	headless = true,
 	/** a `+cam` device's feeds: each camera plays `mode`'s video, else reads `<facing>.png` from `dir` */
-	camera?: { dir: string; mode: CameraMode }
+	camera?: { dir: string; mode: CameraMode },
+	/** the leased port of the emulator's gRPC bridge (`android-grpc.ts`); absent = no bridge */
+	grpcPort?: number
 ): string[] {
 	return [
 		tools.emulator,
@@ -323,6 +339,7 @@ export function claimEmulatorArgv(
 		"-no-boot-anim",
 		...(headless ? headlessEmulatorFlags(env) : []),
 		...(camera !== undefined ? cameraArgv(camera.dir, camera.mode) : []),
+		...(grpcPort !== undefined ? grpcArgv(grpcPort) : []),
 	];
 }
 
@@ -498,6 +515,7 @@ export function forgetAndroidEmulator(store: Store, serial: string): void {
 			const lease = store.findLeaseByResource({ kind: "port", port });
 			if (isEmulatorPortLease(lease)) store.deleteLeases([lease.id]);
 		}
+		forgetGrpcPort(store, serial);
 		store.forgetDevice("android", serial);
 	});
 }
@@ -533,6 +551,7 @@ export function createAndroidProvider(deps: ProviderDeps, options: AndroidProvid
 	const pollIntervalMs = options.pollIntervalMs ?? 250;
 	const pidAlive = options.pidAlive ?? processAlive;
 	const spawnDetached = options.spawnDetached ?? createSpawnDetached(options.earlyExitMs);
+	const isPortFree = options.isPortFree ?? ((port: number) => probePortFree(port));
 	/** emulators this provider launched: the boot wait watches their pid */
 	type Launch = { pid: number; logPath: string; logOffset: number; avd: string; snapshot?: string };
 	const launches = new Map<string, Launch>();
@@ -718,7 +737,8 @@ export function createAndroidProvider(deps: ProviderDeps, options: AndroidProvid
 		serial: string,
 		snapshot: string | undefined,
 		headless: boolean,
-		camera: boolean
+		camera: boolean,
+		grpcPort: number | undefined
 	): AsyncResult<{ pid: number; logPath: string; logOffset: number }> {
 		const logDir = join(wardenHome(deps.env), "logs");
 		try {
@@ -738,9 +758,21 @@ export function createAndroidProvider(deps: ProviderDeps, options: AndroidProvid
 			}
 			cameraLaunch = { dir: cameraDir, mode: readCameraMode(cameraDir) };
 		}
-		const argv = claimEmulatorArgv(tools, deps.env, avd, port, snapshot, headless, cameraLaunch);
+		const argv = claimEmulatorArgv(tools, deps.env, avd, port, snapshot, headless, cameraLaunch, grpcPort);
 		const spawned = await spawnDetached(argv, logPath);
 		return spawned.success ? ok({ pid: spawned.data.pid, logPath, logOffset }) : spawned;
+	}
+
+	/**
+	 * The gRPC port `serial` launches with: its lease (kept across a relaunch), or none when gRPC is off or no port
+	 * is free. A missing bridge only costs the live stream its fast path, so it never fails a launch.
+	 */
+	async function grpcPortFor(serial: string): Promise<number | undefined> {
+		if (!grpcEnabled(deps.env)) return undefined;
+		const leased = await leaseGrpcPort({ ...deps, pidAlive, isPortFree }, serial);
+		if (leased.success) return leased.data.port;
+		deps.log?.(`${serial}: launching without gRPC (${leased.error})`);
+		return undefined;
 	}
 
 	/** `adb devices` for a create: the last inventory's when it is recent (the claim's own), else a fresh one. */
@@ -761,14 +793,15 @@ export function createAndroidProvider(deps: ProviderDeps, options: AndroidProvid
 		camera: boolean
 	): AsyncResult<{ pid: number; logPath: string; logOffset: number; snapshot?: string }> {
 		let headless = true;
+		const grpcPort = await grpcPortFor(serial);
 		const attempt = async (from: string | undefined) => {
-			const first = await launch(avd, port, serial, from, headless, camera);
+			const first = await launch(avd, port, serial, from, headless, camera, grpcPort);
 			if (first.success || !headless || !rejectedOption(first.error)) return first;
 			headless = false;
 			deps.log?.(
 				`${serial}: the emulator rejected ${headlessEmulatorFlags(deps.env).join(" ")} — relaunching without them`
 			);
-			return launch(avd, port, serial, from, false, camera);
+			return launch(avd, port, serial, from, false, camera, grpcPort);
 		};
 		const launched = await attempt(snapshot);
 		if (launched.success) return snapshot !== undefined ? ok({ ...launched.data, snapshot }) : launched;
@@ -820,6 +853,7 @@ export function createAndroidProvider(deps: ProviderDeps, options: AndroidProvid
 			const launched = await launchOrColdBoot(avdName, port, serial, snapshot, camera);
 			if (!launched.success) {
 				deps.store.deleteLeases([lease.id]);
+				forgetGrpcPort(deps.store, serial);
 				return launched;
 			}
 			launches.set(serial, { ...launched.data, avd: target });

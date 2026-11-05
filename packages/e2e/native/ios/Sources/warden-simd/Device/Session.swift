@@ -208,6 +208,9 @@ extension WireError {
   /// `E_AX_UNAVAILABLE` / `E_APP_*`, HID failures `E_HID`, "nothing there" `E_NO_ELEMENT`.
   static func from(_ error: any Error) -> WireError {
     if let wire = error as? WireError { return wire }
+    if let stream = error as? StreamError {
+      return WireError(ErrorCode(rawValue: stream.code.rawValue) ?? .internal, stream.message)
+    }
     if error is CancellationError { return WireError(.internal, "operation cancelled") }
     if let error = error as? QuiescenceError { return from(quiescence: error) }
     if let error = error as? UIAutomationError { return from(automation: error) }

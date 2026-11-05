@@ -4,8 +4,8 @@ import Foundation
 /// (`AUFraming`) written from a queue of at most `maxQueued`. A reader that falls behind never makes latency grow:
 /// the queue is emptied and `onNeedKeyframe` asks the encoder for a keyframe, so the reader resumes on an IDR. A new
 /// reader asks for one too, so it starts on an IDR.
-final class AUSocket: @unchecked Sendable {
-  let path: String
+package final class AUSocket: @unchecked Sendable {
+  package let path: String
   private let listener: Int32
   private let maxQueued: Int
   private let onNeedKeyframe: @Sendable () -> Void
@@ -18,19 +18,19 @@ final class AUSocket: @unchecked Sendable {
   private var sent = 0
   private var sentBytes = 0
 
-  init(path: String, maxQueued: Int = 3, onNeedKeyframe: @escaping @Sendable () -> Void) throws {
+  package init(path: String, maxQueued: Int = 3, onNeedKeyframe: @escaping @Sendable () -> Void) throws {
     self.path = path
     self.maxQueued = maxQueued
     self.onNeedKeyframe = onNeedKeyframe
     unlink(path)
     listener = socket(AF_UNIX, SOCK_STREAM, 0)
-    guard listener >= 0 else { throw WireError(.io, "socket: errno \(errno)") }
+    guard listener >= 0 else { throw StreamError(.io, "socket: errno \(errno)") }
     var addr = sockaddr_un()
     addr.sun_family = sa_family_t(AF_UNIX)
     let bytes = Array(path.utf8)
     guard bytes.count < MemoryLayout.size(ofValue: addr.sun_path) else {
       Darwin.close(listener)
-      throw WireError(.badRequest, "stream socket path is longer than \(MemoryLayout.size(ofValue: addr.sun_path) - 1) bytes")
+      throw StreamError(.badRequest, "stream socket path is longer than \(MemoryLayout.size(ofValue: addr.sun_path) - 1) bytes")
     }
     withUnsafeMutableBytes(of: &addr.sun_path) { raw in raw.copyBytes(from: bytes) }
     let bound = withUnsafePointer(to: &addr) {
@@ -39,28 +39,28 @@ final class AUSocket: @unchecked Sendable {
     guard bound == 0, listen(listener, 2) == 0 else {
       let code = errno
       Darwin.close(listener)
-      throw WireError(.io, "could not listen on \(path): errno \(code)")
+      throw StreamError(.io, "could not listen on \(path): errno \(code)")
     }
     chmod(path, 0o600)
     Thread.detachNewThread { [weak self] in self?.acceptLoop() }
     Thread.detachNewThread { [weak self] in self?.writeLoop() }
   }
 
-  var stats: (sent: Int, bytes: Int, dropped: Int, connected: Bool) {
+  package var stats: (sent: Int, bytes: Int, dropped: Int, connected: Bool) {
     lock.withLock { (sent, sentBytes, dropped, client >= 0) }
   }
 
   /// Resolves once a reader is connected.
-  func waitForClient(timeoutMs: Int) async throws {
+  package func waitForClient(timeoutMs: Int) async throws {
     let deadline = ContinuousClock.now + .milliseconds(timeoutMs)
     while ContinuousClock.now < deadline {
       if lock.withLock({ client >= 0 }) { return }
       try await Task.sleep(for: .milliseconds(10))
     }
-    throw WireError(.timeout, "no reader connected to \(path) within \(timeoutMs) ms")
+    throw StreamError(.timeout, "no reader connected to \(path) within \(timeoutMs) ms")
   }
 
-  func send(_ unit: EncodedUnit) {
+  package func send(_ unit: EncodedUnit) {
     let framed = AUFraming.frame(unit)
     var overflow = false
     ready.lock()
@@ -80,7 +80,7 @@ final class AUSocket: @unchecked Sendable {
     if overflow { onNeedKeyframe() }
   }
 
-  func close() {
+  package func close() {
     ready.lock()
     lock.withLock {
       closed = true

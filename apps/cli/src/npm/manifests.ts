@@ -100,7 +100,11 @@ export function platformManifest(target: ReleaseTarget, meta: PackageMeta, helpe
 		...repoLinks(meta.repository),
 		os: [os],
 		cpu: [cpu],
-		files: [BINARY_PATH, ...(shipped ? helperFiles(BIN_DIR, shipped.frameworks, shipped.inject) : []), LICENSE_FILE],
+		files: [
+			BINARY_PATH,
+			...(shipped ? helperFiles(BIN_DIR, shipped.frameworks, shipped.inject, shipped.emud) : []),
+			LICENSE_FILE,
+		],
 		...(shipped
 			? {
 					bin: { [HELPER_BINARY]: `${BIN_DIR}/${HELPER_BINARY}` },

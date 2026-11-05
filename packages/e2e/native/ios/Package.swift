@@ -10,16 +10,36 @@ let package = Package(
   name: "warden-simd",
   platforms: [.macOS(.v15)],
   products: [
-    .executable(name: "warden-simd", targets: ["warden-simd"])
+    .executable(name: "warden-simd", targets: ["warden-simd"]),
+    .executable(name: "warden-emud", targets: ["warden-emud"]),
   ],
   dependencies: [
     .package(name: "idb-libraries", path: "../idb-libraries")
   ],
   targets: [
+    // The H.264 stream pieces (VideoToolbox encoder, pacer, AU framing, socket) shared by warden-simd (the
+    // simulator display) and warden-emud (an Android emulator's gRPC frames). No idb dependency.
+    .target(
+      name: "WardenStream",
+      path: "Sources/WardenStream"
+    ),
+    // An Android emulator's gRPC screenshot stream (h2c, MMAP frames) into WardenStream: the library warden-emud
+    // serves and its tests drive against a fake bridge.
+    .target(
+      name: "WardenEmu",
+      dependencies: ["WardenStream"],
+      path: "Sources/WardenEmu"
+    ),
+    .executableTarget(
+      name: "warden-emud",
+      dependencies: ["WardenEmu"],
+      path: "Sources/warden-emud"
+    ),
     .executableTarget(
       name: "warden-simd",
       dependencies: [
-        .product(name: "FBSimulatorAX", package: "idb-libraries")
+        "WardenStream",
+        .product(name: "FBSimulatorAX", package: "idb-libraries"),
       ],
       path: "Sources/warden-simd",
       // The stub frameworks (CoreSimulatorStub, AccessibilityPlatformTranslationStub) are staged next to the
@@ -30,8 +50,13 @@ let package = Package(
     ),
     .testTarget(
       name: "warden-simdTests",
-      dependencies: ["warden-simd"],
+      dependencies: ["warden-simd", "WardenStream"],
       path: "Tests/warden-simdTests"
+    ),
+    .testTarget(
+      name: "warden-emudTests",
+      dependencies: ["WardenEmu", "WardenStream"],
+      path: "Tests/warden-emudTests"
     ),
   ]
 )

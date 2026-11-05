@@ -8,11 +8,11 @@ import VideoToolbox
 /// `maxKeyIntervalSeconds`). Each source frame is first copied (and scaled) into a pooled `width`×`height` NV12
 /// buffer, so the simulator drawing into its IOSurface while the encoder reads can never tear a frame. Units reach
 /// `sink` in encode order on VideoToolbox's callback thread.
-final class StreamEncoder: @unchecked Sendable {
-  typealias Sink = @Sendable (EncodedUnit) -> Void
+package final class StreamEncoder: @unchecked Sendable {
+  package typealias Sink = @Sendable (EncodedUnit) -> Void
 
-  let width: Int
-  let height: Int
+  package let width: Int
+  package let height: Int
   private let session: VTCompressionSession
   private let transfer: VTPixelTransferSession
   private let pool: CVPixelBufferPool
@@ -20,8 +20,9 @@ final class StreamEncoder: @unchecked Sendable {
   private let lock = NSLock()
   private var wantKey = true
   private var failures = 0
+  private var drops = 0
 
-  init(width: Int, height: Int, fps: Int, bitrate: Int, maxKeyIntervalSeconds: Int = 10, sink: @escaping Sink) throws {
+  package init(width: Int, height: Int, fps: Int, bitrate: Int, maxKeyIntervalSeconds: Int = 10, sink: @escaping Sink) throws {
     self.width = width
     self.height = height
     self.sink = sink
@@ -31,14 +32,14 @@ final class StreamEncoder: @unchecked Sendable {
       allocator: nil, width: Int32(width), height: Int32(height), codecType: kCMVideoCodecType_H264,
       encoderSpecification: spec as CFDictionary, imageBufferAttributes: nil, compressedDataAllocator: nil,
       outputCallback: nil, refcon: nil, compressionSessionOut: &created)
-    guard status == noErr, let created else { throw WireError(.internal, "VTCompressionSessionCreate: \(status)") }
+    guard status == noErr, let created else { throw StreamError(.internal, "VTCompressionSessionCreate: \(status)") }
     session = created
     var transferSession: VTPixelTransferSession?
     guard VTPixelTransferSessionCreate(allocator: nil, pixelTransferSessionOut: &transferSession) == noErr,
       let transferSession
     else {
       VTCompressionSessionInvalidate(created)
-      throw WireError(.internal, "VTPixelTransferSessionCreate failed")
+      throw StreamError(.internal, "VTPixelTransferSessionCreate failed")
     }
     VTSessionSetProperty(transferSession, key: kVTPixelTransferPropertyKey_ScalingMode, value: kVTScalingMode_Normal)
     transfer = transferSession
@@ -54,7 +55,7 @@ final class StreamEncoder: @unchecked Sendable {
     else {
       VTCompressionSessionInvalidate(created)
       VTPixelTransferSessionInvalidate(transferSession)
-      throw WireError(.internal, "CVPixelBufferPoolCreate failed")
+      throw StreamError(.internal, "CVPixelBufferPoolCreate failed")
     }
     pool = createdPool
     let properties: [CFString: Any] = [
@@ -71,7 +72,7 @@ final class StreamEncoder: @unchecked Sendable {
       // Low-latency rate control rejects some keys (MaxFrameDelayCount); the rest still apply.
       if set != noErr && key != kVTCompressionPropertyKey_MaxFrameDelayCount {
         VTCompressionSessionInvalidate(session)
-        throw WireError(.internal, "VTSessionSetProperty \(key): \(set)")
+        throw StreamError(.internal, "VTSessionSetProperty \(key): \(set)")
       }
     }
     VTCompressionSessionPrepareToEncodeFrames(session)
@@ -83,20 +84,23 @@ final class StreamEncoder: @unchecked Sendable {
   }
 
   /// The next encoded frame is an IDR.
-  func requestKeyframe() {
+  package func requestKeyframe() {
     lock.withLock { wantKey = true }
   }
 
-  /// Frames VideoToolbox handed back with an error (dropped).
-  var errorCount: Int { lock.withLock { failures } }
+  /// Frames VideoToolbox handed back with an error (the next frame is an IDR).
+  package var errorCount: Int { lock.withLock { failures } }
 
-  func encode(_ source: CVPixelBuffer, ptsMicros: UInt64) throws {
+  /// Frames rate control skipped (no IDR follows).
+  package var droppedCount: Int { lock.withLock { drops } }
+
+  package func encode(_ source: CVPixelBuffer, ptsMicros: UInt64) throws {
     var copy: CVPixelBuffer?
     guard CVPixelBufferPoolCreatePixelBuffer(nil, pool, &copy) == kCVReturnSuccess, let pixels = copy else {
-      throw WireError(.internal, "no free encoder buffer")
+      throw StreamError(.internal, "no free encoder buffer")
     }
     let copied = VTPixelTransferSessionTransferImage(transfer, from: source, to: pixels)
-    guard copied == noErr else { throw WireError(.internal, "VTPixelTransferSessionTransferImage: \(copied)") }
+    guard copied == noErr else { throw StreamError(.internal, "VTPixelTransferSessionTransferImage: \(copied)") }
     let key = lock.withLock {
       defer { wantKey = false }
       return wantKey
@@ -106,21 +110,27 @@ final class StreamEncoder: @unchecked Sendable {
     let status = VTCompressionSessionEncodeFrame(
       session, imageBuffer: pixels, presentationTimeStamp: pts, duration: .invalid, frameProperties: options,
       infoFlagsOut: nil
-    ) { [weak self] status, _, sample in
-      self?.emit(status: status, sample: sample, ptsMicros: ptsMicros)
+    ) { [weak self] status, info, sample in
+      self?.emit(status: status, info: info, sample: sample, ptsMicros: ptsMicros)
     }
     if status != noErr {
       if key { requestKeyframe() }
-      throw WireError(.internal, "VTCompressionSessionEncodeFrame: \(status)")
+      throw StreamError(.internal, "VTCompressionSessionEncodeFrame: \(status)")
     }
   }
 
   /// Wait for every frame in flight.
-  func flush() {
+  package func flush() {
     VTCompressionSessionCompleteFrames(session, untilPresentationTimeStamp: .invalid)
   }
 
-  private func emit(status: OSStatus, sample: CMSampleBuffer?, ptsMicros: UInt64) {
+  private func emit(status: OSStatus, info: VTEncodeInfoFlags, sample: CMSampleBuffer?, ptsMicros: UInt64) {
+    if status == noErr && (sample == nil || info.contains(.frameDropped)) {
+      // Rate control skipped this frame: nothing references it (no reordering), so the next frame is still a valid
+      // P-frame. Forcing an IDR here makes the next frame bigger and the next drop likelier (a loop at full size).
+      lock.withLock { drops += 1 }
+      return
+    }
     guard status == noErr, let sample, let block = CMSampleBufferGetDataBuffer(sample) else {
       lock.withLock {
         failures += 1

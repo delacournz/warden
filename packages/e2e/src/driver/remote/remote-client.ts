@@ -60,7 +60,7 @@ export type RequestOptions = { timeoutMs?: number };
 
 export type RemoteClient = {
 	readonly ready: ReadyEvent;
-	/** a control op (`ping`, `shutdown`) or any op without arguments; `params` is accepted for the helper contract and unused */
+	/** a control op (`ping`, `shutdown`), a `stream.*` op, or any op that takes one params object (sent as its only argument) */
 	request(op: string, params?: Record<string, unknown>, opts?: RequestOptions): DriverResult<unknown>;
 	/** the `Driver` over this connection; its `close()` only disconnects (the host keeps the device open) */
 	driver(): RemoteDriver;
@@ -312,7 +312,7 @@ export async function connectRemoteDriver(options: ConnectRemoteOptions): Promis
 		success: true,
 		data: {
 			ready: hello,
-			request: (op, _params, opts) => send(op, [], opts),
+			request: (op, params, opts) => send(op, params === undefined ? [] : [params], opts),
 			driver: buildDriver,
 			close,
 		},
