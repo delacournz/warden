@@ -31,6 +31,7 @@
 		"@delacour/warden-e2e": "workspace:*",
 		"@delacour/warden-perf": "workspace:*",
 		"@delacour/warden-types": "workspace:*",
+		"@delacournz/cli-telemetry": "^0.1.0",
 		"@modelcontextprotocol/sdk": "1.32.2",
 		"@xterm/headless": "6",
 		"chalk": "^6.0.1",

@@ -41,6 +41,8 @@ Every environment variable warden reads, and the ones `warden run`, `batch` and 
 | `WARDEN_SIMD_BRIDGE_COOLDOWN_S` | read by the `warden-simd` helper: seconds after a stalled bridge read during which reads go straight to `ax` before the bridge is asked again (default 20; `0` never skip) |
 | `WARDEN_SIMD_FRONTMOST_COOLDOWN_S` | read by the `warden-simd` helper: seconds after the simulator could not name its frontmost app during which snapshots are read by pid (the launched app, else SpringBoard) without asking again (default 20, doubling while the lookup keeps failing, up to 300; `0` always ask first) |
 | `WARDEN_SIMD_FRONTMOST_METHOD` | read by the `warden-simd` helper: how the in-sim bridge finds the frontmost app: `window-server` (default), `running-board` or `center-point` |
+| `WARDEN_TELEMETRY_DISABLED=1`, `DELACOUR_TELEMETRY_DISABLED=1`, `DO_NOT_TRACK=1` | turn anonymous usage telemetry off, overriding `warden telemetry enable` ([what is sent](/docs/reference/cli#telemetry)) |
+| `DELACOUR_TELEMETRY_DEBUG=1` | print the telemetry request body to stderr instead of sending it |
 | `CODEX_HOME` | Codex config directory (default `~/.codex`) |
 | `WARDEN_BINARY` | npm package only: run this binary instead of the platform package's |
 | `WARDEN_NPM_REGISTRY` | npm registry `warden update` uses for npm installs (default `https://registry.npmjs.org`) |

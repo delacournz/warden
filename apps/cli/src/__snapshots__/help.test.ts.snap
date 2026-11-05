@@ -101,6 +101,7 @@ Setup:
                                 builds) or install the latest release
   version                       print warden's version and build channel (dev /
                                 local / release)
+  telemetry [action]            see, enable or disable anonymous usage telemetry
   mcp                           MCP server on stdio: Metro logs, app console,
                                 network, eval, tree, logpoints, profiles of
                                 \`warden dev\`
@@ -4610,6 +4611,21 @@ exports[`help output warden version --help (and nested subcommands) 1`] = `
 Usage: warden version [options]
 
 print warden's version and build channel (dev / local / release)
+
+Options:
+  --json      machine-readable output
+  -h, --help  display help for command"
+`;
+
+exports[`help output warden telemetry --help (and nested subcommands) 1`] = `
+"$ warden telemetry --help
+Usage: warden telemetry [options] [action]
+
+see, enable or disable anonymous usage telemetry
+
+Arguments:
+  action      show the current setting, or switch telemetry on or off (choices:
+              "status", "enable", "disable", default: "status")
 
 Options:
   --json      machine-readable output

@@ -282,6 +282,12 @@ export const COMMANDS: readonly CommandEntry[] = [
 		load: async () => (await import("./version")).versionCommand,
 	},
 	{
+		name: "telemetry",
+		group: "Setup",
+		summary: "see, enable or disable anonymous usage telemetry",
+		load: async () => (await import("./telemetry")).telemetryCommand,
+	},
+	{
 		name: "mcp",
 		group: "Setup",
 		summary: "MCP server on stdio: Metro logs, app console, network, eval, tree, logpoints, profiles of `warden dev`",
