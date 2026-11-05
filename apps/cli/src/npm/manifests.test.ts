@@ -36,6 +36,7 @@ describe("platformManifest with the simulator helper", () => {
 		xcode: "26.6 (17F113)",
 		frameworks: ["A.framework", "B.framework"],
 		inject: false,
+		emud: false,
 	};
 
 	test("darwin-arm64 ships warden-simd, resources, frameworks and records the build for doctor", () => {

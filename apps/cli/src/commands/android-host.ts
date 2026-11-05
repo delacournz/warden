@@ -1,13 +1,22 @@
+import { androidTools } from "@delacour/warden-core/providers/android";
+import { emulatorDiscoveryDir, emulatorGrpcEndpoint } from "@delacour/warden-core/providers/android-grpc";
+import { wardenHome } from "@delacour/warden-core/store";
+import { androidStreamService } from "@delacour/warden-e2e/driver/android/stream/android-stream";
+import { locateEmud, startEmudStream } from "@delacour/warden-e2e/driver/android/stream/emud";
 import type { Driver } from "@delacour/warden-e2e/driver/driver.types";
+import type { StreamService } from "@delacour/warden-e2e/driver/remote/remote-server";
 import { ok, type Result } from "@delacour/warden-types/result";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { reportError } from "../output";
+import { currentBuild } from "../update/build-info";
 
 /** What `__android-host` reaches the outside world through; tests inject the driver and an abort signal. */
 export type AndroidHostDeps = {
 	/** open the device's driver (default: the in-process adb driver `warden ui` used to open per call) */
 	openDriver?: (ctx: CommandContext, serial: string) => Promise<Result<Driver, string>>;
+	/** the device's `stream.*` (default: the emulator's gRPC frames through `warden-emud`, else `screenrecord`) */
+	openStream?: (ctx: CommandContext, serial: string) => StreamService | undefined;
 	signal?: AbortSignal;
 };
 
@@ -21,6 +30,55 @@ async function defaultOpenDriver(ctx: CommandContext, serial: string): Promise<R
 	const { openAndroidInProcess } = await import("../agent-ui/ui-driver");
 	const opened = await openAndroidInProcess(ctx, serial, (line) => ctx.err(line));
 	return opened.success ? ok(opened.data) : { success: false, error: opened.error.message };
+}
+
+/**
+ * `stream.*` for the device: `warden-emud` (found beside `warden-simd`) on the emulator's gRPC bridge when both are
+ * there, `screenrecord` over adb otherwise. Nothing runs until `stream.start`.
+ */
+function defaultOpenStream(ctx: CommandContext, serial: string): StreamService {
+	const emud = locateEmud({ env: ctx.env, wardenHome: wardenHome(ctx.env), version: currentBuild().version });
+	const log = (line: string) => ctx.err(`warden __android-host: ${line}`);
+	return androidStreamService({
+		serial,
+		adb: androidTools(ctx.env).adb,
+		exec: (cmd) => ctx.exec(cmd),
+		spawn: (argv) => {
+			const child = Bun.spawn([...argv], { stdout: "pipe", stderr: "ignore", stdin: "ignore" });
+			return { stdout: child.stdout, exited: child.exited, kill: () => child.kill() };
+		},
+		grpcEndpoint: () => {
+			const endpoint = emulatorGrpcEndpoint(emulatorDiscoveryDir(ctx.env), serial);
+			if (!endpoint.success) {
+				log(endpoint.error);
+				return undefined;
+			}
+			const { host, port, token } = endpoint.data;
+			return { host, port, token };
+		},
+		...(emud !== undefined
+			? {
+					startGrpc: (endpoint, params, path, size) =>
+						startEmudStream({
+							binary: emud,
+							endpoint,
+							params,
+							path,
+							size,
+							spawn: (argv, env) => {
+								const child = Bun.spawn([...argv], {
+									stdin: "pipe",
+									stdout: "pipe",
+									stderr: "inherit",
+									env: { ...process.env, ...env },
+								});
+								return { stdin: child.stdin, stdout: child.stdout, exited: child.exited, kill: () => child.kill() };
+							},
+						}),
+				}
+			: {}),
+		log,
+	});
 }
 
 /** `--idle-timeout` in seconds (fractions allowed; 0 = never). */
@@ -53,8 +111,10 @@ async function host(ctx: CommandContext, deps: AndroidHostDeps, opts: HostOption
 	const finished = new Promise<void>((resolve) => {
 		finish = resolve;
 	});
+	const stream = (deps.openStream ?? defaultOpenStream)(ctx, serial);
 	const server = await serveDriver({
 		driver: opened.data,
+		...(stream !== undefined ? { stream } : {}),
 		socketPath: socket,
 		idleMs: idle.data,
 		alertIn: "android",

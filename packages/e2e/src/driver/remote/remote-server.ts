@@ -9,6 +9,7 @@ import {
 	DRIVER_OPS,
 	type DriverOp,
 	isRemoteOp,
+	isStreamOp,
 	type LocalAlertIn,
 	OPTIONAL_OPS,
 	type OptionalOp,
@@ -33,8 +34,46 @@ type ServiceOptions = {
 	closeDriver?: boolean;
 	/** tell clients to answer `alertIn` themselves this way */
 	alertIn?: LocalAlertIn;
+	/** answers `stream.*` (`remote-protocol.ts` `STREAM_OPS`); absent = they are `E_UNSUPPORTED` */
+	stream?: StreamService;
 	log?: Logger;
 };
+
+/** The device's live video behind `stream.*`; replies are the iOS helper's shapes. */
+export type StreamService = {
+	start(params: Record<string, unknown>): DriverResult<unknown>;
+	keyframe(): DriverResult<unknown>;
+	stats(): DriverResult<unknown>;
+	stop(): DriverResult<unknown>;
+};
+
+async function runStreamOp(
+	stream: StreamService | undefined,
+	op: string,
+	args: readonly unknown[]
+): DriverResult<unknown> {
+	if (stream === undefined) {
+		return { success: false, error: driverError("E_UNSUPPORTED", `this host serves no stream (\`${op}\`)`) };
+	}
+	try {
+		switch (op) {
+			case "stream.start": {
+				const params = args[0];
+				const record = params !== null && typeof params === "object" ? (params as Record<string, unknown>) : {};
+				return await stream.start(record);
+			}
+			case "stream.keyframe":
+				return await stream.keyframe();
+			case "stream.stats":
+				return await stream.stats();
+			default:
+				return await stream.stop();
+		}
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		return { success: false, error: driverError("E_INTERNAL", `${op} threw: ${message}`) };
+	}
+}
 
 export type ServeDriverOptions = ServiceOptions & {
 	socketPath: string;
@@ -177,6 +216,7 @@ function driverService(options: ServiceOptions, onActivity: () => void = () => u
 		capabilities: driver.capabilities,
 		optional: OPTIONAL_OPS.filter((op) => methodOf(driver, op) !== undefined),
 		...(options.alertIn !== undefined ? { alertIn: options.alertIn } : {}),
+		...(options.stream !== undefined ? { stream: true as const } : {}),
 	});
 
 	const flush = (conn: Conn) => {
@@ -230,6 +270,16 @@ function driverService(options: ServiceOptions, onActivity: () => void = () => u
 		}
 		inFlight += 1;
 		onActivity();
+		if (isStreamOp(op)) {
+			// beside the driver chain: a keyframe request must not wait for a tap
+			void runStreamOp(options.stream, op, args)
+				.then((result) => send(conn, { id, result, capabilities: driver.capabilities } satisfies RemoteResponse))
+				.finally(() => {
+					inFlight -= 1;
+					onActivity();
+				});
+			return;
+		}
 		const next = chain.then(async () => {
 			const result = await run(op, args);
 			send(conn, { id, result, capabilities: driver.capabilities } satisfies RemoteResponse);
@@ -279,6 +329,7 @@ function driverService(options: ServiceOptions, onActivity: () => void = () => u
 		drop,
 		async stop() {
 			drop();
+			if (options.stream !== undefined) await runStreamOp(options.stream, "stream.stop", []);
 			await Promise.race([chain, Bun.sleep(options.stopWaitMs ?? 5000)]);
 			if (options.closeDriver !== false) await driver.close();
 		},

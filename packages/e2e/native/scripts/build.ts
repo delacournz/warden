@@ -1,8 +1,9 @@
 #!/usr/bin/env bun
 /**
- * `bun native/scripts/build.ts` — release-build `warden-simd` and stage `native/dist/`:
+ * `bun native/scripts/build.ts` — release-build `warden-simd` (and `warden-emud`) and stage `native/dist/`:
  *
  *   dist/warden-simd                                  stripped, ad-hoc signed
+ *   dist/warden-emud                                  Android emulator stream encoder; stripped, ad-hoc signed
  *   dist/Resources/SimulatorFrameworkBridge-iOS       idb's prebuilt in-sim guest, copied unchanged (never re-signed)
  *   dist/{CoreSimulatorStub,AccessibilityPlatformTranslationStub}.framework   ad-hoc signed, found via an
  *                                                     `@executable_path` rpath added when SwiftPM linked none
@@ -19,6 +20,8 @@ import { type IdbLock, parseLock } from "./deps";
 const NATIVE_DIR = resolve(import.meta.dir, "..");
 const WIRE_SWIFT = join(NATIVE_DIR, "ios", "Sources", "warden-simd", "Protocol", "Wire.swift");
 const PRODUCT = "warden-simd";
+/** The Android emulator stream encoder (STRM-2): same package, no idb, staged beside warden-simd. */
+const EMUD_PRODUCT = "warden-emud";
 
 /** `BuildInfo.idb` in Wire.swift is what `health` reports; it must be the version the libraries were pinned to. */
 export function checkIdbConstant(wireSwift: string, lock: IdbLock): void {
@@ -83,15 +86,17 @@ export function stageSteps(input: {
 }): StagePlan {
 	const { binDir, libraries, dist, frameworks } = input;
 	const binary = join(dist, PRODUCT);
+	const emud = join(dist, EMUD_PRODUCT);
 	const guest = join("Resources", "SimulatorFrameworkBridge-iOS");
 	return {
 		copies: [
 			{ from: join(binDir, PRODUCT), to: binary },
+			{ from: join(binDir, EMUD_PRODUCT), to: emud },
 			{ from: join(libraries, guest), to: join(dist, guest) },
 			...frameworks.map((framework) => ({ from: join(binDir, framework), to: join(dist, framework) })),
 		],
-		strip: [binary],
-		sign: [...frameworks.map((framework) => join(dist, framework)), binary],
+		strip: [binary, emud],
+		sign: [...frameworks.map((framework) => join(dist, framework)), binary, emud],
 	};
 }
 
@@ -114,6 +119,7 @@ export async function main(): Promise<number> {
 	const packagePath = join(NATIVE_DIR, "ios");
 	log("swift build -c release");
 	await run(exec, ["swift", "build", "-c", "release", "--package-path", packagePath, "--product", PRODUCT]);
+	await run(exec, ["swift", "build", "-c", "release", "--package-path", packagePath, "--product", EMUD_PRODUCT]);
 	const binDir = (
 		await run(exec, ["swift", "build", "-c", "release", "--package-path", packagePath, "--show-bin-path"])
 	).trim();
