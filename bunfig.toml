@@ -13,8 +13,9 @@ linker = "hoisted"
 # `@delacournz/*` (the OpenTelemetry packages from delacour-monorepo) is published to GitHub
 # Packages, not npm. Installing it needs a CLASSIC personal access token with `read:packages` in
 # NPM_TOKEN — GitHub's npm registry rejects fine-grained tokens. On Railway it is a preserved
-# variable on `warden-docs`; locally, export it in your shell. The only users are apps/docs'
-# optionalDependencies, so without the token `bun install` warns on the 401 and carries on: the CLI
-# and packages never need it, and the docs run untraced (apps/docs/src/server/otel.ts).
+# variable on `warden-docs`; locally, export it in your shell; in GitHub Actions the job token
+# (`packages: read`) is passed as NPM_TOKEN. apps/cli depends on `@delacournz/cli-telemetry`, so
+# `bun install` fails with a 401 without it. apps/docs' OpenTelemetry packages are optional: alone,
+# they only warn, and the docs run untraced (apps/docs/src/server/otel.ts).
 [install.scopes]
 "@delacournz" = { url = "https://npm.pkg.github.com", token = "$NPM_TOKEN" }

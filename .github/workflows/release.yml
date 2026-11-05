@@ -29,6 +29,7 @@ jobs:
     runs-on: namespace-profile-mac-medium
     permissions:
       contents: read
+      packages: read
     steps:
       # fetch-depth 0: the ancestry check below needs origin/main, not just the tagged commit.
       - uses: namespacelabs/nscloud-checkout-action@66f2dc6f6c42a8ac6c4e53473c4840006822831e # v9.0.1
@@ -70,9 +71,13 @@ jobs:
         with:
           team: release
 
-      # No NPM_TOKEN: `@delacournz/*` (GitHub Packages) is only apps/docs' optional OpenTelemetry, which
-      # nothing here uses. The 401 is a warning, and this proves a tokenless clone installs.
+      # `@delacournz/cli-telemetry` (GitHub Packages, private) is a hard dependency of apps/cli, so the
+      # install needs a read token. bunfig.toml reads NPM_TOKEN; the job token works because the package
+      # grants this repo Actions read access (package settings > Manage Actions access). apps/docs'
+      # optional OpenTelemetry packages ride on the same token.
       - run: bun install --frozen-lockfile
+        env:
+          NPM_TOKEN: ${{ github.token }}
 
       - name: Tag must match apps/cli version
         run: |
