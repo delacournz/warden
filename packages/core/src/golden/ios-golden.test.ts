@@ -55,7 +55,7 @@ describe("ensureGolden", () => {
 		expect(result.data).toMatchObject({ name: GOLDEN, built: true });
 		expect(host.sims).toEqual([{ udid: result.data.udid, name: GOLDEN, state: "Shutdown" }]);
 		const verbs = host.calls.filter((c) => c[1] === "simctl").map((c) => c[2]);
-		expect(verbs).toEqual(["list", "list", "list", "create", "boot", "bootstatus", "spawn", "shutdown", "rename"]);
+		expect(verbs).toEqual(["list", "list", "list", "create", "boot", "bootstatus", "shutdown", "rename"]);
 		expect(host.calls.find((c) => c[2] === "create")).toEqual([
 			"xcrun",
 			"simctl",
@@ -199,20 +199,48 @@ describe("pruneGoldens", () => {
 	});
 });
 
-const AUTOMATION = ["defaults", "write", "com.apple.Accessibility", "AutomationEnabled", "-bool", "true"];
-
 describe("golden recipe 2: AutomationEnabled baked in (16-7)", () => {
-	test("the build writes AutomationEnabled in the sim after the migration, before it settles and shuts down", async () => {
+	test("no in-sim defaults write: the build never runs simctl spawn", async () => {
+		const host = fakeHost({ migrationPolls: 0 });
+		const result = await ensureGolden(deps(host), "iphone-17");
+		expect(result.success).toBe(true);
+		expect(host.calls.some((c) => c[2] === "spawn")).toBe(false);
+	});
+
+	test("AutomationEnabled is written on the host into the plist after the shutdown, before the check", async () => {
 		const host = fakeHost({ migrationPolls: 0 });
 		const result = await ensureGolden(deps(host), "iphone-17");
 		expect(result.success).toBe(true);
 		if (!result.success) return;
+		const plist = `/Users/me/Library/Developer/CoreSimulator/Devices/${result.data.udid}/data/Library/Preferences/com.apple.Accessibility.plist`;
+		expect(host.plistEdits).toEqual([["-replace", "AutomationEnabled", "-bool", "true", plist]]);
 		const at = (pred: (c: string[]) => boolean) => host.calls.findIndex(pred);
-		const write = at((c) => c[2] === "spawn");
-		expect(host.calls[write]).toEqual(["xcrun", "simctl", "spawn", result.data.udid, ...AUTOMATION]);
-		expect(write).toBeGreaterThan(at((c) => c[2] === "bootstatus"));
-		expect(write).toBeLessThan(at((c) => c[0] === "launchctl"));
-		expect(write).toBeLessThan(at((c) => c[2] === "shutdown"));
+		const write = at((c) => c[0] === "plutil" && c[1] === "-replace");
+		expect(write).toBeGreaterThan(at((c) => c[2] === "shutdown"));
+		expect(write).toBeLessThan(
+			at((c) => c[0] === "plutil" && c.includes("-extract") && c.includes("AutomationEnabled"))
+		);
+	});
+
+	test("a missing plist is created (binary1) and then written; existing keys are not recreated", async () => {
+		const host = fakeHost({ migrationPolls: 0 });
+		host.plistMissing = ["NEW-1"];
+		const result = await ensureGolden(deps(host), "iphone-17");
+		expect(result.success).toBe(true);
+		const plutil = host.calls.filter((c) => c[0] === "plutil" && (c[1] === "-replace" || c[1] === "-create"));
+		expect(plutil.map((c) => c[1])).toEqual(["-replace", "-create", "-replace"]);
+		expect(plutil[1]?.slice(0, 3)).toEqual(["plutil", "-create", "binary1"]);
+	});
+
+	test("a plist that cannot be written → not promoted, wip deleted", async () => {
+		const host = fakeHost({ migrationPolls: 0 });
+		const exec: Exec = async (cmd, opts) =>
+			cmd[0] === "plutil" && (cmd[1] === "-replace" || cmd[1] === "-create")
+				? { exitCode: 1, stdout: "", stderr: "denied" }
+				: host.exec(cmd, opts);
+		const result = await ensureGolden({ ...deps(host), exec }, "iphone-17");
+		expect(result.success).toBe(false);
+		expect(host.sims).toEqual([]);
 	});
 
 	test("AutomationEnabled not on disk after the shutdown → not promoted, wip deleted", async () => {
@@ -230,7 +258,9 @@ describe("golden recipe 2: AutomationEnabled baked in (16-7)", () => {
 		const result = await ensureGolden(deps(host), "iphone-17");
 		expect(result.success).toBe(true);
 		if (!result.success) return;
-		const read = host.calls.findIndex((c) => c[0] === "plutil" && c.includes("AutomationEnabled"));
+		const read = host.calls.findIndex(
+			(c) => c[0] === "plutil" && c[1] === "-extract" && c.includes("AutomationEnabled")
+		);
 		expect(host.calls[read]).toEqual([
 			"plutil",
 			"-extract",
@@ -389,7 +419,6 @@ describe("golden simctl timeouts (16-11)", () => {
 			"simctl create": 120_000,
 			"simctl boot": 120_000,
 			"simctl bootstatus": 15 * 60_000,
-			"simctl spawn": 30_000,
 			"simctl shutdown": 60_000,
 			"simctl rename": 60_000,
 			"simctl clone": 120_000,

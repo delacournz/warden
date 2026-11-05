@@ -57,8 +57,8 @@ export const DEFAULT_GOLDEN_TIMING: GoldenTiming = {
 export const GOLDEN_LOCK_POLL_MS = 200;
 /** `xcode-select` / `plutil` / `xcodebuild -version` reads of the Xcode build (16-11). */
 const XCODE_READ_TIMEOUT_MS = 30_000;
-/** The in-sim `defaults write` of the golden recipe. */
-const DEFAULTS_WRITE_TIMEOUT_MS = 30_000;
+/** The host-side `plutil` write of the golden recipe: a local file edit, never slow. */
+const PLIST_WRITE_TIMEOUT_MS = 30_000;
 
 export type GoldenDeps = {
 	exec: Exec;
@@ -195,8 +195,8 @@ const isUnsettled = (deps: GoldenDeps, udid: string): boolean =>
 	existsSync(join(simDeviceDir(deps.env, udid), UNSETTLED_MARK));
 
 /**
- * `AutomationEnabled` as written on disk in the device's Accessibility preferences, read on the host. The in-sim
- * `defaults write` exits 0 before cfprefsd flushes it, so only this read shows that a shut-down golden kept it.
+ * `AutomationEnabled` as written on disk in the device's Accessibility preferences, read on the host: shows that
+ * a shut-down golden holds it, whether the build or an older warden wrote it.
  */
 export async function hasAutomationEnabled(deps: GoldenDeps, udid: string): Promise<boolean> {
 	const plist = join(simDeviceDir(deps.env, udid), "data/Library/Preferences/com.apple.Accessibility.plist");
@@ -310,10 +310,23 @@ export async function discard(deps: GoldenDeps, udid: string): Promise<void> {
 /**
  * Recipe 2 (16-7): the driver's `AutomationEnabled` preference lives under `data/`, which `simctl clone`
  * copies, so writing it once here saves every fresh clone the in-sim `defaults write` on its first open.
+ * Written on the host into the shut-down golden's plist, not with `simctl spawn defaults write`: on the iOS 27
+ * runtime that spawn never returned on a CI runner (30 s timeout), and with no cfprefsd running a file write persists.
+ * Existing keys are kept; a missing plist is created first.
  */
-const AUTOMATION_ENABLED = ["defaults", "write", "com.apple.Accessibility", "AutomationEnabled", "-bool", "true"];
+export async function writeAutomationEnabled(deps: GoldenDeps, udid: string): AsyncResult<void> {
+	const plist = join(simDeviceDir(deps.env, udid), "data/Library/Preferences/com.apple.Accessibility.plist");
+	const replace = ["plutil", "-replace", "AutomationEnabled", "-bool", "true", plist];
+	let written = await run(deps, replace, PLIST_WRITE_TIMEOUT_MS);
+	if (!written.success) {
+		const created = await run(deps, ["plutil", "-create", "binary1", plist], PLIST_WRITE_TIMEOUT_MS);
+		if (!created.success) return created;
+		written = await run(deps, replace, PLIST_WRITE_TIMEOUT_MS);
+	}
+	return written.success ? ok(undefined) : written;
+}
 
-/** Boot, migrate, write `AutomationEnabled`, settle, shut down, then check both on disk. `ok(settled)`. */
+/** Boot, migrate, settle, shut down, write `AutomationEnabled` on the host, then check both on disk. `ok(settled)`. */
 async function buildSteps(deps: GoldenDeps, target: GoldenTarget, udid: string): AsyncResult<boolean> {
 	const t = timing(deps);
 	let settled = true;
@@ -321,13 +334,13 @@ async function buildSteps(deps: GoldenDeps, target: GoldenTarget, udid: string):
 		() => simctl(deps, ["boot", udid], IOS_TIMEOUTS.bootMs),
 		() => simctl(deps, ["bootstatus", udid, "-b"], t.bootTimeoutMs),
 		() => waitMigrated(deps, udid, target.runtimeBuild),
-		() => simctl(deps, ["spawn", udid, ...AUTOMATION_ENABLED], DEFAULTS_WRITE_TIMEOUT_MS),
 		async () => {
 			const waited = await waitSettled(deps, udid);
 			if (waited.success) settled = waited.data;
 			return waited;
 		},
 		() => simctl(deps, ["shutdown", udid], IOS_TIMEOUTS.shutdownMs),
+		() => writeAutomationEnabled(deps, udid),
 	];
 	for (const step of steps) {
 		const result = await step();

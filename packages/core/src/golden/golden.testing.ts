@@ -24,6 +24,10 @@ export type FakeHost = {
 	xcodePlist: boolean;
 	/** udids whose `com.apple.Accessibility.plist` has no `AutomationEnabled` ("all": every device) */
 	automationMissing: "all" | string[];
+	/** udids whose Accessibility plist does not exist yet: `plutil -replace` fails until `-create` runs */
+	plistMissing: string[];
+	/** args of every `plutil -replace` / `-create` */
+	plistEdits: string[][];
 	/** clone of a booted source fails like simctl does */
 	exec: Exec;
 };
@@ -100,6 +104,17 @@ function xcodeVersionPlist(host: FakeHost, args: string[]): ReturnType<typeof ok
 	return host.xcodePlist && onPlist ? ok(answers[key] ?? "") : fail("Could not extract value");
 }
 
+/** `plutil -replace` / `-create` on a golden's plist: recorded; `-replace` fails while the plist does not exist. */
+function plistEdit(host: FakeHost, args: string[], udid: string): ReturnType<typeof ok> | undefined {
+	if (args[0] !== "-replace" && args[0] !== "-create") return undefined;
+	host.plistEdits.push([...args]);
+	if (args[0] === "-create") {
+		host.plistMissing = host.plistMissing.filter((u) => u !== udid);
+		return ok();
+	}
+	return host.plistMissing.includes(udid) ? fail("No such file") : ok();
+}
+
 function hostTools(host: FakeHost): Record<string, Handler> {
 	const polls = new Map<string, number>();
 	let cpuIndex = 0;
@@ -110,6 +125,8 @@ function hostTools(host: FakeHost): Record<string, Handler> {
 			const versionPlist = xcodeVersionPlist(host, args);
 			if (versionPlist) return versionPlist;
 			const udid = /Devices\/([^/]+)\/data/.exec(args[args.length - 1] ?? "")?.[1] ?? "";
+			const edit = plistEdit(host, args, udid);
+			if (edit) return edit;
 			if (args.includes("AutomationEnabled")) {
 				const missing = host.automationMissing === "all" || host.automationMissing.includes(udid);
 				return missing ? fail("Could not extract value, error: No value at that key path") : ok("true\n");
@@ -133,7 +150,9 @@ function hostTools(host: FakeHost): Record<string, Handler> {
 
 /** Stateful fake of `xcrun simctl`, `xcodebuild`, `plutil`, `launchctl`, `ps` for golden tests. */
 export function fakeHost(
-	init: Partial<Pick<FakeHost, "sims" | "migrationPolls" | "cpu" | "xcodePlist" | "automationMissing">> = {}
+	init: Partial<
+		Pick<FakeHost, "sims" | "migrationPolls" | "cpu" | "xcodePlist" | "automationMissing" | "plistMissing">
+	> = {}
 ): FakeHost {
 	let next = 1;
 	const host: FakeHost = {
@@ -143,6 +162,8 @@ export function fakeHost(
 		cpu: init.cpu ?? [10],
 		xcodePlist: init.xcodePlist ?? true,
 		automationMissing: init.automationMissing ?? [],
+		plistMissing: init.plistMissing ?? [],
+		plistEdits: [],
 		exec: async (cmd) => {
 			host.calls.push([...cmd]);
 			const [bin = "", ...rest] = cmd;
