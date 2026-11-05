@@ -1,5 +1,13 @@
 # @delacour/warden
 
+## 0.12.1
+
+### Patch Changes
+
+- [#193](https://github.com/delacournz/warden/pull/193) [`b0b992b`](https://github.com/delacournz/warden/commit/b0b992b802e68e5e6da6b14620cda760595d1a7a) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - A simulator repack is now valid only for the base it was cloned from. After `warden builds import --kind simulator-base` replaces the base under the same native fingerprint (a CI build with another signature or entitlements), `warden repack` and `warden e2e` repack instead of installing a repack of the old base. `warden repack --json` reports `reason: "base-changed"` when it does, and devices reinstall the new repack. A repack made by an older warden is rebuilt once (`reason: "base-unrecorded"`).
+- Updated dependencies []:
+  - @delacour/warden-e2e@0.12.1
+
 ## 0.12.0
 
 ### Minor Changes
