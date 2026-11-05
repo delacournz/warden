@@ -25,6 +25,8 @@ packages/
   biome-config/       # shared Biome config (root.jsonc, react.jsonc)
   tsconfig/           # shared tsconfig (tsconfig.base.json, tsconfig.react.json)
   types/              # shared utility types (Result, AsyncResult, ok, err)
+crates/
+  warden-rtc/         # Rust: H.264 RTP packetize/depacketize, reorder buffer, codec params; shared by apps/viewer and the stream publisher (WDN-STRM)
 scripts/              # repo scripts (pre-commit biome, signoff/ = local CI gate)
 ```
 

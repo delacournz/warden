@@ -93,7 +93,7 @@ jobs:
       - run: bun run check
       - run: bun run test
 
-  # Paths filter for the native and viewer jobs: does this commit touch packages/e2e/native/** or apps/viewer/**
+  # Paths filter for the native and viewer jobs: does this commit touch packages/e2e/native/**, or apps/viewer/** / crates/warden-rtc/**
   # against develop?
   native-changes:
     needs: validate
@@ -108,14 +108,14 @@ jobs:
           SHA: ${{ inputs.signoff-sha }}
         run: |
           # An unreadable compare runs native rather than skipping it.
-          files=$(gh api "repos/$GITHUB_REPOSITORY/compare/develop...$SHA" --jq '.files[].filename' 2>/dev/null || printf 'packages/e2e/native/\napps/viewer/\n')
+          files=$(gh api "repos/$GITHUB_REPOSITORY/compare/develop...$SHA" --jq '.files[].filename' 2>/dev/null || printf 'packages/e2e/native/\napps/viewer/\ncrates/warden-rtc/\n')
           if echo "$files" | grep -q '^packages/e2e/native/'; then
             echo "native=true" >> "$GITHUB_OUTPUT"
           else
             echo "native=false" >> "$GITHUB_OUTPUT"
           fi
           # Markdown never affects the viewer's Rust (signoff-checks.ts ignores it the same way).
-          if echo "$files" | grep -q '^apps/viewer/' && echo "$files" | grep '^apps/viewer/' | grep -qv '\.md$'; then
+          if echo "$files" | grep -E '^(apps/viewer|crates/warden-rtc)/' | grep -qv '\.md$'; then
             echo "viewer=true" >> "$GITHUB_OUTPUT"
           else
             echo "viewer=false" >> "$GITHUB_OUTPUT"
@@ -189,7 +189,9 @@ jobs:
 
       - uses: Swatinem/rust-cache@2201cc584a476d1b508be977bbe4b7d1c7a52e9c # v2.9.3
         with:
-          workspaces: apps/viewer/src-tauri -> target
+          workspaces: |
+            apps/viewer/src-tauri -> target
+            crates/warden-rtc -> target
 
       # `@delacournz/apogee` (GitHub Packages) needs the read:packages token; only the viewer's closure is installed.
       - run: bun install --frozen-lockfile --filter @delacour/warden-viewer
