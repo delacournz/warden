@@ -37,6 +37,7 @@ import {
 	GOLDEN_LOCK_KEY,
 	type GoldenDeps,
 	type GoldenTarget,
+	hasAutomationEnabled,
 	lockDeps,
 	log,
 	MUTATE_TIMEOUT_MS,
@@ -154,6 +155,11 @@ export async function exportGolden(
 		const ensured = await ensureLocked(deps, target.data);
 		if (!ensured.success) return ensured;
 		const { udid, built } = ensured.data;
+		if (ensured.data.unsettled) {
+			return err(
+				`golden ${golden.name} did not settle after its first boot: not exporting it (it stays usable on this machine; run warden golden prune --all --yes, then the next claim rebuilds it)`
+			);
+		}
 		const source = simDeviceDir(deps.env, udid);
 		if (!existsSync(source)) return err(`golden ${golden.name}: no device dir at ${source}`);
 		const final = join(dir, golden.name);
@@ -262,6 +268,9 @@ async function registerArchive(
 	}
 	if (!migrationDone(await readMigration(deps, udid), target.runtimeBuild)) {
 		return skip("the archived device never finished its first-boot data migration");
+	}
+	if (!(await hasAutomationEnabled(deps, udid))) {
+		return skip("the archived device has no AutomationEnabled in its Accessibility preferences");
 	}
 	const renamed = await simctl(deps, ["rename", udid, name], MUTATE_TIMEOUT_MS);
 	if (!renamed.success) return skip(renamed.error);

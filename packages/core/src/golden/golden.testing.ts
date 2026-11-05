@@ -22,6 +22,8 @@ export type FakeHost = {
 	cpu: number[];
 	/** `xcode-select -p` + `plutil` read the Xcode build from `version.plist` (false: unreadable, as with no plist) */
 	xcodePlist: boolean;
+	/** udids whose `com.apple.Accessibility.plist` has no `AutomationEnabled` ("all": every device) */
+	automationMissing: "all" | string[];
 	/** clone of a booted source fails like simctl does */
 	exec: Exec;
 };
@@ -88,7 +90,7 @@ function simctlVerbs(host: FakeHost, nextId: () => number): Record<string, Handl
 	};
 }
 
-/** `xcodebuild`, `xcode-select`, `plutil` (Xcode build, migration record), `launchctl` + `ps` (CPU) handlers. */
+/** `xcodebuild`, `xcode-select`, `plutil` (Xcode build, migration record, AutomationEnabled), `launchctl` + `ps` (CPU) handlers. */
 /** `plutil -extract <key> raw -o - …/version.plist`: the Xcode build/version, or a failure when the plist is unreadable. */
 function xcodeVersionPlist(host: FakeHost, args: string[]): ReturnType<typeof ok> | undefined {
 	const answers: Record<string, string> = { ProductBuildVersion: "17F113\n", CFBundleShortVersionString: "26.6\n" };
@@ -108,6 +110,10 @@ function hostTools(host: FakeHost): Record<string, Handler> {
 			const versionPlist = xcodeVersionPlist(host, args);
 			if (versionPlist) return versionPlist;
 			const udid = /Devices\/([^/]+)\/data/.exec(args[args.length - 1] ?? "")?.[1] ?? "";
+			if (args.includes("AutomationEnabled")) {
+				const missing = host.automationMissing === "all" || host.automationMissing.includes(udid);
+				return missing ? fail("Could not extract value, error: No value at that key path") : ok("true\n");
+			}
 			const seen = (polls.get(udid) ?? 0) + 1;
 			polls.set(udid, seen);
 			return seen > host.migrationPolls
@@ -127,7 +133,7 @@ function hostTools(host: FakeHost): Record<string, Handler> {
 
 /** Stateful fake of `xcrun simctl`, `xcodebuild`, `plutil`, `launchctl`, `ps` for golden tests. */
 export function fakeHost(
-	init: Partial<Pick<FakeHost, "sims" | "migrationPolls" | "cpu" | "xcodePlist">> = {}
+	init: Partial<Pick<FakeHost, "sims" | "migrationPolls" | "cpu" | "xcodePlist" | "automationMissing">> = {}
 ): FakeHost {
 	let next = 1;
 	const host: FakeHost = {
@@ -136,6 +142,7 @@ export function fakeHost(
 		migrationPolls: init.migrationPolls ?? 1,
 		cpu: init.cpu ?? [10],
 		xcodePlist: init.xcodePlist ?? true,
+		automationMissing: init.automationMissing ?? [],
 		exec: async (cmd) => {
 			host.calls.push([...cmd]);
 			const [bin = "", ...rest] = cmd;
