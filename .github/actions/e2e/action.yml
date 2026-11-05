@@ -149,7 +149,7 @@ runs:
         mkdir -p "$dir" "$HOME/.local/bin"
         tag_args=()
         if [ "$WARDEN_VERSION" != latest ]; then tag_args=("$WARDEN_VERSION"); fi
-        gh release download "${tag_args[@]}" --repo "$WARDEN_REPO" --dir "$dir" \
+        gh release download ${tag_args[@]+"${tag_args[@]}"} --repo "$WARDEN_REPO" --dir "$dir" \
           --pattern "warden-$target" --pattern checksums.txt --clobber
         (cd "$dir" && grep " warden-$target\$" checksums.txt | shasum -a 256 -c -)
         install -m 0755 "$dir/warden-$target" "$HOME/.local/bin/warden"
@@ -176,10 +176,10 @@ runs:
         [ -n "$fp" ] || { echo "warden app fingerprint printed no ios fingerprint" >&2; exit 1; }
         specs=()
         while IFS= read -r line; do [ -n "$line" ] && specs+=("$line"); done <<< "$JS_INPUTS"
-        js=$(git ls-files -s -- "${specs[@]}" | shasum -a 256 | cut -c1-16)
+        js=$(git ls-files -s -- ${specs[@]+"${specs[@]}"} | shasum -a 256 | cut -c1-16)
         profile_args=()
         if [ -n "$PROFILE" ]; then profile_args=(--profile "$PROFILE"); fi
-        golden=$(warden golden key "${profile_args[@]}")
+        golden=$(warden golden key ${profile_args[@]+"${profile_args[@]}"})
         runner="$RUNNER_OS-$RUNNER_ARCH"
         {
           echo "fingerprint=$fp"
@@ -255,7 +255,7 @@ runs:
         # shellcheck disable=SC2206
         extra=($EXTRA)
         started=$(date +%s)
-        warden "${args[@]}" "${extra[@]}"
+        warden "${args[@]}" ${extra[@]+"${extra[@]}"}
         code=$?
         {
           echo "report-path=$report"
@@ -290,7 +290,7 @@ runs:
       run: |
         profile_args=()
         if [ -n "$PROFILE" ]; then profile_args=(--profile "$PROFILE"); fi
-        warden golden export ~/warden-goldens "${profile_args[@]}"
+        warden golden export ~/warden-goldens ${profile_args[@]+"${profile_args[@]}"}
 
     - name: Save the golden simulator
       if: steps.run.outputs.passed == 'true' && inputs.save-cache == 'true' && steps.golden-cache.outputs.cache-hit != 'true'
