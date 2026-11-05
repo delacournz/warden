@@ -73,17 +73,23 @@ final class LiveTouch {
 		return MotionEvent.obtain(downTime, eventTime, action, n, props, coords, 0, 0, 1f, 1f, 0, 0, InputDevice.SOURCE_TOUCHSCREEN, 0);
 	}
 
+	/** how long the last op's injection took, for the latency bench */
+	private long injectNs;
+
 	private void send(int action, boolean sync) throws Uia.OpError {
+		long started = System.nanoTime();
 		MotionEvent e = event(SystemClock.uptimeMillis(), action);
 		try {
 			injector.inject(e, sync);
 		} finally {
 			e.recycle();
+			injectNs = System.nanoTime() - started;
 		}
 	}
 
+	/** `{down, injectUs}`: fingers still down, and the microseconds this op's injection took. */
 	private String reply() {
-		return "{\"down\":" + count() + "}";
+		return "{\"down\":" + count() + ",\"injectUs\":" + (injectNs / 1000) + "}";
 	}
 
 	synchronized String down(int pointer, float x, float y) throws Uia.OpError {

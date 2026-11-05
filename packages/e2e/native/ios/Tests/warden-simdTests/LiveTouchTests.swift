@@ -56,11 +56,13 @@ final class LiveTouchTests: XCTestCase {
     let sink = Sink()
     let live = touch(sink)
     let down = try await call(live, "touch.down", ["x": 10, "y": 20])
-    XCTAssertEqual(down, ["down": 1])
+    XCTAssertEqual(down["down"], 1)
+    XCTAssertNotNil(down["hidUs"]?.intValue)
     _ = try await call(live, "touch.move", ["x": 12, "y": 40])
     _ = try await call(live, "touch.move", ["x": 14, "y": 60])
     let up = try await call(live, "touch.up", ["x": 15, "y": 70])
-    XCTAssertEqual(up, ["down": 0])
+    XCTAssertEqual(up["down"], 0)
+    XCTAssertNotNil(up["hidUs"]?.intValue)
     XCTAssertEqual(
       sink.events,
       [
@@ -124,7 +126,8 @@ final class LiveTouchTests: XCTestCase {
     let live = touch(sink)
     _ = try await call(live, "touch.down", ["x": 100, "y": 100])
     let second = try await call(live, "touch.down", ["x": 200, "y": 300, "pointer": 1])
-    XCTAssertEqual(second, ["down": 2])
+    XCTAssertEqual(second["down"], 2)
+    XCTAssertNotNil(second["hidUs"]?.intValue)
     _ = try await call(live, "touch.move", ["x": 220, "y": 320, "pointer": 1])
     _ = try await call(live, "touch.move", ["x": 90, "y": 80, "pointer": 0])
     XCTAssertEqual(
@@ -145,7 +148,8 @@ final class LiveTouchTests: XCTestCase {
     sink.reset()
     _ = try await call(live, "touch.up", ["x": 210, "y": 210, "pointer": 1])
     let last = try await call(live, "touch.up", ["x": 110, "y": 110, "pointer": 0])
-    XCTAssertEqual(last, ["down": 0])
+    XCTAssertEqual(last["down"], 0)
+    XCTAssertNotNil(last["hidUs"]?.intValue)
     XCTAssertEqual(sink.events, [.twoFingerTouch(direction: .up, finger1: p(100, 100), finger2: p(210, 210))])
   }
 

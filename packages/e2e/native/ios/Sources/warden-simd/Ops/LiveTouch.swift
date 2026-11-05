@@ -3,7 +3,8 @@ import FBSimulatorControl
 import Foundation
 
 // Live touch ops (plan WDN-STRM, STRM-6): `touch.down{x,y,pointer?=0,unit?}`, `touch.move{x,y,pointer?,unit?}`,
-// `touch.up{x?,y?,pointer?,unit?}`, `touch.cancel` → `{down}` (fingers still down; `cancel` adds `released`).
+// `touch.up{x?,y?,pointer?,unit?}` → `{down, hidUs}` (fingers still down, HID send time); `touch.cancel` →
+// `{down, released}`.
 //
 // A viewer's finger streamed as it moves, never a pre-planned path: each op sends at most one HID event at once.
 // Coordinates are portrait-up points like the other input ops (`unit:"norm"` is 0...1 of the oriented screen).
@@ -103,6 +104,7 @@ struct LiveTouchState: Sendable {
 /// One simulator's live touch: the state, the HID it sends to, and the stuck-finger watchdog.
 actor LiveTouch {
   private let environment: InputEnvironment
+  private let sink: any LiveHIDSink
   private let now: @Sendable () -> Double
   private let tick: @Sendable () async throws -> Void
   private var state = LiveTouchState()
@@ -113,10 +115,12 @@ actor LiveTouch {
   /// `now` in seconds; `tick` is how long the watchdog sleeps between looks (1 s in the helper).
   init(
     environment: InputEnvironment,
+    sink: (any LiveHIDSink)? = nil,
     now: @escaping @Sendable () -> Double = LiveTouch.uptime,
     tick: @escaping @Sendable () async throws -> Void = { try await Task.sleep(for: .seconds(1)) }
   ) {
     self.environment = environment
+    self.sink = sink ?? PerEventHIDSink(environment: environment)
     self.now = now
     self.tick = tick
   }
@@ -163,18 +167,25 @@ actor LiveTouch {
     try? await send(events)
   }
 
+  /// Replies `{down, hidUs}`: fingers still down, and the microseconds the HID send took (for the latency bench).
   private func apply(_ events: [SimulatorHIDEvent]) async throws -> JSON {
+    let started = ContinuousClock.now
     try await send(events)
+    let took = (ContinuousClock.now - started).components
     armWatchdog()
-    return ["down": .int(state.down)]
+    let micros = Int(took.seconds) * 1_000_000 + Int(took.attoseconds / 1_000_000_000_000)
+    return ["down": .int(state.down), "hidUs": .int(micros)]
   }
 
+  /// Sends `events`; once no finger is held the sink's open operation is closed.
   private func send(_ events: [SimulatorHIDEvent]) async throws {
-    guard !events.isEmpty else { return }
-    let environment = environment
-    try await environment.gate.run {
-      for event in events { try await environment.send(event) }
+    do {
+      for event in events { try await sink.send(event) }
+    } catch {
+      if state.down == 0 { await sink.end() }
+      throw error
     }
+    if state.down == 0 { await sink.end() }
   }
 
   private func armWatchdog() {
@@ -249,10 +260,17 @@ final class LiveTouchHolder: @unchecked Sendable {
 enum LiveTouchOps {
   static let names = LiveTouch.names
 
+  /// One live touch per session: events stream into one open HID operation per gesture (`StreamingHIDSink`). A
+  /// drained `send(event:)` per event costs ~90 ms (it waits for the guest), an undrained one ~8.6 ms (measured).
+  static func make(for session: Session) -> LiveTouch {
+    let environment = InputOps.environment(for: session)
+    return LiveTouch(environment: environment, sink: StreamingHIDSink.hid(session.hid.hid, gate: environment.gate))
+  }
+
   static let ops: [String: Dispatcher<Session>.OpHandler] = Dictionary(
     uniqueKeysWithValues: names.map { name in
       let handler: Dispatcher<Session>.OpHandler = { session, params in
-        let live = session.liveTouch.get { LiveTouch(environment: InputOps.environment(for: session)) }
+        let live = session.liveTouch.get { make(for: session) }
         return try await live.handle(op: name, params: params)
       }
       return (name, handler)
