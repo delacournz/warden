@@ -12,7 +12,8 @@
  *
  *   `always: true`  — typecheck / check / test. Nothing can change without them being relevant, so
  *                     they run on every pull request.
- *   `always: false` — `native` (warden-simd), `viewer` (Tauri), `cpu-guard`. Path-gated, so most pull requests never run them.
+ *   `always: false` — `native` (warden-simd), `viewer` (Tauri), `stream` (warden-stream), `cpu-guard`. Path-gated, so
+ *                     most pull requests never run them.
  *
  * Only the umbrella `signoff` context is required by `develop`'s branch protection (`gh signoff
  * install`). The sub-contexts are written for the checks panel but gate nothing on their own:
@@ -150,6 +151,21 @@ export const SIGNOFF_CHECKS: readonly SignoffCheck[] = [
 			{ argv: ["bun", "run", "--cwd", "apps/viewer", "test:rust"] },
 		],
 		// Cargo holds an exclusive lock on its target dir; never two builds of it at once.
+		locks: ["viewer-cargo"],
+	},
+	{
+		context: "stream",
+		label: "stream (cargo test warden-stream, warden-rtc)",
+		always: false,
+		// The device stream publisher and the RTP crate it shares with the viewer. Its loopback tests run a real
+		// WebRTC session over 127.0.0.1, no device.
+		paths: ["crates/warden-stream/**", "crates/warden-rtc/**"],
+		workflow: "ci.yml",
+		run: [
+			{ argv: ["cargo", "test", "--manifest-path", "crates/warden-rtc/Cargo.toml"] },
+			{ argv: ["cargo", "test", "--manifest-path", "crates/warden-stream/Cargo.toml"] },
+		],
+		// crates/warden-rtc's target dir is shared with the viewer check (test:rust builds it too).
 		locks: ["viewer-cargo"],
 	},
 	{
