@@ -60,7 +60,16 @@ jobs:
 
       - uses: namespacelabs/nscloud-cache-action@1124a6f3ce44e5cf84cc22111530961f4d2a15f9 # v1.7.0
         with:
+          cache: |
+            bun
+            swiftpm
           path: ~/Library/Caches/warden-idb
+
+      # Own turbo team: a release never replays a green that a dispatched ci.yml run (which may run
+      # reviewed fork code) wrote. Still speeds up a `gh run rerun` of a failed release.
+      - uses: namespace-actions/setup-turbocache@3b82149ffb545cab670093f13bc0bad156917e18 # v0.0.4
+        with:
+          team: release
 
       # `@delacournz/cli-telemetry` (GitHub Packages, private) is a hard dependency of apps/cli, so the
       # install needs a read token. bunfig.toml reads NPM_TOKEN; the job token works because the package
