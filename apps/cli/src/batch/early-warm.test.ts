@@ -58,15 +58,17 @@ const held = (...udids: string[]) => ({
 });
 
 describe("startEarlyWarm", () => {
-	test("a leg's devices are warmed the moment they are leased, before anything settles", async () => {
+	test("a leg's warm-up starts the moment it is leased, one device after the other", async () => {
 		const f = fake();
 		f.deps.legCounts = [2];
 		const warm = startEarlyWarm(f.deps);
 		expect(f.started).toEqual([]);
 		warm.leased(held("U1", "U2"), 0);
 		await Bun.sleep(0);
-		expect(f.started.sort()).toEqual(["U1", "U2"]);
+		expect(f.started).toEqual(["U1"]);
 		f.release("U1");
+		await Bun.sleep(0);
+		expect(f.started).toEqual(["U1", "U2"]);
 		f.release("U2");
 		const done = await warm.settled();
 		expect(done.devices.map((d) => [d.worker, d.udid, d.ok])).toEqual([

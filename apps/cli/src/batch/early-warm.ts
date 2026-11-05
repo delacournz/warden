@@ -19,7 +19,8 @@ export type DeviceWarm = { socketPath?: string; helper?: WarmHelper; warning?: s
 /**
  * The iOS driver warm-up started while the run is still claiming: a leg's helpers are spawned and
  * snapshotted the moment its devices are leased, in parallel with the app install, Metro and the
- * per-device setup, instead of after all of them.
+ * per-device setup, instead of after all of them. A leg's devices warm one after the other (see
+ * `warmDrivers`); the warm-up as a whole still overlaps the install, Metro and setup.
  */
 export type EarlyWarm = {
 	/** `LeaseArgs.onLeased`: warm the devices of leg `leg` (their workers are numbered by leg order, as the run's pools are) */

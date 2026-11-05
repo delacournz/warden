@@ -68,16 +68,88 @@ const message = (error: unknown): string => (error instanceof Error ? error.mess
 /** A helper whose device goes cold: stopped when it can be (else only disconnected); never throws. */
 const discard = (helper: WarmHelper): Promise<void> => (helper.stop ? helper.stop() : helper.close()).catch(() => {});
 
-/**
- * `connect` then one snapshot; never throws. A helper that connects but cannot snapshot is stopped: it may be
- * wedged, so the device's jobs are not handed its socket, and it must not stay resident beside their own helpers.
- */
+/** Stop (else disconnect) the helper of a device that goes cold, and say so in its log. */
 async function coldHelper(helper: WarmHelper, note: (line: string) => void): Promise<void> {
 	await discard(helper);
 	note(helper.stop ? "stopped the helper: this device's jobs start their own" : "closed the helper");
 }
 
-async function warmOne(connect: WarmConnect, udid: string, note: (line: string) => void): Promise<Step> {
+/** Wait before the second snapshot try, then between later ones: the in-sim bridge is up but silent, not gone. */
+const FIRST_RETRY_WAIT_MS = 2_000;
+const RETRY_WAIT_MS = 5_000;
+
+/** Why the device's wait ended early, as the caller knows it: the outer timeout, or a SIGINT. */
+type Late = "timeout" | "interrupt" | undefined;
+
+type Stop = {
+	/** aborted when the device's wait has ended (settled, timed out or interrupted): no more retries after it */
+	signal: AbortSignal;
+	late: () => Late;
+};
+
+/** Wait `ms` through `run.after`; resolves false when `stop` aborted first (the timer is cancelled). */
+function pause(run: WarmRun, ms: number, stop: AbortSignal): Promise<boolean> {
+	return new Promise<boolean>((resolve) => {
+		if (stop.aborted) return resolve(false);
+		const onAbort = () => {
+			cancel();
+			resolve(false);
+		};
+		const cancel = run.after(ms, () => {
+			stop.removeEventListener("abort", onAbort);
+			resolve(true);
+		});
+		stop.addEventListener("abort", onAbort, { once: true });
+	});
+}
+
+/**
+ * Snapshot with backoff until one succeeds (undefined) or the budget or `stop` ends it (the last error). The
+ * budget counts the clock and, as a floor, the time slept, so a clock that stands still cannot retry forever.
+ */
+async function snapshotUntilWarm(
+	run: WarmRun,
+	helper: WarmHelper,
+	budgetMs: number,
+	stop: Stop,
+	note: (line: string) => void
+): Promise<string | undefined> {
+	const started = run.now();
+	let waited = 0;
+	let lastError = "";
+	for (let attempt = 1; ; attempt++) {
+		try {
+			const shot = await helper.snapshot();
+			if (shot.success) return undefined;
+			lastError = `snapshot failed: ${shot.error}`;
+		} catch (error) {
+			lastError = `snapshot failed: ${message(error)}`;
+		}
+		const wait = attempt === 1 ? FIRST_RETRY_WAIT_MS : RETRY_WAIT_MS;
+		const detail = lastError.replace(/^snapshot failed: /, "");
+		const spent = Math.max(run.now() - started, waited);
+		const done = stop.signal.aborted || spent + wait >= budgetMs;
+		note(`snapshot try ${attempt} failed: ${detail}; ${done ? "giving up" : "retrying"}`);
+		if (done || !(await pause(run, wait, stop.signal))) return lastError;
+		waited += wait;
+	}
+}
+
+/**
+ * `connect`, then snapshot until one succeeds or the budget is spent (a loaded host's bridge can stay silent
+ * longer than one ~10 s snapshot): 2 s after the first failure, 5 s between later tries. Never throws. A
+ * helper that connects but never snapshots is stopped: it may be wedged, so the device's jobs are not handed
+ * its socket, and it must not stay resident beside their own helpers.
+ */
+async function warmOne(
+	run: WarmRun,
+	connect: WarmConnect,
+	udid: string,
+	budgetMs: number,
+	stop: Stop,
+	note: (line: string) => void
+): Promise<Step> {
+	const started = run.now();
 	let helper: WarmHelper;
 	try {
 		const connected = await connect(udid);
@@ -87,74 +159,88 @@ async function warmOne(connect: WarmConnect, udid: string, note: (line: string) 
 		return { error: message(error) };
 	}
 	note(`connected ${helper.socketPath}`);
-	try {
-		const shot = await helper.snapshot();
-		if (shot.success) return { helper };
-		await coldHelper(helper, note);
-		return { error: `snapshot failed: ${shot.error}` };
-	} catch (error) {
-		await coldHelper(helper, note);
-		return { error: `snapshot failed: ${message(error)}` };
-	}
+	const lastError = await snapshotUntilWarm(run, helper, budgetMs - (run.now() - started), stop, note);
+	if (lastError === undefined) return { helper };
+	if (stop.late() === "interrupt") await helper.close().catch(() => {});
+	else await coldHelper(helper, note);
+	return { error: lastError };
+}
+
+/** One device's step: its warm-up raced against the budget and the interrupt; a helper that arrives late is discarded. */
+function settleDevice(
+	run: WarmRun,
+	connect: WarmConnect,
+	udid: string,
+	budgetMs: number,
+	note: (line: string) => void
+): Promise<Step> {
+	if (run.signal?.aborted) return Promise.resolve({ error: "interrupted" });
+	let late: Late;
+	const stopper = new AbortController();
+	return new Promise<Step>((resolve) => {
+		const finish = (s: Step) => {
+			cancel();
+			run.signal?.removeEventListener("abort", onAbort);
+			stopper.abort();
+			resolve(s);
+		};
+		const cancel = run.after(budgetMs, () => {
+			late = "timeout";
+			finish({ error: `timed out after ${budgetMs / 1000}s` });
+		});
+		const onAbort = () => {
+			late = "interrupt";
+			finish({ error: "interrupted" });
+		};
+		run.signal?.addEventListener("abort", onAbort, { once: true });
+		const stop: Stop = { signal: stopper.signal, late: () => late };
+		void warmOne(run, connect, udid, budgetMs, stop, note).then((s) => {
+			if (s.helper && late === "timeout") void discard(s.helper);
+			else if (s.helper && late === "interrupt") void s.helper.close().catch(() => {});
+			finish(s);
+		});
+	});
 }
 
 /**
- * Per device, in parallel: connect the socket helper and take one snapshot, so the in-sim bridge is
- * resident before the first job. Each device logs to `<logDir>/warm-<worker>.log`. Failures, the
- * timeout and an interrupt only leave that device cold; this never throws. A helper that arrives after
- * the timeout is stopped (its device's jobs run cold); after an interrupt it is only disconnected.
+ * Per device, one after the other: connect the socket helper and snapshot (retried with backoff until the
+ * per-device budget is spent), so the in-sim bridge is resident before the first job. Sequential because
+ * devices warming at once contend for the host: one cold bridge starves the others of CPU and pushes them
+ * past their timeouts, where one at a time each gets the machine to itself. Device N+1 starts once N is warm
+ * or out of budget. Each device logs to `<logDir>/warm-<worker>.log`. Failures, the timeout and an interrupt
+ * only leave that device cold; this never throws. A helper that arrives after the timeout is stopped (its
+ * device's jobs run cold); after an interrupt it is only disconnected, and devices not yet started are skipped.
  */
 export async function warmDrivers(run: WarmRun, deps: WarmDeps): Promise<WarmOutcome> {
 	const helpers: WarmHelper[] = [];
-	const devices = await Promise.all(
-		run.devices.map(async (device): Promise<Warmed> => {
-			const lines: string[] = [];
-			const note = (line: string) => lines.push(`[${new Date(run.now()).toISOString()}] ${line}`);
-			const log = join(run.logDir, `warm-${device.worker}.log`);
-			note(`warming ${device.udid}`);
-			const pending = warmOne(deps.connect, device.udid, note);
-			let late: "timeout" | "interrupt" | undefined;
-			const step = await new Promise<Step>((resolve) => {
-				const finish = (s: Step) => {
-					cancel();
-					run.signal?.removeEventListener("abort", onAbort);
-					resolve(s);
-				};
-				const cancel = run.after(deps.timeoutMs ?? WARM_TIMEOUT_MS, () => {
-					late = "timeout";
-					finish({ error: `timed out after ${(deps.timeoutMs ?? WARM_TIMEOUT_MS) / 1000}s` });
-				});
-				const onAbort = () => {
-					late = "interrupt";
-					finish({ error: "interrupted" });
-				};
-				run.signal?.addEventListener("abort", onAbort, { once: true });
-				if (run.signal?.aborted) onAbort();
-				void pending.then(finish);
-			});
-			if (late === "timeout") void pending.then((s) => (s.helper ? discard(s.helper) : undefined));
-			else if (late === "interrupt") void pending.then((s) => s.helper?.close().catch(() => {}));
-			let warning: string | undefined;
-			if (step.helper) {
-				helpers.push(step.helper);
-				note("snapshot ok — bridge resident");
-			} else {
-				note(`not warm: ${step.error}`);
-				warning = `warm ${device.udid}: ${step.error} (continuing cold) — log: ${log}`;
-				deps.warn?.(warning);
-			}
-			await run.writeFile(log, `${lines.join("\n")}\n`).catch(() => {});
-			const warmed: Warmed = {
-				worker: device.worker,
-				udid: device.udid,
-				ok: step.helper !== undefined,
-				...(step.helper ? { socketPath: step.helper.socketPath } : {}),
-				...(step.error !== undefined ? { error: step.error } : {}),
-				log,
-			};
-			deps.onDevice?.(warmed, step.helper, warning);
-			return warmed;
-		})
-	);
+	const budgetMs = deps.timeoutMs ?? WARM_TIMEOUT_MS;
+	const devices: Warmed[] = [];
+	for (const device of run.devices) {
+		const lines: string[] = [];
+		const note = (line: string) => lines.push(`[${new Date(run.now()).toISOString()}] ${line}`);
+		const log = join(run.logDir, `warm-${device.worker}.log`);
+		note(`warming ${device.udid}`);
+		const step = await settleDevice(run, deps.connect, device.udid, budgetMs, note);
+		let warning: string | undefined;
+		if (step.helper) {
+			helpers.push(step.helper);
+			note("snapshot ok — bridge resident");
+		} else {
+			note(`not warm: ${step.error}`);
+			warning = `warm ${device.udid}: ${step.error} (continuing cold) — log: ${log}`;
+			deps.warn?.(warning);
+		}
+		await run.writeFile(log, `${lines.join("\n")}\n`).catch(() => {});
+		const warmed: Warmed = {
+			worker: device.worker,
+			udid: device.udid,
+			ok: step.helper !== undefined,
+			...(step.helper ? { socketPath: step.helper.socketPath } : {}),
+			...(step.error !== undefined ? { error: step.error } : {}),
+			log,
+		};
+		deps.onDevice?.(warmed, step.helper, warning);
+		devices.push(warmed);
+	}
 	return { devices, helpers };
 }

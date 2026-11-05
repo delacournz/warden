@@ -14,16 +14,27 @@ type Fixture = {
 	warnings: string[];
 };
 
-function fixture(signal?: AbortSignal): Fixture {
+/** the snapshot retry waits (2 s after the first failure, 5 s after later ones): fired at once when `autoRetry` is set */
+const RETRY_WAITS_MS: readonly number[] = [2_000, 5_000];
+
+function fixture(signal?: AbortSignal, o: { autoRetry?: boolean } = {}): Fixture {
 	const files = new Map<string, string>();
 	const timers: Fixture["timers"] = [];
+	let clock = 1_000;
 	const run: WarmRun = {
 		devices,
 		logDir: "/logs",
-		now: () => 1_000,
+		now: () => clock,
 		after: (ms, fn) => {
 			const timer = { ms, fire: fn, cancelled: false };
 			timers.push(timer);
+			if (o.autoRetry && RETRY_WAITS_MS.includes(ms)) {
+				queueMicrotask(() => {
+					if (timer.cancelled) return;
+					clock += ms;
+					fn();
+				});
+			}
 			return () => {
 				timer.cancelled = true;
 			};
@@ -92,7 +103,7 @@ describe("warmDrivers", () => {
 		expect(f.timers.every((t) => t.cancelled && t.ms === 120_000)).toBe(true);
 	});
 
-	test("devices warm in parallel", async () => {
+	test("devices warm strictly in order: the next connects only after the previous settled", async () => {
 		const f = fixture();
 		const order: string[] = [];
 		const connect: WarmConnect = async (udid) => {
@@ -101,8 +112,102 @@ describe("warmDrivers", () => {
 			order.push(`end ${udid}`);
 			return ok(fake(udid).helper);
 		};
-		await warmDrivers(f.run, { connect });
-		expect(order.slice(0, 2)).toEqual(["start U0", "start U1"]);
+		const settled: string[] = [];
+		await warmDrivers(f.run, { connect, onDevice: (d) => settled.push(`settled ${d.udid}`) });
+		expect(order).toEqual(["start U0", "end U0", "start U1", "end U1"]);
+		expect(settled).toEqual(["settled U0", "settled U1"]);
+	});
+
+	test("a device that ran out of budget does not hold the next one back", async () => {
+		const f = fixture(undefined, { autoRetry: true });
+		const bad = fake("U0", async () => err("E_TIMEOUT"), { stoppable: true });
+		const good = fake("U1");
+		const connect: WarmConnect = async (udid) => ok(udid === "U0" ? bad.helper : good.helper);
+		const out = await warmDrivers(f.run, { connect, timeoutMs: 8_000 });
+		expect(out.devices.map((d) => d.ok)).toEqual([false, true]);
+		expect(good.snapshots()).toBe(1);
+	});
+
+	test("retries the snapshot with backoff: two failures then success keeps the helper warm", async () => {
+		const f = fixture(undefined, { autoRetry: true });
+		let n = 0;
+		const one = fake(
+			"U0",
+			async () => {
+				n++;
+				return n < 3 ? err("E_TIMEOUT") : ok(null);
+			},
+			{ stoppable: true }
+		);
+		const connect: WarmConnect = async (udid) => ok(udid === "U0" ? one.helper : fake(udid).helper);
+		const out = await warmDrivers(f.run, { connect, warn: (l) => f.warnings.push(l) });
+		expect(out.devices[0]).toMatchObject({ ok: true, socketPath: "/s/U0.sock" });
+		expect(one.snapshots()).toBe(3);
+		expect(one.stopped()).toBe(false);
+		expect(one.closed()).toBe(false);
+		expect(out.helpers).toContain(one.helper);
+		expect(f.warnings).toEqual([]);
+		const waits = f.timers.filter((t) => RETRY_WAITS_MS.includes(t.ms)).map((t) => t.ms);
+		expect(waits).toEqual([2_000, 5_000]);
+		const log = f.files.get("/logs/warm-0.log") ?? "";
+		expect(log).toContain("snapshot try 1 failed: E_TIMEOUT; retrying");
+		expect(log).toContain("snapshot try 2 failed: E_TIMEOUT; retrying");
+		expect(log).toContain("snapshot ok");
+	});
+
+	test("the budget running out leaves the device cold: helper stopped, last error reported", async () => {
+		const f = fixture(undefined, { autoRetry: true });
+		let n = 0;
+		const one = fake(
+			"U0",
+			async () => {
+				n++;
+				return err(`E_TIMEOUT ${n}`);
+			},
+			{ stoppable: true }
+		);
+		const connect: WarmConnect = async (udid) => ok(udid === "U0" ? one.helper : fake(udid).helper);
+		const out = await warmDrivers(f.run, { connect, timeoutMs: 10_000, warn: (l) => f.warnings.push(l) });
+		expect(one.snapshots()).toBe(3);
+		expect(out.devices[0]).toMatchObject({ ok: false, error: `snapshot failed: E_TIMEOUT 3` });
+		expect(one.stopped()).toBe(true);
+		expect(f.warnings[0]).toContain("snapshot failed: E_TIMEOUT 3");
+		expect(f.files.get("/logs/warm-0.log")).toContain("stopped the helper");
+		expect(out.helpers.every((h) => h !== one.helper)).toBe(true);
+	});
+
+	test("an interrupt during the retry wait stops the retries and only disconnects the helper", async () => {
+		const controller = new AbortController();
+		const f = fixture(controller.signal);
+		const one = fake("U0", async () => err("E_TIMEOUT"), { stoppable: true });
+		const connect: WarmConnect = async (udid) => ok(udid === "U0" ? one.helper : fake(udid).helper);
+		const running = warmDrivers(f.run, { connect });
+		await Bun.sleep(1);
+		expect(one.snapshots()).toBe(1);
+		const wait = f.timers.find((t) => !t.cancelled && t.ms === 2_000);
+		expect(wait).toBeDefined();
+		controller.abort();
+		const out = await running;
+		await Bun.sleep(1);
+		expect(out.devices.map((d) => d.error)).toEqual(["interrupted", "interrupted"]);
+		expect(one.snapshots()).toBe(1);
+		expect(wait?.cancelled).toBe(true);
+		expect(one.closed()).toBe(true);
+		expect(one.stopped()).toBe(false);
+	});
+
+	test("the outer timeout firing during a retry wait stops the retries and stops the helper", async () => {
+		const f = fixture();
+		const one = fake("U0", async () => err("E_TIMEOUT"), { stoppable: true });
+		const connect: WarmConnect = async (udid) => ok(udid === "U0" ? one.helper : fake(udid).helper);
+		const running = warmDrivers(f.run, { connect, timeoutMs: 9_000 });
+		await Bun.sleep(1);
+		f.timers.find((t) => !t.cancelled && t.ms === 9_000)?.fire();
+		const out = await running;
+		await Bun.sleep(1);
+		expect(out.devices[0]).toMatchObject({ ok: false, error: "timed out after 9s" });
+		expect(one.snapshots()).toBe(1);
+		expect(one.stopped()).toBe(true);
 	});
 
 	test("a failed connect only warns and leaves that device cold", async () => {
@@ -130,7 +235,7 @@ describe("warmDrivers", () => {
 		const f = fixture();
 		const one = fake("U0", async () => err("AX denied"));
 		const connect: WarmConnect = async (udid) => ok(udid === "U0" ? one.helper : fake(udid).helper);
-		const out = await warmDrivers(f.run, { connect, warn: (l) => f.warnings.push(l) });
+		const out = await warmDrivers(f.run, { connect, timeoutMs: 1_000, warn: (l) => f.warnings.push(l) });
 		expect(out.devices[0]).toMatchObject({ ok: false, error: "snapshot failed: AX denied" });
 		expect(out.devices[0]?.socketPath).toBeUndefined();
 		expect(one.closed()).toBe(true);
@@ -141,7 +246,7 @@ describe("warmDrivers", () => {
 		const f = fixture();
 		const one = fake("U0", async () => err("AX denied"), { stoppable: true });
 		const connect: WarmConnect = async (udid) => ok(udid === "U0" ? one.helper : fake(udid).helper);
-		const out = await warmDrivers(f.run, { connect, warn: (l) => f.warnings.push(l) });
+		const out = await warmDrivers(f.run, { connect, timeoutMs: 1_000, warn: (l) => f.warnings.push(l) });
 		expect(out.devices[0]).toMatchObject({ ok: false, error: "snapshot failed: AX denied" });
 		expect(one.stopped()).toBe(true);
 		expect(f.files.get("/logs/warm-0.log")).toContain("stopped the helper");
@@ -156,7 +261,7 @@ describe("warmDrivers", () => {
 			},
 			{ stoppable: true }
 		);
-		const out = await warmDrivers(f.run, { connect: async () => ok(one.helper) });
+		const out = await warmDrivers(f.run, { connect: async () => ok(one.helper), timeoutMs: 1_000 });
 		expect(out.devices[0]).toMatchObject({ ok: false, error: "snapshot failed: socket reset" });
 		expect(one.stopped()).toBe(true);
 	});
