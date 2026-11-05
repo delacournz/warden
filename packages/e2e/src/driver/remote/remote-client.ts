@@ -11,11 +11,13 @@ import type {
 	DriverError,
 	DriverResult,
 	KeyName,
+	Point,
 	Snapshot,
 } from "../driver.types";
 import type { ActsOnElements } from "../element-actions";
 import { driverError } from "../errors";
 import { socketTransport, type Transport, type TransportFactory } from "../ios/simd-transport";
+import type { LiveTouch, TouchPointer } from "../live-touch";
 import type { AuditsNatively, NativeAuditResult } from "../native-audit";
 import type { DetectsAlerts } from "../observation-cache";
 import type { DrivesScreenReader } from "../screen-reader";
@@ -40,6 +42,8 @@ const DEFAULT_READY_TIMEOUT_MS = 2000;
 
 type RemoteA11y = Partial<ReadsA11y & ReadsA11yEvents & AuditsNatively & DrivesScreenReader & ActsOnElements>;
 
+const LIVE_TOUCH_OPS = ["touchDown", "touchMove", "touchUp", "touchCancel"] as const;
+
 /** A remote driver plus whichever optional capabilities the served one offers. */
 export type RemoteDriver = Driver &
 	Partial<
@@ -53,7 +57,8 @@ export type RemoteDriver = Driver &
 			ReadsA11yEvents &
 			AuditsNatively &
 			DrivesScreenReader &
-			ActsOnElements
+			ActsOnElements &
+			LiveTouch
 	>;
 
 export type RequestOptions = { timeoutMs?: number };
@@ -217,6 +222,16 @@ export async function connectRemoteDriver(options: ConnectRemoteOptions): Promis
 		return shot.success ? { success: true, data: screenshotFromWire(shot.data) } : shot;
 	};
 
+	const liveTouchOf = (offered: ReadonlySet<string>): Partial<LiveTouch> =>
+		LIVE_TOUCH_OPS.every((op) => offered.has(op))
+			? {
+					touchDown: (point: Point, pointer?: TouchPointer) => call<void>("touchDown", point, pointer),
+					touchMove: (point: Point, pointer?: TouchPointer) => call<void>("touchMove", point, pointer),
+					touchUp: (point?: Point, pointer?: TouchPointer) => call<void>("touchUp", point, pointer),
+					touchCancel: () => call<void>("touchCancel"),
+				}
+			: {};
+
 	const a11yCapabilities = (offered: ReadonlySet<string>, platform: ReadyEvent["platform"]) => {
 		const out: RemoteA11y = {};
 		if (offered.has("readA11y")) {
@@ -304,6 +319,7 @@ export async function connectRemoteDriver(options: ConnectRemoteOptions): Promis
 			offered.has("alertOn") ? { alertOn: (backend: AlertBackend) => call<AlertInfo | null>("alertOn", backend) } : {},
 			offered.has("isFrontmost") ? { isFrontmost: (bundleId: string) => call<boolean>("isFrontmost", bundleId) } : {},
 			a11yCapabilities(offered, hello.platform),
+			liveTouchOf(offered),
 			hello.alertIn === "android" ? { alertIn: (shot: Snapshot) => detectAlert(shot.flat) } : {}
 		);
 	};

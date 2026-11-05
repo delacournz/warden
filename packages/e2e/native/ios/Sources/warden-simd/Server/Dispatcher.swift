@@ -109,6 +109,7 @@ extension Dispatcher where Context == Session {
       SettleOps.ops,
       AppOps.ops,
       StreamOps.ops,
+      LiveTouchOps.ops,
     ] {
       handlers.merge(table) { _, new in new }
     }

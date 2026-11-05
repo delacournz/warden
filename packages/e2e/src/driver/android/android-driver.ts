@@ -32,6 +32,7 @@ import type {
 import type { ActsOnElements } from "../element-actions";
 import { driverErr } from "../errors";
 import { DEFAULT_RADIUS, type GesturePlan, pinchPlan, planGesture, rotatePlan } from "../gesture-geometry";
+import type { LiveTouch } from "../live-touch";
 import type { AuditsNatively, NativeAuditOptions } from "../native-audit";
 import type { NetworkProxyPort } from "../network-proxy";
 import type { DetectsAlerts } from "../observation-cache";
@@ -353,6 +354,7 @@ function buildDriver(
 	DetectsAlerts &
 	Partial<SelectsAll> &
 	Partial<SetsText> &
+	Partial<LiveTouch> &
 	Partial<ReadsA11yEvents> &
 	Partial<DrivesScreenReader> &
 	Partial<ActsOnElements> &
@@ -512,6 +514,18 @@ function buildDriver(
 	 */
 	const setText: SetsText["setText"] = async (text) =>
 		(await uiad?.setText(text)) ?? driverErr("E_UNSUPPORTED", "setText needs the warden-uiad server");
+
+	/**
+	 * See `LiveTouch`: one MotionEvent per call through the server (points are pixels, like `tap`). `input` cannot hold
+	 * a finger down between commands, so there is no shell fallback: a server that is off is `E_UNSUPPORTED`.
+	 */
+	const noLiveTouch = () => driverErr("E_UNSUPPORTED", "live touch needs the warden-uiad server");
+	const liveTouch: LiveTouch = {
+		touchDown: async (point, pointer) => (await uiad?.touch("down", point, pointer)) ?? noLiveTouch(),
+		touchMove: async (point, pointer) => (await uiad?.touch("move", point, pointer)) ?? noLiveTouch(),
+		touchUp: async (point, pointer) => (await uiad?.touch("up", point, pointer)) ?? noLiveTouch(),
+		touchCancel: async () => (await uiad?.touch("cancel")) ?? noLiveTouch(),
+	};
 
 	/** See `ReadsA11yEvents`: the server's ring of announcements and live-region changes; there is no way without it. */
 	const a11yEvents: ReadsA11yEvents["a11yEvents"] = async (since) =>
@@ -853,7 +867,7 @@ function buildDriver(
 		key,
 		pressKeyRepeat,
 		...(uiad !== undefined || (sdk !== undefined && sdk >= SELECT_ALL_MIN_SDK) ? { selectAll } : {}),
-		...(uiad !== undefined ? { setText, a11yEvents, ...screenReader } : {}),
+		...(uiad !== undefined ? { setText, a11yEvents, ...screenReader, ...liveTouch } : {}),
 		...(uiad !== undefined
 			? {
 					auditNatively: (opts?: NativeAuditOptions) =>

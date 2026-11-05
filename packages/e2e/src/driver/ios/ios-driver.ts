@@ -25,10 +25,12 @@ import type {
 	LaunchOptions,
 	Logger,
 	Orientation,
+	Point,
 	Snapshot,
 } from "../driver.types";
 import { driverErr, driverError } from "../errors";
 import { DEFAULT_RADIUS, type GesturePlan, planGesture, rotatePlan } from "../gesture-geometry";
+import type { LiveTouch, TouchPointer } from "../live-touch";
 import type { AuditsNatively } from "../native-audit";
 import type { NetworkProxyPort } from "../network-proxy";
 import { type SettleDetail, settleByHash, snapshotHash } from "../settle";
@@ -66,7 +68,8 @@ export type IosDriver = Driver &
 	ProbesFrontmost &
 	ReadsA11y &
 	ReadsA11yEvents &
-	AuditsNatively;
+	AuditsNatively &
+	LiveTouch;
 
 export type OpenIosDriverOptions = {
 	udid: string;
@@ -129,6 +132,8 @@ const SETTLE_MARGIN_MS = 2_000;
 /** How long `app.launch` lets the helper wait for its stream to follow the new process; the helper answers earlier. */
 const REBIND_TIMEOUT_MS = 3_000;
 const GESTURE_MARGIN_MS = 5_000;
+/** One live touch event is one HID send (~1 ms); a slower answer means the helper is stuck, not busy. */
+const TOUCH_TIMEOUT_MS = 2_000;
 /** `frontmost` is one launchd lookup; a helper that has not answered in this long is busy, and the caller carries on without. */
 const FRONTMOST_TIMEOUT_MS = 3_000;
 /** The helper's `launch` waits for the app to start, bounded like `simctl launch` was. */
@@ -398,11 +403,11 @@ export function createIosDriver(
 
 	const gestureTimeout = (durationMs: number | undefined, base = 0) => (durationMs ?? 0) + base + GESTURE_MARGIN_MS;
 
-	const helperOutdated = () =>
+	const helperOutdated = (op = "gesture") =>
 		fail(
 			driverError(
 				"E_UNSUPPORTED",
-				`this warden-simd predates the gesture op: restart the helper (warden ui close --udid ${udid}) or rebuild it (bun run --cwd packages/e2e native:build)`,
+				`this warden-simd predates the ${op} op: restart the helper (warden ui close --udid ${udid}) or rebuild it (bun run --cwd packages/e2e native:build)`,
 				{ detail: { reason: "helper_outdated" } }
 			)
 		);
@@ -423,6 +428,20 @@ export function createIosDriver(
 		}
 		return result;
 	};
+
+	let touchUnsupported = false;
+	/** One `touch.*` op (live touch); an old helper that doesn't know them is remembered like `gesture`. */
+	const sendTouch = async (op: "down" | "move" | "up" | "cancel", p: Params): DriverResult<void> => {
+		if (touchUnsupported) return helperOutdated("touch.*");
+		const result = await sendVoid(`touch.${op}`, p, TOUCH_TIMEOUT_MS);
+		if (!result.success && predatesOp(result.error)) {
+			touchUnsupported = true;
+			return helperOutdated("touch.*");
+		}
+		return result;
+	};
+	const touchAt = (point: Point | undefined, pointer: TouchPointer | undefined): Params =>
+		params({ x: point?.x, y: point?.y, pointer: pointer ?? 0 });
 
 	/**
 	 * `launch` / `terminate` / `openUrl` through the helper, whose process already holds CoreSimulator: every `xcrun
@@ -719,6 +738,10 @@ export function createIosDriver(
 			),
 		rotate: (center, degrees, o) => sendGesture(rotatePlan(center, degrees, o, DEFAULT_RADIUS)),
 		gesture: (paths, o) => sendGesture(planGesture(paths, o, 2)),
+		touchDown: (point, pointer) => sendTouch("down", touchAt(point, pointer)),
+		touchMove: (point, pointer) => sendTouch("move", touchAt(point, pointer)),
+		touchUp: (point, pointer) => sendTouch("up", touchAt(point, pointer)),
+		touchCancel: () => sendTouch("cancel", {}),
 		typeText,
 		key: (key, modifiers) => sendVoid("key", params({ usage: KEY_USAGE[key], modifiers: modifiers && [...modifiers] })),
 		selectAll: () => sendVoid("selectAll"),

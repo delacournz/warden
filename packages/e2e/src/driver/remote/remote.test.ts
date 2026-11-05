@@ -5,8 +5,9 @@ import { join } from "node:path";
 import { canReadA11yEvents } from "../a11y-events";
 import { canReadA11y } from "../a11y-read";
 import { el, failWith, fakeDriver, snapshotOf } from "../driver.testing";
-import type { Driver, DriverCapabilities } from "../driver.types";
+import type { Driver, DriverCapabilities, Point } from "../driver.types";
 import { canActOnElements } from "../element-actions";
+import { canLiveTouch, type TouchPointer } from "../live-touch";
 import { canAuditNatively } from "../native-audit";
 import { canDetectAlerts } from "../observation-cache";
 import { canDriveScreenReader } from "../screen-reader";
@@ -360,5 +361,38 @@ describe("remote driver", () => {
 	test("a driver without element actions offers none", async () => {
 		const remote = (await connect(await serve(fakeDriver({ screens: [screen], platform: "android" })))).driver();
 		expect(canActOnElements(remote)).toBe(false);
+	});
+});
+
+describe("live touch over the wire", () => {
+	test("offered when the served driver has it; each call reaches it with its point and pointer", async () => {
+		const calls: unknown[][] = [];
+		const done = async (...args: unknown[]) => {
+			calls.push(args);
+			return { success: true as const, data: undefined };
+		};
+		const served = Object.assign(fakeDriver({ screens: [screen], platform: "android" }), {
+			touchDown: (point: Point, pointer?: TouchPointer) => done("down", point, pointer),
+			touchMove: (point: Point, pointer?: TouchPointer) => done("move", point, pointer),
+			touchUp: (point?: Point, pointer?: TouchPointer) => done("up", point, pointer),
+			touchCancel: () => done("cancel"),
+		});
+		const remote = (await connect(await serve(served))).driver();
+		if (!canLiveTouch(remote)) throw new Error("no live touch");
+		await remote.touchDown({ x: 1, y: 2 }, 1);
+		await remote.touchMove({ x: 3, y: 4 });
+		await remote.touchUp(undefined, 1);
+		await remote.touchCancel();
+		expect(calls).toEqual([
+			["down", { x: 1, y: 2 }, 1],
+			["move", { x: 3, y: 4 }, undefined],
+			["up", undefined, 1],
+			["cancel"],
+		]);
+	});
+
+	test("not offered when the served driver lacks it", async () => {
+		const remote = (await connect(await serve(fakeDriver({ screens: [screen], platform: "android" })))).driver();
+		expect(canLiveTouch(remote)).toBe(false);
 	});
 });
