@@ -187,7 +187,7 @@ export function harness(
 			after: (ms, fn) => {
 				const timer = { ms, fire: fn, cancelled: false };
 				h.timers.push(timer);
-				if (ms === 2_000 || ms === 5_000) {
+				if (opts.warm === "snapshot-fail" && (ms === 2_000 || ms === 5_000)) {
 					queueMicrotask(() => {
 						if (!timer.cancelled) fn();
 					});
