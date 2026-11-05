@@ -36,6 +36,8 @@ webrtc = "0.21"
 bytes = "1.12.1"
 rtc = "0.21"
 async-trait = "0.1.92"
+# H.264 RTP packetizing / depacketizing and the codec parameters, shared with the stream publisher.
+warden-rtc = { path = "../../../crates/warden-rtc" }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

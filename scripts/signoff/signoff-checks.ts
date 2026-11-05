@@ -140,7 +140,8 @@ export const SIGNOFF_CHECKS: readonly SignoffCheck[] = [
 		context: "viewer",
 		label: "viewer (cargo test)",
 		always: false,
-		paths: ["apps/viewer/**"],
+		// crates/warden-rtc is the viewer's own RTP code, shared with the stream publisher; test:rust runs both.
+		paths: ["apps/viewer/**", "crates/warden-rtc/**"],
 		workflow: "ci.yml",
 		// The TS side (typecheck, check, bun test) is already covered by the always-on checks. Rust needs the
 		// frontend built first: tauri::generate_context! reads `frontendDist` at compile time.

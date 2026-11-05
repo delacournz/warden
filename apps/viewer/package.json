@@ -16,7 +16,7 @@
 		"lint": "biome lint --write ./src ./scripts",
 		"check": "biome check ./src ./scripts",
 		"test": "bun test",
-		"test:rust": "cargo test --manifest-path src-tauri/Cargo.toml"
+		"test:rust": "cargo test --manifest-path src-tauri/Cargo.toml && cargo test --manifest-path ../../crates/warden-rtc/Cargo.toml"
 	},
 	"dependencies": {
 		"@phosphor-icons/react": "^2.1.10",

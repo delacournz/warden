@@ -6,20 +6,16 @@
 //! connection state goes to the webview on a Tauri `Channel`.
 
 use crate::device::{close_resource, fetch_ice_servers, post_offer, ApiError, IceServer};
-use crate::h264::Assembler;
 use crate::local_publish::{self, Outlet};
 use crate::registry::Registry;
-use crate::reorder::{Packet, Reorder};
 use rtc::interceptor::Registry as InterceptorRegistry;
 use rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors;
-use rtc::peer_connection::configuration::media_engine::{MediaEngine, MIME_TYPE_H264};
+use rtc::peer_connection::configuration::media_engine::MediaEngine;
 use rtc::peer_connection::configuration::setting_engine::SettingEngineBuilder;
 use rtc::peer_connection::configuration::{RTCConfigurationBuilder, RTCIceServer};
 use rtc::peer_connection::sdp::RTCSessionDescription;
 use rtc::rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
-use rtc::rtp_transceiver::rtp_sender::{
-    RTCPFeedback, RTCRtpCodec, RTCRtpCodecParameters, RtpCodecKind,
-};
+use rtc::rtp_transceiver::rtp_sender::{RTCRtpCodecParameters, RtpCodecKind};
 use rtc::rtp_transceiver::{RTCRtpTransceiverDirection, RTCRtpTransceiverInit};
 use serde::Serialize;
 use std::collections::HashMap;
@@ -27,6 +23,9 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::ipc::Channel;
 use tauri::State;
+use warden_rtc::codec;
+use warden_rtc::h264::Assembler;
+use warden_rtc::reorder::{Packet, Reorder};
 use webrtc::media_stream::track_remote::{TrackRemote, TrackRemoteEvent};
 use webrtc::peer_connection::{
     PeerConnection, PeerConnectionBuilder, PeerConnectionEventHandler, RTCIceGatheringState,
@@ -206,19 +205,8 @@ impl PeerConnectionEventHandler for Handler {
 
 fn media_engine() -> CmdResult<MediaEngine> {
     let mut engine = MediaEngine::default();
-    let feedback = |typ: &str, parameter: &str| RTCPFeedback {
-        typ: typ.to_owned(),
-        parameter: parameter.to_owned(),
-    };
     let h264 = RTCRtpCodecParameters {
-        rtp_codec: RTCRtpCodec {
-            mime_type: MIME_TYPE_H264.to_owned(),
-            clock_rate: 90000,
-            channels: 0,
-            sdp_fmtp_line: "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f"
-                .to_owned(),
-            rtcp_feedback: vec![feedback("nack", ""), feedback("nack", "pli")],
-        },
+        rtp_codec: codec::h264(codec::receiver_feedback()),
         payload_type: 98,
     };
     engine

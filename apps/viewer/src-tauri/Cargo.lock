@@ -5350,6 +5350,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "warden-rtc"
+version = "0.0.0"
+dependencies = [
+ "bytes",
+ "log",
+ "rtc",
+]
+
+[[package]]
 name = "warden-viewer"
 version = "0.0.0"
 dependencies = [
@@ -5372,6 +5381,7 @@ dependencies = [
  "time",
  "tokio",
  "tokio-tungstenite",
+ "warden-rtc",
  "webrtc",
  "windows",
 ]
