@@ -292,11 +292,15 @@ async function rawAndroid(id: string): Promise<Raw> {
 const raw = udid ? await rawIos(udid) : await rawAndroid(serial ?? "");
 const rawMs: number[] = [];
 const deviceMs: number[] = [];
+const rawEnds = { down: [] as number[], up: [] as number[] };
+const deviceEnds = { down: [] as number[], up: [] as number[] };
 for (let d = 0; d < drags; d++) {
 	const r = padFrame;
 	const from = { x: r.x + r.width * 0.2, y: r.y + r.height * 0.5 };
 	const frames = Math.round(0.6 * hz);
-	await raw.request("touch.down", { ...from, pointer: 0 });
+	const pressed = await raw.request("touch.down", { ...from, pointer: 0 });
+	rawEnds.down.push(pressed.ms);
+	deviceEnds.down.push(pressed.deviceUs / 1000);
 	const start = performance.now();
 	for (let i = 1; i <= frames; i++) {
 		const wait = start + i * frameMs - performance.now();
@@ -305,11 +309,17 @@ for (let d = 0; d < drags; d++) {
 		rawMs.push(t.ms);
 		deviceMs.push(t.deviceUs / 1000);
 	}
-	await raw.request("touch.up", { pointer: 0 });
+	const lifted = await raw.request("touch.up", { pointer: 0 });
+	rawEnds.up.push(lifted.ms);
+	deviceEnds.up.push(lifted.deviceUs / 1000);
 	await sleep(150);
 }
 await raw.close();
-process.stdout.write(`\nraw ${udid ? "warden-simd" : "warden-uiad"} (driver closed), moves only:\n`);
-process.stdout.write(`${summary("rtt", rawMs)}\n${summary(udid ? "hid" : "inject", deviceMs)}\n`);
+process.stdout.write(
+	`\nraw ${udid ? "warden-simd" : "warden-uiad"} (driver closed); "dev" = device-side time in the reply:\n`
+);
+process.stdout.write(
+	`${summary("down", rawEnds.down)}\n${summary("move", rawMs)}\n${summary("up", rawEnds.up)}\n${summary(udid ? "move hid" : "move inj", deviceMs)}\n${summary("down dev", deviceEnds.down)}\n${summary("up dev", deviceEnds.up)}\n`
+);
 
 process.exit(failures === 0 ? 0 : 1);
