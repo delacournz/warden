@@ -63,17 +63,34 @@ struct TargetedOutcome<Value: Sendable>: Sendable {
   var target: PidTarget?
 }
 
-/// When the frontmost lookup last failed, so the reads inside the cooldown go straight to a pid.
+/// When the frontmost lookup last failed, so the reads inside the cooldown go straight to a pid. The cooldown doubles
+/// with each failure in a row (capped at `maxCooldownSeconds`): on the hosted runner the lookup stayed dead for the
+/// whole run, and each probe costs a bridge stall plus a host timeout (~7.6 s).
 final class FrontmostLookupGate: @unchecked Sendable {
+  static let maxCooldownSeconds: Double = 300
   private let lock = NSLock()
   private var unresolvedAt: Double?
+  private var failures = 0
 
-  func recordUnresolved(at now: Double) { lock.withLock { unresolvedAt = now } }
-  func recordResolved() { lock.withLock { unresolvedAt = nil } }
+  func recordUnresolved(at now: Double) {
+    lock.withLock {
+      unresolvedAt = now
+      failures += 1
+    }
+  }
+
+  func recordResolved() {
+    lock.withLock {
+      unresolvedAt = nil
+      failures = 0
+    }
+  }
 
   func skips(now: Double, cooldownSeconds: Double) -> Bool {
-    guard cooldownSeconds > 0, let at = lock.withLock({ unresolvedAt }) else { return false }
-    return now - at < cooldownSeconds
+    let (at, count) = lock.withLock { (unresolvedAt, failures) }
+    guard cooldownSeconds > 0, let at else { return false }
+    let scaled = cooldownSeconds * pow(2, Double(max(0, count - 1)))
+    return now - at < min(scaled, max(cooldownSeconds, Self.maxCooldownSeconds))
   }
 
   var lastUnresolvedAt: Double? { lock.withLock { unresolvedAt } }
@@ -117,7 +134,7 @@ extension Session {
     var reason: String
     var failure: (any Error)?
     if gate.skips(now: now(), cooldownSeconds: policy.cooldownSeconds) {
-      reason = "the frontmost lookup failed under \(Int(policy.cooldownSeconds)) s ago"
+      reason = "the frontmost lookup failed recently (asked again after a backoff from \(Int(policy.cooldownSeconds)) s)"
     } else {
       do {
         let outcome = try await read(.frontmost)

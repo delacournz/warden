@@ -129,6 +129,22 @@ final class FrontmostRescueTests: XCTestCase {
       "probes frontmost again after the cooldown")
   }
 
+  func testTheCooldownDoublesWhileTheLookupKeepsFailingUpToFiveMinutes() {
+    let gate = FrontmostLookupGate()
+    gate.recordUnresolved(at: 1000)
+    XCTAssertTrue(gate.skips(now: 1019, cooldownSeconds: 20))
+    XCTAssertFalse(gate.skips(now: 1021, cooldownSeconds: 20))
+    gate.recordUnresolved(at: 1021)
+    XCTAssertTrue(gate.skips(now: 1060, cooldownSeconds: 20), "second failure: 40 s")
+    XCTAssertFalse(gate.skips(now: 1062, cooldownSeconds: 20))
+    for at in stride(from: 2000.0, to: 2010, by: 1) { gate.recordUnresolved(at: at) }
+    XCTAssertTrue(gate.skips(now: 2009 + 299, cooldownSeconds: 20))
+    XCTAssertFalse(gate.skips(now: 2009 + 301, cooldownSeconds: 20), "capped at 300 s")
+    gate.recordResolved()
+    gate.recordUnresolved(at: 3000)
+    XCTAssertFalse(gate.skips(now: 3021, cooldownSeconds: 20), "an answer resets the backoff")
+  }
+
   func testAFrontmostThatAnswersAgainEndsTheCooldown() async throws {
     let gate = FrontmostLookupGate()
     gate.recordUnresolved(at: 1000)
