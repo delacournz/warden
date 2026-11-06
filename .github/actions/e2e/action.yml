@@ -322,11 +322,13 @@ runs:
         started=$(date +%s)
         warden "${args[@]}" ${extra[@]+"${extra[@]}"} &
         suite_pid=$!
+        # `|| exit 0`: the cleanup below kills this sleep first; without it the
+        # subshell carries on and reports a timeout on every passing run.
         (
-          sleep $(( SUITE_TIMEOUT * 60 ))
+          sleep $(( SUITE_TIMEOUT * 60 )) || exit 0
           echo "::error title=suite timed out::warden e2e ran longer than ${SUITE_TIMEOUT} min; stopping it"
           kill -INT "$suite_pid" 2>/dev/null
-          sleep 60
+          sleep 60 || exit 0
           kill -KILL "$suite_pid" 2>/dev/null
         ) &
         watchdog_pid=$!
