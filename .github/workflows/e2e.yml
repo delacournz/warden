@@ -117,3 +117,26 @@ jobs:
           args: ${{ github.event_name == 'workflow_dispatch' && inputs.args || '--specs onboarding,settings,sign-in' }}
           warden-version: ${{ (inputs.warden-version || 'source') == 'source' && 'none' || inputs.warden-version }}
           save-cache: ${{ github.event_name == 'pull_request' && 'true' || (inputs.save-cache && 'true') || 'false' }}
+
+      - name: Diag helper logs and in-sim AX state
+        if: always()
+        run: |
+          set +e
+          out="$RUNNER_TEMP/diag"; mkdir -p "$out"
+          cp -R "$HOME/.warden/simd" "$out/simd" 2>/dev/null
+          ps -axo pid,ppid,pcpu,etime,command > "$out/ps.txt"
+          for udid in $(xcrun simctl list devices booted -j | jq -r '.devices[][]|.udid'); do
+            xcrun simctl spawn "$udid" launchctl list > "$out/launchctl-$udid.txt" 2>&1
+            xcrun simctl spawn "$udid" log show --last 15m --style compact --predicate 'subsystem CONTAINS[c] "accessibility" OR process CONTAINS[c] "axserver" OR process CONTAINS[c] "SimulatorFrameworkBridge" OR process == "SpringBoard" OR process == "backboardd"' > "$out/axlog-$udid.txt" 2>&1
+            plutil -p "$HOME/Library/Developer/CoreSimulator/Devices/$udid/data/Library/Preferences/com.apple.Accessibility.plist" > "$out/axprefs-$udid.txt" 2>&1
+            ls -la "$HOME/Library/Developer/CoreSimulator/Devices/$udid/data/Library/Preferences/" > "$out/prefs-ls-$udid.txt" 2>&1
+          done
+          log show --last 15m --style compact --predicate 'process == "CoreSimulatorService" OR process == "warden-simd"' > "$out/host-coresim.txt" 2>&1
+          ls -la "$out" "$out/simd"
+      - name: Upload diag
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: diag
+          path: ${{ runner.temp }}/diag
+          retention-days: 3
