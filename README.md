@@ -83,8 +83,8 @@ Never edit `version` by hand. `bun run release <version>` is a break-glass for w
 warden claim ios --json                          # lease 1 sim (reuse → boot → create), booted + ready
 warden claim android --profile pixel-10 --count 2
 warden claim ios --count 2 --wait 10m --ttl 1h --label e2e
-warden claim ios --priority high --no-wait       # host full → queue by priority (default --wait 30m); --no-wait fails fast
-warden capacity [--json]                         # host budget (RAM + perf cores), usage, what binds
+warden claim ios --priority high --no-wait       # WARDEN_CAPACITY=on + host full → queue by priority (default --wait 30m); --no-wait fails fast
+warden capacity [--json]                         # host budget (RAM + perf cores), usage, what binds, whether limits are enforced (off by default)
 warden queue [--json]                            # claims waiting for a boot slot: position, priority, age
 warden release --mine [--label x] [--shutdown]   # or <leaseId…> | --udid X | --session S; --label = only --mine leases with that label; --shutdown = warden-created or self-booted sims
 warden release <leaseId> --bad [reason]          # release + quarantine the device (claims skip it); clear: warden sim unquarantine <udid>

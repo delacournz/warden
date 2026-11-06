@@ -69,7 +69,7 @@ function blockedLine(blocked: Record<Platform, CapacityReason | null>): string[]
 
 /** `warden capacity`: what the machine can run, what is running, and why a claim would queue. */
 async function capacity(ctx: CommandContext, json: boolean): Promise<number> {
-	const enabled = capacityEnabled(ctx.env);
+	const enforced = capacityEnabled(ctx.env);
 	const basis = await readCapacityBasis(ctx);
 	const { host, budget, config } = basis;
 	const owner = resolveOwner(ctx);
@@ -110,7 +110,9 @@ async function capacity(ctx: CommandContext, json: boolean): Promise<number> {
 	}));
 
 	const data = {
-		enabled,
+		enforced,
+		/** same as `enforced`; kept for scripts written before limits became opt-in */
+		enabled: enforced,
 		warm: { enabled: warmOn, rows: warmRows },
 		host: {
 			os: host.os,
@@ -142,7 +144,7 @@ async function capacity(ctx: CommandContext, json: boolean): Promise<number> {
 	]);
 	const text = [
 		`host      ${host.os} · ${data.host.totalMemGb} GB · ${host.perfCores} perf + ${host.effCores} eff cores`,
-		`budget    ${Math.round(budget.memMb / MB_PER_GB)} GB · ${cpuLimit.toFixed(1)} cpu units${enabled ? "" : color.yellow("  (capacity gate OFF: WARDEN_CAPACITY=off)")}`,
+		`budget    ${Math.round(budget.memMb / MB_PER_GB)} GB · ${cpuLimit.toFixed(1)} cpu units${enforced ? color.dim("  (limits enforced)") : color.yellow("  (limits not enforced: claims boot at once; WARDEN_CAPACITY=on enforces them)")}`,
 		`usage     ${used.cpu.toFixed(1)} units · ${Math.round(used.memMb)} MB booted`,
 		`pressure  ${data.pressure}`,
 		...(warmOn
@@ -158,7 +160,7 @@ async function capacity(ctx: CommandContext, json: boolean): Promise<number> {
 		"",
 		why,
 	].join("\n");
-	emit(ctx, json, data, text, { scope: "capacity", detail: enabled ? "on" : "off" });
+	emit(ctx, json, data, text, { scope: "capacity", detail: enforced ? "enforced" : "not enforced" });
 	return 0;
 }
 
