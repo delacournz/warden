@@ -211,9 +211,10 @@ runs:
         } >> "$GITHUB_OUTPUT"
         echo "native fingerprint $fp, js $js, golden $golden"
 
-    # Restore and save are separate steps so a failed run never saves: a half-built base or an unsettled
-    # golden would be restored by every later run. The repack directories are cached on their own key (the
-    # native fingerprint plus the JS inputs); the builds cache excludes them.
+    # Restore and save are separate steps so a failed run never saves: a half-built base would be restored by every
+    # later run. The repack directories are cached on their own key (the native fingerprint plus the JS inputs); the
+    # builds cache excludes them. Only the files come back, not warden.db: warden registers a kind's dir it finds
+    # complete on disk with no row, so a restored base or repack is used instead of rebuilt.
     - name: Restore the native build cache
       id: builds-cache
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -338,10 +339,12 @@ runs:
       run: |
         profile_args=()
         if [ -n "$PROFILE" ]; then profile_args=(--profile "$PROFILE"); fi
-        if warden golden export ~/warden-goldens ${profile_args[@]+"${profile_args[@]}"}; then
+        # A small runner never settles a golden (a 3-core one stays at 150-200 % CPU past the 300 s wait), and every
+        # run there would build that same unsettled golden again: caching it saves those minutes.
+        if warden golden export ~/warden-goldens --allow-unsettled ${profile_args[@]+"${profile_args[@]}"}; then
           echo "exported=true" >> "$GITHUB_OUTPUT"
         else
-          echo "::warning title=golden not cached::warden would not export a golden that never settled; the next cold run rebuilds it"
+          echo "::warning title=golden not cached::warden golden export failed; the next cold run rebuilds the golden"
         fi
 
     - name: Save the golden simulator

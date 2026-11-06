@@ -19,7 +19,7 @@ on:
       - .github/actions/e2e/**
       - .github/workflows/e2e.yml
   push:
-    branches: [develop, main, feat/ci-e2e-action]
+    branches: [develop, main]
     paths:
       - apps/example/**
       - apps/cli/**
@@ -61,8 +61,10 @@ permissions:
   # bun install pulls @delacournz/* from GitHub Packages with the job token.
   packages: read
 
+# One group per branch, whatever the event: a branch that is both pushed and has an open pull request would
+# otherwise run the suite twice on one commit (`refs/heads/<b>` and `refs/pull/<n>/merge` are different refs).
 concurrency:
-  group: e2e-${{ github.ref }}
+  group: e2e-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
