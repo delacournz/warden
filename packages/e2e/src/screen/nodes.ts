@@ -53,8 +53,12 @@ function nonEmpty(value: string | undefined): string | undefined {
 	return value === undefined || value === "" ? undefined : value;
 }
 
+/** What iOS shows for a secure field whose role the accessibility tree does not give: only mask bullets. */
+const MASKED_VALUE = /^[\u2022\u25CF]+$/;
+
 function isSecure(element: Element, traits: ReadonlySet<string>): boolean {
 	return (
+		(element.role === "textfield" && element.value !== undefined && MASKED_VALUE.test(element.value)) ||
 		element.role === "securefield" ||
 		traits.has("password") ||
 		traits.has("secure") ||

@@ -1153,6 +1153,23 @@ describe("ensureKindBuild", () => {
 		expect(getInstall(store, "ios", "U1", "com.x.app")?.hash).toBe(`${FP}:dev`);
 	});
 
+	test("a simulator base restored on disk without its row (a CI cache) is registered and used: no build", async () => {
+		const key = { kind: "simulator-base", nativeFp: FP } as const;
+		const app = fakeApp(simulatorBaseDir(env, KEY, "ios", FP));
+		const calls: string[] = [];
+		const logs: string[] = [];
+		const res = await ensureKindBuild(
+			kindInput(fpExec(calls), { key, deviceId: undefined, build: true, log: (line) => logs.push(line) })
+		);
+		expect(res).toEqual({
+			success: true,
+			data: { appPath: app, hash: `${FP}:base`, source: "cache", installed: false },
+		});
+		expect(calls.some((c) => c.startsWith("sh -c") && c !== "sh -c fp")).toBe(false);
+		expect(getBuild(store, KEY, "ios", `${FP}:base`)).toMatchObject({ kind: "simulator-base", source: "restored" });
+		expect(logs.join("\n")).toContain("restored");
+	});
+
 	test("a kind-less build of the same fingerprint is the dev build: aliased under the kind hash, no build", async () => {
 		const path = await seedCache(FP);
 		const calls: string[] = [];

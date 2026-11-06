@@ -481,7 +481,10 @@ function admit(
 	const usage = claimUsage(cap, leases, slimmed, slimCreates);
 	const fit = fits(usage, need, budget);
 	const held = cap.pressure !== "normal";
-	if (head && fit.fits && !held) return undefined;
+	// A host smaller than one device (a 7 GB CI runner: budget 0 after the 8 GB headroom) would queue its first
+	// claim for the whole --wait. With nothing else counted against the budget, one device is always admitted.
+	const lone = !fit.fits && boots === 1 && usage.memMb === 0 && usage.cpu === 0;
+	if (head && (fit.fits || lone) && !held) return undefined;
 	const blocked: QueueBlocked = capacityBlock(fit, held) ?? "behind-earlier";
 	store.refreshQueue(cap.queueId, now, blocked);
 	noteQueued(input, cap, blocked, now);

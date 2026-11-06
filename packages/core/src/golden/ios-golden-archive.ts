@@ -76,7 +76,23 @@ export type GoldenManifest = z.infer<typeof manifestSchema>;
 /** What a golden of this machine is keyed on: what a CI cache key is made of. */
 export type GoldenInfo = GoldenTarget & { key: string; name: string; recipe: number };
 
-export type ExportedGolden = { name: string; key: string; udid: string; built: boolean; path: string };
+/** `unsettled`: exported with `allowUnsettled` from a golden whose first boot never settled (its mark travels with it). */
+export type ExportedGolden = {
+	name: string;
+	key: string;
+	udid: string;
+	built: boolean;
+	path: string;
+	unsettled?: true;
+};
+
+export type ExportGoldenOpts = {
+	/**
+	 * Export a golden that never settled instead of refusing it. For a host too small to ever settle one (a 3-core CI
+	 * runner): every run there builds the same unsettled golden anyway, so caching it only saves the rebuild.
+	 */
+	allowUnsettled?: boolean;
+};
 
 /** One archive `importGoldens` looked at. */
 export type ImportedGolden =
@@ -141,12 +157,14 @@ async function writeArchive(exec: Exec, source: string, final: string, manifest:
 /**
  * Copy the golden of `profile` (built first when missing) into `<dir>/<golden name>/`: the device dir without
  * `device.plist`, plus `golden.json`. Staged beside the final dir and moved in, so a failure leaves the old archive.
+ * A golden that never settled is refused unless `opts.allowUnsettled`.
  */
 export async function exportGolden(
 	deps: GoldenDeps,
 	profile: string,
 	runtime: string | undefined,
-	dir: string
+	dir: string,
+	opts: ExportGoldenOpts = {}
 ): AsyncResult<ExportedGolden> {
 	const target = await readGoldenTarget(deps, profile, runtime);
 	if (!target.success) return target;
@@ -155,9 +173,10 @@ export async function exportGolden(
 		const ensured = await ensureLocked(deps, target.data);
 		if (!ensured.success) return ensured;
 		const { udid, built } = ensured.data;
-		if (ensured.data.unsettled) {
+		const unsettled = ensured.data.unsettled === true;
+		if (unsettled && opts.allowUnsettled !== true) {
 			return err(
-				`golden ${golden.name} did not settle after its first boot: not exporting it (it stays usable on this machine; run warden golden prune --all --yes, then the next claim rebuilds it)`
+				`golden ${golden.name} did not settle after its first boot: not exporting it (it stays usable on this machine; run warden golden prune --all --yes, then the next claim rebuilds it; --allow-unsettled exports it anyway)`
 			);
 		}
 		const source = simDeviceDir(deps.env, udid);
@@ -179,8 +198,15 @@ export async function exportGolden(
 			exportedAt: deps.now(),
 		});
 		if (!written.success) return written;
-		log(deps, `exported ${golden.name} → ${final}`);
-		return ok({ name: golden.name, key: golden.key, udid, built, path: final });
+		log(deps, `exported ${golden.name}${unsettled ? " (unsettled)" : ""} → ${final}`);
+		return ok({
+			name: golden.name,
+			key: golden.key,
+			udid,
+			built,
+			path: final,
+			...(unsettled ? { unsettled: true as const } : {}),
+		});
 	});
 }
 

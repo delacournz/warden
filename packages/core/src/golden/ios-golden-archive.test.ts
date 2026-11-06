@@ -170,6 +170,26 @@ describe("exportGolden", () => {
 		expect(existsSync(join(archive, GOLDEN))).toBe(false);
 	});
 
+	test("allowUnsettled → an unsettled golden is exported and reported unsettled, its mark travels with it", async () => {
+		const host = fakeHost({ migrationPolls: 0, cpu: [300] });
+		seedDevice("NEW-1");
+		const exported = await exportGolden(deps(host), "iphone-17", undefined, archive, { allowUnsettled: true });
+		expect(exported.success).toBe(true);
+		if (!exported.success) return;
+		expect(exported.data).toMatchObject({ name: GOLDEN, built: true, unsettled: true });
+		expect(existsSync(join(archive, GOLDEN, GOLDEN_MANIFEST))).toBe(true);
+		expect(existsSync(join(archive, GOLDEN, "device", "warden-golden-unsettled"))).toBe(true);
+	});
+
+	test("allowUnsettled on a settled golden → exported, not reported unsettled", async () => {
+		const host = fakeHost({ migrationPolls: 0 });
+		seedDevice("NEW-1");
+		const exported = await exportGolden(deps(host), "iphone-17", undefined, archive, { allowUnsettled: true });
+		expect(exported.success).toBe(true);
+		if (!exported.success) return;
+		expect(exported.data.unsettled).toBeUndefined();
+	});
+
 	test("a settled golden reused later → no unsettled mark, exported", async () => {
 		const host = fakeHost({ migrationPolls: 0 });
 		seedDevice("NEW-1");

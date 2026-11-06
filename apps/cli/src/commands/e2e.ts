@@ -869,6 +869,9 @@ function netproxyEnv(): { netproxyCommand?: string[] } {
 }
 
 /** What `specPlan` needs of `BatchDeps` (`warden ui record stop` resolves the same plan to verify a spec). */
+/** `{ helperDir }` when there is a directory to name, else nothing (see `helperDir`). */
+const helperDirOf = (dir: string | undefined): { helperDir?: string } => (dir === undefined ? {} : { helperDir: dir });
+
 export type SpecPlanDeps = Pick<BatchDeps, "execPath" | "resolveModule" | "e2eVersion" | "bundledE2e" | "helperDir">;
 
 /** `bun` + preload + bundle id + timeouts of the suite's specs; every failure names what to set or install. */
@@ -912,7 +915,7 @@ export async function specPlan(
 			...(devClientScheme === undefined ? {} : { devClientScheme }),
 			timeouts: timeouts.data,
 			specsDir: resolve(suite.configDir, suite.config.specsDir),
-			helperDir: ctx.env.WARDEN_HELPER_DIR ?? deps.helperDir(),
+			...helperDirOf(ctx.env.WARDEN_HELPER_DIR ?? deps.helperDir()),
 			version,
 			bin: selfCommand(),
 			...(platform === "ios"

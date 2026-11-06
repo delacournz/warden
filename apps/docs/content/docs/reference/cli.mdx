@@ -384,6 +384,19 @@ On an interactive terminal it draws a dashboard (task rows, live output, Metro's
 
 Set an Expo app up for `warden dev` / `warden e2e`, in the app's root (`--project <dir>`). Writes a starter `warden.config.ts` (the project and a dev-client e2e suite) and an `@delacour/warden-e2e` spec `e2e/smoke.e2e.ts` when the app has no specs. `--bundle-id <id>` fills in `expo.ios.bundleIdentifier` / `expo.android.package` in `app.json` when they are missing (required for an app with no id). Existing files are kept unless `--force`; a warden config in another format is never replaced. Missing packages (`expo-dev-client`, `@delacour/warden-e2e` pinned to this warden's version) are named, not installed. `--dry-run`, `--json` (`{ root, written, skipped, install }`).
 
+### `warden ci cache`
+
+Prints what a CI job caches between runs: `builds` (the native simulator base), `repack` (the JS bundled into it) and `golden`, each with its `key` and `paths`; the golden adds the `afterRestore` / `beforeSave` commands (`warden golden import` / `export --allow-unsettled`). Keys are `<prefix>-builds-<os>-<arch>-<fp>`, `<prefix>-repack-<os>-<arch>-<fp>-<js>` and `<prefix>-<os>-<arch>-<golden>`, with `RUNNER_OS-RUNNER_ARCH` when set. iOS only. See [Bring your own cache](/docs/e2e/ci#bring-your-own-cache).
+
+| Option | Default | |
+|---|---|---|
+| `--project <dir>` | cwd | the project to fingerprint |
+| `--prefix <prefix>` | `warden-e2e-v1` | prefix of every key |
+| `--profile <slug>` | `iphone-17` | device profile of the golden |
+| `--js-input <pathspec>` | `src assets app.config.ts index.ts metro.config.js package.json` | repeatable; the repack key hashes `git ls-files -s` of these |
+| `--golden-dir <dir>` | `~/warden-goldens` | where the golden is archived |
+| `--json` | | the groups as JSON |
+
 ### `warden repack <ios|android>`
 
 Bundle this worktree's JS into the cached simulator build (building that base once per native fingerprint) without installing it. `--project <dir>`, `--force` (repack even when this JS is cached), `--json` → `{ result: "reused" | "repacked" | "fallback", platform, baseHash, hash, jsKey, artifact, bundleMs }` (`fallback` carries `reason`; a `repacked` over a cached repack that could not be reused carries `reason: "base-changed"`, the simulator base was replaced since, or `"base-unrecorded"`, the repack predates base tracking). Exit 0 on a repack, 1 on an error or a fallback (Android images changed). See [App builds](/docs/sims/app-builds).

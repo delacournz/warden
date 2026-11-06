@@ -56,7 +56,7 @@ import { typeTextBudgetMs } from "./type-budget";
  * `simctl io` when the helper cannot, and a helper built before the app ops leaves app lifecycle to `simctl`.
  */
 
-export type IosDriverEnv = Pick<E2eEnv, "simd" | "simdSocket" | "helperDir">;
+export type IosDriverEnv = Pick<E2eEnv, "simd" | "simdSocket" | "helperDir"> & Partial<Pick<E2eEnv, "wardenVersion">>;
 
 /** The iOS driver is a `Driver` plus the optional capabilities of `driver/alerts.ts`. */
 export type IosDriver = Driver &

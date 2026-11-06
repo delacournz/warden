@@ -162,6 +162,12 @@ export const COMMANDS: readonly CommandEntry[] = [
 		load: async () => (await import("./repack")).repackCommand,
 	},
 	{
+		name: "ci",
+		group: "Builds",
+		summary: "CI helpers: cache prints the cache keys and paths a CI job saves between runs",
+		load: async () => (await import("./ci")).ciCommand,
+	},
+	{
 		name: "ui",
 		summary: "drive a leased simulator / emulator (agents): status, snapshot, find, open, press, fill, scroll, …",
 		load: async () => (await import("./ui")).uiCommand,

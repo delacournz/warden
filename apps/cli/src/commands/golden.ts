@@ -218,23 +218,25 @@ async function exportCmd(
 	ctx: CommandContext,
 	sleep: Sleep | undefined,
 	dir: string,
-	opts: ArchiveOpts
+	opts: ArchiveOpts & { allowUnsettled?: true }
 ): Promise<number> {
 	if (!iosOnly(ctx, "export", opts)) return 1;
 	const { exportGolden } = await import("@delacour/warden-core/golden/ios-golden-archive");
 	const profile = opts.profile ?? DEFAULT_PROFILE.ios;
 	if (!opts.json) heading(ctx, "golden export", profile);
 	const exported = await withSpinner(ctx, `exporting golden ${profile} image…`, (sctx) =>
-		exportGolden(goldenDeps(sctx, resolveOwner(ctx), sleep), profile, opts.runtime, resolve(ctx.cwd, dir))
+		exportGolden(goldenDeps(sctx, resolveOwner(ctx), sleep), profile, opts.runtime, resolve(ctx.cwd, dir), {
+			allowUnsettled: opts.allowUnsettled === true,
+		})
 	);
 	if (!exported.success) return fail(ctx, exported.error);
 	const { color } = ctx.ui;
-	const { name, path, built } = exported.data;
+	const { name, path, built, unsettled } = exported.data;
 	emit(
 		ctx,
 		opts.json === true,
 		exported.data,
-		`${color.green(color.bold(name))} → ${path} ${color.dim(`(${built ? "built" : "reused"})`)}`
+		`${color.green(color.bold(name))} → ${path} ${color.dim(`(${built ? "built" : "reused"}${unsettled ? ", unsettled" : ""})`)}`
 	);
 	return 0;
 }
@@ -311,6 +313,10 @@ export function createGoldenCommand(opts: { sleep?: Sleep } = {}): Command {
 				.option("--platform <platform>", "ios (default); android has no portable golden")
 				.option("--profile <slug>", `device profile (default: ${DEFAULT_PROFILE.ios})`)
 				.option("--runtime <runtime>", "runtime: latest, iOS-26-5, 26.5 …")
+				.option(
+					"--allow-unsettled",
+					"export a golden whose first boot never settled (a host too small to settle one, e.g. a 3-core CI runner)"
+				)
 				.option("--json", "machine-readable output")
 				.action(async (dir, o) => done(await exportCmd(ctx, sleep, dir, o)));
 			cmd
