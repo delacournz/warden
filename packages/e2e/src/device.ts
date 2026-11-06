@@ -147,8 +147,8 @@ export type Device = DeviceA11y & {
 	clipboard(): Promise<string>;
 	setClipboard(text: string): Promise<void>;
 	/**
-	 * Dismisses the soft keyboard when the snapshot shows one, else does nothing. iOS presses Enter
-	 * (which may submit the focused field); Android presses back.
+	 * Dismisses the soft keyboard when the snapshot shows one, else does nothing. iOS resigns the first responder
+	 * (an app launched without the injected library gets Enter, which may submit the field); Android presses back.
 	 */
 	hideKeyboard(): Promise<void>;
 	/** Saves `<attemptDir>/screenshots/NNN-<name>.png` and returns the path. */
@@ -191,6 +191,14 @@ export type Device = DeviceA11y & {
 	a11y: DeviceConditions["a11y"];
 	/** Battery level and charging: real on Android emulators, status bar only on iOS (`cosmetic: true`). */
 	battery: DeviceConditions["battery"];
+	/**
+	 * The on-screen keyboard mode: `"software"` (the default: it stays up while the spec types), `"hardware"` (hidden,
+	 * as with a connected keyboard) or `"toggle"`. Live. Put back to the suite's `conditions.keyboard` when the test
+	 * ends. Physical iPhones: `E_UNSUPPORTED`.
+	 */
+	keyboard: DeviceConditions["keyboard"];
+	/** Whether the on-screen keyboard is up now, read from the accessibility tree. `expect(device).toHaveKeyboard()` polls it. */
+	keyboardVisible(): Promise<boolean>;
 	/**
 	 * Simulated camera: `set("fixtures/qr.png", { facing })`, `clear`, `status`. The asset (png, jpg, heic, mp4, mov; path relative
 	 * to the spec file) plays in the app's real camera. iOS: live in an app launched with the camera, else from the next launch.
@@ -398,6 +406,10 @@ export function createDevice({
 		locale: conditions.locale,
 		a11y: conditions.a11y,
 		battery: conditions.battery,
+		keyboard: conditions.keyboard,
+		async keyboardVisible() {
+			return (await unwrap(() => driver.keyboardState(), "read the keyboard", signal())).visible;
+		},
 		camera: conditions.camera,
 		memoryWarning: conditions.memoryWarning,
 		push: conditions.push,
@@ -480,10 +492,8 @@ export function createDevice({
 		},
 
 		async hideKeyboard() {
-			const snapshot = await readSnapshot();
-			if (!snapshot.flat.some((element) => element.role === "keyboard")) return;
-			if (driver.platform === "ios") await unwrap(() => driver.key("Enter"), "hide keyboard", signal());
-			else await unwrap(() => driver.pressButton("back"), "hide keyboard", signal());
+			if (!(await device.keyboardVisible())) return;
+			await unwrap(() => driver.dismissKeyboard(), "hide keyboard", signal());
 		},
 
 		async screenshot(name) {

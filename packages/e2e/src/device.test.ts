@@ -11,6 +11,7 @@ import type { Platform, Snapshot } from "./driver/driver.types";
 import { HASH_FALLBACK_MIN_QUIET_MS } from "./driver/settle";
 import type { E2eEnv } from "./env";
 import type { E2eError } from "./errors";
+import { expect as e2eExpect } from "./expect/expect";
 import type { Clock, FixtureSession } from "./fixture-session";
 import { createScreen } from "./screen/screen";
 import { testHost } from "./screen/screen.testing";
@@ -900,10 +901,11 @@ describe("device.biometrics", () => {
 describe("device.hideKeyboard", () => {
 	const withKeyboard = snapshotOf([el("textfield", { id: "email" }), el("keyboard")]);
 
-	test("iOS presses Enter when a keyboard is in the snapshot", async () => {
+	test("iOS resigns the first responder when a keyboard is in the snapshot", async () => {
 		const { driver, device } = setup({ screens: [withKeyboard] });
 		await device.hideKeyboard();
-		expect(driver.callsOf("key")[0]?.key).toBe("Enter");
+		expect(driver.callsOf("dismissKeyboard")).toHaveLength(1);
+		expect(driver.callsOf("key")).toHaveLength(0);
 	});
 
 	test("Android presses back when a keyboard is in the snapshot", async () => {
@@ -1173,5 +1175,28 @@ describe("device conditions", () => {
 		const { driver, device } = setup({ session: { signal: aborted } });
 		await expect(device.network.set("offline")).rejects.toMatchObject({ code: "TIMEOUT" });
 		expect(driver.callsOf("network")).toEqual([]);
+	});
+});
+
+describe("device.keyboard", () => {
+	test("sets the mode on the driver and toggles from what the spec has in place", async () => {
+		const { driver, device } = setup({ screens: [snapshotOf([])] });
+		expect(await device.keyboard("hardware")).toMatchObject({ mode: "hardware" });
+		await device.keyboard("toggle");
+		expect(driver.callsOf("keyboard").map((call) => call.mode)).toEqual(["hardware", "software"]);
+	});
+
+	test("keyboardVisible reads the accessibility tree", async () => {
+		const up = setup({ screens: [snapshotOf([el("textfield"), el("keyboard")])] });
+		expect(await up.device.keyboardVisible()).toBe(true);
+		const down = setup({ screens: [snapshotOf([el("textfield")])] });
+		expect(await down.device.keyboardVisible()).toBe(false);
+	});
+
+	test("expect(device).toHaveKeyboard follows the tree", async () => {
+		const up = setup({ screens: [snapshotOf([el("keyboard")])] });
+		await e2eExpect(up.device).toHaveKeyboard();
+		const down = setup({ screens: [snapshotOf([el("textfield")])] });
+		await e2eExpect(down.device).not.toHaveKeyboard({ timeout: 150 });
 	});
 });
