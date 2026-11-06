@@ -243,21 +243,10 @@ runs:
       working-directory: ${{ inputs.working-directory }}
       env:
         APP_PATH: ${{ inputs.app-path }}
-        BUILDS_HIT: ${{ steps.builds-cache.outputs.cache-hit }}
         WORKSPACE: ${{ github.workspace }}
       run: |
         set -euo pipefail
         warden golden import ~/warden-goldens
-        # The build cache brings back the files under ~/.warden/builds, not the database rows that make warden
-        # use them: register the cached simulator base again, or warden builds it from source.
-        if [ -z "$APP_PATH" ] && [ "$BUILDS_HIT" = "true" ]; then
-          while IFS= read -r base; do
-            stage=$(mktemp -d)
-            cp -R "$base" "$stage/"
-            warden builds import "$stage/$(basename "$base")" --kind simulator-base || echo "::warning title=cached base not reused::could not import $base"
-            rm -rf "$stage"
-          done < <(find "$HOME/.warden/builds" -path '*/simulator/base/*.app' -maxdepth 6 -type d 2>/dev/null)
-        fi
         if [ -n "$APP_PATH" ]; then
           case "$APP_PATH" in /*) app="$APP_PATH" ;; *) app="$WORKSPACE/$APP_PATH" ;; esac
           warden builds import "$app" --kind simulator-base
