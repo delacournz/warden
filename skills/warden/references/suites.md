@@ -115,7 +115,7 @@ Paths and globs are relative to `warden.config.ts`. Unknown keys are errors.
 | `project` | config dir | `projects[].name`; specs, serve and setup run in its root |
 | `ports` | none | `["<from>[:<span>]"]`, exported as `WARDEN_PORT_<i>` and `WARDEN_PORTS` |
 | `env` | none | added to serve, setup and spec env |
-| `serve` / `serveReady` / `serveTimeout` | none | `sh -c` before the specs, killed at the end. `serveReady` is `http://...`, `tcp:PORT` or `file:PATH`. Both need `serve` |
+| `serve` / `serveReady` / `serveTimeout` | none | `sh -c` once per run before the first spec (own process group), killed once after the last. One process shared by every device, leg, retry, `passes` repeat and shard, never restarted, so its state (users, codes) lives for the whole run and specs must isolate themselves (e.g. a unique user per test). A fixed port still held by a leftover process is not detected by `serveReady`. `serveReady` is `http://...`, `tcp:PORT` or `file:PATH`. Both need `serve` |
 | `setup` | none | `sh -c` once per device before its first spec; `{udid}` is substituted. A non-zero exit drops that device |
 
 ### Runtime
