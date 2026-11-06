@@ -184,7 +184,7 @@ After the run, pass or fail, the action collects what it left on the runner into
 |---|---|---|
 | `report` | `e2e-report.json` | KB |
 | `batches` | `~/.warden/batches`: per-spec logs, `results.jsonl`, `screen-at-failure.txt`, `metro.log` | KB to MB |
-| `logs` | `~/.warden/logs`: native build logs | MB |
+| `logs` | `~/.warden/logs`: native build logs; `simd-logs/`: each device helper's `~/.warden/simd/*.log` (stalls, a wedged accessibility service) | MB |
 | `app` | `app.tar`: the `.app` / `.apk` builds the run used (`warden builds ls`, last used since the suite started), paths kept relative to `$HOME` (`.warden/builds/<project>/…/App.app`) so a base and its repack never clash | ~100 MB each |
 | `golden` | `golden.tar`: the golden simulator archive from `~/warden-goldens`. `tar -xf golden.tar -C ~/warden-goldens && warden golden import ~/warden-goldens` restores it on a Mac with the same Xcode and runtime | GBs |
 

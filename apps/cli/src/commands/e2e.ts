@@ -65,6 +65,7 @@ import {
 	type BatchArgs,
 	type BatchDeps,
 	type BatchLeg,
+	type DeviceWarmReport,
 	defaultBatchDeps,
 	type MetroPlan,
 	parseBatchArgs,
@@ -123,6 +124,8 @@ export type E2eReport = {
 	only?: string[];
 	/** per-device setup outcomes, when the suite has a `setup` */
 	setup?: DeviceSetup[];
+	/** iOS: per-device driver warm-up outcomes (`axRecovery`: a wedged accessibility service it found and what became of it) */
+	warm?: DeviceWarmReport[];
 	/** the run stopped before any spec: a phone's runner would not start (`device_locked`, ...) */
 	error?: { code: string; message: string; udid: string };
 };
@@ -611,6 +614,7 @@ function buildReport(
 		specs: result.specs,
 		...(result.only.length > 0 ? { only: result.only } : {}),
 		...(session.setups ? { setup: session.setups } : {}),
+		...(session.warm && session.warm.length > 0 ? { warm: session.warm } : {}),
 		...(session.error ? { error: session.error } : {}),
 	};
 }

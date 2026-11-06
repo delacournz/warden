@@ -369,6 +369,36 @@ describe("warden e2e", () => {
 	describe("warmDrivers", () => {
 		const jobEnv = (h: Harness) => h.jobs().map((j) => j.opts.env.WARDEN_SIMD_SOCKET);
 
+		test("a device whose accessibility service wedged is recovered, and e2e-report.json says so per device", async () => {
+			const c = setup(["--all"]);
+			const h = harness();
+			const base = h.deps.warmConnect(c);
+			let connects = 0;
+			h.deps.warmConnect = () => async (udid) => {
+				const next = await base(udid);
+				if (!next.success || connects++ > 0) return next;
+				return {
+					success: true,
+					data: {
+						...next.data,
+						snapshot: async () => ({
+							success: false,
+							error: "E_TIMEOUT: did not answer within the query's 10.0s timeout",
+						}),
+						recover: async () => ({ kind: "recovered", note: "restarted backboardd" }),
+					},
+				};
+			};
+			const run = createE2eCommand(h.deps).run(c);
+			await waitFor(() => h.timers.some((t) => t.ms === 2_000 && !t.cancelled));
+			for (const timer of h.timers.filter((t) => t.ms === 2_000 && !t.cancelled)) timer.fire();
+			expect(await run).toBe(0);
+			expect(connects).toBe(2);
+			expect(reportOf(h.files, c).warm).toEqual([
+				{ worker: 0, udid: "U1", ok: true, axRecovery: { outcome: "recovered" } },
+			]);
+		});
+
 		test("every leased iOS device is warmed before the first job; its jobs get WARDEN_SIMD_SOCKET", async () => {
 			write("src/chat/lazy.tsx", "export const x = 2;\n");
 			write("src/settings/form.tsx", "export const y = 2;\n");

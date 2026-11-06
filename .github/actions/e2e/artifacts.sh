@@ -4,7 +4,7 @@
 #
 #   report   e2e-report.json
 #   batches  ~/.warden/batches (spec logs, results.jsonl, screen-at-failure.txt, metro.log)
-#   logs     ~/.warden/logs (native build logs)
+#   logs     ~/.warden/logs (native build logs) and the device helpers' ~/.warden/simd/*.log (copied: no sockets)
 #   app      app.tar: the .app / .apk builds the run used (`warden builds ls`, last used since STARTED), paths kept
 #            relative to $HOME (`.warden/builds/<project>/…/X.app`) so a base and its repack never clash
 #   golden   golden.tar: the golden simulator archived in ~/warden-goldens (`tar -xf golden.tar -C ~/warden-goldens`,
@@ -62,7 +62,16 @@ add() { if [ -e "$2" ]; then echo "$2" >> "$work/$1"; fi; }
 
 if wants report; then add report "$REPORT"; fi
 if wants batches; then add batches "$HOME/.warden/batches"; fi
-if wants logs; then add logs "$HOME/.warden/logs"; fi
+if wants logs; then
+  add logs "$HOME/.warden/logs"
+  # Each device helper's log (warden-simd: stalls, recycles, a wedged accessibility service), copied out because the
+  # directory also holds the helpers' live sockets, which upload-artifact cannot read.
+  simd_logs=("$HOME"/.warden/simd/*.log)
+  if [ -e "${simd_logs[0]}" ]; then
+    mkdir -p "$tars/simd-logs"
+    cp "${simd_logs[@]}" "$tars/simd-logs/" && add logs "$tars/simd-logs"
+  fi
+fi
 # tar_into <group> <tarball> <dir> <entry…>: entries relative to dir; the tarball becomes the group's one path.
 tar_into() {
   local group="$1" tarball="$2" dir="$3"

@@ -43,8 +43,13 @@ export type Warmed = {
 	socketPath?: string;
 	/** why it is not warm (only ever a warning) */
 	error?: string;
+	/** a wedged accessibility service found on this device: recovered, or the last recovery that failed */
+	axRecovery?: AxRecoveryRecord;
 	log: string;
 };
+
+/** What became of a device's wedged accessibility service (absent: never found wedged). */
+export type AxRecoveryRecord = { outcome: "recovered" } | { outcome: "failed"; error: string };
 
 export type WarmRun = {
 	/** the iOS devices to warm */
@@ -73,7 +78,7 @@ export type WarmOutcome = {
 	helpers: WarmHelper[];
 };
 
-type Step = { helper?: WarmHelper; error?: string };
+type Step = { helper?: WarmHelper; error?: string; axRecovery?: AxRecoveryRecord };
 
 const message = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
@@ -115,47 +120,62 @@ function pause(run: WarmRun, ms: number, stop: AbortSignal): Promise<boolean> {
 	});
 }
 
-/** The failed try from which the helper is asked to recover: a cold bridge on a loaded host can miss the first one. */
-const RECOVER_FROM_TRY = 2;
+/**
+ * The failed try from which the helper is asked to recover: the first. A wedged sim's first read already times out,
+ * and checking costs one log read (~2 s) on a sim that is only slow.
+ */
+const RECOVER_FROM_TRY = 1;
+
+/** The helper in use, whether the device was recovered already (one recovery per device) and what became of it. */
+type Recovering = { helper: WarmHelper; recovered: boolean; record?: AxRecoveryRecord };
 
 /** Where the snapshot loop ended: `error` undefined = warm. `helper` is the one in use then (a recovery replaces it). */
-type Snapped = { helper: WarmHelper | undefined; error?: string };
+type Snapped = { helper: WarmHelper | undefined; error?: string; axRecovery?: AxRecoveryRecord };
+
+const ended = (state: Recovering, helper: WarmHelper | undefined, error?: string): Snapped => ({
+	helper,
+	...(error !== undefined ? { error } : {}),
+	...(state.record ? { axRecovery: state.record } : {}),
+});
 
 /**
- * After a failed try: ask the helper to recover (once per device, from `RECOVER_FROM_TRY`). A recovered device gets
- * a fresh helper through `connect`: the old one stopped itself and its in-sim guest still talks to the dead server.
- * Returns the helper to retry with, or the reconnect's error.
+ * After a failed try: ask the helper to recover, unless the device was recovered already. A recovered device gets a
+ * fresh helper through `connect`: the old one stopped itself and its in-sim guest still talks to the dead server.
+ * Updates `state`; returns the reconnect's error.
  */
-async function maybeRecover(
+async function recoverOnce(
 	connect: WarmConnect,
 	udid: string,
-	helper: WarmHelper,
+	state: Recovering,
 	note: (line: string) => void
-): Promise<{ helper: WarmHelper; recovered: boolean } | { error: string }> {
-	if (!helper.recover) return { helper, recovered: false };
-	const outcome = await helper
-		.recover()
-		.catch((error: unknown): WarmRecovery => ({ kind: "failed", error: message(error) }));
-	if (outcome.kind === "not-wedged") return { helper, recovered: false };
+): Promise<string | undefined> {
+	const recover = state.helper.recover;
+	if (state.recovered || !recover) return undefined;
+	const outcome = await recover().catch((error: unknown): WarmRecovery => ({ kind: "failed", error: message(error) }));
+	if (outcome.kind === "not-wedged") return undefined;
 	if (outcome.kind === "failed") {
 		note(`accessibility service recovery failed: ${outcome.error}`);
-		return { helper, recovered: false };
+		state.record = { outcome: "failed", error: outcome.error };
+		return undefined;
 	}
 	note(`accessibility service wedged: ${outcome.note}; reconnecting`);
+	state.recovered = true;
+	state.record = { outcome: "recovered" };
 	try {
 		const fresh = await connect(udid);
-		if (!fresh.success) return { error: fresh.error };
+		if (!fresh.success) return fresh.error;
 		note(`connected ${fresh.data.socketPath}`);
-		return { helper: fresh.data, recovered: true };
+		state.helper = fresh.data;
+		return undefined;
 	} catch (error) {
-		return { error: message(error) };
+		return message(error);
 	}
 }
 
 /**
  * Snapshot with backoff until one succeeds or the budget or `stop` ends it (the last error). The budget counts the
- * clock and, as a floor, the time slept, so a clock that stands still cannot retry forever. From the second failed
- * try the helper may recover a wedged device once, after which the loop carries on with the helper it reconnected.
+ * clock and, as a floor, the time slept, so a clock that stands still cannot retry forever. After each failed try
+ * the helper may recover a wedged device (once), after which the loop carries on with the helper it reconnected.
  */
 async function snapshotUntilWarm(
 	run: WarmRun,
@@ -171,14 +191,14 @@ async function snapshotUntilWarm(
 	let waited = 0;
 	for (let attempt = 1; ; attempt++) {
 		const lastError = await snapshotOnce(state.helper);
-		if (lastError === undefined) return { helper: state.helper };
+		if (lastError === undefined) return ended(state, state.helper);
 		const wait = attempt === 1 ? FIRST_RETRY_WAIT_MS : RETRY_WAIT_MS;
 		const spent = Math.max(run.now() - started, waited);
 		if (givingUp(stop, spent + wait >= budgetMs, attempt, lastError, note))
-			return { helper: state.helper, error: lastError };
+			return ended(state, state.helper, lastError);
 		const reconnectError = attempt >= RECOVER_FROM_TRY ? await recoverOnce(connect, udid, state, note) : undefined;
-		if (reconnectError !== undefined) return { helper: undefined, error: reconnectError };
-		if (!(await pause(run, wait, stop.signal))) return { helper: state.helper, error: lastError };
+		if (reconnectError !== undefined) return ended(state, undefined, reconnectError);
+		if (!(await pause(run, wait, stop.signal))) return ended(state, state.helper, lastError);
 		waited += wait;
 	}
 }
@@ -208,24 +228,6 @@ async function snapshotOnce(helper: WarmHelper): Promise<string | undefined> {
 	}
 }
 
-/** The helper in use and whether the device was recovered already (one recovery per device). */
-type Recovering = { helper: WarmHelper; recovered: boolean };
-
-/** `maybeRecover` unless the device was recovered already; updates `state`, returns a reconnect's error. */
-async function recoverOnce(
-	connect: WarmConnect,
-	udid: string,
-	state: Recovering,
-	note: (line: string) => void
-): Promise<string | undefined> {
-	if (state.recovered || !state.helper.recover) return undefined;
-	const next = await maybeRecover(connect, udid, state.helper, note);
-	if ("error" in next) return next.error;
-	state.helper = next.helper;
-	state.recovered = next.recovered;
-	return undefined;
-}
-
 /**
  * `connect`, then snapshot until one succeeds or the budget is spent (a loaded host's bridge can stay silent
  * longer than one ~10 s snapshot): 2 s after the first failure, 5 s between later tries. Never throws. A
@@ -250,21 +252,15 @@ async function warmOne(
 		return { error: message(error) };
 	}
 	note(`connected ${first.socketPath}`);
-	const { helper, error } = await snapshotUntilWarm(
-		run,
-		connect,
-		udid,
-		first,
-		budgetMs - (run.now() - started),
-		stop,
-		note
-	);
-	if (error === undefined && helper) return { helper };
+	const left = budgetMs - (run.now() - started);
+	const { helper, error, axRecovery } = await snapshotUntilWarm(run, connect, udid, first, left, stop, note);
+	const record = axRecovery ? { axRecovery } : {};
+	if (error === undefined && helper) return { helper, ...record };
 	if (helper) {
 		if (stop.late() === "interrupt") await helper.close().catch(() => {});
 		else await coldHelper(helper, note);
 	}
-	return { error: error ?? "not warm" };
+	return { error: error ?? "not warm", ...record };
 }
 
 /** One device's step: its warm-up raced against the budget and the interrupt; a helper that arrives late is discarded. */
@@ -338,6 +334,7 @@ export async function warmDrivers(run: WarmRun, deps: WarmDeps): Promise<WarmOut
 			ok: step.helper !== undefined,
 			...(step.helper ? { socketPath: step.helper.socketPath } : {}),
 			...(step.error !== undefined ? { error: step.error } : {}),
+			...(step.axRecovery ? { axRecovery: step.axRecovery } : {}),
 			log,
 		};
 		deps.onDevice?.(warmed, step.helper, warning);

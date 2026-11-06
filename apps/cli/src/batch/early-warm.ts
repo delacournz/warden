@@ -1,4 +1,12 @@
-import { type WarmConnect, type WarmHelper, type WarmOutcome, type WarmRun, warmDrivers } from "./warm-drivers";
+import {
+	type AxRecoveryRecord,
+	type WarmConnect,
+	type Warmed,
+	type WarmHelper,
+	type WarmOutcome,
+	type WarmRun,
+	warmDrivers,
+} from "./warm-drivers";
 
 /** What the early warm-up needs: the `warmDrivers` effects plus the run's shape. */
 export type EarlyWarmDeps = Pick<WarmRun, "logDir" | "now" | "after" | "writeFile"> & {
@@ -14,7 +22,13 @@ export type EarlyWarmDeps = Pick<WarmRun, "logDir" | "now" | "after" | "writeFil
 export type EarlyWarmOutcome = WarmOutcome & { warnings: string[] };
 
 /** One device's warm-up once it settled: its socket and helper when warm, its (held back) warning when not; `{}` for a device never warmed. */
-export type DeviceWarm = { socketPath?: string; helper?: WarmHelper; warning?: string; error?: string };
+export type DeviceWarm = {
+	socketPath?: string;
+	helper?: WarmHelper;
+	warning?: string;
+	error?: string;
+	axRecovery?: AxRecoveryRecord;
+};
 
 /**
  * The iOS driver warm-up started while the run is still claiming: a leg's helpers are spawned and
@@ -36,6 +50,17 @@ export type EarlyWarm = {
 	/** stop waiting for helpers still starting (a late one is closed) */
 	abort: () => void;
 };
+
+/** One settled device's `DeviceWarm` from its `Warmed` outcome, helper and held-back warning. */
+function deviceWarm(warmed: Warmed, helper: WarmHelper | undefined, warning: string | undefined): DeviceWarm {
+	return {
+		...(warmed.socketPath !== undefined ? { socketPath: warmed.socketPath } : {}),
+		...(helper ? { helper } : {}),
+		...(warning !== undefined ? { warning } : {}),
+		...(warmed.error !== undefined ? { error: warmed.error } : {}),
+		...(warmed.axRecovery ? { axRecovery: warmed.axRecovery } : {}),
+	};
+}
 
 /** Start the warm-up of the run's devices as they are leased; never throws. */
 export function startEarlyWarm(deps: EarlyWarmDeps): EarlyWarm {
@@ -66,12 +91,7 @@ export function startEarlyWarm(deps: EarlyWarmDeps): EarlyWarm {
 						connect: deps.connect,
 						warn: (line) => warnings.push(line),
 						onDevice: (warmed, helper, warning) => {
-							const outcome: DeviceWarm = {
-								...(warmed.socketPath !== undefined ? { socketPath: warmed.socketPath } : {}),
-								...(helper ? { helper } : {}),
-								...(warning !== undefined ? { warning } : {}),
-								...(warmed.error !== undefined ? { error: warmed.error } : {}),
-							};
+							const outcome = deviceWarm(warmed, helper, warning);
 							done.set(warmed.udid, outcome);
 							byDevice.get(warmed.udid)?.resolve(outcome);
 						},

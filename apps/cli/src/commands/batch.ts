@@ -53,7 +53,7 @@ import {
 	render,
 	withRunners,
 } from "../batch/tui";
-import type { WarmConnect, WarmHelper } from "../batch/warm-drivers";
+import type { AxRecoveryRecord, WarmConnect, WarmHelper } from "../batch/warm-drivers";
 import { warmGate } from "../batch/warm-gate";
 import { buildCapacityDeps } from "../capacity-deps";
 import {
@@ -1017,9 +1017,41 @@ export type SessionResult = {
 	devices?: Array<{ worker: number; udid: string; name: string; leg?: string }>;
 	/** per-device setup outcomes, when the session ran a setup */
 	setups?: DeviceSetup[] | undefined;
+	/** per-device driver warm-up outcomes, when the session warmed its iOS devices */
+	warm?: DeviceWarmReport[] | undefined;
 	/** why the run stopped before any job: a phone whose runner would not start (`device_locked`, ...) */
 	error?: { code: string; message: string; udid: string };
 };
+
+/** One device's driver warm-up as the report keeps it (`e2e-report.json` `warm`). */
+export type DeviceWarmReport = {
+	worker: number;
+	udid: string;
+	ok: boolean;
+	error?: string;
+	axRecovery?: AxRecoveryRecord;
+};
+
+/** Each leased device's settled warm-up, worker order; undefined without a warm-up. */
+function warmReport(
+	warm: EarlyWarm | undefined,
+	devices: ReadonlyArray<{ worker: number; udid: string }>
+): DeviceWarmReport[] | undefined {
+	if (!warm) return undefined;
+	return devices.flatMap((d) => {
+		const done = warm.peek(d.udid);
+		if (!done) return [];
+		return [
+			{
+				worker: d.worker,
+				udid: d.udid,
+				ok: done.socketPath !== undefined,
+				...(done.error !== undefined ? { error: done.error } : {}),
+				...(done.axRecovery ? { axRecovery: done.axRecovery } : {}),
+			},
+		];
+	});
+}
 
 /** Extras for callers building on batch (`warden e2e`). */
 export type SessionHooks = {
@@ -2093,6 +2125,7 @@ async function supervise(
 			resultFiles,
 			devices,
 			setups,
+			warm: warmReport(run.warm, devices),
 		};
 	} catch (error) {
 		return fail(error instanceof Error ? error.message : String(error));

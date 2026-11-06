@@ -361,7 +361,7 @@ describe("warmDrivers: a wedged accessibility service", () => {
 		return { ...one, helper, recovers: () => recovers };
 	}
 
-	test("from the second failed try it asks the helper to recover, then reconnects and warms on the new helper", async () => {
+	test("from the first failed try it asks the helper to recover, then reconnects and warms on the new helper", async () => {
 		const f = fixture(undefined, { autoRetry: true });
 		const stuck = wedged("U0", { kind: "recovered", note: "restarted backboardd" });
 		const fresh = fake("U0", async () => ok(null), { stoppable: true });
@@ -373,10 +373,10 @@ describe("warmDrivers: a wedged accessibility service", () => {
 			return ok(next);
 		};
 		const out = await warmDrivers(f.run, { connect, warn: (l) => f.warnings.push(l) });
-		expect(stuck.snapshots()).toBe(2);
+		expect(stuck.snapshots()).toBe(1);
 		expect(stuck.recovers()).toBe(1);
 		expect(connected).toEqual([stuck.helper, fresh.helper]);
-		expect(out.devices[0]).toMatchObject({ ok: true, socketPath: "/s/U0.sock" });
+		expect(out.devices[0]).toMatchObject({ ok: true, socketPath: "/s/U0.sock", axRecovery: { outcome: "recovered" } });
 		expect(out.helpers).toContain(fresh.helper);
 		expect(out.helpers).not.toContain(stuck.helper);
 		expect(f.warnings).toEqual([]);
@@ -411,8 +411,9 @@ describe("warmDrivers: a wedged accessibility service", () => {
 		};
 		const out = await warmDrivers(f.run, { connect });
 		expect(out.devices[0]?.ok).toBe(true);
+		expect(out.devices[0]?.axRecovery).toBeUndefined();
 		expect(connects).toBe(1);
-		expect(recovers).toBe(1);
+		expect(recovers).toBe(2);
 		expect(one.stopped()).toBe(false);
 	});
 
@@ -426,7 +427,7 @@ describe("warmDrivers: a wedged accessibility service", () => {
 			return ok(one.helper);
 		};
 		const out = await warmDrivers(f.run, { connect, timeoutMs: 40_000 });
-		expect(out.devices[0]?.ok).toBe(false);
+		expect(out.devices[0]).toMatchObject({ ok: false, axRecovery: { outcome: "recovered" } });
 		expect(helpers).toHaveLength(2);
 		expect(helpers.reduce((sum, h) => sum + h.recovers(), 0)).toBe(1);
 		expect(helpers[1]?.stopped()).toBe(true);
@@ -441,7 +442,7 @@ describe("warmDrivers: a wedged accessibility service", () => {
 			return ok(udid === "U0" ? stuck.helper : fake(udid).helper);
 		};
 		const out = await warmDrivers(f.run, { connect, timeoutMs: 20_000 });
-		expect(out.devices[0]?.ok).toBe(false);
+		expect(out.devices[0]).toMatchObject({ ok: false, axRecovery: { outcome: "failed", error: "kickstart exit 3" } });
 		expect(connects).toBe(1);
 		expect(f.files.get("/logs/warm-0.log")).toContain("recovery failed: kickstart exit 3");
 	});
@@ -456,6 +457,10 @@ describe("warmDrivers: a wedged accessibility service", () => {
 			return connects === 1 ? ok(stuck.helper) : err("helper did not start");
 		};
 		const out = await warmDrivers(f.run, { connect });
-		expect(out.devices[0]).toMatchObject({ ok: false, error: "helper did not start" });
+		expect(out.devices[0]).toMatchObject({
+			ok: false,
+			error: "helper did not start",
+			axRecovery: { outcome: "recovered" },
+		});
 	});
 });
