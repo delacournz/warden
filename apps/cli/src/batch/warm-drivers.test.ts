@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { err, ok } from "@delacour/warden-types/result";
-import { type WarmConnect, type WarmHelper, type WarmRun, warmDrivers } from "./warm-drivers";
+import { type WarmConnect, type WarmHelper, type WarmRecovery, type WarmRun, warmDrivers } from "./warm-drivers";
 
 const devices = [
 	{ worker: 0, udid: "U0" },
@@ -341,5 +341,121 @@ describe("warmDrivers", () => {
 		controller.abort();
 		const out = await running;
 		expect(out.devices.map((d) => d.error)).toEqual(["interrupted", "interrupted"]);
+	});
+});
+
+describe("warmDrivers: a wedged accessibility service", () => {
+	/** a helper whose every snapshot times out, and whose `recover` answers `outcome` (counting the calls) */
+	function wedged(udid: string, outcome: WarmRecovery) {
+		const one = fake(udid, async () => err("E_TIMEOUT: did not answer within the query's 10.0s timeout"), {
+			stoppable: true,
+		});
+		let recovers = 0;
+		const helper: WarmHelper = {
+			...one.helper,
+			recover: async () => {
+				recovers++;
+				return outcome;
+			},
+		};
+		return { ...one, helper, recovers: () => recovers };
+	}
+
+	test("from the second failed try it asks the helper to recover, then reconnects and warms on the new helper", async () => {
+		const f = fixture(undefined, { autoRetry: true });
+		const stuck = wedged("U0", { kind: "recovered", note: "restarted backboardd" });
+		const fresh = fake("U0", async () => ok(null), { stoppable: true });
+		const connected: WarmHelper[] = [];
+		const connect: WarmConnect = async (udid) => {
+			if (udid !== "U0") return ok(fake(udid).helper);
+			const next = connected.length === 0 ? stuck.helper : fresh.helper;
+			connected.push(next);
+			return ok(next);
+		};
+		const out = await warmDrivers(f.run, { connect, warn: (l) => f.warnings.push(l) });
+		expect(stuck.snapshots()).toBe(2);
+		expect(stuck.recovers()).toBe(1);
+		expect(connected).toEqual([stuck.helper, fresh.helper]);
+		expect(out.devices[0]).toMatchObject({ ok: true, socketPath: "/s/U0.sock" });
+		expect(out.helpers).toContain(fresh.helper);
+		expect(out.helpers).not.toContain(stuck.helper);
+		expect(f.warnings).toEqual([]);
+		const log = f.files.get("/logs/warm-0.log") ?? "";
+		expect(log).toContain("accessibility service wedged: restarted backboardd");
+		expect(log).toContain("snapshot ok");
+	});
+
+	test("a service that is not wedged keeps retrying the same helper", async () => {
+		const f = fixture(undefined, { autoRetry: true });
+		let n = 0;
+		const one = fake(
+			"U0",
+			async () => {
+				n++;
+				return n < 3 ? err("E_TIMEOUT") : ok(null);
+			},
+			{ stoppable: true }
+		);
+		let recovers = 0;
+		const helper: WarmHelper = {
+			...one.helper,
+			recover: async () => {
+				recovers++;
+				return { kind: "not-wedged" };
+			},
+		};
+		let connects = 0;
+		const connect: WarmConnect = async (udid) => {
+			if (udid === "U0") connects++;
+			return ok(udid === "U0" ? helper : fake(udid).helper);
+		};
+		const out = await warmDrivers(f.run, { connect });
+		expect(out.devices[0]?.ok).toBe(true);
+		expect(connects).toBe(1);
+		expect(recovers).toBe(1);
+		expect(one.stopped()).toBe(false);
+	});
+
+	test("it recovers at most once: a device still wedged afterwards runs out of budget and goes cold", async () => {
+		const f = fixture(undefined, { autoRetry: true });
+		const helpers: Array<ReturnType<typeof wedged>> = [];
+		const connect: WarmConnect = async (udid) => {
+			if (udid !== "U0") return ok(fake(udid).helper);
+			const one = wedged(udid, { kind: "recovered", note: "restarted backboardd" });
+			helpers.push(one);
+			return ok(one.helper);
+		};
+		const out = await warmDrivers(f.run, { connect, timeoutMs: 40_000 });
+		expect(out.devices[0]?.ok).toBe(false);
+		expect(helpers).toHaveLength(2);
+		expect(helpers.reduce((sum, h) => sum + h.recovers(), 0)).toBe(1);
+		expect(helpers[1]?.stopped()).toBe(true);
+	});
+
+	test("a recovery that fails is logged and the same helper keeps retrying", async () => {
+		const f = fixture(undefined, { autoRetry: true });
+		const stuck = wedged("U0", { kind: "failed", error: "kickstart exit 3" });
+		let connects = 0;
+		const connect: WarmConnect = async (udid) => {
+			if (udid === "U0") connects++;
+			return ok(udid === "U0" ? stuck.helper : fake(udid).helper);
+		};
+		const out = await warmDrivers(f.run, { connect, timeoutMs: 20_000 });
+		expect(out.devices[0]?.ok).toBe(false);
+		expect(connects).toBe(1);
+		expect(f.files.get("/logs/warm-0.log")).toContain("recovery failed: kickstart exit 3");
+	});
+
+	test("a reconnect that fails after a recovery leaves the device cold with that error", async () => {
+		const f = fixture(undefined, { autoRetry: true });
+		const stuck = wedged("U0", { kind: "recovered", note: "restarted backboardd" });
+		let connects = 0;
+		const connect: WarmConnect = async (udid) => {
+			if (udid !== "U0") return ok(fake(udid).helper);
+			connects++;
+			return connects === 1 ? ok(stuck.helper) : err("helper did not start");
+		};
+		const out = await warmDrivers(f.run, { connect });
+		expect(out.devices[0]).toMatchObject({ ok: false, error: "helper did not start" });
 	});
 });

@@ -42,7 +42,7 @@ export async function waitBooted(exec: Exec, udid: string, timeoutMs = BOOT_WAIT
  * and hand back one `snapshot` plus a `close` that only disconnects — the helper itself stays resident
  * for the jobs (`WARDEN_SIMD_SOCKET`) and after the run, until its idle timeout or a `--shutdown` — and a
  * `stop` (`stopHelper`) for a warm-up that failed, so the device's cold jobs do not run their own helpers
- * beside it (20-1). The helper lifecycle and the iOS driver are imported when the first device warms, so
+ * beside it (20-1), and a `recover` that restarts a wedged accessibility service (`ax-wedge`) and stops this helper. The helper lifecycle and the iOS driver are imported when the first device warms, so
  * `warden batch` / `e2e` start without them (`deps` replaces both: tests). The driver is opened with no cold bridge
  * budget of its own: `snapshotUntilWarm` paces the retries, and one `snapshot` inside it is one read.
  */
@@ -70,6 +70,12 @@ export function warmConnect(ctx: CommandContext, deps?: WarmConnectDeps): WarmCo
 			await client?.close();
 			return err(`${driver.error.code}: ${driver.error.message}`);
 		}
+		const stop = async () => {
+			await driver.data.close();
+			const { stopHelper } = await import("../agent-ui/helper");
+			const { warning } = await stopHelper(ctx, udid, { socketPath });
+			if (warning !== undefined) ctx.err(`warden: ${warning}`);
+		};
 		return ok({
 			socketPath: helper.data.socketPath,
 			snapshot: async () => {
@@ -77,11 +83,12 @@ export function warmConnect(ctx: CommandContext, deps?: WarmConnectDeps): WarmCo
 				return shot.success ? ok(shot.data) : err(`${shot.error.code}: ${shot.error.message}`);
 			},
 			close: () => driver.data.close(),
-			stop: async () => {
-				await driver.data.close();
-				const { stopHelper } = await import("../agent-ui/helper");
-				const { warning } = await stopHelper(ctx, udid, { socketPath });
-				if (warning !== undefined) ctx.err(`warden: ${warning}`);
+			stop,
+			recover: async () => {
+				const { recoverAxWedge } = await import("./ax-wedge");
+				const outcome = await recoverAxWedge(ctx.exec, udid);
+				if (outcome.kind === "recovered") await stop();
+				return outcome;
 			},
 		});
 	};

@@ -7,7 +7,8 @@ import { fakeDriver, snapshotOf } from "@delacour/warden-e2e/driver/driver.testi
 import type { openIosDriver } from "@delacour/warden-e2e/driver/ios/ios-driver";
 import { ok } from "@delacour/warden-types/result";
 import { writeState } from "../agent-ui/state";
-import { testContext } from "../testing";
+import { fakeExec, testContext } from "../testing";
+import { AX_WEDGE_MARKER } from "./ax-wedge";
 import { residentSocket, runnerWarmError, waitBooted, warmConnect } from "./warm-connect";
 
 let home: string | undefined;
@@ -124,5 +125,67 @@ describe("warmConnect", () => {
 		expect(opened[0]?.coldBridgeBudgetMs).toBe(0);
 		expect(opened[0]?.socketPath).toBe("/tmp/U1.sock");
 		if (helper.success) await helper.data.close();
+	});
+	test("recover: a wedged sim gets backboardd restarted and the helper stopped, so the warm loop reconnects", async () => {
+		const calls: string[][] = [];
+		const ctx = testContext([], {
+			exec: fakeExec(
+				[
+					["xcrun simctl bootstatus", {}],
+					["xcrun simctl spawn U1 log show", { stdout: `x AXError: ${AX_WEDGE_MARKER}\n` }],
+					["xcrun simctl spawn U1 launchctl kickstart", {}],
+				],
+				calls
+			),
+		});
+		let closed = 0;
+		const connect = warmConnect(ctx, {
+			ensureHelper: async () => ok({ socketPath: "/tmp/U1.sock", spawned: false }),
+			openIosDriver: async () => {
+				const driver = fakeDriver({ screens: [snapshotOf([])] });
+				return ok({
+					...driver,
+					close: async () => {
+						closed++;
+						await driver.close();
+					},
+				});
+			},
+		});
+		const helper = await connect("U1");
+		if (!helper.success) throw new Error(helper.error);
+		const out = await helper.data.recover?.();
+		expect(out?.kind).toBe("recovered");
+		expect(calls.some((c) => c.join(" ").includes("kickstart -k user/foreground/com.apple.backboardd"))).toBe(true);
+		expect(closed).toBe(1);
+		ctx.cleanup();
+	});
+
+	test("recover: a sim that is not wedged keeps its helper", async () => {
+		const ctx = testContext([], {
+			exec: fakeExec([
+				["xcrun simctl bootstatus", {}],
+				["xcrun simctl spawn U1 log show", { stdout: "" }],
+			]),
+		});
+		let closed = 0;
+		const connect = warmConnect(ctx, {
+			ensureHelper: async () => ok({ socketPath: "/tmp/U1.sock", spawned: false }),
+			openIosDriver: async () => {
+				const driver = fakeDriver({ screens: [snapshotOf([])] });
+				return ok({
+					...driver,
+					close: async () => {
+						closed++;
+						await driver.close();
+					},
+				});
+			},
+		});
+		const helper = await connect("U1");
+		if (!helper.success) throw new Error(helper.error);
+		expect((await helper.data.recover?.())?.kind).toBe("not-wedged");
+		expect(closed).toBe(0);
+		ctx.cleanup();
 	});
 });
