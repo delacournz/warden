@@ -717,6 +717,16 @@ export interface WardenE2eSuite {
 	count?: number | undefined;
 	/** Device profile (not with `devices`). */
 	profile?: string | undefined;
+	/**
+	 * iOS simulator runtime the run's devices boot on, and whose golden they clone: `latest`, `iOS-26-5` or `26.5`.
+	 * Pin it so the run (locally and on CI) sees one accessibility tree: values change between iOS releases.
+	 * A runtime that is not installed fails the run before any device is claimed, listing the installed ones; it never
+	 * falls back to another. Applies to every `devices` leg. Skipped on Android. `--runtime` overrides it.
+	 * `warden golden key --profile <profile> --runtime <runtime>` names the golden archive the run uses.
+	 *
+	 * @example "27.0"
+	 */
+	runtime?: string | undefined;
 	/** Ensure the app on every device first. */
 	app?: WardenAppOption | undefined;
 	/** Ports leased for the run (`<from>[:<span>]`), exported as `WARDEN_PORT_<i>` / `WARDEN_PORTS` to serve, setup and every spec process. */

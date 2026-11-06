@@ -84,6 +84,7 @@ Paths and globs are relative to `warden.config.ts`. Unknown keys are errors.
 |---|---|---|
 | `devices` | none | `[{ profile, count = 1, env?, default = true }]`. Replaces `profile` / `count`. At least one leg must be default |
 | `count`, `profile` | claim defaults | single pool |
+| `runtime` | newest installed | iOS simulator runtime for the run's devices and their golden: `latest`, `iOS-26-5`, `26.5`. Applies to every `devices` leg. `--runtime` wins. Not installed → the run fails before any claim, listing the installed runtimes (never another runtime). Skipped with a note on an Android run. `warden golden key --profile <p> --runtime <r>` names the golden the run uses. See "Pin the iOS runtime" |
 | `metro` | none | `{ enabled = true, port = "8081:100", launchArgs = [], open = true, env, prewarm = true, readyTimeout = "2m" }`. warden starts one Metro for the run and points the dev client at it. Applies only with `--dev` / kind `dev`, unless the suite pins `app.variant` or `app.kind: "dev"`, or installs no app. Without Metro (kind `simulator` / `release`) its `env` is still the bundle env: `EXPO_PUBLIC_*` values land in the repacked / built JS (and its cache key), over `.env*` and the shell |
 | `headless` | off | keep Simulator.app windows closed (top-level `headless` is the default; `--headless` / `--no-headless` win) |
 | `slim` | on | iOS only: simulator daemons specs never need are off from first boot. `false` leaves them running; `true` is the default profile; `{ except?: string[]; keep?: string[] }`: `except` keeps whole categories running (ids from `warden sim profiles`, e.g. `store` for push/StoreKit, `web` for universal links, `search` Spotlight, `pim` Contacts/Calendar pickers, `photos` photo picker), `keep` keeps single `com.apple.*` labels. Unknown ids fail config load. `--no-slim` / `WARDEN_SLIM=0` opt out. Skipped with a note on an Android run; refused on a suite fixed to `platform: "android"` |
@@ -161,6 +162,20 @@ A fresh runner otherwise builds the simulator base (a Release `xcodebuild`) and 
 
 - `--kind simulator-base` checks the `.app`: `DTPlatformName` `iphonesimulator`, a slice for this Mac (`arm64` on Apple silicon: `ARCHS=arm64`), `CFBundleIdentifier` = the project's iOS bundle id (`--bundle-id` overrides), no Debug / dev-client payload (`<exe>.debug.dylib`, `EXDevLauncher`, `EXDevMenu`). An embedded `main.jsbundle` is stripped from the cached copy (`strippedBundle: true`); every repack writes its own. Android: not supported (`--kind` is iOS only).
 - `golden import` registers a fresh `-wip` device with `simctl create`, copies the archive over its dir (not `device.plist`), re-points absolute symlinks to the new udid, checks the first-boot migration record and `AutomationEnabled`, then renames it: no CoreSimulatorService restart, other sims untouched. `--platform android` is refused for key / export / import.
+
+## Pin the iOS runtime
+
+Accessibility values change between iOS releases, so a suite should run on one runtime locally and on CI. Set `runtime` in the suite (or pass `--runtime`); a runtime that is not installed fails before any claim with `iOS runtime "<r>" is not installed (installed: …)`. Devices and goldens are matched on the runtime (`27.0`, `iOS-27-0` and `iOS 27.0` are the same), so a pool never hands the run a sim on another one.
+
+```ts
+e2e: { mobile: { specsDir: "e2e", platform: "ios", profile: "iphone-17", runtime: "27.0" } }
+```
+
+```bash
+warden golden key --profile iphone-17 --runtime 27.0   # the cache key of the golden the run uses
+warden e2e mobile --all                                 # runs on 27.0 (suite runtime)
+warden e2e mobile --all --runtime 26.5                  # flag overrides the suite
+```
 
 ## Example config (`apps/example/warden.config.ts`)
 
