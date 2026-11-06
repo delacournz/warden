@@ -31,7 +31,7 @@ import { driverErr, driverError } from "../errors";
 import { DEFAULT_RADIUS, type GesturePlan, planGesture, rotatePlan } from "../gesture-geometry";
 import type { AuditsNatively } from "../native-audit";
 import type { NetworkProxyPort } from "../network-proxy";
-import { type SettleDetail, settleByHash, snapshotHash } from "../settle";
+import { hashFallbackQuietMs, type SettleDetail, settleByHash, snapshotHash } from "../settle";
 import { noteSpanDetail } from "../span-detail";
 import type { PastesText, SelectsAll } from "../typing";
 import { createInjectChannel, INJECT_DYLIB_ENV, type InjectFs, injectStatePath, locateInjectDylib } from "./inject";
@@ -683,7 +683,7 @@ export function createIosDriver(
 					if (!snap.success) throw new DriverFailure(snap.error);
 					return snapshotHash(snap.data);
 				},
-				{ quietMs: o.quietMs, timeoutMs: o.timeoutMs, now, sleep }
+				{ quietMs: hashFallbackQuietMs(o.quietMs), timeoutMs: o.timeoutMs, now, sleep }
 			);
 			noteSpanDetail("via", "hash");
 			return { success: true, data: { ...outcome, via: "hash" } };

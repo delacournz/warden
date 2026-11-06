@@ -54,6 +54,7 @@ import type {
 import {
 	DEFAULT_SETTLE_QUIET_MS,
 	DEFAULT_SETTLE_TIMEOUT_MS,
+	hashFallbackQuietMs,
 	type SettleDetail,
 	settleByHash,
 	settleDetailOf,
@@ -521,7 +522,7 @@ export function createDevice({
 			if (native.success) return settleDetailOf(native.data);
 			if (native.error.code !== "E_UNSUPPORTED") throw toE2eError(native.error, "settle");
 			const polled = await settleByHash(async () => snapshotHash(await readSnapshot()), {
-				quietMs,
+				quietMs: hashFallbackQuietMs(quietMs),
 				timeoutMs,
 				now: clock.now,
 				sleep: clock.sleep,
