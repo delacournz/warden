@@ -29,7 +29,7 @@
 //
 // Keyboard (KBD-2): HID typing makes iOS treat a hardware keyboard as attached and minimise the on-screen keyboard. In
 // `software` mode `-[UIKeyboardImpl isMinimized]` answers NO, so the keyboard stays up while warden types; `hardware`
-// calls the original. Every mode change runs `reloadInputViews` on the main thread, so the keyboard shows or hides at
+// answers YES (it never depends on whether iOS has seen a HID keyboard event). Every mode change runs `reloadInputViews` on the main thread, so the keyboard shows or hides at
 // once, no relaunch. The initial mode is `WARDEN_KEYBOARD`; a state file without a `keyboard` field leaves the mode as is.
 // A state with `"dismissKeyboard":true` resigns the first responder (a one-shot, like `a11yRead`): the keyboard goes away
 // without a Return that could submit the focused form.
@@ -2098,7 +2098,9 @@ static void write_ack(long long seq) {
 }
 
 #if TARGET_OS_IOS
-static _Atomic int g_keyboard_software = 0;
+// 0 = unset (iOS decides: the original answer), 1 = software (never minimised), 2 = hardware (always minimised). Hardware
+// must not depend on whether iOS has seen a HID keyboard event in this process, so it forces YES instead of asking.
+static _Atomic int g_keyboard_mode = 0;
 
 static void keyboard_install_swizzle(void) {
   static dispatch_once_t once;
@@ -2109,20 +2111,22 @@ static void keyboard_install_swizzle(void) {
     if (!m) return;
     BOOL (*orig)(id, SEL) = (void *)method_getImplementation(m);
     method_setImplementation(m, imp_implementationWithBlock(^BOOL(id self_) {
-      if (atomic_load(&g_keyboard_software)) return NO;
+      int mode = atomic_load(&g_keyboard_mode);
+      if (mode == 1) return NO;
+      if (mode == 2) return YES;
       return orig(self_, sel);
     }));
   });
 }
 
 static void keyboard_apply(NSString *mode) {
-  int software = [mode isEqualToString:@"software"] ? 1 : 0;
-  int was = atomic_exchange(&g_keyboard_software, software);
+  int next = [mode isEqualToString:@"software"] ? 1 : ([mode isEqualToString:@"hardware"] ? 2 : 0);
+  int was = atomic_exchange(&g_keyboard_mode, next);
   keyboard_install_swizzle();
-  if (was == software) return;
+  DLOG("keyboard=%s (was %d)", mode.UTF8String, was);
+  if (was == next) return;
   dispatch_async(dispatch_get_main_queue(), ^{
     [UIApplication.sharedApplication sendAction:NSSelectorFromString(@"reloadInputViews") to:nil from:nil forEvent:nil];
-    DLOG("keyboard=%s", software ? "software" : "hardware");
   });
 }
 
@@ -2195,8 +2199,8 @@ __attribute__((constructor)) static void warden_inject_init(void) {
     NSString *proxy = env[@"WARDEN_NET_PROXY"];
     if (proxy.length) install_proxy(proxy);
 #if TARGET_OS_IOS
-    if ([env[@"WARDEN_KEYBOARD"] isEqualToString:@"software"]) {
-      atomic_store(&g_keyboard_software, 1);
+    if ([env[@"WARDEN_KEYBOARD"] isEqualToString:@"software"] || [env[@"WARDEN_KEYBOARD"] isEqualToString:@"hardware"]) {
+      atomic_store(&g_keyboard_mode, [env[@"WARDEN_KEYBOARD"] isEqualToString:@"software"] ? 1 : 2);
       keyboard_install_swizzle();
     }
 #endif
