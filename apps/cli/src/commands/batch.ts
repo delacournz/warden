@@ -190,7 +190,7 @@ export type BatchDeps = LeaseSessionDeps & {
 	/** extract the `@delacour/warden-e2e` copy this warden ships and return its preload (repos without the dependency) */
 	bundledE2e: (ctx: CommandContext) => AsyncResult<string>;
 	/** where the spec drivers' native helper lives next to this warden (`WARDEN_HELPER_DIR`) */
-	helperDir: () => string;
+	helperDir: () => string | undefined;
 };
 
 /** Commander option values of `warden batch`. */
