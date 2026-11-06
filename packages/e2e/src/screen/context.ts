@@ -6,7 +6,7 @@ import { E2eError } from "../errors";
 import type { SpanOptions, SpanRunner } from "../runner/span";
 import { indexSnapshot, type NodeIndex } from "./nodes";
 import { type Clock, type PollResult, type PollStep, poll, systemClock } from "./poll";
-import { locateByTestIdViaReact, type ReactMatch } from "./react-locator";
+import { lookUpTestIdViaReact, type ReactLookup, type ReactMatch } from "./react-locator";
 import { renderHeader, renderSnapshot } from "./render";
 import type { TextMatch } from "./text";
 
@@ -81,7 +81,7 @@ export type ObserveOptions = {
 };
 
 export class Runtime {
-	private reactCache: { key: string; at: number; matches: ReactMatch[] } | undefined;
+	private reactCache: { key: string; at: number; lookup: ReactLookup } | undefined;
 	/** the index of each snapshot, so a snapshot that several reads share is indexed once */
 	private readonly indexed = new WeakMap<Snapshot, NodeIndex>();
 	/** the time before which a degraded look is not retried on its first reader, after that reader failed to answer */
@@ -211,17 +211,31 @@ export class Runtime {
 	 * Empty without devtools. Reads are throttled: inside the window the previous answer for the same query is reused.
 	 */
 	async reactMatches(testId: TextMatch, observed: Observed): Promise<ReactMatch[]> {
+		const lookup = await this.reactLookup(testId, observed);
+		return lookup.answered ? lookup.matches : [];
+	}
+
+	/** Whether the host has devtools to ask the React tree through. */
+	hasReactTree(): boolean {
+		return this.host.devtools?.() !== undefined;
+	}
+
+	/**
+	 * `reactMatches`, keeping "the React tree could not be read" (`answered: false`, also without devtools) apart from
+	 * "it has no such component", for a degraded read that must not take the first for the second.
+	 */
+	async reactLookup(testId: TextMatch, observed: Observed): Promise<ReactLookup> {
 		const facet = this.host.devtools?.();
-		if (facet === undefined) return [];
+		if (facet === undefined) return { answered: false };
 		const key = typeof testId === "string" ? `s:${testId}` : `r:${testId.toString()}`;
 		const cached = this.reactCache;
 		if (cached !== undefined && cached.key === key && this.clock.now() - cached.at < REACT_THROTTLE_MS) {
-			return cached.matches;
+			return cached.lookup;
 		}
 		const view = { platform: observed.snapshot.platform, screen: observed.snapshot.screen };
-		const matches = await locateByTestIdViaReact(facet, testId, view, { timeoutMs: REACT_TIMEOUT_MS });
-		this.reactCache = { key, at: this.clock.now(), matches };
-		return matches;
+		const lookup = await lookUpTestIdViaReact(facet, testId, view, { timeoutMs: REACT_TIMEOUT_MS });
+		this.reactCache = { key, at: this.clock.now(), lookup };
+		return lookup;
 	}
 
 	/**

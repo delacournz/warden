@@ -16,18 +16,22 @@ export type ReactMatch = {
 
 export type ReactView = { platform: Platform; screen: ScreenInfo };
 
+/** What the React tree said: `answered: false` when it could not be read (no devtools, a failed or timed-out read). */
+export type ReactLookup = { answered: true; matches: ReactMatch[] } | { answered: false };
+
 /**
  * Components of the running app whose `testID` matches, with rects in the driver's pixels. This is the fallback for
  * `getByTestId` when the platform hides the view from accessibility (React Native only exposes `testID` to
- * accessibility on some views). Any devtools failure means "nothing found", so callers keep their own not-found
- * error. Android measures in dp but the driver taps in px: `view.screen.scale` converts.
+ * accessibility on some views), and the second opinion on a degraded read. A devtools failure is `answered: false`,
+ * kept apart from an empty answer so a caller can tell "absent" from "cannot tell". Android measures in dp but the
+ * driver taps in px: `view.screen.scale` converts.
  */
-export async function locateByTestIdViaReact(
+export async function lookUpTestIdViaReact(
 	facet: Pick<DevtoolsFacet, "tree">,
 	testId: TextMatch,
 	view: ReactView,
 	options: { screenName?: string; timeoutMs?: number } = {}
-): Promise<ReactMatch[]> {
+): Promise<ReactLookup> {
 	const treeOptions: TreeOptions = {
 		...(view.platform === "android" ? { pixelRatio: view.screen.scale } : {}),
 		...(options.screenName === undefined ? {} : { screen: options.screenName }),
@@ -37,9 +41,9 @@ export async function locateByTestIdViaReact(
 	try {
 		result = await facet.tree(treeOptions);
 	} catch {
-		return [];
+		return { answered: false };
 	}
-	if (!result.success) return [];
+	if (!result.success) return { answered: false };
 	const matches: ReactMatch[] = [];
 	for (const component of result.data.components) {
 		const { testID, rect } = component;
@@ -52,7 +56,18 @@ export async function locateByTestIdViaReact(
 			name: component.name,
 		});
 	}
-	return matches;
+	return { answered: true, matches };
+}
+
+/** `lookUpTestIdViaReact` where any failure means "nothing found", so callers keep their own not-found error. */
+export async function locateByTestIdViaReact(
+	facet: Pick<DevtoolsFacet, "tree">,
+	testId: TextMatch,
+	view: ReactView,
+	options: { screenName?: string; timeoutMs?: number } = {}
+): Promise<ReactMatch[]> {
+	const lookup = await lookUpTestIdViaReact(facet, testId, view, options);
+	return lookup.answered ? lookup.matches : [];
 }
 
 /** Where a tap on `match` lands: `position` is an offset from the frame's top-left corner, else the centre. */

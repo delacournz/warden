@@ -74,7 +74,7 @@ Every run writes under a batch directory, `$WARDEN_HOME/batches/<id>` (the `--re
 
 A spec fails when any of its tests failed or timed out, or its process exited non-zero. When a process wrote no `results.jsonl` at all (a crash before the first test), the verdict falls back to the exit code with a warning. Under `CI`, a `test.only` left in a spec fails the run and is listed under `only`.
 
-A spec's error is an `E2eError` with a `code`: `LOCATOR_NOT_FOUND`, `LOCATOR_AMBIGUOUS`, `INVALID_LOCATOR`, `ACTION_FAILED`, `NOT_ACTIONABLE`, `TIMEOUT`, `INVALID_ARGUMENT`, `ASSERTION`, `SESSION`, `DRIVER`. A locator failure carries the screen as text.
+A spec's error is an `E2eError` with a `code`: `LOCATOR_NOT_FOUND`, `LOCATOR_AMBIGUOUS`, `INVALID_LOCATOR`, `ACTION_FAILED`, `NOT_ACTIONABLE`, `TIMEOUT`, `INVALID_ARGUMENT`, `ASSERTION`, `SESSION`, `DRIVER`, `PERF_BUDGET`, `RUN_FAILED`, `READ_DEGRADED`. A locator failure carries the screen as text.
 
 ## Fix a missing testID in the component
 
