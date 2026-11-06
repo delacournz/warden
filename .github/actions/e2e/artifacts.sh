@@ -13,7 +13,9 @@
 # app and golden are tarballs because upload-artifact drops the executable bit and follows symlinks: a raw .app would
 # not launch and a raw golden would not import. Both land in $RUNNER_TEMP/warden-artifacts.
 #
-# `all` follows the outcome: a green run collects every group, a failed one report, batches and golden.
+# `all` follows the outcome: a green run collects every group, a failed one report, batches, logs and golden.
+# logs are always collected, whatever ARTIFACTS says (even `none`): they are small and, when the build broke, the
+# only evidence there is.
 #
 # env: ARTIFACTS (all | none | comma list), PASSED (true | other), REPORT (absolute path), PROFILE (may be empty),
 #      STARTED (epoch seconds the suite started; empty collects every cached build)
@@ -30,9 +32,10 @@ trap 'rm -rf "$work"' EXIT
 
 case "$ARTIFACTS" in
   none | "") selected="" ;;
-  all) if [ "${PASSED:-}" = true ]; then selected="$ALL_GROUPS"; else selected="report batches golden"; fi ;;
+  all) if [ "${PASSED:-}" = true ]; then selected="$ALL_GROUPS"; else selected="report batches logs golden"; fi ;;
   *) selected=$(echo "$ARTIFACTS" | tr ',' ' ') ;;
 esac
+selected="$selected logs"
 
 wants() {
   local group
