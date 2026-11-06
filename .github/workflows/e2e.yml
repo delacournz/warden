@@ -110,7 +110,7 @@ jobs:
           NPM_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          xcode=$(ls -d /Applications/Xcode_*.app /Applications/Xcode-*.app 2>/dev/null | sort -V | tail -1)
+          xcode=$( (ls -d /Applications/Xcode_*.app /Applications/Xcode-*.app 2>/dev/null || true) | sort -V | tail -1)
           if [ -n "$xcode" ]; then export DEVELOPER_DIR="$xcode/Contents/Developer"; fi
           xcodebuild -version
           bun install --frozen-lockfile
