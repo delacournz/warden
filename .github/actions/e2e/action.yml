@@ -70,7 +70,7 @@ inputs:
       metro.config.js
       package.json
   cache:
-    description: "`github` restores and saves the build, repack and golden caches with actions/cache. `none` leaves storing them to you: the golden is still imported from `~/warden-goldens` and exported there after a green run (`save-cache`), and the `cache-groups` output lists every key and path to restore before this step and save after it."
+    description: "`github` restores and saves the build, repack and golden caches with actions/cache. `none` leaves storing them to you: the golden is still imported from `~/warden-goldens` but never exported (run the golden's `beforeSave` from `cache-groups` when your cache missed it), and the `cache-groups` output lists every key and path to restore before this step and save after it."
     default: github
   save-cache:
     description: Save the build, repack and golden caches after a green run (true on the default branch, false on pull requests).
@@ -338,7 +338,7 @@ runs:
 
     - name: Export the golden simulator
       id: golden-export
-      if: steps.run.outputs.passed == 'true' && inputs.save-cache == 'true' && steps.golden-cache.outputs.cache-hit != 'true'
+      if: inputs.cache == 'github' && steps.run.outputs.passed == 'true' && inputs.save-cache == 'true' && steps.golden-cache.outputs.cache-hit != 'true'
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       env:

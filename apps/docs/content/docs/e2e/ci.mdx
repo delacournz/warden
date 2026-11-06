@@ -186,7 +186,7 @@ A native build is minutes of `xcodebuild`, the JS bundle about 3.5 minutes on a 
 
 ### Bring your own cache
 
-With `cache: none` the action never calls `actions/cache`. It still imports the golden from `~/warden-goldens` before the run and, after a green run with `save-cache: true`, exports it there, so a cache you control only has to move directories. `warden ci cache --json` (the action's `cache-groups` output) lists them, on any CI:
+With `cache: none` the action never calls `actions/cache`. It still imports the golden from `~/warden-goldens` before the run, but never exports it: a golden your cache already restored would be exported for nothing. When your cache missed it, run the golden's `beforeSave` after a green run, then save the directory. `warden ci cache --json` (the action's `cache-groups` output) lists them, on any CI:
 
 ```json
 {
@@ -202,7 +202,7 @@ With `cache: none` the action never calls `actions/cache`. It still imports the 
 }
 ```
 
-A `paths` group is stored as it is (a `!` path is left out of the one before it). An `archive` group needs its commands around it: `afterRestore` after you restore it, `beforeSave` before you save it. The action runs both for you. Run it from the project (`--project <dir>`), with the same `--prefix`, `--profile` and `--js-input` you pass the action. On a runner with a persistent cache volume (Namespace, a self-hosted Mac), mount the paths and skip the keys:
+A `paths` group is stored as it is (a `!` path is left out of the one before it). An `archive` group needs its commands around it: `afterRestore` after you restore it, `beforeSave` before you save it. With `cache: none` the action runs `afterRestore` for you; `beforeSave` is yours. Run it from the project (`--project <dir>`), with the same `--prefix`, `--profile` and `--js-input` you pass the action. On a runner with a persistent cache volume (Namespace, a self-hosted Mac), mount the paths and skip the keys:
 
 ```yaml
 - uses: namespacelabs/nscloud-cache-action@v1
@@ -214,6 +214,10 @@ A `paths` group is stored as it is (a `!` path is left out of the one before it)
   with:
     working-directory: apps/mobile
     cache: none
+- name: Keep the golden on the volume
+  if: success()
+  working-directory: apps/mobile
+  run: '[ -n "$(ls -A ~/warden-goldens 2>/dev/null)" ] || warden golden export ~/warden-goldens --allow-unsettled'
 ```
 
 On another CI, key each group by its `key` and restore before `warden e2e`:
@@ -223,7 +227,7 @@ groups=$(warden ci cache --json --project apps/mobile)
 # restore every group's paths under its key, then:
 warden golden import ~/warden-goldens
 warden e2e --project apps/mobile
-# after a green run: warden golden export ~/warden-goldens --allow-unsettled, then save each group under its key
+# after a green run, only when the golden missed: warden golden export ~/warden-goldens --allow-unsettled; then save each group under its key
 ```
 
 ### Reuse an app built earlier in the workflow
@@ -251,7 +255,7 @@ Build the `.app` with ad-hoc signing and pass it in. `CODE_SIGNING_ALLOWED=NO` l
 | ``xcrun simctl list devices … did not finish within 30s`` | the first CoreSimulator call of a cold image, under a native build's load | the action calls it once before the run; keep `count` at 1 on a 3-core runner |
 | first spec on each simulator fails, the rest pass | the in-sim bridge is up but silent | `retry: 1`; warm-up retries its snapshot for 120 s and warms one device at a time |
 | `errSecMissingEntitlement` / `-34018` in the app | simulator app built with `CODE_SIGNING_ALLOWED=NO` | build with `CODE_SIGN_IDENTITY=-` |
-| golden "not settled after 300s" | a loaded 3-core runner | the run still works. The action exports it with `warden golden export --allow-unsettled`, so the next run restores it instead of building it again. A bigger runner settles it |
+| golden "not settled after 300s" | a loaded 3-core runner | the run still works. With `cache: github` the action exports it with `warden golden export --allow-unsettled`, so the next run restores it instead of building it again. A bigger runner settles it |
 | `warden: command not found` | `warden-version: none` without an earlier install | install warden first or leave the default |
 | `bun: command not found` after a blocked `setup-bun` | an allowlist blocks third-party actions | the action never uses one: leave `bun-version` empty or pin it |
 | cache never hits | the key moved: Xcode image, fingerprint or `js-inputs` changed | read the `Key the caches` step: it prints the fingerprint and golden name |
