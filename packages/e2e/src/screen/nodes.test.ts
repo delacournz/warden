@@ -70,6 +70,18 @@ describe("names, values, secure", () => {
 		expect(entry?.value).toBeUndefined();
 	});
 
+	test("an iOS text field with the secure-text-field trait is secure, empty or showing its placeholder", () => {
+		const [empty, placeholder] = indexSnapshot(
+			snap([
+				el("textfield", { id: "a", traits: ["text-entry", "secure-text-field"] }),
+				el("textfield", { id: "b", traits: ["text-entry", "secure-text-field"], value: "At least 8 characters" }),
+			])
+		).entries;
+		expect(empty?.secure).toBe(true);
+		expect(placeholder?.secure).toBe(true);
+		expect(placeholder?.value).toBeUndefined();
+	});
+
 	test("a text field with a real value is not secure", () => {
 		const entry = indexSnapshot(snap([el("textfield", { value: "a•b", label: "Name" })])).entries[0];
 		expect(entry?.secure).toBe(false);

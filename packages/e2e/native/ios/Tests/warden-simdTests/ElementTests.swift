@@ -46,6 +46,13 @@ final class ElementTests: XCTestCase {
     XCTAssertEqual(RoleMap.role(forType: "Image", traits: ["button"]), .image)
   }
 
+  func testSecureTextFieldTraitMakesATextFieldSecure() {
+    XCTAssertEqual(RoleMap.role(forType: "TextField", traits: ["text-entry", "secure-text-field"]), .securefield)
+    XCTAssertEqual(RoleMap.role(forType: "SecureTextField", traits: ["secure-text-field"]), .securefield)
+    XCTAssertEqual(RoleMap.role(forType: "TextField", traits: ["text-entry"]), .textfield)
+    XCTAssertEqual(RoleMap.role(forType: "StaticText", traits: ["secure-text-field"]), .text)
+  }
+
   func testEveryMappedRoleIsAKnownRole() {
     XCTAssertTrue(Set(RoleMap.table.values).isSubset(of: Set(Role.allCases)))
   }
