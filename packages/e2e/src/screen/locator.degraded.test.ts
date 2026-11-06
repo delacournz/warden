@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { el } from "../driver/driver.testing";
+import { el, snapshotOf } from "../driver/driver.testing";
 import { E2eError } from "../errors";
 import {
 	type DegradedOptions,
@@ -10,6 +10,7 @@ import {
 	ERROR_COMPONENT,
 	emptyRootSnapshot,
 	FORM_ERROR_COMPONENT,
+	lossySnapshot,
 	measuredLossySnapshot,
 } from "./degraded.testing";
 import { createScreen } from "./screen";
@@ -66,6 +67,43 @@ describe("locator reads on a degraded read", () => {
 		const host = testHost(staticDriver([el("text", { label: "Too short" })]));
 		expect(await createScreen(host).getByTestId("error").isHidden()).toBe(true);
 		expect(host.clock.sleeps).toEqual([]);
+	});
+});
+
+describe("quick checks on a degraded read wait a short window, not the action timeout", () => {
+	test("isVisible / isHidden / count give up after 2000 ms with READ_DEGRADED", async () => {
+		for (const check of ["isVisible", "isHidden", "count"] as const) {
+			const { screen, host } = setup({ actionTimeoutMs: 30_000 });
+			const start = host.clock.now();
+			const error = await failure(screen.getByTestId("error")[check]());
+			expect(error.code).toBe("READ_DEGRADED");
+			expect(error.message).toContain("within 2000 ms");
+			expect(host.clock.now() - start).toBeLessThan(5000);
+		}
+	});
+
+	test("an action timeout shorter than the window wins", async () => {
+		const { screen } = setup({ actionTimeoutMs: 500 });
+		expect((await failure(screen.getByTestId("error").isVisible())).message).toContain("within 500 ms");
+	});
+
+	test("text() / read() still wait the whole action timeout", async () => {
+		const { screen } = setup({ actionTimeoutMs: 30_000 });
+		const locator = screen.getByTestId("error");
+		expect((await failure(locator.text())).message).toContain("within 30000 ms");
+		expect((await failure(locator.read())).message).toContain("within 30000 ms");
+	});
+
+	test("a read that recovers inside the window answers", async () => {
+		let reads = 0;
+		const { screen } = setup({
+			actionTimeoutMs: 30_000,
+			screen: () => {
+				reads += 1;
+				return reads < 3 ? lossySnapshot() : snapshotOf([el("text", { id: "error", label: "Too short" })]);
+			},
+		});
+		expect(await screen.getByTestId("error").isVisible()).toBe(true);
 	});
 });
 
