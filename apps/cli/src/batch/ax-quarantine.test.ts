@@ -27,11 +27,30 @@ describe("axVerdict", () => {
 		});
 	});
 
+	test("cold although the sim was rebooted is quarantined", () => {
+		expect(axVerdict({ error: "snapshot failed: E_TIMEOUT", axRecovery: { outcome: "rebooted" } })).toEqual({
+			kind: "quarantine",
+			reason: "accessibility service wedged, still not answering after a reboot: snapshot failed: E_TIMEOUT",
+		});
+	});
+
+	test("a failed recovery names the stage that failed", () => {
+		expect(
+			axVerdict({
+				error: "snapshot failed: E_TIMEOUT",
+				axRecovery: { outcome: "failed", stage: "reboot", error: "refused: not leased" },
+			})
+		).toEqual({
+			kind: "quarantine",
+			reason: "accessibility service wedged, recovery failed (reboot): refused: not leased",
+		});
+	});
+
 	test("an outcome this build does not know only drops the device from the run", () => {
-		const record = JSON.parse('{"outcome":"rebooted"}');
+		const record = JSON.parse('{"outcome":"reimaged"}');
 		expect(axVerdict({ error: "snapshot failed: E_TIMEOUT", axRecovery: record })).toEqual({
 			kind: "drop",
-			reason: "accessibility service wedged (recovery: rebooted), still not answering: snapshot failed: E_TIMEOUT",
+			reason: "accessibility service wedged (recovery: reimaged), still not answering: snapshot failed: E_TIMEOUT",
 		});
 	});
 

@@ -17,8 +17,8 @@ export type WarmAdmitDeps = {
 
 /**
  * The scheduler's `admit` for a warmed iOS run: a worker waits for its own device's warm-up (as its first job's
- * socket lookup would) and leaves before pulling a job when `axVerdict` drops it; a quarantined device is never
- * handed out again. Never throws (a failed quarantine still drops the device).
+ * socket lookup would) and leaves before pulling a job when `axVerdict` drops it; a quarantined device is not
+ * handed out again for 24h (a later boot clears the wedge). Never throws (a failed quarantine still drops the device).
  */
 export function warmAdmit(deps: WarmAdmitDeps): (worker: BatchWorker) => Promise<boolean> {
 	return async ({ udid }) => {
@@ -33,7 +33,9 @@ export function warmAdmit(deps: WarmAdmitDeps): (worker: BatchWorker) => Promise
 			}
 		}
 		deps.dropped.set(udid, { reason: verdict.reason, quarantined });
-		const why = quarantined ? `dropped and quarantined (clear with: warden sim unquarantine ${udid})` : "dropped";
+		const why = quarantined
+			? `dropped and quarantined for 24h (clear now: warden sim unquarantine ${udid})`
+			: "dropped";
 		deps.report(`${udid}: ${verdict.reason}; ${why}`);
 		return false;
 	};

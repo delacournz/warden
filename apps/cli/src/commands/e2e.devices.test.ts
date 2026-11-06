@@ -442,7 +442,9 @@ describe("warden e2e", () => {
 			expect(await retryUntil(h, createE2eCommand(h.deps).run(c))).toBe(0);
 			expect(h.jobs().map((j) => j.opts.env.WARDEN_UDID)).toEqual(["U2", "U2"]);
 			const u1 = c.db.listDevices("ios").find((d) => d.id === "U1");
-			expect(u1?.quarantineReason).toBe("accessibility service wedged, recovery failed: launchctl kickstart exited 1");
+			expect(u1?.quarantineReason).toBe(
+				"warm: accessibility service wedged, recovery failed: launchctl kickstart exited 1"
+			);
 			expect(c.db.listDevices("ios").find((d) => d.id === "U2")?.quarantinedAt).toBeUndefined();
 			expect(c.db.listLeases()).toEqual([]);
 			expect(reportOf(h.files, c).warm?.find((w) => w.udid === "U1")).toMatchObject({

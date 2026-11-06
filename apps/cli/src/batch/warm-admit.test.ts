@@ -37,7 +37,7 @@ describe("warmAdmit", () => {
 			quarantined: true,
 		});
 		expect(a.lines).toEqual([
-			"U1: accessibility service wedged, recovery failed: kick; dropped and quarantined (clear with: warden sim unquarantine U1)",
+			"U1: accessibility service wedged, recovery failed: kick; dropped and quarantined for 24h (clear now: warden sim unquarantine U1)",
 		]);
 	});
 
@@ -53,7 +53,7 @@ describe("warmAdmit", () => {
 	});
 
 	test("an unknown recovery outcome drops without quarantining", async () => {
-		const a = admitWith({ error: "snapshot failed: E_TIMEOUT", axRecovery: JSON.parse('{"outcome":"rebooted"}') });
+		const a = admitWith({ error: "snapshot failed: E_TIMEOUT", axRecovery: JSON.parse('{"outcome":"reimaged"}') });
 		expect(await a.admit({ worker: 0, udid: "U1" })).toBe(false);
 		expect(a.asked).toEqual([]);
 	});

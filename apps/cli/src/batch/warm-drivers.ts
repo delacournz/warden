@@ -48,8 +48,15 @@ export type Warmed = {
 	log: string;
 };
 
-/** What became of a device's wedged accessibility service (absent: never found wedged). */
-export type AxRecoveryRecord = { outcome: "recovered" } | { outcome: "failed"; error: string };
+/**
+ * What became of a device's wedged accessibility service (absent: never found wedged): `recovered` (backboardd
+ * restarted), `rebooted` (the restart did not clear it, the sim was rebooted), or `failed` at a `stage` (absent
+ * from an older helper).
+ */
+export type AxRecoveryRecord =
+	| { outcome: "recovered" }
+	| { outcome: "rebooted" }
+	| { outcome: "failed"; error: string; stage?: "log" | "restart" | "reboot" };
 
 export type WarmRun = {
 	/** the iOS devices to warm */

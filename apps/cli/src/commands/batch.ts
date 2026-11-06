@@ -11,6 +11,7 @@ import {
 	runBatch,
 } from "@delacour/warden-core/batch/schedule";
 import type { ClaimedDevice, ClaimOutcome } from "@delacour/warden-core/claim";
+import { WARM_QUARANTINE_PREFIX } from "@delacour/warden-core/claim";
 import { parseClaimError } from "@delacour/warden-core/claim-errors";
 import { formatDuration, parseDuration } from "@delacour/warden-core/duration";
 import { bunExec, execError } from "@delacour/warden-core/exec";
@@ -2019,7 +2020,9 @@ function runAdmit(
 			const leaseId = r.devices.find((d) => d.udid === udid)?.leaseId;
 			const store = ctx.store();
 			const lease = leaseId !== undefined ? store.getLease(leaseId) : undefined;
-			return lease ? quarantineLeases(store, [lease], reason, ctx.now()).quarantined.includes(udid) : false;
+			return lease
+				? quarantineLeases(store, [lease], `${WARM_QUARANTINE_PREFIX}${reason}`, ctx.now()).quarantined.includes(udid)
+				: false;
 		},
 	});
 }
