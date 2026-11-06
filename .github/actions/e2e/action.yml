@@ -311,6 +311,7 @@ runs:
         retention-days: ${{ inputs.retention-days }}
 
     - name: Export the golden simulator
+      id: golden-export
       if: steps.run.outputs.passed == 'true' && inputs.save-cache == 'true' && steps.golden-cache.outputs.cache-hit != 'true'
       shell: bash
       working-directory: ${{ inputs.working-directory }}
@@ -319,10 +320,14 @@ runs:
       run: |
         profile_args=()
         if [ -n "$PROFILE" ]; then profile_args=(--profile "$PROFILE"); fi
-        warden golden export ~/warden-goldens ${profile_args[@]+"${profile_args[@]}"}
+        if warden golden export ~/warden-goldens ${profile_args[@]+"${profile_args[@]}"}; then
+          echo "exported=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "::warning title=golden not cached::warden would not export a golden that never settled; the next cold run rebuilds it"
+        fi
 
     - name: Save the golden simulator
-      if: steps.run.outputs.passed == 'true' && inputs.save-cache == 'true' && steps.golden-cache.outputs.cache-hit != 'true'
+      if: steps.golden-export.outputs.exported == 'true'
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ~/warden-goldens
