@@ -262,7 +262,7 @@ e2e/<w>-<seq>[-p<N>]/results.jsonl        (-pN: pass N+1 of an attempt, with pas
 e2e/<w>-<seq>[-p<N>]/<specId>/<title>-<hash6>/   trace.jsonl screenshots/ failure.png screen-at-failure.txt console.jsonl network.jsonl perf/ (with --perf)
 ```
 
-`e2e-report.json`: `{ suite, platform, base?, isolate, ok, headless, batchDir?, specs[], only?, setup?, warm? }`. iOS `warm[]`: per device `{ worker, udid, ok, error?, axRecovery? }`; `axRecovery` `{ outcome: "recovered" }` or `{ outcome: "failed", error }` when the warm-up found the sim's accessibility service wedged (troubleshooting 119). Each spec has `verdict`, `attempts`, `tests[]`; a failed test carries `line` (where it failed in the spec, from the stack) when the spec is on its stack.
+`e2e-report.json`: `{ suite, platform, base?, isolate, ok, headless, batchDir?, specs[], only?, setup?, warm? }`. iOS `warm[]`: per device `{ worker, udid, ok, error?, axRecovery? }`; `axRecovery` `{ outcome: "recovered" }` (backboardd restarted), `{ outcome: "rebooted" }` (the sim rebooted) or `{ outcome: "failed", error, stage? }` (`stage`: `log`, `restart` or `reboot`) when the warm-up found the sim's accessibility service wedged (troubleshooting 119). Each spec has `verdict`, `attempts`, `tests[]`; a failed test carries `line` (where it failed in the spec, from the stack) when the spec is on its stack.
 
 iOS bridge stalls (the in-sim accessibility bridge did not answer and the read went to `ax`) show in three places:
 

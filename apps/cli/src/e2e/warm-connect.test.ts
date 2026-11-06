@@ -8,9 +8,10 @@ import { fakeDriver, snapshotOf } from "@delacour/warden-e2e/driver/driver.testi
 import type { openIosDriver } from "@delacour/warden-e2e/driver/ios/ios-driver";
 import { ok } from "@delacour/warden-types/result";
 import { writeState } from "../agent-ui/state";
+import { resolveOwner } from "../claim-flags";
 import { fakeExec, testContext } from "../testing";
 import { AX_WEDGE_MARKER } from "./ax-wedge";
-import { residentSocket, runnerWarmError, waitBooted, warmConnect } from "./warm-connect";
+import { rebootRefusal, residentSocket, runnerWarmError, waitBooted, warmConnect } from "./warm-connect";
 
 let home: string | undefined;
 afterEach(() => {
@@ -274,5 +275,98 @@ describe("warmConnect", () => {
 			expect(calls.some((c) => c.join(" ").includes("simctl spawn"))).toBe(false);
 			ctx.cleanup();
 		}
+	});
+});
+
+describe("warmConnect: reboot", () => {
+	/** a connect whose driver counts its closes */
+	function connectFor(ctx: ReturnType<typeof testContext>) {
+		let closed = 0;
+		const connect = warmConnect(ctx, {
+			ensureHelper: async () => ok({ socketPath: "/tmp/U1.sock", spawned: false }),
+			openIosDriver: async () => {
+				const driver = fakeDriver({ screens: [snapshotOf([])] });
+				return ok({
+					...driver,
+					close: async () => {
+						closed++;
+						await driver.close();
+					},
+				});
+			},
+		});
+		return { connect, closed: () => closed };
+	}
+
+	const lease = (ctx: ReturnType<typeof testContext>, owner = resolveOwner(ctx)) =>
+		ctx
+			.store()
+			.insertLease(
+				{ resource: { kind: "device", platform: "ios", id: "U1", name: "warden-iphone-1" }, owner, ttlMs: 60_000 },
+				ctx.now()
+			);
+
+	test("a sim this run leased: helper stopped, shut down, booted until ready", async () => {
+		const calls: string[][] = [];
+		const ctx = testContext([], {
+			exec: fakeExec(
+				[
+					["xcrun simctl bootstatus", {}],
+					["xcrun simctl shutdown U1", {}],
+				],
+				calls
+			),
+		});
+		lease(ctx);
+		const { connect, closed } = connectFor(ctx);
+		const helper = await connect("U1");
+		if (!helper.success) throw new Error(helper.error);
+		calls.length = 0;
+		expect(await helper.data.reboot?.()).toEqual({ kind: "rebooted" });
+		expect(closed()).toBe(1);
+		const lines = calls.map((c) => c.join(" "));
+		expect(lines[0]).toBe("xcrun simctl shutdown U1");
+		expect(lines).toContain("xcrun simctl bootstatus U1 -b");
+		ctx.cleanup();
+	});
+
+	test("a sim with no lease, or another owner's: refused, nothing run, helper kept", async () => {
+		const calls: string[][] = [];
+		const ctx = testContext([], { exec: fakeExec([["xcrun simctl bootstatus", {}]], calls) });
+		const { connect, closed } = connectFor(ctx);
+		const helper = await connect("U1");
+		if (!helper.success) throw new Error(helper.error);
+		calls.length = 0;
+		const none = await helper.data.reboot?.();
+		expect(none).toMatchObject({ kind: "refused" });
+		lease(ctx, { kind: "agent", sessionId: "someone-else", cwd: "/elsewhere" });
+		const other = await helper.data.reboot?.();
+		expect(other).toMatchObject({ kind: "refused" });
+		if (other?.kind === "refused") expect(other.reason).toContain("someone-else");
+		expect(calls).toEqual([]);
+		expect(closed()).toBe(0);
+		ctx.cleanup();
+	});
+
+	test("rebootRefusal: a physical device is never rebooted", () => {
+		const ctx = testContext([]);
+		expect(rebootRefusal(ctx, "00008110-001A2B3C4D5E6F70", resolveOwner(ctx))).toContain("physical");
+		ctx.cleanup();
+	});
+
+	test("a reboot that fails to shut the sim down says so", async () => {
+		const ctx = testContext([], {
+			exec: fakeExec([
+				["xcrun simctl bootstatus", {}],
+				["xcrun simctl shutdown U1", { exitCode: 149, stderr: "Unable to shutdown device" }],
+			]),
+		});
+		lease(ctx);
+		const { connect } = connectFor(ctx);
+		const helper = await connect("U1");
+		if (!helper.success) throw new Error(helper.error);
+		const out = await helper.data.reboot?.();
+		expect(out).toMatchObject({ kind: "failed", stage: "shutdown" });
+		ctx.cleanup();
 	});
 });
