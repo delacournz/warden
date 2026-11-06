@@ -166,12 +166,13 @@ Pin the action to a commit SHA or release tag. In order, it:
 | `xcode-path` | runner default | e.g. `/Applications/Xcode_27.2.app` |
 | `headroom-gb` | 1 on hosts of 16 GB or less | `WARDEN_CAPACITY_HEADROOM_GB` |
 | `report-path` | `warden-e2e-report.json` | where the report goes |
+| `cache` | `github` | `github` saves and restores with `actions/cache`; `none` leaves storing to you (see below) |
 | `cache-prefix` | `warden-e2e-v1` | change it to drop every cache |
 | `js-inputs` | `src assets app.config.ts index.ts metro.config.js package.json` | git pathspecs that key the repack cache; mirror `kinds.simulator.jsInputs` |
 | `save-cache` | `true` | `false` on pull requests |
 | `retention-days`, `artifact-name` | `3`, `warden-e2e` | the evidence artifact |
 
-Outputs: `report-path` (absolute) and `passed` (`true` / `false`). The job fails when the gate fails.
+Outputs: `report-path` (absolute), `passed` (`true` / `false`) and `cache-groups` (the JSON below). The job fails when the gate fails.
 
 ### The caches
 
@@ -182,6 +183,48 @@ Outputs: `report-path` (absolute) and `passed` (`true` / `false`). The job fails
 | Golden simulator | `~/warden-goldens` | `warden golden key --profile <p>` (Xcode build, runtime build, device type, recipe) | after a green run on a miss |
 
 A native build is minutes of `xcodebuild`, the JS bundle about 3.5 minutes on a hosted runner, and a cold golden up to five more minutes of first boot and settling. A pull request restores what the default branch saved but never saves (`save-cache: false`), so a branch cannot evict the default branch's entries; a push to the default branch fills them. A JS-only change misses only the repack cache. A new Xcode or runtime image misses only the golden. The caches hold files, not `warden.db`: a base or repack dir that comes back complete with no row is registered on its first lookup (`warden builds --json` shows `"source": "restored"`) and used as it is.
+
+### Bring your own cache
+
+With `cache: none` the action never calls `actions/cache`. It still imports the golden from `~/warden-goldens` before the run and, after a green run with `save-cache: true`, exports it there, so a cache you control only has to move directories. `warden ci cache --json` (the action's `cache-groups` output) lists them, on any CI:
+
+```json
+{
+  "builds": { "kind": "paths", "key": "warden-e2e-v1-builds-macOS-ARM64-<fp>", "paths": ["/Users/runner/.warden/builds", "!/Users/runner/.warden/builds/*/ios/*/simulator/repacks"] },
+  "repack": { "kind": "paths", "key": "warden-e2e-v1-repack-macOS-ARM64-<fp>-<js>", "paths": ["/Users/runner/.warden/builds/*/ios/*/simulator/repacks"] },
+  "golden": {
+    "kind": "archive",
+    "key": "warden-e2e-v1-macOS-ARM64-warden-golden-iphone-17-<key>-r2",
+    "paths": ["/Users/runner/warden-goldens"],
+    "afterRestore": "warden golden import /Users/runner/warden-goldens",
+    "beforeSave": "warden golden export /Users/runner/warden-goldens --allow-unsettled"
+  }
+}
+```
+
+A `paths` group is stored as it is (a `!` path is left out of the one before it). An `archive` group needs its commands around it: `afterRestore` after you restore it, `beforeSave` before you save it. The action runs both for you. Run it from the project (`--project <dir>`), with the same `--prefix`, `--profile` and `--js-input` you pass the action. On a runner with a persistent cache volume (Namespace, a self-hosted Mac), mount the paths and skip the keys:
+
+```yaml
+- uses: namespacelabs/nscloud-cache-action@v1
+  with:
+    path: |
+      ~/.warden/builds
+      ~/warden-goldens
+- uses: delacournz/warden/.github/actions/e2e@<sha>
+  with:
+    working-directory: apps/mobile
+    cache: none
+```
+
+On another CI, key each group by its `key` and restore before `warden e2e`:
+
+```bash
+groups=$(warden ci cache --json --project apps/mobile)
+# restore every group's paths under its key, then:
+warden golden import ~/warden-goldens
+warden e2e --project apps/mobile
+# after a green run: warden golden export ~/warden-goldens --allow-unsettled, then save each group under its key
+```
 
 ### Reuse an app built earlier in the workflow
 

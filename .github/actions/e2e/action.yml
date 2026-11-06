@@ -69,6 +69,9 @@ inputs:
       index.ts
       metro.config.js
       package.json
+  cache:
+    description: "`github` restores and saves the build, repack and golden caches with actions/cache. `none` leaves storing them to you: the golden is still imported from `~/warden-goldens` and exported there after a green run (`save-cache`), and the `cache-groups` output lists every key and path to restore before this step and save after it."
+    default: github
   save-cache:
     description: Save the build, repack and golden caches after a green run (true on the default branch, false on pull requests).
     default: "true"
@@ -89,6 +92,9 @@ outputs:
   passed:
     description: "`true` when the gate passed, `false` when a required spec failed or the run broke."
     value: ${{ steps.run.outputs.passed }}
+  cache-groups:
+    description: "`warden ci cache --json`: `{builds, repack, golden}`, each `{kind, key, paths}` (the golden adds `afterRestore` / `beforeSave`). For caching with something other than actions/cache (`cache: none`)."
+    value: ${{ steps.keys.outputs.cache-groups }}
 
 runs:
   using: composite
@@ -98,8 +104,10 @@ runs:
       env:
         XCODE_PATH: ${{ inputs.xcode-path }}
         HEADROOM_GB: ${{ inputs.headroom-gb }}
+        CACHE: ${{ inputs.cache }}
       run: |
         set -euo pipefail
+        case "$CACHE" in github|none) ;; *) echo "cache must be github or none, not \"$CACHE\"" >&2; exit 1 ;; esac
         {
           echo "WARDEN_TELEMETRY_DISABLED=1"
           echo "DO_NOT_TRACK=1"
@@ -192,30 +200,27 @@ runs:
         JS_INPUTS: ${{ inputs.js-inputs }}
       run: |
         set -euo pipefail
-        fp=$(warden app fingerprint ios --kind simulator --json | node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8"));process.stdout.write(d.fingerprints.ios)')
-        [ -n "$fp" ] || { echo "warden app fingerprint printed no ios fingerprint" >&2; exit 1; }
-        specs=()
-        while IFS= read -r line; do [ -n "$line" ] && specs+=("$line"); done <<< "$JS_INPUTS"
-        js=$(git ls-files -s -- ${specs[@]+"${specs[@]}"} | shasum -a 256 | cut -c1-16)
-        profile_args=()
-        if [ -n "$PROFILE" ]; then profile_args=(--profile "$PROFILE"); fi
-        golden=$(warden golden key ${profile_args[@]+"${profile_args[@]}"})
-        runner="$RUNNER_OS-$RUNNER_ARCH"
+        args=(--json --prefix "$PREFIX")
+        if [ -n "$PROFILE" ]; then args+=(--profile "$PROFILE"); fi
+        while IFS= read -r line; do [ -n "$line" ] && args+=(--js-input "$line"); done <<< "$JS_INPUTS"
+        groups=$(warden ci cache "${args[@]}")
+        key() { node -e 'const g=JSON.parse(process.argv[1])[process.argv[2]];process.stdout.write(g.key)' "$groups" "$1"; }
         {
-          echo "fingerprint=$fp"
-          echo "js=$js"
-          echo "golden=$golden"
-          echo "builds=$PREFIX-builds-$runner-$fp"
-          echo "repack=$PREFIX-repack-$runner-$fp-$js"
-          echo "golden-key=$PREFIX-$runner-$golden"
+          echo "builds=$(key builds)"
+          echo "repack=$(key repack)"
+          echo "golden-key=$(key golden)"
+          echo "cache-groups<<WARDEN_CACHE_GROUPS"
+          echo "$groups"
+          echo "WARDEN_CACHE_GROUPS"
         } >> "$GITHUB_OUTPUT"
-        echo "native fingerprint $fp, js $js, golden $golden"
+        echo "$groups"
 
     # Restore and save are separate steps so a failed run never saves: a half-built base would be restored by every
     # later run. The repack directories are cached on their own key (the native fingerprint plus the JS inputs); the
     # builds cache excludes them. Only the files come back, not warden.db: warden registers a kind's dir it finds
     # complete on disk with no row, so a restored base or repack is used instead of rebuilt.
     - name: Restore the native build cache
+      if: inputs.cache == 'github'
       id: builds-cache
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
@@ -225,6 +230,7 @@ runs:
         key: ${{ steps.keys.outputs.builds }}
 
     - name: Restore the JS repack cache
+      if: inputs.cache == 'github'
       id: repack-cache
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
@@ -232,6 +238,7 @@ runs:
         key: ${{ steps.keys.outputs.repack }}
 
     - name: Restore the golden simulator
+      if: inputs.cache == 'github'
       id: golden-cache
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
@@ -348,14 +355,14 @@ runs:
         fi
 
     - name: Save the golden simulator
-      if: steps.golden-export.outputs.exported == 'true'
+      if: inputs.cache == 'github' && steps.golden-export.outputs.exported == 'true'
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ~/warden-goldens
         key: ${{ steps.keys.outputs.golden-key }}
 
     - name: Save the native build cache
-      if: steps.run.outputs.passed == 'true' && inputs.save-cache == 'true' && steps.builds-cache.outputs.cache-hit != 'true'
+      if: inputs.cache == 'github' && steps.run.outputs.passed == 'true' && inputs.save-cache == 'true' && steps.builds-cache.outputs.cache-hit != 'true'
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: |
@@ -364,7 +371,7 @@ runs:
         key: ${{ steps.keys.outputs.builds }}
 
     - name: Save the JS repack cache
-      if: steps.run.outputs.passed == 'true' && inputs.save-cache == 'true' && steps.repack-cache.outputs.cache-hit != 'true'
+      if: inputs.cache == 'github' && steps.run.outputs.passed == 'true' && inputs.save-cache == 'true' && steps.repack-cache.outputs.cache-hit != 'true'
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ~/.warden/builds/*/ios/*/simulator/repacks
