@@ -7,9 +7,14 @@ enum RoleMap {
   /// XCUI / AX element type (the `AX` prefix already stripped, as idb reports it) to `Role`. `Other` upgrades to
   /// `button` when AX gives it the button trait; anything unknown is `other`. A `textfield` with the
   /// `secure-text-field` trait is `securefield`: the host `ax` reader names a secure text input `TextField` and keeps
-  /// its secure state only in that trait (empty or filled), where the bridge says `SecureTextField`.
+  /// its secure state only in that trait (empty or filled), where the bridge says `SecureTextField`. An unknown type
+  /// with the `text-entry` trait is a `textfield` (`securefield` with `secure-text-field`): the bridge types a web
+  /// view's `<input>` by its wrapper class (`WebAccessibilityObjectWrapper`) and marks it only by those traits.
   static func role(forType type: String, traits: [String]) -> Role {
     let known = table[type] ?? .other
+    if known == .other, traits.contains("text-entry") {
+      return traits.contains("secure-text-field") ? .securefield : .textfield
+    }
     if known == .other, traits.contains("button") { return .button }
     if known == .textfield, traits.contains("secure-text-field") { return .securefield }
     return known

@@ -665,6 +665,14 @@ describe("ensureHelper: a resident helper", () => {
 		expect(s.spawns).toHaveLength(1);
 	});
 
+	test("the recycle budget reaches a resident helper: WARDEN_SIMD_BRIDGE_MAX_RECYCLES is part of its env key", () => {
+		const base = simdEnvKey({});
+		expect(simdEnvKey({ WARDEN_SIMD_BRIDGE_MAX_RECYCLES: "0" })).not.toBe(base);
+		expect(simdEnvKey({ WARDEN_SIMD_BRIDGE_MAX_RECYCLES: "0" })).not.toBe(
+			simdEnvKey({ WARDEN_SIMD_BRIDGE_MAX_RECYCLES: "5" })
+		);
+	});
+
 	test("the WARDEN_SIMD_* env changed since the helper was spawned: replaced; other env changes: reused", async () => {
 		const changed = resident(agentA, { env: simdEnvKey({ WARDEN_SIMD_PACE_MS: "10" }) });
 		changed.c.env = { ...changed.c.env, WARDEN_SIMD_PACE_MS: "20" };
