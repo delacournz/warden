@@ -178,7 +178,8 @@ export type Snapshot = {
 	modal?: ModalInfo;
 	/**
 	 * Set when `backend` answered because this reader failed or was skipped first (iOS: `axbridge` stalled, `ax` read in
-	 * its place). The fallback reader can lack what the first one has, so a missing node on such a snapshot is not final.
+	 * its place). The fallback reader can lack what the first one has, so a missing node on such a snapshot is not final:
+	 * the iOS helper probes the first reader in the background, and a later read is back on it once it answers.
 	 */
 	fellBackFrom?: SnapshotBackend;
 };

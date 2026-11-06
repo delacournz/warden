@@ -143,11 +143,86 @@ final class BridgeWarmth: @unchecked Sendable {
     }
   }
 
-  /// The outcome of the warm-up in flight for the current spell, waited for; nil when none is running.
+  /// The outcome of the current spell's warm-up, waited for; nil when none ran or the guest has answered since (a
+  /// recovery probe can warm a guest whose warm-up stalled).
   func joinWarmUp() async -> WarmUp? {
-    guard let task = lock.withLock({ inFlight?.spell == spell ? inFlight?.task : nil }) else { return nil }
+    guard let task = lock.withLock({ cold && inFlight?.spell == spell ? inFlight?.task : nil }) else { return nil }
     return await task.value
   }
+}
+
+/// A cheap check that the `axbridge` guest answers again, run in the background while reads are on `ax` (a stall
+/// cooldown, or a cold guest whose warm-up stalled), so a guest that recovers is used again without a caller paying a
+/// full tree read against the read deadline. Single-flight: reads that arrive while one runs join it; a new one starts
+/// at most every `intervalSeconds`. Each probe is bounded by `deadlineMs`, short of a user read's.
+final class BridgeProbe: @unchecked Sendable {
+  /// One element answered is proof enough; a healthy one takes a few ms, a cold guest's first read up to seconds.
+  static let defaultDeadlineMs = 1500
+  /// The least time between two probes.
+  static let defaultIntervalSeconds: Double = 5
+
+  enum Outcome: Sendable, Equatable {
+    case answered
+    case silent(afterMs: Int)
+    case failed(String)
+  }
+
+  let deadlineMs: Int
+  let intervalSeconds: Double
+  private let lock = NSLock()
+  private var inFlight: Task<Outcome, Never>?
+  private var latest: Task<Outcome, Never>?
+  private var startedAt: Double?
+
+  init(deadlineMs: Int = BridgeProbe.defaultDeadlineMs, intervalSeconds: Double = BridgeProbe.defaultIntervalSeconds) {
+    self.deadlineMs = deadlineMs
+    self.intervalSeconds = intervalSeconds
+  }
+
+  /// The probe in flight, else the last one (tests wait on it).
+  var current: Task<Outcome, Never>? { lock.withLock { inFlight ?? latest } }
+
+  /// The probe in flight, or a new one; nil inside the back-off. `settled` runs once with the outcome before the task
+  /// ends, so whoever awaits the task sees its effects.
+  func start(
+    now: Double, check: @escaping @Sendable () async throws -> Void,
+    settled: @escaping @Sendable (Outcome, Int) -> Void
+  ) -> Task<Outcome, Never>? {
+    lock.withLock { () -> Task<Outcome, Never>? in
+      if let inFlight { return inFlight }
+      if let startedAt, now - startedAt < intervalSeconds { return nil }
+      startedAt = now
+      let deadlineMs = self.deadlineMs
+      let task = Task<Outcome, Never> { [weak self] in
+        let started = ContinuousClock.now
+        let outcome: Outcome
+        do {
+          try await Session.bounded(check, deadlineMs: deadlineMs)
+          outcome = .answered
+        } catch let stall as BridgeStalled {
+          outcome = .silent(afterMs: stall.afterMs)
+        } catch {
+          outcome = .failed(WireError.from(error).message)
+        }
+        settled(outcome, Session.elapsedMs(since: started))
+        self?.finish()
+        return outcome
+      }
+      inFlight = task
+      latest = task
+      return task
+    }
+  }
+
+  private func finish() {
+    lock.withLock { inFlight = nil }
+  }
+}
+
+/// What a session probes the bridge with (`BridgeProbe` + its liveness check); nil where nothing can be probed.
+struct BridgeRecovery: Sendable {
+  var probe: BridgeProbe
+  var check: @Sendable () async throws -> Void
 }
 
 /// An `axbridge` read that did not answer within `BridgeDeadline.readMs`.
@@ -192,6 +267,10 @@ extension Session {
   /// - otherwise each bridge read attempt is bounded by `policy.readMs` (`coldReadMs` while the guest is cold); a
   ///   not-responding app is recovered and read again (`readRecovering`); a bridge failure (a stall included) with no
   ///   explicit backend is read on `ax`. A cold guest's first stall does not arm the cooldown.
+  /// - with a `recovery`, a read the cooldown or a stalled warm-up sends to `ax` starts a background `BridgeProbe`
+  ///   and does not wait for it; a probe that answers ends the cooldown (and warms the guest), a silent one re-arms
+  ///   it, so no caller pays the full read deadline while the guest stays silent. An explicit `axbridge` read inside
+  ///   the cooldown waits for the probe only (its short deadline), then reads, or fails as a stall without a read.
   static func readAX<Value: Sendable>(
     requested: AXBackend?,
     bridge: (@Sendable () async throws -> Value)?,
@@ -201,7 +280,8 @@ extension Session {
     gate: BridgeStallGate,
     warmth: BridgeWarmth,
     health: BridgeHealth,
-    now: @Sendable () -> Double,
+    recovery: BridgeRecovery? = nil,
+    now: @escaping @Sendable () -> Double,
     log: @escaping @Sendable (String) -> Void,
     bridgeName: String
   ) async throws -> AXOutcome<Value> {
@@ -213,12 +293,24 @@ extension Session {
     }
 
     let reason: String
+    let probe = { () -> Task<BridgeProbe.Outcome, Never>? in
+      guard let recovery else { return nil }
+      return startProbe(recovery, gate: gate, warmth: warmth, health: health, now: now, log: log)
+    }
     if let bridge {
-      if requested == nil, host != nil,
-        let skip = gate.skipReason(now: now(), cooldownSeconds: policy.cooldownSeconds)
-      {
+      let skip = gate.skipReason(now: now(), cooldownSeconds: policy.cooldownSeconds)
+      if requested == .axbridge, skip != nil, recovery != nil {
+        // an explicit read pays the probe's short deadline, never the full read's, while the guest is cooling down
+        let outcome = await probe()?.value
+        guard outcome == .answered else {
+          throw BridgeStalled(afterMs: recovery?.probe.deadlineMs ?? 0)
+        }
+      }
+      if requested == nil, host != nil, let skip {
+        _ = probe()
         reason = skip
       } else if case let .stalled(afterMs)? = await warmth.joinWarmUp(), requested == nil, host != nil {
+        _ = probe()
         reason = "axbridge warm-up did not answer within \(afterMs) ms (cold guest)"
       } else {
         let generation = warmth.generation
@@ -257,6 +349,28 @@ extension Session {
       return AXOutcome(value: value, backend: .ax, fallback: Fallback(reason: reason))
     } catch {
       throw AXReadersFailed(bridgeReason: reason, host: error)
+    }
+  }
+
+  /// Starts (or joins) a recovery probe whose outcome updates the gate, the guest's warmth and health.
+  static func startProbe(
+    _ recovery: BridgeRecovery, gate: BridgeStallGate, warmth: BridgeWarmth, health: BridgeHealth,
+    now: @escaping @Sendable () -> Double, log: @escaping @Sendable (String) -> Void
+  ) -> Task<BridgeProbe.Outcome, Never>? {
+    let generation = warmth.generation
+    return recovery.probe.start(now: now(), check: recovery.check) { outcome, elapsedMs in
+      switch outcome {
+      case .answered:
+        warmth.noteSuccess(generation: generation)
+        health.recordSuccess()
+        gate.recordSuccess()
+        log("axbridge probe answered in \(elapsedMs) ms; reads use axbridge again")
+      case let .silent(afterMs):
+        if !warmth.isCold { gate.recordStall(at: now()) }
+        log("axbridge probe did not answer within \(afterMs) ms; reads stay on ax")
+      case let .failed(message):
+        log("axbridge probe failed: \(message)")
+      }
     }
   }
 
