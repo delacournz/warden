@@ -81,6 +81,7 @@ const AFFECTED = {
 		},
 		a11y: { entries: ["src/app/welcome.tsx", "src/app/a11y.tsx", "src/modules/a11y"] },
 		camera: { entries: ["src/app/welcome.tsx", "src/app/camera.tsx", "src/modules/camera"] },
+		"keyboard-sheet": { entries: ["src/app/welcome.tsx", "src/app/keyboard-sheet.tsx", "src/modules/keyboard"] },
 	},
 } satisfies Partial<WardenE2eSuite>;
 
