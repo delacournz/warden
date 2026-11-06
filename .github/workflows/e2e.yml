@@ -79,7 +79,6 @@ jobs:
       # `$WARDEN_HOME/simd`), so a helper change is tested here and a version with no release yet (the version PR)
       # needs no download: the action's `warden doctor --fetch-helper` finds it and fetches nothing. Same toolchain
       # and Namespace cache volume as ci's native job and the release build (newest Xcode, for the build only).
-      # The Namespace volume also keeps bun's install cache, so the action's `bun install` links instead of downloading.
       - if: (inputs.warden-version || 'source') == 'source'
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
@@ -90,7 +89,6 @@ jobs:
         with:
           cache: |
             swiftpm
-            bun
           path: |
             ~/Library/Caches/warden-idb
             packages/e2e/native/ios/.build
@@ -103,6 +101,12 @@ jobs:
           xcode=$( (ls -d /Applications/Xcode_*.app /Applications/Xcode-*.app 2>/dev/null || true) | sort -V | tail -1)
           if [ -n "$xcode" ]; then echo "developer-dir=$xcode/Contents/Developer" >> "$GITHUB_OUTPUT"; export DEVELOPER_DIR="$xcode/Contents/Developer"; fi
           echo "build=$(xcodebuild -version | awk '/Build version/ {print $3}')" >> "$GITHUB_OUTPUT"
+          # Tracked blobs only: hashFiles also hashed untracked files the runner left in these paths, so the key moved
+          # between commits that changed none of them.
+          git ls-files -s packages/e2e/native/idb.lock.json packages/e2e/native/ios/Package.swift packages/e2e/native/ios/Sources \
+            packages/e2e/native/ios-inject packages/e2e/native/scripts/build.ts packages/e2e/native/scripts/deps.ts \
+            packages/e2e/native/scripts/inject.ts packages/e2e/package.json > "$RUNNER_TEMP/simd-inputs"
+          echo "sources=$(shasum -a 256 "$RUNNER_TEMP/simd-inputs" | cut -c1-40)" >> "$GITHUB_OUTPUT"
           xcodebuild -version
 
       # The built dist/ is keyed on what goes into it (the helper's sources, the inject dylib, the build scripts, the
@@ -113,7 +117,7 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: packages/e2e/native/dist
-          key: warden-simd-${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode.outputs.build }}-${{ hashFiles('packages/e2e/native/idb.lock.json', 'packages/e2e/native/ios/Package.swift', 'packages/e2e/native/ios/Sources/**', 'packages/e2e/native/ios-inject/**', 'packages/e2e/native/scripts/build.ts', 'packages/e2e/native/scripts/deps.ts', 'packages/e2e/native/scripts/inject.ts', 'packages/e2e/package.json') }}
+          key: warden-simd-${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode.outputs.build }}-${{ steps.xcode.outputs.sources }}
 
       - name: Build warden-simd from this checkout
         if: (inputs.warden-version || 'source') == 'source' && steps.simd-cache.outputs.cache-hit != 'true'
