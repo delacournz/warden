@@ -544,6 +544,11 @@ export function getSession(opts: SessionOptions = {}): Session {
 	return session;
 }
 
+/** The process-wide session if one exists; never creates one (so a caller outside a test opens no device). */
+export function peekSession(): Session | undefined {
+	return slot()[SESSION_KEY];
+}
+
 /** Closes and forgets the process-wide session, if any. */
 export async function resetSession(): Promise<void> {
 	await slot()[SESSION_KEY]?.close();

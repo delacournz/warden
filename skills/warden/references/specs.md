@@ -31,11 +31,11 @@ e2e/helpers/poll.ts      pollUntil
 ## Imports
 
 ```ts
-import { test, expect, describe, beforeEach, afterEach, beforeAll, afterAll, E2eError } from "@delacour/warden-e2e";
+import { test, expect, describe, beforeEach, afterEach, beforeAll, afterAll, run, E2eError } from "@delacour/warden-e2e";
 import type { App, Device, Screen, Locator, TestFixtures } from "@delacour/warden-e2e";
 ```
 
-Other type exports: `OpenOptions OpenWaitUntil SystemAlerts DevicePerf PerfStartOptions PerfReport PerfBudgets PerfBreach LocatorReading TapOptions TapUntil PinchOptions RotateOptions ScreenGestures ScreenPinchOptions ScreenRotateOptions ScreenPathOptions`; value `WARDEN_E2E_VERSION`.
+Other type exports: `RunOptions RunResult RunCommand OpenOptions OpenWaitUntil SystemAlerts DevicePerf PerfStartOptions PerfReport PerfBudgets PerfBreach LocatorReading TapOptions TapUntil PinchOptions RotateOptions ScreenGestures ScreenPinchOptions ScreenRotateOptions ScreenPathOptions`; value `WARDEN_E2E_VERSION`.
 
 Never import subpaths (`/device`, `/screen/*`, `/env`). Only `.` and `./preload` are published. (The repo's example helpers use subpaths because the workspace exposes `./*`; copy the root type imports instead.)
 
@@ -236,6 +236,18 @@ Roles: button link textbox searchbox checkbox radio switch slider image heading 
   - `swipe({ direction, momentum? })`, `scrollTo({ direction = "down", momentum?, maxSwipes = 10, timeout? })`
   - `pinch(scale, { durationMs?, radius?, timeout? })`, `rotate(degrees, { durationMs?, radius?, timeout? })` (positive = clockwise). Out-of-range `scale`/`degrees` and unsupported gestures throw `INVALID_ARGUMENT` (no `capabilities.pinch`, or more than `maxPointers` fingers; Android without `warden-uiad`: no pinch/rotate, 1-finger paths only): skip with `test({ platforms: ["ios"] })`.
 
+## Host commands (`run`)
+
+Specs run on the host (bun), not on the device: `fetch`, files and npm packages all work. `run` runs a command there:
+
+- `run(command, { cwd?, env?, timeout = "60s", input?, check = true })` → `{ ok, exitCode, stdout, stderr, ms, json() }`.
+- `command`: a string runs with `sh -c`; an argv array (`["bun", "scripts/seed.ts"]`) runs with no shell (nothing expanded).
+- `cwd` defaults to the spec process's (project root under `warden e2e`); `env` is merged over the spec's env (`undefined` removes one); `input` goes to stdin.
+- Non-zero exit throws `RUN_FAILED` (message: program, exit code, stderr tail); `check: false` returns `ok: false` instead. Over `timeout` the process is SIGKILLed and throws `TIMEOUT`. Empty command / bad timeout / `json()` on non-JSON stdout: `INVALID_ARGUMENT`.
+- Inside a test it is one `run` span in `trace.jsonl` (exit code only; the command is never recorded).
+- Seed through an API or script, then deep link: `const { id } = (await run(["bun", "scripts/seed-order.ts"])).json() as { id: string }; await app.open({ url: `myapp://orders/${id}` });`
+- Suite-wide servers/setup belong in `warden.config.ts` (`serve`, `setup`, `ports`: `suites.md`), not in `beforeAll`.
+
 ## Matchers
 
 `expect(locator)` polls every 100 ms for the first second, then every 250 ms. Any other value goes to bun's `expect`.
@@ -247,7 +259,7 @@ Accessibility matchers (`a11y.md`): on a locator `toHaveAccessibleName(t)`, `toH
 - Zero matches keep polling. Several matches fail at once (except `toHaveCount`).
 - `.not` passes only after the inverted state held for 1000 ms (sooner on iOS/Android when the driver reports a quiet screen).
 - `expect.soft(locator)` records the failure and the test fails when its body ends.
-- Failures are `E2eError` with a `code`: `LOCATOR_NOT_FOUND LOCATOR_AMBIGUOUS INVALID_LOCATOR ACTION_FAILED TIMEOUT NOT_ACTIONABLE INVALID_ARGUMENT SESSION DRIVER ASSERTION PERF_BUDGET`. `E2eError` also carries `screen` (AX tree text at the failure, when known) and `matches` (count for `LOCATOR_AMBIGUOUS`).
+- Failures are `E2eError` with a `code`: `LOCATOR_NOT_FOUND LOCATOR_AMBIGUOUS INVALID_LOCATOR ACTION_FAILED TIMEOUT NOT_ACTIONABLE INVALID_ARGUMENT SESSION DRIVER ASSERTION PERF_BUDGET RUN_FAILED`. `E2eError` also carries `screen` (AX tree text at the failure, when known) and `matches` (count for `LOCATOR_AMBIGUOUS`).
 
 ## Example spec (`apps/example/e2e/todos.e2e.ts`)
 
