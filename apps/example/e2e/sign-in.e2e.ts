@@ -9,7 +9,7 @@ test("invalid email and short password show field errors", async ({ app, screen 
 	await submitSignIn(screen, "not-an-email", "password1");
 	await expect(screen.getByTestId(ids.signIn.emailError)).toHaveText("Enter a valid email address.");
 	await submitSignIn(screen, "ada@example.com", "short");
-	await expect(screen.getByText("Password must be at least 8 characters.")).toBeVisible();
+	await expect(screen.getByTestId(ids.signIn.passwordError)).toHaveText("Password must be at least 8 characters.");
 });
 
 test("a locked account shows the form alert", async ({ app, screen }) => {
