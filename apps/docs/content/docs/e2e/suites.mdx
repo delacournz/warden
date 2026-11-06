@@ -44,9 +44,11 @@ No device to pick, no port to export, no bundler to start first. warden claims t
 - `app`: `true` installs the project's app on every device first; `{ variant }` installs a `projects[].variants` build; `{ installMode: "clean" | "reinstall", resetKeychain }` resets the installed app first.
 - `metro: {}`: warden leases a port (from `8081:100`), starts `bunx expo start --dev-client --port <p>` in the project root with `CI=1`, and calls it ready only once `/status` proves the port serves **this** checkout. Another worktree's Metro on the port stops the run with `port <p> is served by <dir>, not this worktree`. With a Metro suite, warden passes `--initialUrl <metro url>` as the first launch argument, so every `app.open()` lands on warden's bundler. Metro's log is `<batchDir>/metro.log`.
 - `count`, `profile`: devices to claim and their profile.
+- `runtime`: the iOS runtime the devices boot on and whose golden they clone (`latest`, `iOS-26-5`, `26.5`); `--runtime` overrides it. See [Pin the iOS runtime](#pin-the-ios-runtime).
 - `isolate`: `"device"` (default): one `bun test` process per device runs its share of the specs, sharded round-robin by spec id. `"spec"`: one process per spec, devices share the specs dynamically; each spec starts fresh. `device` is not allowed with `passes` > 1, which defaults to `spec`.
 - `jobTimeoutMs` (default 600000): per spec. A spec process still going after that long for each spec it runs is screenshotted, killed (SIGTERM, SIGKILL 5 s later, whole process group) and counted failed (exit 124).
 - `retry`, `passes`: rerun a failed spec up to N times; require N consecutive green runs on the same device (`WARDEN_PASS` = 0, 1).
+- `serve` runs once per run: started before the first spec, stopped after the last. Every device, device leg, retry, `passes` repeat and shard talks to the same process, which is never restarted, so its in-memory state lives for the whole run. Specs must isolate their own state (for example a unique user per test); a fixed port also needs to be free before the run, because `serveReady` cannot tell a leftover process from yours.
 - `serve`, `serveReady`, `serveTimeout`, `ports`, `env`, `setup`, `slim`: a local API, per-device setup, simulator slimming (on by default) and spare ports; see [Affected e2e](/docs/e2e/affected#per-device-setup) and the [field reference](/docs/reference/configuration#e2e).
 
 The first run of a native fingerprint builds the app (minutes); later runs reuse the cache.
@@ -64,6 +66,24 @@ devices: [
 ```
 
 Each leg's `env` is added to its processes and only its own devices appear in `WARDEN_UDIDS`. A leg with `default: false` runs only with `--devices all` or `--devices <profile>`.
+
+## Pin the iOS runtime
+
+Accessibility values change between iOS releases, and CI images ship several runtimes. Set `runtime` so a suite runs on one known runtime, locally and on CI:
+
+```ts
+e2e: {
+  mobile: { specsDir: "e2e", platform: "ios", profile: "iphone-17", runtime: "27.0" },
+}
+```
+
+Devices and the golden they clone are matched on that runtime (`27.0`, `iOS-27-0` and `iOS 27.0` are the same). A runtime that is not installed fails the run before any device is claimed, listing the installed ones; warden never falls back to another runtime. `--runtime` on `warden e2e` overrides the suite, and `runtime` is skipped on an Android run.
+
+The golden cache key names the archive the run uses, so a CI cache can key on it:
+
+```bash
+warden golden key --profile iphone-17 --runtime 27.0
+```
 
 ## Run it
 
@@ -91,6 +111,7 @@ With one suite the name is optional. `warden e2e` is [`warden batch`](/docs/sims
 | `--serve`, `--serve-ready`, `--serve-timeout`, `--port <from:span>` | a local service and leased ports for the run |
 | `--headless`, `--no-headless` | close or keep Simulator.app windows ([Headless](/docs/sims/headless)) |
 | `--record <dir>`, `--logs <dir>`, `--no-tui`, `--json`, `--report <file>` | record every simulator and the TUI (iOS); job logs dir; plain lines instead of the live grid; JSON output; also write `e2e-report.json` here |
+| `--json-lines` | NDJSON on stdout: a `test` event as each test finishes, then a `report` event with the whole `e2e-report.json` |
 | `--no-shutdown`, `--no-warm`, `--adopt` | keep devices up after a pass; skip the iOS driver pre-warm; allow foreign devices |
 
 Exit 0: every required spec passed (or nothing was selected, in which case no device is claimed). Exit 1: a required spec failed, or setup failed. Exit 130: interrupted. `required: false` specs are reported but never fail the gate.

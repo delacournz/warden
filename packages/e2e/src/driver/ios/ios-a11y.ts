@@ -46,15 +46,29 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 const optionalString = (value: unknown): string | undefined =>
 	typeof value === "string" && value !== "" ? value : undefined;
 
+/** A walk entry's `frame` field as `[x, y, width, height]`, or undefined when it is not four numbers. */
+function readFrame(frame: unknown): number[] | undefined {
+	if (!Array.isArray(frame) || frame.length !== 4 || !frame.every((n) => typeof n === "number")) return undefined;
+	return frame as number[];
+}
+
+/** A walk entry's `actions` field: absent is fine, anything but an array of strings is malformed. */
+function actionsValid(actions: unknown): actions is string[] | undefined {
+	return actions === undefined || (Array.isArray(actions) && actions.every((a) => typeof a === "string"));
+}
+
+/** A walk entry's `traits`: a hex string (bits above 2^53 do not survive JSON numbers). */
+function traitsValid(traits: unknown): traits is string {
+	return typeof traits === "string" && /^0x[0-9a-f]+$/i.test(traits);
+}
+
 function readNode(value: unknown): IosA11yNode | undefined {
 	if (!isRecord(value) || typeof value.ae !== "boolean" || typeof value.cls !== "string") return undefined;
-	const { frame, traits, actions } = value;
-	if (!Array.isArray(frame) || frame.length !== 4 || !frame.every((n) => typeof n === "number")) return undefined;
-	if (typeof traits !== "string" || !/^0x[0-9a-f]+$/i.test(traits)) return undefined;
-	if (actions !== undefined && (!Array.isArray(actions) || !actions.every((a) => typeof a === "string"))) {
-		return undefined;
-	}
-	const [x, y, width, height] = frame as number[];
+	const { traits, actions } = value;
+	const box = readFrame(value.frame);
+	if (!box) return undefined;
+	if (!traitsValid(traits) || !actionsValid(actions)) return undefined;
+	const [x, y, width, height] = box;
 	const label = optionalString(value.label);
 	const hint = optionalString(value.hint);
 	const text = optionalString(value.value);
@@ -68,7 +82,7 @@ function readNode(value: unknown): IosA11yNode | undefined {
 		...(identifier ? { identifier } : {}),
 		traits: BigInt(traits),
 		frame: { x: x ?? 0, y: y ?? 0, width: width ?? 0, height: height ?? 0 },
-		actions: (actions as string[] | undefined) ?? [],
+		actions: actions ?? [],
 		...(typeof value.order === "number" ? { order: value.order } : {}),
 	};
 }

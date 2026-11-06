@@ -145,6 +145,13 @@ struct StuckTracker: Equatable {
 
 /// Two reads of the same tree at least `quietMs` apart count as settled. Pure; the reads are fed in.
 struct FrameStability: Equatable {
+  /// The shortest window the snapshot fallback waits. A navigation push exposes both screens at their final frames
+  /// for 300-460 ms before the old one leaves the tree, so a shorter window can settle on that mixed tree.
+  static let minQuietMs = 500
+
+  /// The window the fallback uses for a caller's `quietMs`.
+  static func windowMs(quietMs: Int) -> Int { max(quietMs, minQuietMs) }
+
   private var last: Data?
   private var since: Double = 0
 
@@ -597,7 +604,7 @@ actor QuiescenceMonitor {
       case .fallback:
         if now - lastRead >= 0.1, let frame = try? await readFrame() {
           lastRead = Self.clock()
-          if stability.observe(frame, now: lastRead, quietMs: max(quietMs, 150)) {
+          if stability.observe(frame, now: lastRead, quietMs: FrameStability.windowMs(quietMs: quietMs)) {
             Self.trace("settle quiet by snapshot stability after \(Int((lastRead - begun) * 1000)) ms")
             return Outcome(quiet: true, via: "snapshot")
           }
@@ -782,6 +789,24 @@ enum GuestRecycling {
   }
 }
 
+extension GuestRecycling {
+  /// Ends the guests of `udid` after a bridge read stalled on a guest that had answered, and reopens the stream when
+  /// one is open (its guest went with them). Returns how many it ended; none found changes nothing.
+  static func endStalledGuests(
+    udid: String, wedge: WedgeWatch, reaper: GuestReaper, monitor: QuiescenceMonitor?,
+    now: Double = ProcessInfo.processInfo.systemUptime, settleSeconds: Double = 0.15
+  ) async -> Int {
+    if let monitor {
+      return await endGuests(
+        udid: udid, wedge: wedge, reaper: reaper, monitor: monitor, now: now, settleSeconds: settleSeconds
+      ).count
+    }
+    let ended = reaper.reap(udid: udid)
+    if !ended.isEmpty { wedge.didReap(now: now) }
+    return ended.count
+  }
+}
+
 /// What `rebind` does before it waits for the stream to bind: forgets the bundle's remembered pid (the relaunch made
 /// it stale), and replaces guests old enough to be about to wedge, while the launched app is still starting and the
 /// wait for its stream would be paid anyway (`WedgePolicy.recycleAfterSeconds`). Returns whether guests were replaced.
@@ -834,6 +859,26 @@ extension Session {
     await monitor.start()
   }
 
+  /// Starts a background `axbridge` read while the guest is cold (helper start, after a recycle or a launch's rebind),
+  /// so the first read a caller makes finds it warm or joins this one (`BridgeWarmth.warmUp`). No-op without a bridge
+  /// or with `ax` as the default reader.
+  @discardableResult
+  func warmBridge() -> Task<BridgeWarmth.WarmUp, Never>? {
+    guard axDefault == "axbridge", let reader = axBridgeReader else { return nil }
+    return bridgeWarmth.warmUp(
+      deadlineMs: bridgeDeadline.coldDeadlineMs, log: { OpLog.shared.log(.info, $0, op: "warmUp") },
+      read: { _ = try await reader.describe(.frontmost, options: AccessibilityRequestOptions()) })
+  }
+
+  /// Ends this simulator's guests after a stall on a warm guest (`BridgeReaper`); idb starts a new one on the next read.
+  func recycleStalledGuest() async -> Int {
+    await GuestRecycling.endStalledGuests(
+      udid: udid, wedge: quiescence.wedge, reaper: .system, monitor: quiescence.existing)
+  }
+
+  /// The stream's monitor if a stream was ever opened; never opens one.
+  func existingQuiescenceMonitor() -> QuiescenceMonitor? { quiescence.existing }
+
   func quiescenceMonitor() throws -> QuiescenceMonitor {
     guard let reader = axBridgeReader else {
       throw WireError(.unsupported, "settle needs the axbridge backend (bridge: \(bridge.name))")
@@ -873,6 +918,7 @@ extension Session {
     guard wedge.wantsReap(), let monitor = quiescence.existing else { return }
     let reaped = await GuestRecycling.endGuests(udid: udid, wedge: wedge, reaper: reaper, monitor: monitor)
     guard !reaped.isEmpty else { return }
+    bridgeWarmth.markCold()
     OpLog.shared.log(
       .info, "quiescence stuck on every process; ended \(reaped.count) AX guest(s) (reap \(wedge.reaps))", op: "settle")
   }
@@ -889,6 +935,7 @@ extension Session {
     let recycled = await RebindPrelude.run(
       bundleId: request.bundleId, pids: bundlePids, udid: udid, wedge: quiescence.wedge, reaper: .system,
       monitor: monitor)
+    if recycled { bridgeWarmth.markCold() }
     let remainingMs = max(0, request.timeoutMs - Session.elapsedMs(since: started))
     let outcome = await monitor.bind(
       bundleId: request.bundleId, timeoutMs: remainingMs,
@@ -898,6 +945,8 @@ extension Session {
       "restarts": .int(outcome.restarts),
     ]
     if recycled { reply["recycled"] = .bool(true) }
+    // the app is up and the stream follows it: read it once in the background so the caller's first read is warm
+    warmBridge()
     if let pid = outcome.pid { reply["pid"] = .int(Int(pid)) }
     if let reason = outcome.reason { reply["reason"] = .string(reason) }
     return .object(reply)

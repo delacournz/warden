@@ -1,7 +1,12 @@
 import { canReadA11y } from "@delacour/warden-e2e/driver/a11y-read";
 import type { Driver, Element, ElementA11y, Rect, Snapshot } from "@delacour/warden-e2e/driver/driver.types";
 import { assignRefs, type RefTable } from "@delacour/warden-e2e/driver/refs";
-import { DEFAULT_SETTLE_QUIET_MS, settleByHash, snapshotHash } from "@delacour/warden-e2e/driver/settle";
+import {
+	DEFAULT_SETTLE_QUIET_MS,
+	hashFallbackQuietMs,
+	settleByHash,
+	snapshotHash,
+} from "@delacour/warden-e2e/driver/settle";
 import { indexSnapshot, type NodeEntry } from "@delacour/warden-e2e/screen/nodes";
 import { resolve } from "@delacour/warden-e2e/screen/query";
 import { isListed, renderEntryLine, renderHeader, renderSnapshot } from "@delacour/warden-e2e/screen/render";
@@ -139,8 +144,9 @@ async function fetchSnapshot(
 		return snapshotHash(taken.data);
 	};
 	try {
+		// A navigation push holds a mixed tree still for 300-460 ms: a shorter window would call it settled.
 		const outcome = await settleByHash(poll, {
-			quietMs: DEFAULT_SETTLE_QUIET_MS,
+			quietMs: hashFallbackQuietMs(DEFAULT_SETTLE_QUIET_MS),
 			timeoutMs: settle.budgetMs,
 			now: ctx.now,
 			sleep: deps.sleep,
@@ -156,9 +162,27 @@ async function fetchSnapshot(
 	}
 }
 
+/** An interactive element without a testID, when the request asks for those to be marked. */
+function lacksMarkedId(request: SnapshotRequest, entry: NodeEntry): boolean {
+	return (
+		request.markMissingIds === true &&
+		request.interactiveOnly &&
+		isInteractiveRole(entry.role) &&
+		(entry.element.identifier === undefined || entry.element.identifier === "")
+	);
+}
+
+/** The hint line telling the author to add a testID to the `missing` marked elements. */
+function missingIdHints(missing: number): string[] {
+	if (missing === 0) return [];
+	return [
+		`# ${missing} interactive element${missing === 1 ? "" : "s"} marked ${NO_ID_MARK}: add testID + accessible in the component, reload, \`record undo\` and redo — a text selector breaks with the copy`,
+	];
+}
+
 /**
  * Take a snapshot of the device, give it the next generation and `@eN` refs, store it as the device's
- * `last-snapshot.json` and render it. With `settle`, polls until the screen hash stays equal for 250 ms
+ * `last-snapshot.json` and render it. With `settle`, polls until the screen hash stays equal for 500 ms
  * (or the budget runs out: `settle.quiet === false`) and diffs against the previously stored snapshot.
  * Refs are numbered over the whole tree, so `-i`, `--depth` and `--all` print the same `@eN` for the same element.
  */
@@ -187,11 +211,7 @@ export async function takeSnapshot(
 	});
 	const entries = indexSnapshot(view).entries;
 	const listed = (request.interactiveOnly ? entries.filter(isListed) : entries).slice(0, rendered.shown);
-	const unmarked = (entry: NodeEntry): boolean =>
-		request.markMissingIds === true &&
-		request.interactiveOnly &&
-		isInteractiveRole(entry.role) &&
-		(entry.element.identifier === undefined || entry.element.identifier === "");
+	const unmarked = (entry: NodeEntry): boolean => lacksMarkedId(request, entry);
 	const lines = rendered.lines.map((line, at) => {
 		const entry = listed[at];
 		return entry !== undefined && unmarked(entry) ? `${line} ${NO_ID_MARK}` : line;
@@ -214,12 +234,7 @@ export async function takeSnapshot(
 			...elementJson(entry, refs.byId.get(entry.element.id), request.a11y === true),
 			...(unmarked(entry) ? { noId: true as const } : {}),
 		})),
-		hints:
-			missing === 0
-				? []
-				: [
-						`# ${missing} interactive element${missing === 1 ? "" : "s"} marked ${NO_ID_MARK}: add testID + accessible in the component, reload, \`record undo\` and redo — a text selector breaks with the copy`,
-					],
+		hints: missingIdHints(missing),
 		total: rendered.total,
 		shown: rendered.shown,
 		omitted: rendered.omitted,

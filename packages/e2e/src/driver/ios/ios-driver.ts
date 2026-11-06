@@ -12,6 +12,7 @@ import type { E2eEnv } from "../../env";
 import type { ReadsA11yEvents } from "../a11y-events";
 import type { ReadsA11y } from "../a11y-read";
 import type { AlertBackend, ProbesFrontmost, ReadsAlertOn } from "../alerts";
+import { bridgeStallSchema, formatBridgeStall, noteBridgeStall, toBridgeStall } from "../bridge-stall";
 import type { ClockRecorder } from "../clock-recorder";
 import type {
 	AlertInfo,
@@ -31,7 +32,7 @@ import { driverErr, driverError } from "../errors";
 import { DEFAULT_RADIUS, type GesturePlan, planGesture, rotatePlan } from "../gesture-geometry";
 import type { AuditsNatively } from "../native-audit";
 import type { NetworkProxyPort } from "../network-proxy";
-import { type SettleDetail, settleByHash, snapshotHash } from "../settle";
+import { hashFallbackQuietMs, type SettleDetail, settleByHash, snapshotHash } from "../settle";
 import { noteSpanDetail } from "../span-detail";
 import type { PastesText, SelectsAll } from "../typing";
 import { createInjectChannel, INJECT_DYLIB_ENV, type InjectFs, injectStatePath, locateInjectDylib } from "./inject";
@@ -44,7 +45,7 @@ import { resolveHelper } from "./locate-helper";
 import { normalizeElement, normalizeElements, toSnapshot } from "./normalize";
 import { createSimctl, type Simctl } from "./simctl";
 import { connectSimd, type RequestOptions, type SimdClient, spawnSimd } from "./simd-client";
-import type { AlertButtonsData, HealthData, OpData, RebindData, SettleData } from "./simd-protocol";
+import type { AlertButtonsData, HealthData, OpData, RebindData, SettleData, SnapshotData } from "./simd-protocol";
 import type { SimdSpawn } from "./simd-transport";
 import { typeTextBudgetMs } from "./type-budget";
 
@@ -56,7 +57,7 @@ import { typeTextBudgetMs } from "./type-budget";
  * `simctl io` when the helper cannot, and a helper built before the app ops leaves app lifecycle to `simctl`.
  */
 
-export type IosDriverEnv = Pick<E2eEnv, "simd" | "simdSocket" | "helperDir">;
+export type IosDriverEnv = Pick<E2eEnv, "simd" | "simdSocket" | "helperDir"> & Partial<Pick<E2eEnv, "wardenVersion">>;
 
 /** The iOS driver is a `Driver` plus the optional capabilities of `driver/alerts.ts`. */
 export type IosDriver = Driver &
@@ -86,6 +87,8 @@ export type OpenIosDriverOptions = {
 	client?: SimdClient;
 	now?: () => number;
 	sleep?: (ms: number) => Promise<void>;
+	/** how long the session's first snapshot waits for an in-sim bridge that is up but silent (default 60 s); 0 tries once */
+	coldBridgeBudgetMs?: number;
 	/** for `locateHelper` / `$WARDEN_HOME/simd/<version>`; defaults read the process */
 	version?: string;
 	wardenHome?: string;
@@ -126,8 +129,39 @@ export type OpenIosDriverOptions = {
 const DEFAULT_QUIET_MS = 250;
 const DEFAULT_SETTLE_TIMEOUT_MS = 5_000;
 const SETTLE_MARGIN_MS = 2_000;
-/** How long `app.launch` lets the helper wait for its stream to follow the new process; the helper answers earlier. */
-const REBIND_TIMEOUT_MS = 3_000;
+/**
+ * How long `app.launch` lets the helper wait for its stream to follow the new process. The helper answers the moment
+ * it binds (0.7 s on a dev Mac), so this only costs time on a host that needs it: a GitHub `macos-26` runner bound in
+ * 2.4-4 s warm and 8.6-11.3 s right after boot, and a 3 s budget left every launch there unbound.
+ */
+const REBIND_TIMEOUT_MS = 10_000;
+/**
+ * How long the first snapshot of a session waits for an in-sim bridge that is up but silent. A freshly cloned
+ * simulator on a loaded host can take longer than one read's budget (axbridge 4 s + AX fallback 5 s) to answer the
+ * first time, and every read after it is fast, so the first one retries while the failure says "not ready yet".
+ * Once a read or a rebind has succeeded the normal per-call budgets apply.
+ */
+export const COLD_BRIDGE_BUDGET_MS = 60_000;
+/** Waits between the cold first snapshot's tries: after the first failure, then after each later one. */
+const COLD_BRIDGE_FIRST_WAIT_MS = 2_000;
+const COLD_BRIDGE_WAIT_MS = 5_000;
+/**
+ * warden-simd's deadline for the first `axbridge` read of a cold guest (helper start, a recycled guest, an app just
+ * launched): `BridgeDeadline.defaultColdReadMs`, or `WARDEN_SIMD_BRIDGE_COLD_DEADLINE_MS`. On a 3-vCPU runner that
+ * first read takes 4-11 s; warm reads keep the 4 s deadline.
+ */
+export const BRIDGE_COLD_DEADLINE_MS = 12_000;
+/** What a read past a stalled cold bridge still needs: the host `ax` read it falls back to. */
+const AX_FALLBACK_MARGIN_MS = 8_000;
+/** The request timeout of a read while the bridge is cold, so the client never gives up before the helper's deadline. */
+export const COLD_READ_TIMEOUT_MS = BRIDGE_COLD_DEADLINE_MS + AX_FALLBACK_MARGIN_MS;
+
+/** {@link COLD_READ_TIMEOUT_MS}, following a `WARDEN_SIMD_BRIDGE_COLD_DEADLINE_MS` the helper also reads. */
+export function coldReadTimeoutMs(env: Readonly<Record<string, string | undefined>> = process.env): number {
+	const raw = Number(env.WARDEN_SIMD_BRIDGE_COLD_DEADLINE_MS);
+	const deadline = Number.isFinite(raw) && raw > BRIDGE_COLD_DEADLINE_MS ? raw : BRIDGE_COLD_DEADLINE_MS;
+	return deadline + AX_FALLBACK_MARGIN_MS;
+}
 const GESTURE_MARGIN_MS = 5_000;
 /** `frontmost` is one launchd lookup; a helper that has not answered in this long is busy, and the caller carries on without. */
 const FRONTMOST_TIMEOUT_MS = 3_000;
@@ -207,6 +241,88 @@ function nativeDetail(data: SettleData): SettleDetail {
 	return detail;
 }
 
+/** The fields of a failed snapshot's `detail` the helper sets (which reader, why, both readers' errors), on its span. */
+export function noteSnapshotError(detail: unknown): void {
+	if (typeof detail !== "object" || detail === null) return;
+	const fields: Record<string, string> = {
+		stage: "axStage",
+		reason: "axReason",
+		request: "axRequest",
+		bridgeError: "bridgeError",
+		axError: "axError",
+	};
+	for (const [from, to] of Object.entries(fields)) {
+		const value: unknown = (detail as Record<string, unknown>)[from];
+		if (typeof value === "string") noteSpanDetail(to, value);
+	}
+	const stall = bridgeStallSchema.safeParse((detail as Record<string, unknown>).stall);
+	if (stall.success) noteBridgeStall(toBridgeStall(stall.data));
+}
+
+/** Logs a snapshot's reader fallback and leaves its reason and the helper's stall report on the span. */
+function noteFallback(fallback: NonNullable<SnapshotData["fallback"]>, log: Logger | undefined): void {
+	const stall = fallback.stall && toBridgeStall(fallback.stall);
+	const why = stall ? ` (${formatBridgeStall(stall)})` : "";
+	log?.(`[ios] snapshot fell back ${fallback.from} -> ${fallback.to}: ${fallback.reason}${why}`);
+	noteSpanDetail("fallback", fallback.reason);
+	if (stall) noteBridgeStall(stall);
+}
+
+/** Leaves the pid a snapshot read by (when the helper had to name it) on the current span. */
+function noteSnapshotTarget(target: { pid: number; source: string } | undefined): void {
+	if (!target) return;
+	noteSpanDetail("targetPid", target.pid);
+	noteSpanDetail("targetSource", target.source);
+}
+
+/** What the helper says about itself after a failed read: bridge state, host vs build Xcode, CoreSimulator. */
+export function noteHelperHealth(health: HealthData): void {
+	noteSpanDetail("bridge", health.ax.bridge);
+	if (health.ax.lastError) noteSpanDetail("bridgeLastError", health.ax.lastError.message);
+	if (health.ax.error) noteSpanDetail("bridgeLastError", health.ax.error);
+	if (health.xcode) noteSpanDetail("hostXcode", health.xcode);
+	if (health.builtWith?.xcode) noteSpanDetail("helperXcode", health.builtWith.xcode);
+	if (health.coreSimulatorVersion) noteSpanDetail("coreSimulator", health.coreSimulatorVersion);
+	if (health.frontmost) noteSpanDetail("frontmostUnresolvedAgoMs", health.frontmost.unresolvedAgoMs);
+	if (health.bridgeRecycles) {
+		noteSpanDetail("bridgeRecycles", health.bridgeRecycles.count);
+		noteSpanDetail("bridgeRecyclesExhausted", health.bridgeRecycles.exhausted);
+	}
+}
+
+/** The wait before the next cold snapshot try, or undefined once the budget is spent. */
+function coldBridgeWait(error: DriverError, attempt: number, spentMs: number, budgetMs: number): number | undefined {
+	if (!bridgeNotReady(error)) return undefined;
+	const wait = attempt === 1 ? COLD_BRIDGE_FIRST_WAIT_MS : COLD_BRIDGE_WAIT_MS;
+	return spentMs + wait >= budgetMs ? undefined : wait;
+}
+
+/** Runs `read` until it succeeds or fails for a reason other than the bridge being late, or the cold budget is spent. */
+async function retryColdSnapshot<T>(
+	read: () => DriverResult<T>,
+	ctx: { now: () => number; sleep: (ms: number) => Promise<void>; budgetMs: number; log?: Logger }
+): DriverResult<T> {
+	const started = ctx.now();
+	let waited = 0;
+	for (let attempt = 1; ; attempt++) {
+		const result = await read();
+		const spent = Math.max(ctx.now() - started, waited);
+		const wait = result.success ? undefined : coldBridgeWait(result.error, attempt, spent, ctx.budgetMs);
+		if (wait === undefined) {
+			if (attempt > 1) noteSpanDetail("coldBridgeMs", spent);
+			return result;
+		}
+		ctx.log?.(`[ios] snapshot try ${attempt} failed, the bridge is not up yet: retrying`);
+		await ctx.sleep(wait);
+		waited += wait;
+	}
+}
+
+/** A failure that says the bridge is not answering yet (timeout, degraded or silent guest), as opposed to a real error. */
+function bridgeNotReady(error: DriverError): boolean {
+	return error.code === "E_TIMEOUT" || error.code === "E_AX_UNAVAILABLE";
+}
+
 /** Leaves the helper's rebind verdict on the current span. */
 function noteRebind(data: RebindData): void {
 	noteSpanDetail("rebind", data.bound ? "bound" : (data.reason ?? "unbound"));
@@ -279,6 +395,8 @@ export function createIosDriver(
 		now: () => number;
 		sleep: (ms: number) => Promise<void>;
 		log?: Logger;
+		/** how long the first snapshot waits for a bridge that is not up yet (default {@link COLD_BRIDGE_BUDGET_MS}) */
+		coldBridgeBudgetMs?: number;
 		/** told about every successful `clock` op */
 		clockRecorder?: ClockRecorder;
 		/** device settings (`ios-settings.ts`); absent: those ops answer `E_UNSUPPORTED` */
@@ -325,7 +443,18 @@ export function createIosDriver(
 	const nativeSettle = ready.ax.default === "axbridge" && ready.ax.bridge === "available";
 	const bridgeUp = ready.ax.bridge === "available";
 	let settleUnsupported = !nativeSettle;
+	/** Native settles in a row that could not bind the AX observer (`E_AX_UNAVAILABLE`); at 2 they stop being asked. */
+	let settleAxFailures = 0;
 	let rebindUnsupported = false;
+	/** whether this session has had a successful snapshot or a bound rebind: until then the bridge may still be coming up */
+	let bridgeProven = false;
+	/**
+	 * The helper generation whose bridge last answered a read itself (no `ax` fallback). Any other generation, or a
+	 * launch since, is a cold bridge: its reads get {@link coldReadTimeoutMs} so they outlast the helper's cold deadline.
+	 */
+	let warmGeneration: number | undefined;
+	const coldTimeoutMs = coldReadTimeoutMs();
+	const readOpts = (): RequestOptions => (warmGeneration === swap.generation() ? {} : { minTimeoutMs: coldTimeoutMs });
 	let gestureUnsupported = false;
 	/** set once the helper did not know an app lifecycle op: it predates them, and `simctl` does app lifecycle */
 	let appOpsOutdated = false;
@@ -465,11 +594,31 @@ export function createIosDriver(
 		return okVoid;
 	}
 
+	/** Whether the helper's health was already noted for the current run of failed snapshots. */
+	let failureDiagnosed = false;
+
 	const fetchSnapshot = async (o?: { interactiveOnly?: boolean; backend?: Snapshot["backend"] }) => {
-		const result = await request("snapshot", params({ interactiveOnly: o?.interactiveOnly, backend: o?.backend }));
-		if (!result.success) return result;
-		const { fallback } = result.data;
-		if (fallback) opts.log?.(`[ios] snapshot fell back ${fallback.from} -> ${fallback.to}: ${fallback.reason}`);
+		const generation = swap.generation();
+		const result = await request(
+			"snapshot",
+			params({ interactiveOnly: o?.interactiveOnly, backend: o?.backend }),
+			readOpts()
+		);
+		if (!result.success) {
+			noteSnapshotError(result.error.detail);
+			if (!failureDiagnosed) {
+				failureDiagnosed = true;
+				const health = await request("health", {});
+				if (health.success) noteHelperHealth(health.data);
+			}
+			return result;
+		}
+		failureDiagnosed = false;
+		const { fallback, target } = result.data;
+		if (result.data.backend === "axbridge" && !fallback) warmGeneration = generation;
+		noteSpanDetail("backend", result.data.backend);
+		if (fallback) noteFallback(fallback, opts.log);
+		noteSnapshotTarget(target);
 		return { success: true, data: toSnapshot(result.data, now()) } as const;
 	};
 
@@ -477,7 +626,10 @@ export function createIosDriver(
 	 * The first `E_AX_UNAVAILABLE` goes to the caller (it is retryable); a second one in a row means the
 	 * in-sim AX bridge went stale, so restart the helper once and retry the snapshot.
 	 */
-	async function snapshot(o?: { interactiveOnly?: boolean; backend?: Snapshot["backend"] }): DriverResult<Snapshot> {
+	async function snapshotOnce(o?: {
+		interactiveOnly?: boolean;
+		backend?: Snapshot["backend"];
+	}): DriverResult<Snapshot> {
 		const generation = swap.generation();
 		const first = await fetchSnapshot(o);
 		if (first.success) {
@@ -495,6 +647,23 @@ export function createIosDriver(
 		if (!restarted.success) return restarted;
 		axFailures = 0;
 		return fetchSnapshot(o);
+	}
+
+	/**
+	 * `snapshotOnce`, and until the session has had one success (the cold path) a bridge-not-ready failure is retried
+	 * with backoff for up to `COLD_BRIDGE_BUDGET_MS`, so the first read on a fresh simulator waits for the bridge
+	 * instead of failing the first spec. Other errors return at once. The wait is `coldBridgeMs` on the span.
+	 */
+	async function snapshot(o?: { interactiveOnly?: boolean; backend?: Snapshot["backend"] }): DriverResult<Snapshot> {
+		if (bridgeProven) return snapshotOnce(o);
+		const result = await retryColdSnapshot(() => snapshotOnce(o), {
+			now,
+			sleep,
+			budgetMs: opts.coldBridgeBudgetMs ?? COLD_BRIDGE_BUDGET_MS,
+			...(opts.log ? { log: opts.log } : {}),
+		});
+		if (result.success) bridgeProven = true;
+		return result;
 	}
 
 	async function typeText(text: string): DriverResult<void> {
@@ -527,7 +696,7 @@ export function createIosDriver(
 					if (!snap.success) throw new DriverFailure(snap.error);
 					return snapshotHash(snap.data);
 				},
-				{ quietMs: o.quietMs, timeoutMs: o.timeoutMs, now, sleep }
+				{ quietMs: hashFallbackQuietMs(o.quietMs), timeoutMs: o.timeoutMs, now, sleep }
 			);
 			noteSpanDetail("via", "hash");
 			return { success: true, data: { ...outcome, via: "hash" } };
@@ -535,6 +704,19 @@ export function createIosDriver(
 			if (error instanceof DriverFailure) return fail(error.error);
 			throw error;
 		}
+	}
+
+	/** After a successful launch: remember the bundle, rebind the stream, then confirm the injected libraries loaded. */
+	async function settleAfterLaunch(bundleId: string): Promise<DriverError | undefined> {
+		lastLaunched = bundleId;
+		warmGeneration = undefined;
+		launchedBundle = bundleId;
+		if (await rebind(bundleId)) launchedBundle = undefined;
+		const loaded = await net?.confirmLoaded();
+		if (loaded && !loaded.success) return loaded.error;
+		const a11yLoaded = await a11y?.confirmLoaded();
+		if (a11yLoaded && !a11yLoaded.success) return a11yLoaded.error;
+		return undefined;
 	}
 
 	/**
@@ -557,11 +739,27 @@ export function createIosDriver(
 			return false;
 		}
 		noteRebind(reply.data);
+		if (reply.data.bound) bridgeProven = true;
 		return reply.data.bound;
 	}
 
+	/** A native settle that could not bind the AX observer: poll hashes for it; two in a row stop asking the helper. */
+	function noteSettleAxFailure(message: string): undefined {
+		settleAxFailures += 1;
+		noteSpanDetail("nativeError", "E_AX_UNAVAILABLE");
+		if (settleAxFailures >= 2) {
+			settleUnsupported = true;
+			opts.log?.(
+				`[ios] native settle could not bind the AX observer twice in a row, polling snapshot hashes: ${message}`
+			);
+		}
+		return undefined;
+	}
+
 	/**
-	 * The helper's own settle, or undefined when it is unsupported (the caller falls back to polling snapshot hashes).
+	 * The helper's own settle, or undefined when the caller should poll snapshot hashes instead: it is unsupported, or
+	 * it could not bind the simulator's AX observer (`E_AX_UNAVAILABLE`, seen on GitHub-hosted runners while snapshots
+	 * read fine). Two of those in a row stop asking for the session: each one costs seconds before it fails.
 	 * The helper's budget is `settleTimeoutMs`; the envelope `timeoutMs` is only our padded transport timer.
 	 */
 	async function settleViaHelper(quietMs: number, timeoutMs: number): Promise<DriverResult<SettleDetail> | undefined> {
@@ -572,6 +770,7 @@ export function createIosDriver(
 			{ timeoutMs: timeoutMs + SETTLE_MARGIN_MS }
 		);
 		if (native.success) {
+			settleAxFailures = 0;
 			// a mismatch means the app never came to the front: keep asking for it on the next settle
 			if (expected !== undefined && native.data.reason !== "frontmost_mismatch") launchedBundle = undefined;
 			return { success: true, data: nativeDetail(native.data) };
@@ -584,6 +783,7 @@ export function createIosDriver(
 				data: { quiet: false, waitedMs: timeoutMs + SETTLE_MARGIN_MS, reason: "helper_timeout" },
 			};
 		}
+		if (native.error.code === "E_AX_UNAVAILABLE") return noteSettleAxFailure(native.error.message);
 		if (native.error.code !== "E_UNSUPPORTED") return native;
 		settleUnsupported = true;
 		opts.log?.("[ios] native settle unsupported, polling snapshot hashes");
@@ -624,7 +824,7 @@ export function createIosDriver(
 
 	/** The helper's `alertButtons`: both readers without a `backend`, only that one with it. */
 	async function readAlert(backend?: AlertBackend): DriverResult<AlertInfo | null> {
-		const result = await request("alertButtons", params({ backend }));
+		const result = await request("alertButtons", params({ backend }), readOpts());
 		if (!result.success) return result;
 		return { success: true, data: result.data === null ? null : toAlertInfo(result.data) };
 	}
@@ -685,7 +885,11 @@ export function createIosDriver(
 		health,
 		snapshot,
 		async elementAtPoint(point, o) {
-			const result = await request("elementAtPoint", params({ x: point.x, y: point.y, reachability: o?.reachability }));
+			const result = await request(
+				"elementAtPoint",
+				params({ x: point.x, y: point.y, reachability: o?.reachability }),
+				readOpts()
+			);
 			if (!result.success) return result;
 			return {
 				success: true,
@@ -788,16 +992,9 @@ export function createIosDriver(
 					() => simctl.launch(bundleId, o),
 					(data) => noteSpanDetail("pid", data.pid)
 				);
-				if (launched.success) {
-					lastLaunched = bundleId;
-					launchedBundle = bundleId;
-					if (await rebind(bundleId)) launchedBundle = undefined;
-					const loaded = await net?.confirmLoaded();
-					if (loaded && !loaded.success) return loaded;
-					const a11yLoaded = await a11y?.confirmLoaded();
-					if (a11yLoaded && !a11yLoaded.success) return a11yLoaded;
-				}
-				return launched;
+				if (!launched.success) return launched;
+				const unconfirmed = await settleAfterLaunch(bundleId);
+				return unconfirmed ? { success: false, error: unconfirmed } : launched;
 			},
 			terminate: async (bundleId) => {
 				const viaHelper = await appOp("terminate", { bundleId }, APP_OP_TIMEOUT_MS);
@@ -875,6 +1072,43 @@ async function connect(o: OpenIosDriverOptions, log: Logger): Promise<Result<Sim
 	});
 }
 
+/** The native audit runner `openIosDriver` hands to the driver. */
+function nativeAuditFor(
+	o: OpenIosDriverOptions,
+	exec: Exec,
+	log: Logger,
+	ctx: { lastBundle: () => string | undefined }
+): IosNativeAudit {
+	return createIosNativeAudit({
+		udid: o.udid,
+		exec,
+		bundleId: () => o.bundleId ?? ctx.lastBundle(),
+		...(o.wardenHome ? { wardenHome: o.wardenHome } : {}),
+		...(o.version ? { version: o.version } : {}),
+		...(o.runnerSources ? { runnerSources: o.runnerSources } : {}),
+		...(o.nativeAudit ?? {}),
+		...(o.debug ? { log } : {}),
+	});
+}
+
+/** The simulator settings store `openIosDriver` hands to the driver. */
+function settingsFor(o: OpenIosDriverOptions, exec: Exec, ctx: { lastBundle: () => string | undefined }): IosSettings {
+	return createIosSettings({
+		udid: o.udid,
+		exec,
+		lastBundle: ctx.lastBundle,
+		...(o.bundleId ? { defaultBundle: o.bundleId } : {}),
+		staged: o.stagedSettings ?? stagedSettingsFor(o.wardenHome ?? resolveWardenHome(), o.udid),
+	});
+}
+
+/** `E_HELPER_MISSING` before any other work, when nothing can supply a helper: no client, no socket and no binary. */
+function helperPreflight(o: OpenIosDriverOptions): { success: false; error: DriverError } | undefined {
+	if (o.client || (o.socketPath ?? o.env?.simdSocket)) return undefined;
+	const helper = resolveHelper(o);
+	return helper.success ? undefined : helper;
+}
+
 /**
  * Open the iOS driver for `udid`. Writes `AutomationEnabled` (best effort) while the helper starts.
  * `E_HELPER_MISSING` (with the `warden doctor` hint) when no helper binary can be found.
@@ -886,12 +1120,10 @@ export async function openIosDriver(o: OpenIosDriverOptions): DriverResult<Drive
 	const simctl = createSimctl({ udid: o.udid, exec, ...(o.devicesRoot ? { devicesRoot: o.devicesRoot } : {}) });
 	// a driver that cannot start (no socket, no helper binary) fails before any simctl call: the AutomationEnabled
 	// write takes seconds on a cold machine and would only delay the E_HELPER_MISSING answer
-	if (!o.client && !(o.socketPath ?? o.env?.simdSocket)) {
-		const helper = resolveHelper(o);
-		if (!helper.success) return helper;
-	}
-	const connecting: Promise<Result<SimdClient, DriverError>> = o.client
-		? Promise.resolve({ success: true, data: o.client })
+	const preflight = helperPreflight(o);
+	if (preflight) return preflight;
+	const connecting = o.client
+		? Promise.resolve<Result<SimdClient, DriverError>>({ success: true, data: o.client })
 		: connect(o, log);
 	const [client, automation] = await Promise.all([connecting, simctl.enableAutomation()]);
 	if (!automation.success) log(`[ios] could not enable AX automation: ${automation.error.message}`);
@@ -911,27 +1143,11 @@ export async function openIosDriver(o: OpenIosDriverOptions): DriverResult<Drive
 			now,
 			sleep,
 			log,
+			...(o.coldBridgeBudgetMs !== undefined ? { coldBridgeBudgetMs: o.coldBridgeBudgetMs } : {}),
 			...(network ? { network } : {}),
 			a11y: () => iosA11yFor(o, now, sleep),
-			nativeAudit: (ctx) =>
-				createIosNativeAudit({
-					udid: o.udid,
-					exec,
-					bundleId: () => o.bundleId ?? ctx.lastBundle(),
-					...(o.wardenHome ? { wardenHome: o.wardenHome } : {}),
-					...(o.version ? { version: o.version } : {}),
-					...(o.runnerSources ? { runnerSources: o.runnerSources } : {}),
-					...(o.nativeAudit ?? {}),
-					...(o.debug ? { log } : {}),
-				}),
-			settings: (ctx) =>
-				createIosSettings({
-					udid: o.udid,
-					exec,
-					lastBundle: ctx.lastBundle,
-					...(o.bundleId ? { defaultBundle: o.bundleId } : {}),
-					staged: o.stagedSettings ?? stagedSettingsFor(o.wardenHome ?? resolveWardenHome(), o.udid),
-				}),
+			nativeAudit: (ctx) => nativeAuditFor(o, exec, log, ctx),
+			settings: (ctx) => settingsFor(o, exec, ctx),
 			...(o.clockRecorder ? { clockRecorder: o.clockRecorder } : {}),
 		}),
 	};

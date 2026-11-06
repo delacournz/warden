@@ -8,6 +8,7 @@ import { createDevice } from "./device";
 import { sheetlessFor } from "./device-link";
 import { type ElementSpec, el, type FakeDriver, failWith, fakeDriver, snapshotOf } from "./driver/driver.testing";
 import type { Platform, Snapshot } from "./driver/driver.types";
+import { HASH_FALLBACK_MIN_QUIET_MS } from "./driver/settle";
 import type { E2eEnv } from "./env";
 import type { E2eError } from "./errors";
 import type { Clock, FixtureSession } from "./fixture-session";
@@ -955,6 +956,18 @@ describe("device.settle", () => {
 		});
 		const device = createDevice({ session: { out: "/tmp/out" }, driver, env, clock });
 		expect(await device.settle({ quietMs: 200, timeout: 2000 })).toMatchObject({ quiet: true, via: "hash" });
+	});
+
+	test("the hash-polling fallback holds the screen still for at least the minimum fallback window", async () => {
+		const clock = fakeClock();
+		const driver = fakeDriver({
+			screens: [snapshotOf([el("text", { label: "a" })])],
+			onCall: (c) => (c.method === "settle" ? failWith("E_UNSUPPORTED") : undefined),
+		});
+		const device = createDevice({ session: { out: "/tmp/out" }, driver, env, clock });
+		const settled = await device.settle({ quietMs: 250, timeout: 3000 });
+		expect(settled.quiet).toBe(true);
+		expect(settled.waitedMs).toBeGreaterThanOrEqual(HASH_FALLBACK_MIN_QUIET_MS);
 	});
 
 	test("falls back to snapshot-hash polling on E_UNSUPPORTED", async () => {

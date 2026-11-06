@@ -3,6 +3,11 @@
 	"version": "0.1.0",
 	"type": "module",
 	"private": true,
+	"homepage": "https://warden.co.nz",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/delacournz/warden.git"
+	},
 	"packageManager": "bun@1.4.3",
 	"scripts": {
 		"postinstall": "git rev-parse --git-dir > /dev/null 2>&1 && prek install || true",
@@ -23,6 +28,9 @@
 		"smoke:ui-bench": "bun scripts/smoke/ui-bench.ts",
 		"demo": "bun scripts/demo/demo.ts",
 		"demo:compose": "bun scripts/demo/compose.ts",
+		"demo:batch": "bun scripts/demo/batch-take.ts",
+		"demo:lanes": "bun scripts/demo/lanes-demo.ts",
+		"demo:dev": "bun scripts/demo/dev-demo.ts",
 		"demo:fixture": "bun scripts/demo/fixture.ts",
 		"nuke": "rm -rf node_modules ./apps/**/node_modules ./packages/**/node_modules && bun install --no-cache -f",
 		"bench": "bun packages/e2e-bench/src/cli.ts",

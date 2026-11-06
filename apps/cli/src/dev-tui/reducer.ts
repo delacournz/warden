@@ -2,6 +2,8 @@ import type { DevReady } from "../commands/dev-ui";
 import { sanitizeLine } from "./ansi";
 import { type Action, actionFor, type Key, type PromptEdit } from "./keys";
 import {
+	FLASH_MS,
+	type Flash,
 	type HudBundle,
 	type HudFps,
 	type HudPerf,
@@ -32,7 +34,9 @@ export type TuiEvent =
 	| { type: "hud:visible"; on: boolean }
 	| { type: "prompt:open"; label: string }
 	| { type: "prompt:edit"; edit: PromptEdit }
-	| { type: "prompt:close" };
+	| { type: "prompt:close" }
+	/** the clock moved: spinners, running durations and the footer flash follow `now` */
+	| { type: "tick"; at: number };
 
 /** Lines kept per task; older ones drop off the front. */
 export const MAX_LOG_LINES = 5000;
@@ -74,6 +78,16 @@ function follow(state: TuiState, id: string): TuiState {
 function ensureTask(state: TuiState, id: string, title: string): TuiState {
 	if (state.tasks.some((t) => t.id === id)) return state;
 	return { ...state, tasks: [...state.tasks, newTask(id, title)] };
+}
+
+const ACTION_ROW = "action:";
+
+/** The footer note for an action row that ended; undefined for the session's own rows. */
+function flashFor(state: TuiState, id: string, kind: Flash["kind"], detail: string | undefined, at: number) {
+	if (!id.startsWith(ACTION_ROW)) return state.flash;
+	const title = state.tasks.find((t) => t.id === id)?.title ?? id.slice(ACTION_ROW.length);
+	const first = detail?.split(/\r?\n/).find((line) => line.trim() !== "");
+	return { kind, text: first ? `${title} · ${sanitizeLine(first)}` : title, at };
 }
 
 function readyLines(info: DevReady): string[] {
@@ -143,6 +157,20 @@ function applyAction(state: TuiState, action: Action): TuiState {
 	}
 }
 
+function editPrompt(state: TuiState, edit: PromptEdit): TuiState {
+	const { prompt } = state;
+	if (!prompt) return state;
+	if (edit.op === "char") return { ...state, prompt: { ...prompt, text: prompt.text + edit.char } };
+	if (edit.op === "backspace") return { ...state, prompt: { ...prompt, text: [...prompt.text].slice(0, -1).join("") } };
+	return state;
+}
+
+/** The clock moved; a flash older than `FLASH_MS` goes. */
+function tick(state: TuiState, at: number): TuiState {
+	const expired = state.flash !== undefined && at - state.flash.at >= FLASH_MS;
+	return { ...state, now: at, flash: expired ? undefined : state.flash };
+}
+
 export function reduce(state: TuiState, event: TuiEvent): TuiState {
 	switch (event.type) {
 		case "task:start": {
@@ -162,7 +190,8 @@ export function reduce(state: TuiState, event: TuiEvent): TuiState {
 				status: "ok",
 				endedAt: event.at,
 			}));
-			return event.detail ? withLog(done, event.id, event.detail) : done;
+			const flashed = { ...done, flash: flashFor(done, event.id, "ok", event.detail, event.at) };
+			return event.detail ? withLog(flashed, event.id, event.detail) : flashed;
 		}
 		case "task:fail": {
 			const failed = updateTask({ ...state, now: event.at }, event.id, (task) => ({
@@ -170,7 +199,11 @@ export function reduce(state: TuiState, event: TuiEvent): TuiState {
 				status: "fail",
 				endedAt: event.at,
 			}));
-			return withLog(failed, event.id, event.error);
+			return withLog(
+				{ ...failed, flash: flashFor(failed, event.id, "fail", event.error, event.at) },
+				event.id,
+				event.error
+			);
 		}
 		case "task:log":
 			return withLog(state, event.id, event.line);
@@ -204,14 +237,8 @@ export function reduce(state: TuiState, event: TuiEvent): TuiState {
 			return { ...state, hud: { ...state.hud, perf: event.perf } };
 		case "prompt:open":
 			return { ...state, mode: "prompt", prompt: { label: event.label, text: "" } };
-		case "prompt:edit": {
-			const { prompt } = state;
-			if (!prompt) return state;
-			if (event.edit.op === "char") return { ...state, prompt: { ...prompt, text: prompt.text + event.edit.char } };
-			if (event.edit.op === "backspace")
-				return { ...state, prompt: { ...prompt, text: [...prompt.text].slice(0, -1).join("") } };
-			return state;
-		}
+		case "prompt:edit":
+			return editPrompt(state, event.edit);
 		case "prompt:close":
 			return { ...state, mode: "list", prompt: undefined };
 		case "hud:sample":
@@ -220,6 +247,8 @@ export function reduce(state: TuiState, event: TuiEvent): TuiState {
 			return { ...state, hud: { ...state.hud, bundle: event.bundle } };
 		case "hud:visible":
 			return { ...state, hud: { ...state.hud, visible: event.on } };
+		case "tick":
+			return tick(state, event.at);
 		case "metro:exit": {
 			const noted = withLog({ ...state, now: event.at }, "metro", `metro exited (code ${event.code})`);
 			return { ...noted, metroExit: event.code, mode: state.mode === "interact" ? "list" : state.mode };

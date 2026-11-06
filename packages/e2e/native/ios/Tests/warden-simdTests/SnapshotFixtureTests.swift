@@ -71,6 +71,26 @@ final class SnapshotFixtureTests: XCTestCase {
     XCTAssertEqual(submit.hittable, true)
   }
 
+  /// Host `ax` names the password field `TextField` and keeps the secure state only as the `SecureTextField` trait,
+  /// empty (value = placeholder) and filled (value = one `•` per character) alike: both read as `securefield`.
+  func testHostReaderSecureFieldIsASecureFieldEmptyOrFilled() throws {
+    for (name, value) in [
+      ("sign-in-host.document.json", "At least 8 characters"),
+      ("sign-in-host-filled.document.json", "•••••••••"),
+    ] {
+      let document = try DocumentFixture.document(name)
+      let built = ElementBuilder.build(
+        document.elements, options: Session.buildOptions(screen: screen, document: document.screen))
+      let nodes = built.elements.flatMap(\.preorder)
+      let password = try XCTUnwrap(nodes.first { $0.identifier == "sign-in-password" }, name)
+      XCTAssertEqual(password.rawType, "TextField", name)
+      XCTAssertEqual(password.role, .securefield, name)
+      XCTAssertEqual(password.value, value, name)
+      let email = try XCTUnwrap(nodes.first { $0.identifier == "sign-in-email" }, name)
+      XCTAssertEqual(email.role, .textfield, name)
+    }
+  }
+
   // MARK: alerts
 
   func testHostReaderAlertPayloadMatchesGolden() throws {

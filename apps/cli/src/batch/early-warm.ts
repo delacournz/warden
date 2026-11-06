@@ -19,7 +19,10 @@ export type DeviceWarm = { socketPath?: string; helper?: WarmHelper; warning?: s
 /**
  * The iOS driver warm-up started while the run is still claiming: a leg's helpers are spawned and
  * snapshotted the moment its devices are leased, in parallel with the app install, Metro and the
- * per-device setup, instead of after all of them.
+ * per-device setup, instead of after all of them. A leg's devices warm one after the other (see
+ * `warmDrivers`), and so do the legs: a leg's warm-up waits for the earlier-leased legs', because separate
+ * legs warming at once contend for the host exactly as the devices of one would. The warm-up as a whole still
+ * overlaps the install, Metro and setup.
  */
 export type EarlyWarm = {
 	/** `LeaseArgs.onLeased`: warm the devices of leg `leg` (their workers are numbered by leg order, as the run's pools are) */
@@ -40,6 +43,8 @@ export function startEarlyWarm(deps: EarlyWarmDeps): EarlyWarm {
 	const signal = deps.signal ? AbortSignal.any([deps.signal, own.signal]) : own.signal;
 	const warnings: string[] = [];
 	const pending: Promise<WarmOutcome>[] = [];
+	// the legs' warm-ups run in lease order: each starts when the one before it has settled (`warmDrivers` never rejects)
+	let tail: Promise<unknown> = Promise.resolve();
 	const firstWorker = (leg: number) => deps.legCounts.slice(0, leg).reduce((sum, n) => sum + n, 0);
 	const byDevice = new Map<string, ReturnType<typeof Promise.withResolvers<DeviceWarm>>>();
 	const done = new Map<string, DeviceWarm>();
@@ -47,7 +52,7 @@ export function startEarlyWarm(deps: EarlyWarmDeps): EarlyWarm {
 		leased: (outcome, leg) => {
 			const first = firstWorker(leg);
 			for (const c of outcome.claimed) byDevice.set(c.device.id, Promise.withResolvers<DeviceWarm>());
-			pending.push(
+			const run = tail.then(() =>
 				warmDrivers(
 					{
 						devices: outcome.claimed.map((c, i) => ({ worker: first + i, udid: c.device.id })),
@@ -74,6 +79,8 @@ export function startEarlyWarm(deps: EarlyWarmDeps): EarlyWarm {
 					}
 				)
 			);
+			pending.push(run);
+			tail = run;
 		},
 		settled: async () => {
 			const outcomes = await Promise.all(pending);

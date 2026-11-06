@@ -207,7 +207,7 @@ function reserve(
 	skip: ReadonlySet<string>,
 	cap?: CapacityRound
 ): Reservation {
-	const { store, request, owner } = input;
+	const { store, request } = input;
 	const now = input.now();
 	reclaimed.push(...store.reclaimStale(now, input.pidAlive));
 	const leases = store.listLeases();
@@ -235,46 +235,55 @@ function reserve(
 		return { kind: "wait", poolSize, notReady: notReadyPhysical(inventory, request), blocked };
 	}
 	if (cap) store.dequeue(cap.queueId);
+	const items = plan.steps.map((step) => insertReserved(input, step, now));
+	recordClaimKey(input, now);
+	return { kind: "assign", items };
+}
+
+/** Insert the lease for one allocation step: a placeholder for a device to create, else the device's own. */
+function insertReserved(input: ClaimInput, step: AllocationStep, now: number): Reserved {
+	const { store, request, owner } = input;
 	const common = { owner, ...(input.label !== undefined ? { label: input.label } : {}), ...claimField(input) };
-	const items = plan.steps.map((step): Reserved => {
-		if (step.action === "create") {
-			const placeholder = { platform: request.platform, id: `${PENDING_PREFIX}${step.name}`, name: step.name };
-			const lease = store.insertLease(
-				{
-					resource: placeholderResource(placeholder),
-					...common,
-					ttlMs: Math.min(input.ttlMs, input.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS),
-					pid: input.selfPid ?? process.pid,
-				},
-				now
-			);
-			return { action: "create", name: step.name, lease };
-		}
+	if (step.action === "create") {
+		const placeholder = { platform: request.platform, id: `${PENDING_PREFIX}${step.name}`, name: step.name };
 		const lease = store.insertLease(
 			{
-				resource: deviceResourceOf(step.device),
+				resource: placeholderResource(placeholder),
 				...common,
-				ttlMs: input.ttlMs,
-				...(input.pid !== undefined ? { pid: input.pid } : {}),
+				ttlMs: Math.min(input.ttlMs, input.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS),
+				pid: input.selfPid ?? process.pid,
 			},
 			now
 		);
-		return { action: step.action, device: step.device, lease };
-	});
-	if (input.idempotencyKey !== undefined && input.claimId !== undefined) {
-		store.setClaimKey(
-			{
-				ownerKey: ownerKey(owner),
-				key: input.idempotencyKey,
-				claimId: input.claimId,
-				platform: request.platform,
-				profile: request.profile,
-				count: request.count,
-			},
-			now
-		);
+		return { action: "create", name: step.name, lease };
 	}
-	return { kind: "assign", items };
+	const lease = store.insertLease(
+		{
+			resource: deviceResourceOf(step.device),
+			...common,
+			ttlMs: input.ttlMs,
+			...(input.pid !== undefined ? { pid: input.pid } : {}),
+		},
+		now
+	);
+	return { action: step.action, device: step.device, lease };
+}
+
+/** Map the idempotency key to this claim, when the caller gave both. */
+function recordClaimKey(input: ClaimInput, now: number): void {
+	if (input.idempotencyKey === undefined || input.claimId === undefined) return;
+	const { store, request, owner } = input;
+	store.setClaimKey(
+		{
+			ownerKey: ownerKey(owner),
+			key: input.idempotencyKey,
+			claimId: input.claimId,
+			platform: request.platform,
+			profile: request.profile,
+			count: request.count,
+		},
+		now
+	);
 }
 
 /**
@@ -472,7 +481,10 @@ function admit(
 	const usage = claimUsage(cap, leases, slimmed, slimCreates);
 	const fit = fits(usage, need, budget);
 	const held = cap.pressure !== "normal";
-	if (head && fit.fits && !held) return undefined;
+	// A host smaller than one device (a 7 GB CI runner: budget 0 after the 8 GB headroom) would queue its first
+	// claim for the whole --wait. With nothing else counted against the budget, one device is always admitted.
+	const lone = !fit.fits && boots === 1 && usage.memMb === 0 && usage.cpu === 0;
+	if (head && (fit.fits || lone) && !held) return undefined;
 	const blocked: QueueBlocked = capacityBlock(fit, held) ?? "behind-earlier";
 	store.refreshQueue(cap.queueId, now, blocked);
 	noteQueued(input, cap, blocked, now);
@@ -1003,21 +1015,7 @@ async function settle(
 	if (reservation.kind === "limited") return settleLimited(input, reservation.message, round);
 	if (reservation.kind === "assign")
 		return completeRound(input, reservation.items, round.reclaimed, health, round.deadline);
-	if (reservation.kind === "queued") {
-		round.queued = reservation;
-		const key = `${reservation.position}/${reservation.total}/${reservation.reason}`;
-		if (key !== round.queuedKey) {
-			round.queuedKey = key;
-			const { position, total, reason, blocked } = reservation;
-			input.log?.(
-				`queued #${position} of ${total} (${priorityName(input.priority ?? PRIORITY.normal)}) — ${reason} [${blocked}]`
-			);
-		}
-		if (reservation.evict.length > 0) {
-			await evictIdle(input, reservation.evict, round.noEvict);
-			return undefined;
-		}
-	}
+	if (reservation.kind === "queued" && (await settleQueued(input, reservation, round))) return undefined;
 	const remaining = round.deadline - input.now();
 	if (remaining <= 0) {
 		if (skippedOnce && health.overload) return err(overloadMessage(health.overload, health.reasons));
@@ -1029,6 +1027,26 @@ async function settle(
 	}
 	await pause(input, remaining);
 	return undefined;
+}
+
+/** Note and log a queue position; true when idle devices were evicted for the queue head (go round again at once). */
+async function settleQueued(
+	input: ClaimInput,
+	reservation: Extract<Reservation, { kind: "queued" }>,
+	round: Round
+): Promise<boolean> {
+	round.queued = reservation;
+	const key = `${reservation.position}/${reservation.total}/${reservation.reason}`;
+	if (key !== round.queuedKey) {
+		round.queuedKey = key;
+		const { position, total, reason, blocked } = reservation;
+		input.log?.(
+			`queued #${position} of ${total} (${priorityName(input.priority ?? PRIORITY.normal)}) — ${reason} [${blocked}]`
+		);
+	}
+	if (reservation.evict.length === 0) return false;
+	await evictIdle(input, reservation.evict, round.noEvict);
+	return true;
 }
 
 /** The earlier claim under this key is still booting: poll until it is granted or gone, else fail when no wait is left. */

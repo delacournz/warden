@@ -1,13 +1,34 @@
+import type { Exec } from "@delacour/warden-core/exec";
 import { isPhysicalIosId } from "@delacour/warden-core/types";
 import { err, ok } from "@delacour/warden-types/result";
 import type { UiError } from "../agent-ui/output";
 import type { WarmConnect } from "../batch/warm-drivers";
 import type { CommandContext } from "../context";
 import { runnerSourcesFor } from "../ios-runner/sim-sources";
+import { currentBuild } from "../update/build-info";
 
 /** A runner host's start-up failure as the warm step's error text: `<code>: <message> (<hint>)`, the code `warmGate` stops the run on. */
 export function runnerWarmError(error: UiError): string {
 	return `${error.code}: ${error.message}${error.hint ? ` (${error.hint})` : ""}`;
+}
+
+/** How long the warm-up lets a simulator finish booting before it starts the helper: a golden clone's first boot is slow on a loaded host. */
+export const BOOT_WAIT_MS = 90_000;
+
+/**
+ * Block until `simctl bootstatus` says the simulator has finished booting (SpringBoard and the daemons the in-sim
+ * bridge needs). A device that is still coming up answers the helper's first calls with silence. Returns a note when it
+ * could not confirm the boot (never throws, never fails the warm-up: the snapshot retries decide that).
+ */
+export async function waitBooted(exec: Exec, udid: string, timeoutMs = BOOT_WAIT_MS): Promise<string | undefined> {
+	const run = await exec(["xcrun", "simctl", "bootstatus", udid], { timeoutMs }).catch((error: unknown) => ({
+		exitCode: -1,
+		stdout: "",
+		stderr: error instanceof Error ? error.message : String(error),
+	}));
+	if (run.exitCode === 0) return undefined;
+	const why = run.stderr.trim().split("\n").pop() || `exit ${run.exitCode}`;
+	return `${udid}: boot not confirmed (${why})`;
 }
 
 /**
@@ -22,6 +43,8 @@ export function runnerWarmError(error: UiError): string {
 export function warmConnect(ctx: CommandContext): WarmConnect {
 	return async (udid) => {
 		if (isPhysicalIosId(udid)) return warmRunner(ctx, udid);
+		const bootNote = await waitBooted(ctx.exec, udid);
+		if (bootNote !== undefined) ctx.err(`warden: ${bootNote}`);
 		const { ensureHelper } = await import("../agent-ui/helper");
 		const { openIosDriver } = await import("@delacour/warden-e2e/driver/ios/ios-driver");
 		const helper = await ensureHelper(ctx, udid, { keepClient: true });
@@ -32,6 +55,7 @@ export function warmConnect(ctx: CommandContext): WarmConnect {
 			exec: ctx.exec,
 			socketPath,
 			...(client ? { client } : {}),
+			version: currentBuild().version,
 			runnerSources: runnerSourcesFor(),
 			now: ctx.now,
 		});

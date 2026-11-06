@@ -2,6 +2,7 @@ import { copyFileSync, mkdirSync, readdirSync, statSync, writeFileSync } from "n
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { Exec, ExecResult } from "@delacour/warden-core/exec";
+import { androidTail, iosTail, unresolvedShare } from "./native-log-tail";
 
 export const NATIVE_LOG = "native.log";
 
@@ -37,7 +38,37 @@ export type NativeLogWindow = {
 	timeoutMs?: number;
 };
 
-export type NativeCapture = { files: string[]; problems: string[] };
+export type NativeCapture = {
+	files: string[];
+	problems: string[];
+	/** the last readable lines (errors first, at most 20) to print next to the failure */
+	tail: string[];
+};
+
+/** `log config` flag name for the opt-out of private data on the simulator. */
+export const NATIVE_PRIVATE_DATA_ENV = "WARDEN_NATIVE_LOG_PRIVATE";
+
+/**
+ * Makes sure the simulator's own logd keeps `%{private}` values readable (`log config --mode private_data:on`)
+ * so `native.log` shows them instead of `<private>`. It must be set before the app logs: what logd redacts when
+ * it writes cannot be recovered when it is read. Skipped when `log config --status` already lists `PRIVATE_DATA`
+ * (the case on the iOS 27.0 simulator, which refuses the change with "Simulator unable to set system mode").
+ * The sim is a leased, disposable test device. Resolves with a problem string, never throws.
+ */
+export async function enableNativePrivateData(udid: string, exec: Exec, timeoutMs = DEFAULT_TIMEOUT_MS) {
+	const log = (...args: string[]) => exec(["xcrun", "simctl", "spawn", udid, "log", ...args], { timeoutMs });
+	try {
+		const status = await log("config", "--status");
+		if (status.exitCode === 0 && status.stdout.includes("PRIVATE_DATA")) return undefined;
+		const res = await log("config", "--mode", "private_data:on");
+		return res.exitCode === 0 ? undefined : `native log: ${failed("log config private_data:on", res)}`;
+	} catch (cause) {
+		return `native log: private_data:on: ${cause instanceof Error ? cause.message : String(cause)}`;
+	}
+}
+
+/** Fewer than this many events is too small a sample to call a log unresolved. */
+const UNRESOLVED_MIN_EVENTS = 10;
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 /** `log show` slack so lines logged just before the attempt (the launch) are kept */
@@ -98,7 +129,7 @@ async function iosNativeLog(
 	win: NativeLogWindow,
 	timeoutMs: number
 ): Promise<NativeCapture> {
-	const capture: NativeCapture = { files: [], problems: [] };
+	const capture: NativeCapture = { files: [], problems: [], tail: [] };
 	const proc = await iosProcessName(target, deps.exec, timeoutMs);
 	if (proc.error !== undefined || proc.exe === undefined) {
 		capture.problems.push(`native log: ${proc.error ?? "unknown process"}`);
@@ -115,6 +146,8 @@ async function iosNativeLog(
 			"show",
 			"--style",
 			"ndjson",
+			"--info",
+			"--debug",
 			"--last",
 			`${seconds}s`,
 			"--predicate",
@@ -125,6 +158,13 @@ async function iosNativeLog(
 	if (show.exitCode === 0) {
 		deps.fs.write(join(win.dir, NATIVE_LOG), tail(show.stdout));
 		capture.files.push(NATIVE_LOG);
+		capture.tail = iosTail(show.stdout);
+		const { unresolved, total } = unresolvedShare(show.stdout);
+		if (total >= UNRESOLVED_MIN_EVENTS && unresolved * 2 > total) {
+			capture.problems.push(
+				`native log: ${unresolved} of ${total} messages unresolved (<compose failure>): the simulator runtime's shared cache could not be read back`
+			);
+		}
 	} else {
 		capture.problems.push(`native log: ${failed("log show", show)}`);
 	}
@@ -142,7 +182,7 @@ async function androidNativeLog(
 	win: NativeLogWindow,
 	timeoutMs: number
 ): Promise<NativeCapture> {
-	const capture: NativeCapture = { files: [], problems: [] };
+	const capture: NativeCapture = { files: [], problems: [], tail: [] };
 	const adb = (...args: string[]) => deps.exec([deps.adb, "-s", target.serial, ...args], { timeoutMs });
 	const pid = await adb("shell", "pidof", target.pkg);
 	const pidArg =
@@ -160,12 +200,14 @@ async function androidNativeLog(
 	];
 	deps.fs.write(join(win.dir, NATIVE_LOG), tail(sections.filter(Boolean).join("\n")));
 	capture.files.push(NATIVE_LOG);
+	capture.tail = androidTail(sections.filter(Boolean).join("\n"));
 	return capture;
 }
 
 /**
  * `native.log` (and iOS `.ips` crash reports) for a failed attempt, read after the fact: iOS
- * `simctl spawn log show` for the app's process over the attempt's window, Android `logcat -d` for its pid
+ * `simctl spawn log show` (inside the simulator, so format strings resolve against the runtime's own shared cache)
+ * for the app's process over the attempt's window, Android `logcat -d` for its pid
  * plus the crash buffer. Reading afterwards needs no stream to start, stop or leak. Never throws.
  */
 export async function captureNativeLog(
@@ -179,6 +221,10 @@ export async function captureNativeLog(
 			? await iosNativeLog(target, deps, win, timeoutMs)
 			: await androidNativeLog(target, deps, win, timeoutMs);
 	} catch (cause) {
-		return { files: [], problems: [`native log: ${cause instanceof Error ? cause.message : String(cause)}`] };
+		return {
+			files: [],
+			problems: [`native log: ${cause instanceof Error ? cause.message : String(cause)}`],
+			tail: [],
+		};
 	}
 }

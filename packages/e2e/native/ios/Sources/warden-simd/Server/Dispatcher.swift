@@ -51,7 +51,7 @@ struct Dispatcher<Context: Sendable>: Sendable {
 /// caller is answered on time.
 func withTimeout<T: Sendable>(
   milliseconds: Int,
-  error makeError: @escaping @Sendable () -> WireError,
+  error makeError: @escaping @Sendable () -> any Error,
   _ body: @escaping @Sendable () async throws -> T
 ) async throws -> T {
   try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<T, any Error>) in
@@ -59,8 +59,9 @@ func withTimeout<T: Sendable>(
     let work = Task { try await body() }
     let timer = Task {
       do { try await Task.sleep(for: .milliseconds(milliseconds)) } catch { return }
-      work.cancel()
+      // fail first: the cancelled work's own error (a CancellationError) must not win the race to the gate
       gate.fail(makeError())
+      work.cancel()
     }
     Task {
       do {

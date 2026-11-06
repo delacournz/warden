@@ -24,6 +24,8 @@ on:
 
 permissions:
   contents: read
+  # bun install pulls @delacournz/* from GitHub Packages with the job token.
+  packages: read
 
 # One run per branch, newest wins. A signoff binds to a SHA, so once a branch moves on (a second
 # merge into develop re-pushes the version PR head seconds after the first; a maintainer dispatches
@@ -83,12 +85,18 @@ jobs:
         with:
           cache: bun
 
-      # NPM_TOKEN (read:packages) installs the optional `@delacournz/*` design systems, which the apps
-      # that render one need to typecheck and test. The native job below installs without it, which
-      # keeps proving a tokenless clone installs.
+      # Namespace remote cache for turbo (sets TURBO_API / TURBO_TEAM / TURBO_TOKEN from the instance
+      # credentials). Same task hashes as a local signoff, so a re-dispatch replays untouched greens.
+      - uses: namespace-actions/setup-turbocache@3b82149ffb545cab670093f13bc0bad156917e18 # v0.0.4
+
+      # `@delacournz/cli-telemetry` (GitHub Packages, private) is a hard dependency of apps/cli, so the
+      # install needs a read token. bunfig.toml reads NPM_TOKEN. NPM_READ_TOKEN (classic PAT,
+      # read:packages) also installs the optional `@delacournz/*` design systems, which the apps that
+      # render one need to typecheck and test; without it the job token still covers cli-telemetry
+      # and apps/docs' optional OpenTelemetry packages (Actions read access granted per package).
       - run: bun install --frozen-lockfile
         env:
-          NPM_TOKEN: ${{ secrets.NPM_READ_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_READ_TOKEN || github.token }}
       - run: bun run typecheck
       - run: bun run check
       - run: bun run test
@@ -137,18 +145,25 @@ jobs:
           xcodebuild -version
           swift --version
 
-      # Namespace cache volume (keyless, persists across runs): idb tarball/source + SwiftPM build products
+      # Namespace cache volume (keyless, persists across runs): bun + SwiftPM caches, idb tarball/source + SwiftPM build products
       # (idb's library package compiles for minutes). SwiftPM's incremental build handles stale products.
       - uses: namespacelabs/nscloud-cache-action@1124a6f3ce44e5cf84cc22111530961f4d2a15f9 # v1.7.0
         with:
+          cache: |
+            bun
+            swiftpm
           path: |
             ~/Library/Caches/warden-idb
             packages/e2e/native/ios/.build
             packages/e2e/native/ios-runner/RunnerCore/.build
 
-      # No NPM_TOKEN: `@delacournz/*` (GitHub Packages) is only apps/docs' optional OpenTelemetry, which
-      # nothing here uses. The 401 is a warning, and this proves a tokenless clone installs.
+      # `@delacournz/cli-telemetry` (GitHub Packages, private) is a hard dependency of apps/cli, so the
+      # install needs a read token. bunfig.toml reads NPM_TOKEN; the job token works because the package
+      # grants this repo Actions read access (package settings > Manage Actions access). apps/docs'
+      # optional OpenTelemetry packages ride on the same token.
       - run: bun install --frozen-lockfile
+        env:
+          NPM_TOKEN: ${{ github.token }}
       - run: bun run --cwd packages/e2e native:deps
       - run: bun run --cwd packages/e2e native:build
       - run: swift test --package-path packages/e2e/native/ios

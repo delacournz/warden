@@ -3,6 +3,7 @@
  * goldens runs under one machine-wide warden lease (`golden:ios`), so a build, clone or prune in one
  * process never races another — a clone never sees a half-built or deleted golden.
  */
+import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { withBuildLock } from "../builds/lock";
@@ -56,8 +57,8 @@ export const DEFAULT_GOLDEN_TIMING: GoldenTiming = {
 export const GOLDEN_LOCK_POLL_MS = 200;
 /** `xcode-select` / `plutil` / `xcodebuild -version` reads of the Xcode build (16-11). */
 const XCODE_READ_TIMEOUT_MS = 30_000;
-/** The in-sim `defaults write` of the golden recipe. */
-const DEFAULTS_WRITE_TIMEOUT_MS = 30_000;
+/** The host-side `plutil` write of the golden recipe: a local file edit, never slow. */
+const PLIST_WRITE_TIMEOUT_MS = 30_000;
 
 export type GoldenDeps = {
 	exec: Exec;
@@ -78,7 +79,8 @@ export type GoldenDeps = {
 };
 
 export type GoldenTarget = GoldenInputs & { profile: string };
-export type EnsuredGolden = { udid: string; name: string; built: boolean };
+/** `unsettled`: still busy when its build's settle wait ran out; usable on this machine, never exported. */
+export type EnsuredGolden = { udid: string; name: string; built: boolean; unsettled?: true };
 export type ClonedDevice = { udid: string; name: string; golden: string; runtimeId: string };
 
 /** Run `cmd`; with `timeoutMs`, a call still running then is an error (and the process is killed). */
@@ -91,14 +93,14 @@ async function run(deps: GoldenDeps, cmd: string[], timeoutMs?: number): AsyncRe
 	return result.exitCode === 0 ? ok(result.stdout) : err(execError(cmd, result));
 }
 
-const simctl = (deps: GoldenDeps, args: string[], timeoutMs?: number) =>
+export const simctl = (deps: GoldenDeps, args: string[], timeoutMs?: number) =>
 	run(deps, ["xcrun", "simctl", ...args], timeoutMs);
 
 function timing(deps: GoldenDeps): GoldenTiming {
 	return { ...DEFAULT_GOLDEN_TIMING, ...deps.timing };
 }
 
-const log = (deps: GoldenDeps, line: string) => deps.log?.(`golden: ${line}`);
+export const log = (deps: GoldenDeps, line: string) => deps.log?.(`golden: ${line}`);
 
 /**
  * The selected Xcode's build (`17F113`): `DEVELOPER_DIR` first, else `xcode-select` (see `readXcode`).
@@ -157,20 +159,49 @@ async function readTarget(deps: GoldenDeps, profile: string, runtime?: string): 
 	});
 }
 
-async function allSims(deps: GoldenDeps): AsyncResult<SimctlSim[]> {
+export async function allSims(deps: GoldenDeps): AsyncResult<SimctlSim[]> {
 	const out = await simctl(deps, ["list", "devices", "-j"], IOS_TIMEOUTS.listMs);
 	return out.success ? parseAllSims(out.data) : out;
 }
 
-async function readMigration(deps: GoldenDeps, udid: string): Promise<string> {
-	const plist = join(
-		deps.env.HOME ?? "~",
-		"Library/Developer/CoreSimulator/Devices",
-		udid,
-		"data/Library/Preferences/com.apple.migration.plist"
-	);
+/** `~/Library/Developer/CoreSimulator/Devices/<udid>`: the device's dir in the default device set. */
+export function simDeviceDir(env: Record<string, string | undefined>, udid: string): string {
+	return join(env.HOME ?? "~", "Library/Developer/CoreSimulator/Devices", udid);
+}
+
+export async function readMigration(deps: GoldenDeps, udid: string): Promise<string> {
+	const plist = join(simDeviceDir(deps.env, udid), "data/Library/Preferences/com.apple.migration.plist");
 	const out = await run(deps, ["plutil", "-convert", "json", "-o", "-", plist]);
 	return out.success ? out.data : "";
+}
+
+/**
+ * Beside `data/` in a golden that never settled. A claim builds the golden and `warden golden export` reuses it in
+ * another process, so the mark lives on disk. Only a rebuild clears it: the dir goes with the device.
+ */
+const UNSETTLED_MARK = "warden-golden-unsettled";
+
+function markUnsettled(deps: GoldenDeps, udid: string): void {
+	const dir = simDeviceDir(deps.env, udid);
+	if (!existsSync(dir)) return;
+	try {
+		writeFileSync(join(dir, UNSETTLED_MARK), "");
+	} catch {
+		// best effort: without the mark a later export of this golden is not refused
+	}
+}
+
+const isUnsettled = (deps: GoldenDeps, udid: string): boolean =>
+	existsSync(join(simDeviceDir(deps.env, udid), UNSETTLED_MARK));
+
+/**
+ * `AutomationEnabled` as written on disk in the device's Accessibility preferences, read on the host: shows that
+ * a shut-down golden holds it, whether the build or an older warden wrote it.
+ */
+export async function hasAutomationEnabled(deps: GoldenDeps, udid: string): Promise<boolean> {
+	const plist = join(simDeviceDir(deps.env, udid), "data/Library/Preferences/com.apple.Accessibility.plist");
+	const out = await run(deps, ["plutil", "-extract", "AutomationEnabled", "raw", "-o", "-", plist]);
+	return out.success && out.data.trim() === "true";
 }
 
 /** `bootstatus -b` can return mid-migration: wait on the migration's own record. */
@@ -246,8 +277,11 @@ async function simCpu(deps: GoldenDeps, udid: string): Promise<number | undefine
 	return cpu;
 }
 
-/** A fresh device keeps working for minutes after boot; shut the golden down at rest. Timeout is logged, not fatal. */
-async function waitSettled(deps: GoldenDeps, udid: string): AsyncResult<void> {
+/**
+ * A fresh device keeps working for minutes after boot; shut the golden down at rest. Timeout is logged, not fatal:
+ * `false` marks the golden unsettled, so it is used here but never exported.
+ */
+async function waitSettled(deps: GoldenDeps, udid: string): AsyncResult<boolean> {
 	const t = timing(deps);
 	const samples: number[] = [];
 	const deadline = deps.now() + t.settleMaxMs;
@@ -256,19 +290,19 @@ async function waitSettled(deps: GoldenDeps, udid: string): AsyncResult<void> {
 		const cpu = await simCpu(deps, udid);
 		if (cpu === undefined) return err(`${udid} stopped while settling`);
 		samples.push(cpu);
-		if (isSettled(samples, t)) return ok(undefined);
+		if (isSettled(samples, t)) return ok(true);
 	}
 	log(
 		deps,
 		`not settled after ${t.settleMaxMs / 1000}s (last ${samples.slice(-t.window).join(", ")}% CPU) — using it anyway`
 	);
-	return ok(undefined);
+	return ok(false);
 }
 
 /** Shutdown, delete and rename: quick CoreSimulator calls, bounded like a shutdown. */
-const MUTATE_TIMEOUT_MS = IOS_TIMEOUTS.shutdownMs;
+export const MUTATE_TIMEOUT_MS = IOS_TIMEOUTS.shutdownMs;
 
-async function discard(deps: GoldenDeps, udid: string): Promise<void> {
+export async function discard(deps: GoldenDeps, udid: string): Promise<void> {
 	await simctl(deps, ["shutdown", udid], MUTATE_TIMEOUT_MS);
 	await simctl(deps, ["delete", udid], MUTATE_TIMEOUT_MS);
 }
@@ -276,18 +310,37 @@ async function discard(deps: GoldenDeps, udid: string): Promise<void> {
 /**
  * Recipe 2 (16-7): the driver's `AutomationEnabled` preference lives under `data/`, which `simctl clone`
  * copies, so writing it once here saves every fresh clone the in-sim `defaults write` on its first open.
+ * Written on the host into the shut-down golden's plist, not with `simctl spawn defaults write`: on the iOS 27
+ * runtime that spawn never returned on a CI runner (30 s timeout), and with no cfprefsd running a file write persists.
+ * Existing keys are kept; a missing plist is created first.
  */
-const AUTOMATION_ENABLED = ["defaults", "write", "com.apple.Accessibility", "AutomationEnabled", "-bool", "true"];
+export async function writeAutomationEnabled(deps: GoldenDeps, udid: string): AsyncResult<void> {
+	const plist = join(simDeviceDir(deps.env, udid), "data/Library/Preferences/com.apple.Accessibility.plist");
+	const replace = ["plutil", "-replace", "AutomationEnabled", "-bool", "true", plist];
+	let written = await run(deps, replace, PLIST_WRITE_TIMEOUT_MS);
+	if (!written.success) {
+		const created = await run(deps, ["plutil", "-create", "binary1", plist], PLIST_WRITE_TIMEOUT_MS);
+		if (!created.success) return created;
+		written = await run(deps, replace, PLIST_WRITE_TIMEOUT_MS);
+	}
+	return written.success ? ok(undefined) : written;
+}
 
-async function buildSteps(deps: GoldenDeps, target: GoldenTarget, udid: string): AsyncResult<void> {
+/** Boot, migrate, settle, shut down, write `AutomationEnabled` on the host, then check both on disk. `ok(settled)`. */
+async function buildSteps(deps: GoldenDeps, target: GoldenTarget, udid: string): AsyncResult<boolean> {
 	const t = timing(deps);
+	let settled = true;
 	const steps: Array<() => AsyncResult<unknown>> = [
 		() => simctl(deps, ["boot", udid], IOS_TIMEOUTS.bootMs),
 		() => simctl(deps, ["bootstatus", udid, "-b"], t.bootTimeoutMs),
 		() => waitMigrated(deps, udid, target.runtimeBuild),
-		() => simctl(deps, ["spawn", udid, ...AUTOMATION_ENABLED], DEFAULTS_WRITE_TIMEOUT_MS),
-		() => waitSettled(deps, udid),
+		async () => {
+			const waited = await waitSettled(deps, udid);
+			if (waited.success) settled = waited.data;
+			return waited;
+		},
 		() => simctl(deps, ["shutdown", udid], IOS_TIMEOUTS.shutdownMs),
+		() => writeAutomationEnabled(deps, udid),
 	];
 	for (const step of steps) {
 		const result = await step();
@@ -296,7 +349,10 @@ async function buildSteps(deps: GoldenDeps, target: GoldenTarget, udid: string):
 	if (!migrationDone(await readMigration(deps, udid), target.runtimeBuild)) {
 		return err(`${udid}: migration record missing after shutdown — not promoting it`);
 	}
-	return ok(undefined);
+	if (!(await hasAutomationEnabled(deps, udid))) {
+		return err(`${udid}: AutomationEnabled missing after shutdown — not promoting it`);
+	}
+	return ok(settled);
 }
 
 /** create `-wip` → boot → migration done → settled → shutdown → verify → rename. The wip is deleted on failure. */
@@ -330,11 +386,12 @@ async function buildGolden(deps: GoldenDeps, target: GoldenTarget, key: string):
 		await discard(deps, udid);
 		return renamed;
 	}
+	if (!built.data) markUnsettled(deps, udid);
 	log(deps, `${name} ready in ${Math.round((deps.now() - started) / 1000)}s`);
-	return ok({ udid, name, built: true });
+	return ok({ udid, name, built: true, ...(built.data ? {} : { unsettled: true as const }) });
 }
 
-async function deleteSims(deps: GoldenDeps, sims: SimctlSim[]): AsyncResult<SimctlSim[]> {
+export async function deleteSims(deps: GoldenDeps, sims: SimctlSim[]): AsyncResult<SimctlSim[]> {
 	for (const sim of sims) {
 		log(deps, `deleting ${sim.name} (${sim.udid})`);
 		await simctl(deps, ["shutdown", sim.udid], MUTATE_TIMEOUT_MS);
@@ -345,7 +402,7 @@ async function deleteSims(deps: GoldenDeps, sims: SimctlSim[]): AsyncResult<Simc
 }
 
 /** Caller holds the golden lock. */
-async function ensureLocked(deps: GoldenDeps, target: GoldenTarget): AsyncResult<EnsuredGolden> {
+export async function ensureLocked(deps: GoldenDeps, target: GoldenTarget): AsyncResult<EnsuredGolden> {
 	const key = goldenKey(target);
 	const sims = await allSims(deps);
 	if (!sims.success) return sims;
@@ -360,10 +417,16 @@ async function ensureLocked(deps: GoldenDeps, target: GoldenTarget): AsyncResult
 		await discard(deps, plan.sim.udid);
 		return buildGolden(deps, target, key);
 	}
-	return ok({ udid: plan.sim.udid, name: plan.sim.name, built: false });
+	if (!(await hasAutomationEnabled(deps, plan.sim.udid))) {
+		log(deps, `${plan.sim.name} has no AutomationEnabled — rebuilding`);
+		await discard(deps, plan.sim.udid);
+		return buildGolden(deps, target, key);
+	}
+	const unsettled = isUnsettled(deps, plan.sim.udid) ? { unsettled: true as const } : {};
+	return ok({ udid: plan.sim.udid, name: plan.sim.name, built: false, ...unsettled });
 }
 
-function lockDeps(deps: GoldenDeps) {
+export function lockDeps(deps: GoldenDeps) {
 	return {
 		...deps,
 		waitMs: timing(deps).lockWaitMs,

@@ -4,6 +4,15 @@ description: Take an Expo app with no warden setup to a passing spec, run by han
 icon: FlaskConical
 ---
 
+<DemoReel
+  src="/demos/e2e/batch"
+  label="warden batch leasing five iOS simulators and running salient's end-to-end specs across them"
+  command="warden batch salient-e2e"
+  facts="37/37 passed · shown at 5× speed"
+/>
+
+`warden batch` runs 37 Salient e2e specs across 5 leased iOS simulators at once, shown here at 5× speed.
+
 ## Set up with your agent
 
 Paste this into your coding agent. It sets up warden e2e, writes a real spec for one flow and runs it in parallel.

@@ -200,6 +200,7 @@ export default defineConfig({
     passes: { type: "number", description: "Consecutive green runs a spec needs.", default: "1" },
     retry: { type: "number", description: "Re-run a failed spec up to N times.", default: "0" },
     count: { type: "number", description: "Devices to claim (not with `devices`)." },
+    runtime: { type: "string", description: "iOS simulator runtime for the run's devices and their golden: `latest`, `iOS-26-5` or `26.5`. Applies to every `devices` leg; `--runtime` overrides it. A runtime that is not installed fails the run before any claim, listing the installed ones. Skipped on Android. `warden golden key --profile <p> --runtime <r>` names the golden the run uses." },
     profile: { type: "string", description: "Device profile (not with `devices`)." },
     app: { type: "boolean | { installMode?: 'clean' | 'reinstall'; resetKeychain?: boolean; variant?: string }", description: "Ensure the app on every device first. `{ installMode: \"clean\" | \"reinstall\" }` resets the installed app first (`--install-mode`), `resetKeychain: true` also resets the iOS sim keychain (`--reset-keychain`); `{ clean: true }` is a deprecated alias of reinstall. `{ variant }` installs that `projects[].variants` build (must exist on the suite's project)." },
     ports: { type: "string[]", description: "Ports leased for the run (`<from>[:<span>]`, like `--port`), exported as `WARDEN_PORT_<i>` / `WARDEN_PORTS` to serve, setup and every spec process." },

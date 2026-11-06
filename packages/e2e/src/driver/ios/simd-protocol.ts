@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { bridgeStallSchema } from "../bridge-stall";
 import type { DriverError, DriverErrorCode, Rect, Role, ScreenInfo } from "../driver.types";
 import { driverError } from "../errors";
 
@@ -251,7 +252,15 @@ export const healthDataSchema = z.looseObject({
 	/** present when the helper serves a socket */
 	socket: z.object({ path: z.string(), clients: z.number() }).optional(),
 	idb: z.string().optional(),
+	/** the host's Xcode (`DEVELOPER_DIR` / xcode-select) */
 	xcode: z.string().optional(),
+	/** what the helper was built with (its `manifest.json`) */
+	builtWith: z.object({ xcode: z.string().optional(), idb: z.string().optional() }).optional(),
+	coreSimulatorVersion: z.string().nullish(),
+	/** set while reads go by pid because the frontmost lookup failed */
+	frontmost: z.object({ unresolvedAgoMs: z.number(), method: z.string() }).optional(),
+	/** stalled AX guests this helper recycled; absent until one was */
+	bridgeRecycles: z.object({ count: z.number(), exhausted: z.boolean() }).optional(),
 	state: z.string().optional(),
 	uptimeMs: z.number().optional(),
 });
@@ -265,7 +274,17 @@ export const snapshotDataSchema = z.looseObject({
 	elements: z.array(z.custom<WireElement>(isWireElement, { error: (issue) => wireElementProblem(issue.input) })),
 	ms: z.number(),
 	/** set when the helper answered from another backend than asked for (axbridge → ax) */
-	fallback: z.object({ from: z.string(), to: z.string(), reason: z.string() }).optional(),
+	fallback: z
+		.object({
+			from: z.string(),
+			to: z.string(),
+			reason: z.string(),
+			/** what the bridge failure looked like (a helper built before it sends none) */
+			stall: bridgeStallSchema.optional(),
+		})
+		.optional(),
+	/** set when the frontmost app could not be resolved and the helper read this pid instead */
+	target: z.object({ pid: z.number(), source: z.string() }).optional(),
 	readMs: z.number().optional(),
 	nodes: z.number().optional(),
 });

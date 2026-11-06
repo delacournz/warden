@@ -131,3 +131,19 @@ describe("e2e.<suite>.conditions", () => {
 		expect(issues({ conditions: { battery: 1 } })).not.toEqual([]);
 	});
 });
+
+describe("e2e suite runtime", () => {
+	test("is optional and keeps the spelling it was given", () => {
+		expect(suite().runtime).toBeUndefined();
+		for (const runtime of ["latest", "iOS-26-5", "26.5", "27.0"]) expect(suite({ runtime }).runtime).toBe(runtime);
+	});
+
+	test("an empty or non-string runtime is refused", () => {
+		expect(issues({ runtime: "" })).not.toEqual([]);
+		expect(issues({ runtime: 27 })).not.toEqual([]);
+	});
+
+	test("combines with devices legs", () => {
+		expect(issues({ runtime: "27.0", devices: [{ profile: "iphone-17" }] })).toEqual([]);
+	});
+});

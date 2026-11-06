@@ -78,7 +78,7 @@ describe("press / tap", () => {
 		expect(doc(h.c).result.verified).toBe(true);
 	});
 
-	test("--settle waits for two equal hashes >= 250 ms apart and reports the diff", async () => {
+	test("--settle waits for two equal hashes >= 500 ms apart and reports the diff", async () => {
 		const after = snapshotOf([el("text", { label: "Signed in" })]);
 		let tapped = false;
 		const h = harness(() => (tapped ? after : snapshotOf(LOGIN)), {
@@ -93,8 +93,8 @@ describe("press / tap", () => {
 		const out = doc(h.c);
 		expect(out.generation).toBe(2);
 		expect(out.result.settled.quiet).toBe(true);
-		expect(out.result.settled.waitedMs).toBeGreaterThanOrEqual(250);
-		expect(h.clock.t - start).toBeGreaterThanOrEqual(250);
+		expect(out.result.settled.waitedMs).toBeGreaterThanOrEqual(500);
+		expect(h.clock.t - start).toBeGreaterThanOrEqual(500);
 		expect(out.result.settled.diff.against).toBe(1);
 		expect(out.result.settled.diff.added.map((e: { line: string }) => e.line)).toEqual([
 			'[text] "Signed in" enabled (0,0 390×44)',

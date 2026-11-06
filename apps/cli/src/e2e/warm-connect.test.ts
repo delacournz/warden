@@ -2,8 +2,9 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { ExecResult } from "@delacour/warden-core/exec";
 import { writeState } from "../agent-ui/state";
-import { residentSocket, runnerWarmError } from "./warm-connect";
+import { residentSocket, runnerWarmError, waitBooted } from "./warm-connect";
 
 let home: string | undefined;
 afterEach(() => {
@@ -69,5 +70,35 @@ describe("runnerWarmError", () => {
 
 	test("no hint: no parentheses", () => {
 		expect(runnerWarmError({ code: "engine_unavailable", message: "no runner" })).toBe("engine_unavailable: no runner");
+	});
+});
+
+describe("waitBooted", () => {
+	const answer = (exitCode: number, stdout = "", stderr = ""): ExecResult => ({ exitCode, stdout, stderr });
+
+	test("asks simctl bootstatus about the device, with a timeout, and reports nothing when it finished booting", async () => {
+		const calls: Array<{ cmd: readonly string[]; timeoutMs: number | undefined }> = [];
+		const note = await waitBooted(async (cmd, opts) => {
+			calls.push({ cmd, timeoutMs: opts?.timeoutMs });
+			return answer(0, "Status=Booted, isTerminal=YES");
+		}, "U1");
+		expect(note).toBeUndefined();
+		expect(calls).toHaveLength(1);
+		expect(calls[0]?.cmd).toEqual(["xcrun", "simctl", "bootstatus", "U1"]);
+		expect(calls[0]?.timeoutMs).toBeGreaterThan(0);
+	});
+
+	test("a device that is not booted, or a bootstatus that failed, is a note, never a throw", async () => {
+		const note = await waitBooted(
+			async () => answer(164, "", "Unable to get bootstatus for device that is not booted"),
+			"U2"
+		);
+		expect(note).toContain("U2");
+		expect(note).toContain("not booted");
+	});
+
+	test("a bootstatus that does not finish in time says so", async () => {
+		const note = await waitBooted(async () => answer(124, "", "timed out"), "U3", 5_000);
+		expect(note).toContain("U3");
 	});
 });

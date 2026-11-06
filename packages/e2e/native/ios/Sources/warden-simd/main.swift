@@ -52,6 +52,7 @@ func runMain(_ arguments: Arguments) async -> Int32 {
   }
 
   Task { await session.warmQuiescence() }
+  session.warmBridge()
 
   if let socketPath = arguments.socket {
     return await runSocket(session: session, path: socketPath, idleTimeout: arguments.idleTimeout, output: output)

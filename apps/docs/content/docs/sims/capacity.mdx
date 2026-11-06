@@ -4,14 +4,16 @@ description: How warden sizes the host, queues boots by priority and frees idle 
 icon: Gauge
 ---
 
-warden decides how many sims and emulators may run at once from the host's RAM and CPU. A claim that needs a new boot while the host is full joins a priority queue and boots when a slot frees. Agents just call `warden claim` / `ui open` / `e2e` and block: no retry loops, no `--max` games.
+By default warden puts no limit on how many sims and emulators boot: a claim boots what it asks for, even on a host with little RAM or CPU, and nothing queues on host specs. Set `WARDEN_CAPACITY=on` to opt in to capacity limits: warden then decides how many may run at once from the host's RAM and CPU, and a claim that needs a new boot while the host is full joins a priority queue and boots when a slot frees. Everything below describes that opt-in mode. `warden capacity` and `warden queue` always print the numbers and say whether limits are enforced.
+
+A `--max` you pass (or set in config) caps a profile's pool in both modes. Without it the pool is uncapped by default; with limits on it defaults to cores / 4 and grows to what the budget has room for.
 
 ## Cost model
 
 Weighted units, not a flat count: an Android emulator costs about twice an iOS sim.
 
 ```
-budget.mem = totalMem - headroom        headroom = max(8 GB, 25% of totalMem)
+budget.mem = totalMem - headroom        headroom = max(8 GB, 25% of totalMem); 0 in CI
 budget.cpu = perfCores x 0.6            leaves room for Metro, xcodebuild, gradle
 iOS sim    = 4 GB, 1 cpu unit      (slim iOS sim: 1.75 GB)
 Android    = 4 GB, 2 cpu units
@@ -29,7 +31,9 @@ A boot fits when summed memory and cpu of everything booted, plus the request, s
 
 Mixed loads share the budget: on the 48 GB host, 4 iOS + 1 Android fills it. CPU usually binds before memory; `warden capacity` says which.
 
+- **CI has no headroom.** With `CI=true` / `1` or `GITHUB_ACTIONS=true` the headroom defaults to 0 (a 7 GB runner would otherwise budget 0 MB and the claim would queue forever). `WARDEN_CAPACITY_HEADROOM_GB` overrides it.
 - **Foreign devices count, never get touched.** Every booted device on the host (warden's and not) uses budget. Foreign ones are never shut down, erased or installed on.
+- **One device is the floor.** A host smaller than one device (a 7 GB CI runner: 8 GB headroom leaves no budget) still admits a claim that boots one device while nothing else is booted. A second claim queues. Set `WARDEN_CAPACITY_HEADROOM_GB` to fit more.
 - **Reuse is free.** Reusing an already-booted free device needs no slot. Only `boot` and `create` do.
 - **Memory pressure gate.** Before admitting a boot warden reads the OS memory pressure (macOS `kern.memorystatus_vm_pressure_level`, Linux `/proc/meminfo`). Anything but `normal` holds new boots even when the budget fits. An unreadable signal counts as `normal`.
 
@@ -73,8 +77,8 @@ warden queue [--json]      # waiting claims: position, effective priority, age, 
 | `--priority <interactive\|high\|normal\|low\|N>` | priority of this claim; `WARDEN_PRIORITY` sets it for the shell |
 | `--wait <duration>` | queue timeout, default `30m` |
 | `--no-wait` | fail fast instead of queueing |
-| `WARDEN_CAPACITY=off` | skip the capacity gate and queue (old behaviour: only `--max` limits the pool) |
+| `WARDEN_CAPACITY=on` | enforce the capacity budget and boot queue (default: off, `1` / `true` / `yes` also work) |
 | `WARDEN_CAPACITY_MAX=<n>` | hard cap on weighted cpu units |
-| `WARDEN_CAPACITY_HEADROOM_GB=<n>` | RAM held back instead of `max(8 GB, 25%)` |
+| `WARDEN_CAPACITY_HEADROOM_GB=<n>` | RAM held back instead of `max(8 GB, 25%)` (`0` in CI) |
 
-`--max` still caps how many devices of one profile warden creates; it does not raise the capacity budget, so passing it never jumps the queue.
+`--max` caps how many devices of one profile warden creates; with limits on it does not raise the capacity budget, so passing it never jumps the queue. `WARDEN_CAPACITY_MAX`, `WARDEN_CAPACITY_HEADROOM_GB` and `--wait` / `--priority` only matter with `WARDEN_CAPACITY=on`.

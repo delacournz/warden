@@ -96,6 +96,50 @@ describe("computeFingerprint", () => {
 	});
 });
 
+describe("computeFingerprint with no output", () => {
+	const nowait = async () => {};
+
+	test("a clean exit that printed nothing is run once more and the second answer is used", async () => {
+		let runs = 0;
+		const exec: Exec = async () => {
+			runs++;
+			return runs === 1
+				? { exitCode: 0, stdout: "", stderr: "" }
+				: { exitCode: 0, stdout: JSON.stringify({ hash: HASH }), stderr: "" };
+		};
+		const res = await computeFingerprint(exec, testProject({ fingerprintCommand: "fp" }), "ios", nowait);
+		expect(res).toEqual({ success: true, data: HASH });
+		expect(runs).toBe(2);
+	});
+
+	test("still nothing after the retry: the error names the command, the directory and stderr", async () => {
+		let runs = 0;
+		const exec: Exec = async () => {
+			runs++;
+			return { exitCode: 0, stdout: "", stderr: "warn: watchman crawl failed\n" };
+		};
+		const res = await computeFingerprint(exec, testProject({ fingerprintCommand: "fp" }), "ios", nowait);
+		expect(runs).toBe(2);
+		expect(res.success).toBe(false);
+		if (!res.success) {
+			expect(res.error).toContain("(empty)");
+			expect(res.error).toContain("watchman crawl failed");
+			expect(res.error).toContain("sh -c fp");
+			expect(res.error).toContain("/repo/app");
+		}
+	});
+
+	test("a failing exit is not retried", async () => {
+		let runs = 0;
+		const exec: Exec = async () => {
+			runs++;
+			return { exitCode: 1, stdout: "", stderr: "boom" };
+		};
+		await computeFingerprint(exec, testProject({ fingerprintCommand: "fp" }), "ios", nowait);
+		expect(runs).toBe(1);
+	});
+});
+
 describe("computeCacheKey", () => {
 	function host(js: string) {
 		const exec: Exec = async (cmd) => {

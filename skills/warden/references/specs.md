@@ -31,11 +31,11 @@ e2e/helpers/poll.ts      pollUntil
 ## Imports
 
 ```ts
-import { test, expect, describe, beforeEach, afterEach, beforeAll, afterAll, E2eError } from "@delacour/warden-e2e";
+import { test, expect, describe, beforeEach, afterEach, beforeAll, afterAll, run, E2eError } from "@delacour/warden-e2e";
 import type { App, Device, Screen, Locator, TestFixtures } from "@delacour/warden-e2e";
 ```
 
-Other type exports: `OpenOptions OpenWaitUntil SystemAlerts DevicePerf PerfStartOptions PerfReport PerfBudgets PerfBreach LocatorReading TapOptions TapUntil PinchOptions RotateOptions ScreenGestures ScreenPinchOptions ScreenRotateOptions ScreenPathOptions`; value `WARDEN_E2E_VERSION`.
+Other type exports: `RunOptions RunResult RunCommand OpenOptions OpenWaitUntil SystemAlerts DevicePerf PerfStartOptions PerfReport PerfBudgets PerfBreach LocatorReading TapOptions TapUntil PinchOptions RotateOptions ScreenGestures ScreenPinchOptions ScreenRotateOptions ScreenPathOptions`; value `WARDEN_E2E_VERSION`.
 
 Never import subpaths (`/device`, `/screen/*`, `/env`). Only `.` and `./preload` are published. (The repo's example helpers use subpaths because the workspace exposes `./*`; copy the root type imports instead.)
 
@@ -230,11 +230,23 @@ Roles: button link textbox searchbox checkbox radio switch slider image heading 
 - **Wait:** `waitFor({ state: "attached" | "detached" | "visible" | "hidden", timeout? })`. Default state is `visible`.
 - **Actions** wait for exactly one visible match. Several matches fail with `LOCATOR_AMBIGUOUS`.
   - `tap({ position?, timeout?, until?, retries = 2, windowMs = 4000, pollMs = 250 })`, `longPress({ durationMs? })`. `until` (a locator that must be visible, or `async () => boolean`) makes the tap retrying: after each tap it polls for `windowMs`, re-taps when `until` did not hold. With a locator `until` a screen that changed after the tap counts as landed (no re-tap, however late `until` is), and an unchanged screen is re-tapped from 750 ms on. The last tap is not waited on (the next assertion reports what is missing). `retries`/`windowMs`/`pollMs` without `until` are `INVALID_ARGUMENT`. Replaces hand-written `tapUntil` helpers.
-  - `fill(text, { via? })` empties the field, puts the text in, verifies on two reads, retries once. `via` is `"type"` (default, per key) or `"paste"` (iOS pastes with one Cmd+V, ~400 ms flat; falls back to typing if the pasteboard write fails; Xcode 27 syncs every sim's pasteboard with the Mac clipboard both ways, so a paste lands in clipboard history and on other sims, so avoid it on parallel runs and for secrets). The retry always types. Android always types. Secure fields are not verified.
+  - `fill(text, { via? })` empties the field, puts the text in, verifies on two reads, retries once. `via` is `"type"` (default, per key) or `"paste"` (iOS pastes with one Cmd+V, ~400 ms flat; falls back to typing if the pasteboard write fails; Xcode 27 syncs every sim's pasteboard with the Mac clipboard both ways, so a paste lands in clipboard history and on other sims, so avoid it on parallel runs and for secrets). The retry always types. Android always types. Secure fields are not verified; a field that only reads back as bullets (`•`) is confirmed by their count against the typed length, and its failure message gives the length, never the text.
   - `clear()`, `type(text)` (at the caret)
   - `press(key, { modifiers? })` sends a KEY (`Enter Backspace Tab Space Escape Delete Up Down Left Right`), it is not a tap. Use `tap()` to tap.
   - `swipe({ direction, momentum? })`, `scrollTo({ direction = "down", momentum?, maxSwipes = 10, timeout? })`
   - `pinch(scale, { durationMs?, radius?, timeout? })`, `rotate(degrees, { durationMs?, radius?, timeout? })` (positive = clockwise). Out-of-range `scale`/`degrees` and unsupported gestures throw `INVALID_ARGUMENT` (no `capabilities.pinch`, or more than `maxPointers` fingers; Android without `warden-uiad`: no pinch/rotate, 1-finger paths only): skip with `test({ platforms: ["ios"] })`.
+
+## Host commands (`run`)
+
+Specs run on the host (bun), not on the device: `fetch`, files and npm packages all work. `run` runs a command there:
+
+- `run(command, { cwd?, env?, timeout = "60s", input?, check = true })` → `{ ok, exitCode, stdout, stderr, ms, json() }`.
+- `command`: a string runs with `sh -c`; an argv array (`["bun", "scripts/seed.ts"]`) runs with no shell (nothing expanded).
+- `cwd` defaults to the spec process's (project root under `warden e2e`); `env` is merged over the spec's env (`undefined` removes one); `input` goes to stdin.
+- Non-zero exit throws `RUN_FAILED` (message: program, exit code, stderr tail); `check: false` returns `ok: false` instead. Over `timeout` the process is SIGKILLed and throws `TIMEOUT`. Empty command / bad timeout / `json()` on non-JSON stdout: `INVALID_ARGUMENT`.
+- Inside a test it is one `run` span in `trace.jsonl` (exit code only; the command is never recorded).
+- Seed through an API or script, then deep link: `const { id } = (await run(["bun", "scripts/seed-order.ts"])).json() as { id: string }; await app.open({ url: `myapp://orders/${id}` });`
+- Suite-wide servers/setup belong in `warden.config.ts` (`serve`, `setup`, `ports`: `suites.md`), not in `beforeAll`.
 
 ## Matchers
 
@@ -245,9 +257,10 @@ Roles: button link textbox searchbox checkbox radio switch slider image heading 
 Accessibility matchers (`a11y.md`): on a locator `toHaveAccessibleName(t)`, `toHaveRole(role)`, `toHaveHint(t)` (iOS needs the inject), `toAnnounce(t, { exact? })` (the simulated phrase, "Save, button"), `toBeA11yFocused()` (Android TalkBack). On `expect(device)`: `toPassA11yAudit({ rules?, ignore?, minSeverity?, textSize?, native? })` (runs once, settle first; fails with the issue table and the `--a11y` screen) and `toHaveAnnounced(t, { timeoutMs?, since? })` (string = contains, RegExp; `.not` waits the timeout for none).
 
 - Zero matches keep polling. Several matches fail at once (except `toHaveCount`).
+- **Degraded reads are inconclusive, never negative.** A look that fell back from the iOS bridge (`axbridge` stalled, host `ax` answered: it drops RN testIDs on static text) or came back an empty root cannot say a node is absent. With zero matches on such a look, `toBeHidden`, `.not.toBeVisible`, `toHaveCount(0)` (and every other matcher) keep polling; `waitFor`, the reads (`isHidden`, `isVisible`, `count`, `read`, `text`, ...) and actions look again within the action timeout. A plain `getByTestId` asks the React tree first (dev client with Metro). A component whose rect is a node's on that read (host `ax` keeps the text node, drops only its testID) resolves to that node: `text()`, `read()`, `toHaveText`, `toContainText`, visibility, `tap({ until })` and every action work as on a whole read. One with no such node (host `ax` drops plain Views) answers from the React tree: presence, rect, visibility, and `text()`/`read().text`/`toHaveText`/`toContainText` from the text it renders (its own, else its children's: a badge around a `Text`); value, state and fills need the node. A secure text input reads as `securefield` on host `ax` too (its `secure-text-field` trait), empty or filled, so `fill` on a password field works on a degraded read. Still unknown at the timeout: `READ_DEGRADED` (message names `fellBackFrom` and the backend; troubleshooting row 118).
 - `.not` passes only after the inverted state held for 1000 ms (sooner on iOS/Android when the driver reports a quiet screen).
 - `expect.soft(locator)` records the failure and the test fails when its body ends.
-- Failures are `E2eError` with a `code`: `LOCATOR_NOT_FOUND LOCATOR_AMBIGUOUS INVALID_LOCATOR ACTION_FAILED TIMEOUT NOT_ACTIONABLE INVALID_ARGUMENT SESSION DRIVER ASSERTION PERF_BUDGET`. `E2eError` also carries `screen` (AX tree text at the failure, when known) and `matches` (count for `LOCATOR_AMBIGUOUS`).
+- Failures are `E2eError` with a `code`: `LOCATOR_NOT_FOUND LOCATOR_AMBIGUOUS INVALID_LOCATOR ACTION_FAILED TIMEOUT NOT_ACTIONABLE INVALID_ARGUMENT SESSION DRIVER ASSERTION PERF_BUDGET RUN_FAILED READ_DEGRADED`. `E2eError` also carries `screen` (AX tree text at the failure, when known) and `matches` (count for `LOCATOR_AMBIGUOUS`).
 
 ## Example spec (`apps/example/e2e/todos.e2e.ts`)
 
@@ -326,9 +339,9 @@ WARDEN_UDID=<udid> WARDEN_BUNDLE_ID=<bundleId> \
 `<out>/<specId>/<title-slug>-<hash6>/`. `<out>` is `WARDEN_E2E_OUT`, default `.warden-e2e/<ISO time>`. Under `warden e2e` it is `<batchDir>/e2e/<worker>-<seq>/`.
 
 - Always: `trace.jsonl`, `screenshots/`.
-- On failure: `failure.png`, `screen-at-failure.txt`, `native.log` (+ iOS `.ips` crash reports) best effort, plus `console.jsonl` and `network.jsonl` with devtools.
+- On failure: `failure.png`, `screen-at-failure.txt`, `native.log` (+ iOS `.ips` crash reports) best effort (iOS: read inside the sim with `simctl spawn <udid> log show --info --debug`; private data is made readable first with `log config --mode private_data:on`, `WARDEN_NATIVE_LOG_PRIVATE=0` skips that; a tail of at most 20 lines, errors first, is printed under the failure), plus `console.jsonl` and `network.jsonl` with devtools.
 - With `device.perf` / `--perf`: `perf/report.json`, `perf/report.md`, `perf/session.json`.
-- `<out>/results.jsonl`: one line per test (`file title status durationMs startedAt error? artifacts{dir,files} device`), status `passed | failed | skipped | timed-out`. `files` lists what was written into the attempt dir.
+- `<out>/results.jsonl`: one line per test (`file title status durationMs startedAt error? artifacts{dir,files} bridge? device`; `bridge` = iOS reads that left `axbridge`, see `suites.md`), status `passed | failed | skipped | timed-out`. `files` lists what was written into the attempt dir.
 - Under `warden e2e` the batch dir also holds `e2e-report.json` (verdicts; `--report <file>` copies it).
 - Read `screen-at-failure.txt` first: it is the full AX tree at the failure.
 

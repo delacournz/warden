@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { openStore, type Store } from "../store";
 import { fakeApp } from "./builds.testing";
 import {
+	adoptKindDir,
 	aliasBuild,
 	type BuildRecord,
 	buildDir,
@@ -294,6 +295,55 @@ const base = (hash: string, path: string, size = 10) => ({
 	size,
 	createdAt: 1,
 	lastUsedAt: 1,
+});
+
+describe("adoptKindDir (a CI cache restored the files, not warden.db)", () => {
+	const fp = "fp1";
+	const baseKey = { kind: "simulator-base", nativeFp: fp } as const;
+	const repackKey = { kind: "simulator-repack", nativeFp: fp, jsKey: "js1" } as const;
+	const adopt = (key: Parameters<typeof adoptKindDir>[1]["key"]) =>
+		adoptKindDir(store, { env, projectKey: KEY, platform: "ios", profile: "local:simulator", key, now: 50 });
+
+	test("a base dir with one .app and no row → registered as the base", () => {
+		const app = fakeApp(kindDir(env, KEY, "ios", baseKey));
+		const adopted = adopt(baseKey);
+		expect(adopted).toMatchObject({
+			kind: "simulator-base",
+			hash: "fp1:base",
+			path: app,
+			source: "restored",
+			size: 12,
+		});
+		expect(findSimulatorBase(store, { projectKey: KEY, platform: "ios", nativeFp: fp })?.path).toBe(app);
+	});
+
+	test("a repack dir → registered over its base, with its jsKey", () => {
+		const app = fakeApp(kindDir(env, KEY, "ios", repackKey));
+		expect(adopt(repackKey)).toMatchObject({
+			kind: "simulator-repack",
+			hash: "fp1:js1",
+			baseHash: "fp1:base",
+			jsKey: "js1",
+		});
+		expect(findRepack(store, { projectKey: KEY, platform: "ios", nativeFp: fp, jsKey: "js1" })?.path).toBe(app);
+	});
+
+	test("an existing row is kept as it is", () => {
+		const app = fakeApp(kindDir(env, KEY, "ios", baseKey));
+		upsertBuild(store, { ...base("fp1:base", app), kind: "simulator-base" });
+		expect(adopt(baseKey)).toBeUndefined();
+		expect(getBuild(store, KEY, "ios", "fp1:base")?.source).toBe("build");
+	});
+
+	test("no dir, an empty dir, or two artifacts → nothing adopted", () => {
+		expect(adopt(baseKey)).toBeUndefined();
+		mkdirSync(kindDir(env, KEY, "ios", baseKey), { recursive: true });
+		expect(adopt(baseKey)).toBeUndefined();
+		fakeApp(kindDir(env, KEY, "ios", baseKey), "A.app");
+		fakeApp(kindDir(env, KEY, "ios", baseKey), "B.app");
+		expect(adopt(baseKey)).toBeUndefined();
+		expect(listBuilds(store)).toEqual([]);
+	});
 });
 
 describe("kind records", () => {

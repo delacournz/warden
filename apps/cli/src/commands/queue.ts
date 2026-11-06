@@ -8,6 +8,7 @@ import {
 	type WaitReason,
 } from "@delacour/warden-core/queue";
 import { describeOwner, ownerLocation, type Platform } from "@delacour/warden-core/types";
+import { capacityEnabled } from "../capacity-deps";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { emit, plural, table } from "../output";
@@ -34,13 +35,11 @@ export type QueueRow = {
 	stale?: true;
 };
 
-/** `warden queue`: claims waiting for host capacity, head first. */
-function queue(ctx: CommandContext, json: boolean): number {
-	const now = ctx.now();
-	const ordered = queueOrder(ctx.store().listQueue(), now);
-	const gated = ordered.filter((e) => !isDeviceWaitReason(e.reason));
-	const waiting = ordered.filter((e) => isDeviceWaitReason(e.reason));
-	const rows: QueueRow[] = [...gated, ...waiting].map((e) => ({
+type QueueEntry = ReturnType<CommandContext["store"]> extends { listQueue(): (infer E)[] } ? E : never;
+
+/** One queued claim as a row; `gated` (the boot-queue order) gives its position, a claim polling for a device has none. */
+function queueRow(e: QueueEntry, gated: readonly QueueEntry[], now: number): QueueRow {
+	return {
 		...(isDeviceWaitReason(e.reason) ? {} : { position: gated.indexOf(e) + 1 }),
 		...(e.reason !== undefined ? { reason: e.reason } : {}),
 		id: e.id,
@@ -56,9 +55,30 @@ function queue(ctx: CommandContext, json: boolean): number {
 		...(e.label !== undefined ? { label: e.label } : {}),
 		...(e.pid !== undefined ? { pid: e.pid } : {}),
 		...(e.pid !== undefined && !processAlive(e.pid) ? { stale: true as const } : {}),
-	}));
+	};
+}
+
+/** The PID column: empty, the pid, or the pid in yellow with `stale` once the process is gone. */
+function pidCell(r: QueueRow, color: CommandContext["ui"]["color"]): string {
+	if (r.pid === undefined) return "";
+	return r.stale ? color.yellow(`${r.pid} stale`) : String(r.pid);
+}
+
+/** `warden queue`: claims waiting for host capacity, head first. */
+function queue(ctx: CommandContext, json: boolean): number {
+	const now = ctx.now();
+	const ordered = queueOrder(ctx.store().listQueue(), now);
+	const gated = ordered.filter((e) => !isDeviceWaitReason(e.reason));
+	const waiting = ordered.filter((e) => isDeviceWaitReason(e.reason));
+	const rows: QueueRow[] = [...gated, ...waiting].map((e) => queueRow(e, gated, now));
 	const { color } = ctx.ui;
-	const text =
+	const enforced = capacityEnabled(ctx.env);
+	const note = color.dim(
+		enforced
+			? "capacity limits enforced (WARDEN_CAPACITY=on)"
+			: "capacity limits not enforced (WARDEN_CAPACITY=on to enforce)"
+	);
+	const list =
 		rows.length === 0
 			? color.dim("queue empty")
 			: table(
@@ -75,10 +95,11 @@ function queue(ctx: CommandContext, json: boolean): number {
 						r.owner,
 						r.where ?? "",
 						r.label ?? "",
-						r.pid === undefined ? "" : r.stale ? color.yellow(`${r.pid} stale`) : String(r.pid),
+						pidCell(r, color),
 					])
 				);
-	emit(ctx, json, { queue: rows }, text, { scope: "queue", detail: plural(rows.length, "waiting claim") });
+	const text = `${list}\n${note}`;
+	emit(ctx, json, { queue: rows, enforced }, text, { scope: "queue", detail: plural(rows.length, "waiting claim") });
 	return 0;
 }
 

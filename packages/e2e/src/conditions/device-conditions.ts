@@ -891,6 +891,86 @@ export function createDeviceConditions(deps: DeviceConditionsDeps): DeviceCondit
 		baseline.a11y !== undefined ||
 		env.cameraFeeds !== undefined;
 
+	/** Puts the baseline's permissions in place, remembering each state so a later reset knows what to restore. */
+	async function applyBaselinePermissions(): Promise<void> {
+		if (baseline.permissions === undefined) return;
+		for (const [name, state] of Object.entries(baseline.permissions))
+			permissionStates.set(name as PermissionName, state);
+		await applyPermissions(baseline.permissions);
+	}
+
+	/** What `applyBaseline` puts in place, in order; each step does nothing when the baseline leaves its area undeclared. */
+	const baselineSteps: readonly (() => Promise<void>)[] = [
+		applyBaselinePermissions,
+		async () => {
+			if (baseline.timezone !== undefined) await applyTimezone(baseline.timezone);
+		},
+		async () => {
+			if (baseline.locale !== undefined) await applyLocale(baseline.locale);
+		},
+		async () => {
+			if (baseline.a11y !== undefined) await applyA11y(a11yOpOf(baseline.a11y));
+		},
+		async () => {
+			if (baseline.clock !== undefined) await applyClock(baseline.clock);
+		},
+		async () => {
+			if (baseline.location !== undefined) await applyLocation(baseline.location);
+		},
+		async () => {
+			if (baseline.network !== undefined) await applyNetwork(baseline.network, { relaunch: true });
+		},
+		async () => {
+			if (env.cameraFeeds !== undefined) await applyCamera(baselineCamera());
+		},
+	];
+
+	/** What `teardown` undoes after `stopRuns`, in order: each runs only while its area is dirty. */
+	const teardownSteps: readonly { dirty: () => boolean; run: () => Promise<void> }[] = [
+		{ dirty: () => networkDirty, run: resetNetwork },
+		{
+			dirty: () => locationDirty,
+			run: async () => {
+				const goal = baseline.location ?? { kind: "clear" };
+				await applyLocation(goal);
+				locationDirty = false;
+				recorder?.settle("location", goal, goal.kind === "clear");
+			},
+		},
+		{ dirty: () => clockDirty, run: clockApi.reset },
+		{ dirty: () => permissionsDirty, run: () => permissionsApi.reset() },
+		{
+			dirty: () => localeDirty,
+			run: async () => {
+				await applyTimezone(baseline.timezone ?? null);
+				await applyLocale(baseline.locale ?? null);
+				localeDirty = false;
+			},
+		},
+		{
+			dirty: () => a11yDirty,
+			run: async () => {
+				await applyA11y(null);
+				if (baseline.a11y !== undefined) await applyA11y(a11yOpOf(baseline.a11y));
+				a11yDirty = false;
+			},
+		},
+		{
+			dirty: () => batteryDirty,
+			run: async () => {
+				await applyBattery(null);
+				batteryDirty = false;
+			},
+		},
+		{
+			dirty: () => cameraDirty,
+			run: async () => {
+				await applyCamera(baselineCamera());
+				cameraDirty = false;
+			},
+		},
+	];
+
 	const internals: ConditionsInternals = {
 		declared,
 		dirty: () =>
@@ -909,18 +989,7 @@ export function createDeviceConditions(deps: DeviceConditionsDeps): DeviceCondit
 			currentNetwork.kind !== "online" ||
 			currentClock.kind !== "real",
 		async applyBaseline() {
-			if (baseline.permissions !== undefined) {
-				for (const [name, state] of Object.entries(baseline.permissions))
-					permissionStates.set(name as PermissionName, state);
-				await applyPermissions(baseline.permissions);
-			}
-			if (baseline.timezone !== undefined) await applyTimezone(baseline.timezone);
-			if (baseline.locale !== undefined) await applyLocale(baseline.locale);
-			if (baseline.a11y !== undefined) await applyA11y(a11yOpOf(baseline.a11y));
-			if (baseline.clock !== undefined) await applyClock(baseline.clock);
-			if (baseline.location !== undefined) await applyLocation(baseline.location);
-			if (baseline.network !== undefined) await applyNetwork(baseline.network, { relaunch: true });
-			if (env.cameraFeeds !== undefined) await applyCamera(baselineCamera());
+			for (const step of baselineSteps) await step();
 			cameraDirty = false;
 			networkDirty = false;
 			locationDirty = false;
@@ -940,42 +1009,8 @@ export function createDeviceConditions(deps: DeviceConditionsDeps): DeviceCondit
 				}
 			};
 			await attempt(stopRuns);
-			if (networkDirty) await attempt(resetNetwork);
-			if (locationDirty) {
-				await attempt(async () => {
-					const goal = baseline.location ?? { kind: "clear" };
-					await applyLocation(goal);
-					locationDirty = false;
-					recorder?.settle("location", goal, goal.kind === "clear");
-				});
-			}
-			if (clockDirty) await attempt(clockApi.reset);
-			if (permissionsDirty) await attempt(() => permissionsApi.reset());
-			if (localeDirty) {
-				await attempt(async () => {
-					await applyTimezone(baseline.timezone ?? null);
-					await applyLocale(baseline.locale ?? null);
-					localeDirty = false;
-				});
-			}
-			if (a11yDirty) {
-				await attempt(async () => {
-					await applyA11y(null);
-					if (baseline.a11y !== undefined) await applyA11y(a11yOpOf(baseline.a11y));
-					a11yDirty = false;
-				});
-			}
-			if (batteryDirty) {
-				await attempt(async () => {
-					await applyBattery(null);
-					batteryDirty = false;
-				});
-			}
-			if (cameraDirty) {
-				await attempt(async () => {
-					await applyCamera(baselineCamera());
-					cameraDirty = false;
-				});
+			for (const step of teardownSteps) {
+				if (step.dirty()) await attempt(step.run);
 			}
 			if (errors.length > 0) throw errors[0];
 		},

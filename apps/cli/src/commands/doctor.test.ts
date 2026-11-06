@@ -354,7 +354,12 @@ describe("warden doctor --fetch-helper", () => {
 			expect(await command.run(c)).toBe(0);
 			const report = JSON.parse(c.stdout.join("\n"));
 			const dir = join(c.env.WARDEN_HOME ?? "", "simd", "0.3.0");
-			expect(report.helperFetch).toMatchObject({ dir, url: `${BASE}/warden-simd-darwin-arm64.tgz` });
+			expect(report.helperFetch).toMatchObject({
+				status: "fetched",
+				dir,
+				url: `${BASE}/warden-simd-darwin-arm64.tgz`,
+				release: "version",
+			});
 			expect(byName(c)["sim-helper"]).toMatchObject({ status: "ok" });
 			expect(byName(c)["sim-helper"]?.detail).toContain(join(dir, "warden-simd"));
 			expect(byName(c)["sim-helper"]?.detail).toContain("warden-simd 0.1.0, idb 1.1.8");
@@ -362,5 +367,75 @@ describe("warden doctor --fetch-helper", () => {
 			rmSync(dist, { recursive: true, force: true });
 			rmSync(out, { recursive: true, force: true });
 		}
+	});
+
+	test("a helper found ahead of $WARDEN_HOME/simd (a source build): nothing fetched, the report says where", async () => {
+		const built = "/repo/packages/e2e/native/dist/warden-simd";
+		const c = setup(["--fetch-helper", "--json"]);
+		const command = createDoctorCommand({
+			helper: helperDeps({ importDir: "/repo/packages/e2e/src/driver/ios", exists: (path) => path === built }),
+			fetch: async () => {
+				throw new Error("should not fetch");
+			},
+			fallbackToLatest: true,
+		});
+		await command.run(c);
+		const report = JSON.parse(c.stdout.join("\n"));
+		expect(report.helperFetch).toEqual({ status: "present", path: built, source: "source-build" });
+	});
+
+	test("an unreleased version (dev build): takes the latest release's helper and warns", async () => {
+		const LATEST = "https://github.com/delacournz/warden/releases/latest/download";
+		const dist = join(tmpdir(), `warden-doctor-latest-dist-${process.pid}`);
+		const out = join(tmpdir(), `warden-doctor-latest-out-${process.pid}`);
+		try {
+			fakeHelperDist(dist);
+			const packed = await packHelper({ distDir: dist, outDir: out, exec: bunExec });
+			if (!packed.success) throw new Error(packed.error);
+			const files: Record<string, string | Uint8Array> = {
+				[`${LATEST}/SHA256SUMS`]: `${packed.data.sha256}  warden-simd-darwin-arm64.tgz\n`,
+				[`${LATEST}/warden-simd-darwin-arm64.tgz`]: readFileSync(packed.data.tgz),
+			};
+			const c = setup(["--fetch-helper", "--json"], async (cmd, opts) =>
+				cmd[0] === "tar" ? bunExec(cmd, opts) : { exitCode: 127, stdout: "", stderr: "" }
+			);
+			const command = createDoctorCommand({
+				helper: helperDeps({
+					exists: existsSync,
+					readFile: (path) => (existsSync(path) ? readFileSync(path, "utf8") : undefined),
+				}),
+				fetch: async (url) => {
+					const body = files[url];
+					return body === undefined ? new Response("", { status: 404 }) : new Response(body);
+				},
+				fallbackToLatest: true,
+			});
+			expect(await command.run(c)).toBe(0);
+			const report = JSON.parse(c.stdout.join("\n"));
+			expect(report.helperFetch).toMatchObject({
+				status: "fetched",
+				dir: join(c.env.WARDEN_HOME ?? "", "simd", "0.3.0"),
+				url: `${LATEST}/warden-simd-darwin-arm64.tgz`,
+				release: "latest",
+			});
+			expect(c.stderr.join("\n")).toContain("no release v0.3.0");
+		} finally {
+			rmSync(dist, { recursive: true, force: true });
+			rmSync(out, { recursive: true, force: true });
+		}
+	});
+
+	test("a release build never falls back: an unreleased version is an error", async () => {
+		const asked: string[] = [];
+		const c = setup(["--fetch-helper", "--json"]);
+		const command = createDoctorCommand({
+			helper: helperDeps(),
+			fetch: async (url) => {
+				asked.push(url);
+				return new Response("", { status: 404 });
+			},
+		});
+		expect(await command.run(c)).toBe(1);
+		expect(asked).toEqual(["https://github.com/delacournz/warden/releases/download/v0.3.0/SHA256SUMS"]);
 	});
 });

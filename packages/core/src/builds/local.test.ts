@@ -860,18 +860,21 @@ describe("runLocalBuild: a stale CNG native dir is regenerated before the build"
 		writeFileSync(join(root, "android", "stale"), "old prebuild");
 		const command = opts.command ?? EXPO_RUN;
 		const seen = { staleAtBuild: undefined as boolean | undefined };
+		/** the build command: records whether the stale marker survived, then fails or makes the apk */
+		const build = () => {
+			seen.staleAtBuild = existsSync(join(root, "android", "stale"));
+			const buildExit = opts.buildExit ?? 0;
+			if (buildExit !== 0) return { exitCode: buildExit, stdout: "", stderr: "BUILD FAILED" };
+			mkdirSync(apkDir(root), { recursive: true });
+			writeFileSync(join(apkDir(root), "app-debug.apk"), "apk");
+			return { exitCode: 0, stdout: "", stderr: "" };
+		};
+		const ignoredExit = opts.ignored === false ? 1 : 0;
 		const exec: Exec = async (cmd) => {
 			const joined = cmd.join(" ");
-			if (cmd[2] === command) {
-				seen.staleAtBuild = existsSync(join(root, "android", "stale"));
-				if ((opts.buildExit ?? 0) !== 0) return { exitCode: opts.buildExit ?? 1, stdout: "", stderr: "BUILD FAILED" };
-				mkdirSync(apkDir(root), { recursive: true });
-				writeFileSync(join(apkDir(root), "app-debug.apk"), "apk");
-				return { exitCode: 0, stdout: "", stderr: "" };
-			}
+			if (cmd[2] === command) return build();
 			if (cmd[2] === "fp") return { exitCode: 0, stdout: '{"hash":"h1"}', stderr: "" };
-			if (joined === "git check-ignore -q android")
-				return { exitCode: opts.ignored === false ? 1 : 0, stdout: "", stderr: "" };
+			if (joined === "git check-ignore -q android") return { exitCode: ignoredExit, stdout: "", stderr: "" };
 			if (joined.startsWith("git status --porcelain")) return { exitCode: 0, stdout: "", stderr: "" };
 			return { exitCode: 127, stdout: "", stderr: joined };
 		};

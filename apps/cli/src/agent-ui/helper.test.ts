@@ -6,6 +6,7 @@ import type { DriverError } from "@delacour/warden-e2e/driver/driver.types";
 import type { SimdClient } from "@delacour/warden-e2e/driver/ios/simd-client";
 import type { Result } from "@delacour/warden-types/result";
 import { type TestContext, testContext } from "../testing";
+import { currentBuild } from "../update/build-info";
 import {
 	type ConnectOptions,
 	ensureHelper,
@@ -313,6 +314,14 @@ describe("ensureHelper", () => {
 		expect(res.success).toBe(false);
 		if (!res.success) expect(res.error.code).toBe("engine_unavailable");
 		expect(s.spawns).toEqual([]);
+	});
+
+	test("the helper `warden doctor --fetch-helper` staged under $WARDEN_HOME/simd/<this version> is the one spawned", async () => {
+		const { s, socketPath, host } = setup();
+		const staged = join(host.env.WARDEN_HOME ?? "", "simd", currentBuild().version, "warden-simd");
+		const res = await ensureHelper(host, UDID, { socketPath, deps: { ...s.deps, exists: (path) => path === staged } });
+		expect(res.success).toBe(true);
+		expect(s.spawns[0]?.cmd[0]).toBe(staged);
 	});
 
 	test("the previous holder finished between our failed connect and our claim: no second spawn, its socket is kept", async () => {

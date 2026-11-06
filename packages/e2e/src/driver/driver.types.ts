@@ -10,6 +10,7 @@ import type {
 } from "@delacour/warden-core/conditions/conditions.types";
 import type { AsyncResult } from "@delacour/warden-types/result";
 import type { ScreenReaderState } from "../a11y/a11y.types";
+import type { BridgeStall } from "./bridge-stall";
 
 /**
  * The device driver contract every layer of warden-e2e builds on: the spec API (`screen`, `device`,
@@ -176,6 +177,14 @@ export type Snapshot = {
 	flat: Element[];
 	truncated: boolean;
 	modal?: ModalInfo;
+	/**
+	 * Set when `backend` answered because this reader failed or was skipped first (iOS: `axbridge` stalled, `ax` read in
+	 * its place). The fallback reader can lack what the first one has, so a missing node on such a snapshot is not final:
+	 * the iOS helper probes the first reader in the background, and a later read is back on it once it answers.
+	 */
+	fellBackFrom?: SnapshotBackend;
+	/** iOS: what the bridge failure behind `fellBackFrom` looked like, when the helper reported it */
+	bridgeStall?: BridgeStall;
 };
 
 export type Orientation = "portrait" | "portraitUpsideDown" | "landscapeLeft" | "landscapeRight";

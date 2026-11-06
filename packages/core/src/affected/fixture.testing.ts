@@ -1,4 +1,14 @@
-import { cpSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+	appendFileSync,
+	copyFileSync,
+	cpSync,
+	mkdirSync,
+	mkdtempSync,
+	realpathSync,
+	rmSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createImportGraph, type GraphOptions, type ImportGraph } from "./graph";
@@ -88,19 +98,30 @@ function buildSuiteRepo(suite: Record<string, unknown>, config: Record<string, u
 			},
 		})
 	);
-	for (const args of [
-		["init", "-q", "-b", "main"],
-		["config", "user.email", "t@t"],
-		["config", "user.name", "t"],
-		["add", "."],
-		["commit", "-qm", "base"],
-		["checkout", "-qb", "feature"],
-	]) {
+	const git = (...args: string[]) => {
 		const res = Bun.spawnSync(["git", ...args], { cwd: dir });
-		if (res.exitCode !== 0) throw new Error(res.stderr.toString());
-	}
+		if (res.exitCode !== 0) throw new Error(`git ${args.join(" ")} exited ${res.exitCode}: ${res.stderr.toString()}`);
+	};
+	// Three git processes, the rest on disk: each spawn costs seconds on a loaded CI host.
+	git("init", "-q", "-b", "main");
+	// No auto-maintenance: `git commit` would detach a `maintenance run --auto` that creates and
+	// deletes `.git/objects/maintenance.lock` while the cpSync below walks the tree (ENOENT on lstat).
+	appendFileSync(
+		join(dir, ".git/config"),
+		"[user]\n\temail = t@t\n\tname = t\n[maintenance]\n\tauto = false\n[gc]\n\tauto = 0\n"
+	);
+	git("add", ".");
+	git("commit", "-qm", "base");
+	copyFileSync(join(dir, ".git/refs/heads/main"), join(dir, ".git/refs/heads/feature"));
+	writeFileSync(join(dir, ".git/HEAD"), "ref: refs/heads/feature\n");
 	return dir;
 }
+
+/**
+ * Timeout for a hook that calls `makeSuiteRepo`: the first call in a process builds the template
+ * (git spawns + copies), which runs past bun's 5 s hook default on a loaded CI host.
+ */
+export const SUITE_REPO_HOOK_TIMEOUT_MS = 60_000;
 
 /**
  * Two specs + a `mobile` suite mapping them to screens, committed on `main`, checked out on `feature`.

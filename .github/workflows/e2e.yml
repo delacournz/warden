@@ -1,0 +1,119 @@
+name: e2e
+
+# warden's own iOS e2e suite (`apps/example`) on a Namespace macOS runner (`namespace-profile-mac-medium`, as `ci`'s native job), through the reusable action
+# in .github/actions/e2e. Separate from `ci` (the signoff escape hatch) so it never slows a PR that
+# touches nothing it covers: pull requests only run it for the paths below.
+#
+# Runs on pull requests into develop only (never on a push to develop or main). Caches: a pull request
+# saves its own after a green run (scoped to the PR, so its next push starts warm) and can restore
+# develop's. `workflow_dispatch` on develop seeds the shared entries every PR can restore.
+on:
+  pull_request:
+    branches: [develop]
+    paths:
+      - apps/example/**
+      - apps/cli/**
+      - packages/core/**
+      - packages/e2e/**
+      - bun.lock
+      - package.json
+      - .github/actions/e2e/**
+      - .github/workflows/e2e.yml
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: runs-on label (default the repo variable WARDEN_E2E_RUNNER, else namespace-profile-mac-medium)
+        type: string
+        default: ""
+      count:
+        description: Simulators in parallel (empty = the suite's)
+        type: string
+        default: ""
+      retry:
+        description: Reruns of a failed spec
+        type: string
+        default: "1"
+      args:
+        description: Extra `warden e2e` arguments
+        type: string
+        default: --specs onboarding,settings,sign-in
+      warden-version:
+        description: source (this checkout, the default), a release tag, or latest
+        type: string
+        default: source
+      save-cache:
+        description: Save the caches after a green run
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  # bun install pulls @delacournz/* from GitHub Packages with the job token.
+  packages: read
+
+# One group per branch: a new push to a pull request cancels the run on its previous head.
+concurrency:
+  group: e2e-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  example:
+    runs-on: ${{ inputs.runner || vars.WARDEN_E2E_RUNNER || 'namespace-profile-mac-medium' }}
+    timeout-minutes: 50
+    steps:
+      - uses: namespacelabs/nscloud-checkout-action@66f2dc6f6c42a8ac6c4e53473c4840006822831e # v9.0.1
+        with:
+          persist-credentials: false
+
+      # `source` runs the checkout's own CLI, so a change to warden is tested by this job; a release tag or
+      # `latest` runs a published binary for comparison. The shim needs the bun and the install the action sets up.
+      - name: Run warden from this checkout
+        if: (inputs.warden-version || 'source') == 'source'
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          printf '#!/bin/sh\nexec bun "%s/apps/cli/src/cli.ts" "$@"\n' "$GITHUB_WORKSPACE" > "$HOME/.local/bin/warden"
+          chmod +x "$HOME/.local/bin/warden"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      # `source` also builds warden-simd from this checkout (`packages/e2e/native/dist`, which the driver prefers over
+      # `$WARDEN_HOME/simd`), so a helper change is tested here and a version with no release yet (the version PR)
+      # needs no download: the action's `warden doctor --fetch-helper` finds it and fetches nothing. Same toolchain
+      # and Namespace cache volume as ci's native job and the release build (newest Xcode, for the build only).
+      - if: (inputs.warden-version || 'source') == 'source'
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: package.json
+
+      - if: (inputs.warden-version || 'source') == 'source'
+        uses: namespacelabs/nscloud-cache-action@1124a6f3ce44e5cf84cc22111530961f4d2a15f9 # v1.7.0
+        with:
+          cache: |
+            swiftpm
+          path: |
+            ~/Library/Caches/warden-idb
+            packages/e2e/native/ios/.build
+
+      - name: Build warden-simd from this checkout
+        if: (inputs.warden-version || 'source') == 'source'
+        env:
+          NPM_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          xcode=$( (ls -d /Applications/Xcode_*.app /Applications/Xcode-*.app 2>/dev/null || true) | sort -V | tail -1)
+          if [ -n "$xcode" ]; then export DEVELOPER_DIR="$xcode/Contents/Developer"; fi
+          xcodebuild -version
+          bun install --frozen-lockfile
+          bun run --cwd packages/e2e native:deps
+          bun run --cwd packages/e2e native:build
+          ls -l packages/e2e/native/dist/warden-simd
+
+      - id: e2e
+        uses: ./.github/actions/e2e
+        with:
+          working-directory: apps/example
+          suite: example
+          count: ${{ inputs.count || '1' }}
+          retry: ${{ inputs.retry || '1' }}
+          args: ${{ github.event_name == 'workflow_dispatch' && inputs.args || '--specs onboarding,settings,sign-in' }}
+          warden-version: ${{ (inputs.warden-version || 'source') == 'source' && 'none' || inputs.warden-version }}
+          save-cache: ${{ github.event_name == 'pull_request' && 'true' || (inputs.save-cache && 'true') || 'false' }}

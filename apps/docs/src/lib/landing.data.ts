@@ -29,6 +29,8 @@ export type Feature = {
 	link: { to: string; text: string };
 	/** Terminal or file sample shown beside the points; absent for the run chart. */
 	sample?: { label: string; code: string };
+	/** A recorded clip shown in place of the sample (which stays one toggle away): under `public/`, no extension. */
+	clip?: { src: string; label: string };
 };
 
 /** One recorded clip: a real simulator driven by the commands its caption names. */
@@ -47,7 +49,7 @@ export type Faq = { q: string; a: string; proof?: Proof };
 
 export const HERO = {
 	pill: "open source · MIT · iOS + Android",
-	lede: "warden leases iOS simulators, Android emulators and real phones to your coding agents, drives the app on them and keeps what they checked as tests. Devices, ports and builds, leased across every worktree on your Mac. One CLI, free and open source.",
+	lede: "Your coding agents drive your app on iOS simulators, Android emulators and real phones, and keep what they checked as e2e tests. Devices, ports and builds are leased per worktree, so parallel agents never collide.",
 	installNote: "Installs the CLI and the skill for every agent it finds.",
 } as const;
 
@@ -197,6 +199,11 @@ export const ON_THE_DEVICE = {
 			],
 			link: { to: "sims/dev", text: "Dev client per worktree" },
 			sample: { label: "terminal", code: DEV_SAMPLE },
+			clip: {
+				src: "/demos/dev/hero",
+				label:
+					"warden dev's dashboard beside the iOS simulator it leased: the dev client opens, an edited string hot reloads on the phone, the HUD turns on, q releases the device and port",
+			},
 		},
 		{
 			label: "Drive it",
@@ -209,6 +216,11 @@ export const ON_THE_DEVICE = {
 			],
 			link: { to: "sims/ui", text: "Drive a device" },
 			sample: { label: "terminal", code: DRIVE_SAMPLE },
+			clip: {
+				src: "/demos/agent/loop",
+				label:
+					"warden ui reads the sign-in screen, fills it, presses submit and waits for the todos screen on a leased simulator.",
+			},
 		},
 		{
 			label: "Debug it",
@@ -233,6 +245,10 @@ export const ON_THE_DEVICE = {
 			],
 			link: { to: "e2e", text: "Write your first test" },
 			sample: { label: "e2e/add-todo.e2e.ts", code: KEEP_SAMPLE },
+			clip: {
+				src: "/demos/record/spec",
+				label: "warden ui record start drives a sign-in on a leased simulator, then record stop writes the spec.",
+			},
 		},
 		{
 			label: "Run the suite",
@@ -244,6 +260,10 @@ export const ON_THE_DEVICE = {
 				"Failures leave a screenshot, the screen tree and a trace",
 			],
 			link: { to: "e2e/how-it-works", text: "How e2e works" },
+			clip: {
+				src: "/demos/e2e/parallel",
+				label: "warden e2e runs five of the example app's specs on two leased iOS simulators at once.",
+			},
 		},
 	] satisfies readonly Feature[],
 } as const;
@@ -301,6 +321,36 @@ export const DEVICE_CONTROL = {
 				"`warden ui clock advance 10d` expires a 14-day trial; `reset` brings real time back. The app reads `Date.now()`.",
 			src: "/demos/clock/trial",
 			href: "sims/conditions/clock",
+			proof: { source: "skills/warden/references/ui.md" },
+		},
+		{
+			id: "camera",
+			tab: "Camera",
+			title: "Point the camera at anything.",
+			caption:
+				"`warden ui camera set qr-hello.png` feeds an image into the app's real camera preview; `warden ui wait text \"hello\"` sees the app's own scanner read the QR.",
+			src: "/demos/camera/qr",
+			href: "sims/conditions/camera",
+			proof: { source: "skills/warden/references/ui.md" },
+		},
+		{
+			id: "a11y",
+			tab: "Accessibility",
+			title: "Audit the screen.",
+			caption:
+				"`warden ui a11y audit` flags a broken control and passes the good screen; `warden ui a11y set --text-size accessibility-large --bold` grows the text.",
+			src: "/demos/a11y/audit",
+			href: "sims/conditions/accessibility",
+			proof: { source: "skills/warden/references/a11y.md" },
+		},
+		{
+			id: "events",
+			tab: "Push",
+			title: "Send a push to the app.",
+			caption:
+				'`warden ui push payload.json` delivers a notification payload to the running app on an iOS simulator; `warden ui wait text "Order shipped"` sees the app\'s handler receive it.',
+			src: "/demos/events/push",
+			href: "sims/conditions/events",
 			proof: { source: "skills/warden/references/ui.md" },
 		},
 	] satisfies readonly Clip[],

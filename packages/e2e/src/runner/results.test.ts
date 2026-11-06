@@ -37,6 +37,17 @@ describe("results.jsonl", () => {
 		]);
 	});
 
+	test("a result with bridge evidence reads back", () => {
+		const path = join(tmp(), "results.jsonl");
+		const bridge = {
+			fallbacks: 3,
+			first: { reason: "stalled", stage: "read", readMs: 12001, deadlineMs: 12000, cold: true, probes: 1 },
+			last: { code: "E_TIMEOUT", stage: "cooldown", cold: false, cooldownRemainingMs: 4000, probes: 2 },
+		};
+		openResults(path).append({ ...result("one", "failed"), bridge });
+		expect(readResults(readFileSync(path, "utf8"))[0]?.bridge).toEqual(bridge);
+	});
+
 	test("appends to an existing file", () => {
 		const path = join(tmp(), "results.jsonl");
 		openResults(path).append(result("one"));

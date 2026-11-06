@@ -46,7 +46,7 @@ Every call heartbeats your lease. Another live session's lease: `device_foreign`
 | `--force` | drive the device while your running `warden e2e` / `batch` / `run` holds it (else exit 2 `device_busy`); it disturbs that run. Not needed for your own `warden dev` |
 | `--json` | one JSON document on stdout |
 
-Actions also take `--settle [ms]`: wait for a quiet screen (budget 3000 ms), then print what changed.
+Actions also take `--settle [ms]`: wait for a quiet screen (500 ms unchanged, budget 3000 ms), then print what changed.
 
 Every subcommand also takes `--no-record`: while a `record` is active, this call is not appended to it. `--overwrite` (record start/stop) replaces a file; `--force` is only the busy-device option.
 

@@ -4,6 +4,13 @@ description: Clone new simulators from a settled golden for ~16 s boots.
 icon: Layers
 ---
 
+<DemoReel
+  src="/demos/golden/clone"
+  label="warden golden ensure reusing the warm golden image, then warden claim ios cloning it into a new simulator and booting it"
+  command="warden claim ios"
+  facts="golden image reused in 0.4s · claim returned at 9s · home screen at 22s · the boot logo stretch is shown at 3× speed"
+/>
+
 A golden image is a settled simulator warden clones new pool devices from, so a claim that needs a new iOS sim boots in seconds instead of minutes; you only touch it to pre-build one or prune old ones.
 
 ```bash
@@ -21,7 +28,7 @@ A brand-new simulator's first boot takes 1–10 min, and about 80% of that is th
 So when `warden claim ios` needs a **new** pool device, it clones it (`simctl clone`) from a **golden image**: a sim warden booted once, waited on until its data migration finished (`DMLastMigrationResults`, since `bootstatus -b` can return early) and its CPU settled, then shut down.
 
 - The golden is built on first use and keyed by Xcode build + runtime + runtime build + device type + recipe. An Xcode or runtime upgrade simply builds a new one.
-- The golden also has the e2e driver's accessibility switch (`AutomationEnabled`) written in it, so a fresh clone's first driver open skips that in-sim `defaults write`. This is recipe 2: after upgrading to it, every machine builds a recipe-2 golden once (a few minutes) on its next claim; run `warden golden ensure` to pay that ahead of time. Golden names carry their recipe (`warden-golden-<profile>-<key>-r2`), so two warden versions on one machine (say an older npm install and a checkout) each keep their own golden instead of deleting each other's on every claim: a claim keeps the previous recipe's golden of the same target and never deletes a newer recipe's. Each kept golden costs disk (a full simulator, ~1.5 GB); `warden golden prune` deletes the older recipes' goldens once you no longer run the older version.
+- The golden also has the e2e driver's accessibility switch (`AutomationEnabled`) written in it, so a fresh clone's first driver open skips that in-sim `defaults write`. The build writes it into the shut-down golden's `com.apple.Accessibility.plist` on the host (`plutil`), not with `simctl spawn defaults write` while booted: on the iOS 27 runtime that spawn never returned on a CI runner (`did not finish within 30s`), failing `warden golden export` and making a claim fall back from a clone to a fresh boot. The golden's content is unchanged, so this is still recipe 2 and an existing recipe-2 golden is reused. This is recipe 2: after upgrading to it, every machine builds a recipe-2 golden once (a few minutes) on its next claim; run `warden golden ensure` to pay that ahead of time. Golden names carry their recipe (`warden-golden-<profile>-<key>-r2`), so two warden versions on one machine (say an older npm install and a checkout) each keep their own golden instead of deleting each other's on every claim: a claim keeps the previous recipe's golden of the same target and never deletes a newer recipe's. Each kept golden costs disk (a full simulator, ~1.5 GB); `warden golden prune` deletes the older recipes' goldens once you no longer run the older version.
 - Clones are APFS copy-on-write (~30 MB each).
 - If cloning fails, warden falls back to `simctl create`. `WARDEN_GOLDEN=0` turns cloning off.
 - A pool device that already exists is always reused first; a second boot takes ~6.5 s.
@@ -34,6 +41,23 @@ warden golden ensure --profile iphone-17   # build ahead of time, so the first c
 warden golden ls
 warden golden prune                        # delete stale goldens; --all deletes every one
 ```
+
+## Carry a golden between machines
+
+A CI runner starts with no golden, so its first claim spends about four minutes on the first boot. `warden golden export` and `import` move the golden through a cache instead.
+
+```bash
+warden golden key --profile iphone-17           # warden-golden-iphone-17-<key>-r2: the cache key
+warden golden import ~/warden-goldens           # restore: registers what matches this machine
+warden golden export ~/warden-goldens --profile iphone-17   # save: <dir>/<name>/{golden.json,device/}
+```
+
+- An iOS golden is only a CoreSimulator device; warden's store holds no state for it. The archive is that device's directory (about 2 GB) without `device.plist`, plus a `golden.json` manifest with the key and its inputs.
+- `import` never copies a directory into the device set behind CoreSimulator's back: the service would not see it until it restarts, and restarting it stops every booted simulator. It does what `simctl clone` does instead: `simctl create` registers a fresh `-wip` device of the same device type and runtime, the archive replaces its contents, absolute symlinks into the old device are pointed at the new one, the first-boot migration record and `AutomationEnabled` are checked, and only then is the device renamed to the golden's name. All of it runs under the `golden:ios` lease, so no claim clones a half-imported golden.
+- An archive for another Xcode build, runtime build, device type or recipe is skipped with the reason, as is one whose migration record or `AutomationEnabled` preference is missing; a golden already on the machine is left as it is. Nothing is an error: the next claim builds the golden as it would without an archive.
+- `export` builds the golden first when there is none, and replaces an older archive of the same name. It refuses (exit 1) a golden that was still busy when its first boot's settle wait ran out (`not settled after 300s … using it anyway`): that golden stays usable on the machine, but is never cached for other runners. `warden golden prune --all --yes` deletes it, and the next claim builds a new one. `--allow-unsettled` exports it anyway (`--json` reports `"unsettled": true`): on a runner too small to ever settle a golden (a 3-core hosted macOS runner stays at 150–200 % CPU), every run would otherwise build that same unsettled golden again. Android snapshots live inside their AVD and are not covered: `key`, `export` and `import` refuse `--platform android`.
+
+A GitHub Actions workflow is in [CI](/docs/e2e/ci#reuse-a-prebuilt-app-and-the-golden).
 
 ## Android: warden's quick-boot snapshot
 

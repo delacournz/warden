@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { normalizeElement, normalizeElements, toSnapshot } from "./normalize";
-import type { WireElement } from "./simd-protocol";
+import type { SnapshotData, WireElement } from "./simd-protocol";
 
 const screen = { width: 400, height: 800, scale: 2 };
 const frame = (x: number, y: number, width: number, height: number) => ({ x, y, width, height });
@@ -137,5 +137,28 @@ describe("focus", () => {
 			screen
 		);
 		expect(flat.map((element) => element.focused)).toEqual([true, false, true]);
+	});
+});
+
+describe("toSnapshot fallback", () => {
+	const data: SnapshotData = { backend: "ax", screen, elements: [], truncated: false, ms: 1 };
+
+	test("an ax read that replaced axbridge is marked", () => {
+		const snapshot = toSnapshot({ ...data, fallback: { from: "axbridge", to: "ax", reason: "stalled" } }, 0);
+		expect(snapshot.fellBackFrom).toBe("axbridge");
+	});
+
+	test("the helper's stall report rides along with the fallback", () => {
+		const stall = { stage: "read", readMs: 4003, deadlineMs: 4000, guestAgeMs: 900, cold: true, probes: 1 };
+		const snapshot = toSnapshot({ ...data, fallback: { from: "axbridge", to: "ax", reason: "stalled", stall } }, 0);
+		expect(snapshot.bridgeStall).toEqual(stall);
+		expect(toSnapshot({ ...data, fallback: { from: "axbridge", to: "ax", reason: "stalled" } }, 0)).not.toHaveProperty(
+			"bridgeStall"
+		);
+	});
+
+	test("a plain read is not", () => {
+		expect(toSnapshot(data, 0).fellBackFrom).toBeUndefined();
+		expect(toSnapshot({ ...data, backend: "axbridge" }, 0)).not.toHaveProperty("fellBackFrom");
 	});
 });

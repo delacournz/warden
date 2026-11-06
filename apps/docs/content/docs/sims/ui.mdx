@@ -4,6 +4,10 @@ description: "Look at and drive a leased iOS simulator or Android emulator from 
 icon: Smartphone
 ---
 
+<DemoClip src="/demos/gestures/pinch" label="warden ui gesture pinch and rotate on the example app's gesture canvas, then screen appearance light, on a leased simulator" />
+
+`warden ui gesture pinch id=gestures-canvas 1.6` and `gesture rotate id=gestures-canvas 45` move two real fingers on the canvas, then `warden ui screen appearance light` flips the system appearance.
+
 `warden ui` is how your agent looks at a device and drives it: read the screen as text, tap, type, scroll, wait, read the app's console and React tree. Use it to explore, reproduce a bug, verify a change, or get the selectors for a spec.
 
 ```bash
@@ -38,6 +42,10 @@ warden ui close --release --udid $UDID                  # 6. stop the helper and
 
 ## Record a session as a spec
 
+<DemoClip src="/demos/record/spec" label="warden ui record start, a hand-driven sign-in, then record stop writing a spec and replaying it on the same leased simulator" />
+
+`warden ui record start signin-demo`, then `open --relaunch`, `press` and `fill` through onboarding and sign-in, then `warden ui record stop` writes `e2e/signin-demo.e2e.ts` and replays it once on the same simulator.
+
 Between `warden ui record start <name>` and `record stop`, every action and query is journaled (`--no-record` skips one call) and `stop` writes a [spec](/docs/e2e/specs) and runs it once on the same device. While recording, `snapshot -i` marks interactive elements with no testID `[no-id]`, and `status` shows the recording. `record use <module#fn>` runs a helper on the device and records a call to it. Full workflow, route capture, lints and helpers: [Author specs by recording](/docs/e2e/author-specs).
 
 ## Reading the screen
@@ -55,7 +63,7 @@ A line is `@ref [role] "name" id=<testID> value="…" <states> (x,y w×h)`. Stat
 | Command | Use |
 |---|---|
 | `snapshot [-i\|--interactive] [--all] [--depth n] [--a11y]` | the screen. `-i` filters to interactive elements and `testID`s; the default caps at 200 lines (`--all` removes the cap); `--depth n` keeps the first `n` levels; `--a11y` adds `hint`, `actions`, `a11y-focused`, `not-important` and `live` per line ([Accessibility](/docs/e2e/accessibility)) |
-| `snapshot --settle [ms]` | wait for a quiet screen (the tree hash is unchanged for 250 ms; default budget 3000 ms), then print what changed against the previous snapshot as `-` / `+` lines and a `= N unchanged` count |
+| `snapshot --settle [ms]` | wait for a quiet screen (the tree hash is unchanged for 500 ms, so a navigation push is never caught mid-transition; default budget 3000 ms), then print what changed against the previous snapshot as `-` / `+` lines and a `= N unchanged` count |
 | `find <selector…>` | only the elements matching a [selector](#targets-and-selectors), each with a fresh `@eN` |
 | `screen screenshot [path]` | a PNG; default `$WARDEN_HOME/ui/<udid>/shots/NNN.png` |
 | `screen video start [path]` · `screen video stop` | record the screen (iOS `simctl recordVideo`, Android `screenrecord`, 3 min device limit); default `$WARDEN_HOME/ui/<udid>/videos/NNN.mp4` |
@@ -125,7 +133,7 @@ These poll the live screen every 100 ms for the first second, then every 250 ms 
 | `wait <selector>` | until a match is on screen; prints it with a fresh `@eN` (the snapshot it matched in becomes the new generation) |
 | `wait absent <selector>` | until no match is visible |
 | `wait text "…"` | until that text is visible |
-| `wait stable [ms]` | until the screen has stopped changing for that long (default 250 ms) |
+| `wait stable [ms]` | until the screen has stopped changing for that long (default 500 ms: a navigation push holds a mixed screen still for up to ~460 ms) |
 | `is <selector> visible\|hittable\|enabled\|checked\|selected\|focused` | prints `true` / `false`; exit 0 when true, 1 when false or nothing matches: usable in a shell `if` (`--json`: `{ matched, state, element?, waitedMs, reason? }`) |
 | `get <selector> text\|value\|label\|id\|role\|frame\|count` | print one bare value (`frame` as `x y w h`; `count`: how many match, `0` is a success); no match is `target_not_found` |
 

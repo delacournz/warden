@@ -39,6 +39,7 @@ FPS = plan["fps"]
 OUTRO_AT = plan["outroS"]
 STEPS = plan["steps"]
 PITCH, OUT_OFF, FONT_PX = layout["entryPitch"], layout["outputOffset"], layout["fontPx"]
+LINE_GAP = layout["lineGap"]
 
 title_font = ImageFont.truetype(DISPLAY, 70)
 sub_font = ImageFont.truetype(BODY, 30)
@@ -80,14 +81,23 @@ def check(d: ImageDraw.ImageDraw, cx: int, cy: int) -> None:
     d.line([(cx + px * s, cy + py * s) for px, py in pts], fill=OPEN, width=max(2, round(3 * s)), joint="curve")
 
 
+def entry_height(step: dict) -> int:
+    """Rows a step takes: one pitch, plus a line gap for every `lines` output line past the first."""
+    out = step["output"]
+    extra = max(0, len(out["text"]) - 1) if out["kind"] == "lines" else 0
+    return PITCH + extra * LINE_GAP
+
+
 def frame(bg: Image.Image, t: float) -> Image.Image:
     img = bg.copy()
     d = ImageDraw.Draw(img)
     x0 = 182
     text_w = 1170 - 32 - x0 - 30
     started = [i for i, s in enumerate(STEPS) if t >= s["typeStartS"]]
-    scroll_by = max(0, len(started) - layout["visibleEntries"]) if layout["scroll"] else 0
-    y = BODY_TOP - scroll_by * PITCH
+    scroll_px = 0
+    if layout["scroll"]:
+        scroll_px = max(0, sum(entry_height(STEPS[i]) for i in started) - layout["visibleEntries"] * PITCH)
+    y = BODY_TOP - scroll_px
     cursor = None
     for i, s in enumerate(STEPS):
         if t < s["typeStartS"]:
@@ -105,12 +115,15 @@ def frame(bg: Image.Image, t: float) -> Image.Image:
         out = s["output"]
         if y >= BODY_TOP - 1:
             oy = y + OUT_OFF
-            if out["kind"] == "ok":
+            if out["kind"] == "lines":
+                for k, line in enumerate(out["text"]):
+                    d.text((x0 + 30, oy + k * LINE_GAP), fit(line, mono, text_w), font=mono, fill=MUTED)
+            elif out["kind"] == "ok":
                 check(d, x0 + 30, oy)
                 d.text((x0 + 30 + round(30 * FONT_PX / 25), oy), fit(out["text"], mono, text_w), font=mono, fill=OPEN)
             else:
                 d.text((x0 + 30, oy), fit(out["text"], mono, text_w), font=mono, fill=MUTED)
-        y += PITCH
+        y += entry_height(s)
     if t >= OUTRO_AT:
         note = fit(plan["outro"], mono, text_w)
         d.text((x0, y), note, font=mono, fill=FAINT)

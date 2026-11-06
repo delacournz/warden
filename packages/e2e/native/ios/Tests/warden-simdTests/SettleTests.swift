@@ -96,6 +96,26 @@ final class SettleTests: XCTestCase {
     XCTAssertTrue(stability.observe(b, now: 0.56, quietMs: 250))
   }
 
+  func testSnapshotFallbackWindowOutlastsANavigationPush() {
+    XCTAssertGreaterThan(FrameStability.minQuietMs, 460)
+    XCTAssertEqual(FrameStability.windowMs(quietMs: 0), FrameStability.minQuietMs)
+    XCTAssertEqual(FrameStability.windowMs(quietMs: 250), FrameStability.minQuietMs)
+    XCTAssertEqual(FrameStability.windowMs(quietMs: 900), 900)
+  }
+
+  func testMidPushTreeStillFor460MsIsNotSettled() {
+    var stability = FrameStability()
+    let mixed = Data("both screens".utf8)
+    let pushed = Data("new screen".utf8)
+    let window = FrameStability.windowMs(quietMs: 250)
+    XCTAssertFalse(stability.observe(mixed, now: 0, quietMs: window))
+    XCTAssertFalse(stability.observe(mixed, now: 0.25, quietMs: window))
+    XCTAssertFalse(stability.observe(mixed, now: 0.45, quietMs: window))
+    XCTAssertFalse(stability.observe(pushed, now: 0.46, quietMs: window))
+    XCTAssertFalse(stability.observe(pushed, now: 0.75, quietMs: window))
+    XCTAssertTrue(stability.observe(pushed, now: 0.97, quietMs: window))
+  }
+
   func testCustomThresholds() {
     let quick = SettleJudge(restartAfterMs: 100, fallbackAfterMs: 200)
     XCTAssertEqual(quick.decide(isQuiet: false, stuckForMs: 100, restarted: false), .restartStream)

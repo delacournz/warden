@@ -1,6 +1,8 @@
 import { statSync } from "node:fs";
 import { resolve } from "node:path";
+import { Option } from "@commander-js/extra-typings";
 import type { InstallMode } from "@delacour/warden-core/builds/app-option.schema";
+import { kindHash } from "@delacour/warden-core/builds/cache";
 import { findWardenConfig } from "@delacour/warden-core/builds/config";
 import { type EnsureInput, ensureApp, type ProjectContext } from "@delacour/warden-core/builds/ensure";
 import {
@@ -12,7 +14,8 @@ import {
 	projectRepackers,
 } from "@delacour/warden-core/builds/ensure-kind";
 import { type CacheKey, computeCacheKey } from "@delacour/warden-core/builds/fingerprint";
-import { BUILD_KINDS, type BuildKind } from "@delacour/warden-core/builds/kinds";
+import { kindFingerprints } from "@delacour/warden-core/builds/kind-key";
+import { BUILD_KINDS, type BuildKind, kindlessIsDev } from "@delacour/warden-core/builds/kinds";
 import type { ApplyRepack } from "@delacour/warden-core/builds/repack.types";
 import type { AppPhase, EnsureResult } from "@delacour/warden-core/builds/resolve";
 import { processAlive } from "@delacour/warden-core/liveness";
@@ -225,8 +228,10 @@ export async function prepareApp(
 	}
 	const project = await loadContext(ctx, opts, platform);
 	if (!project.success) return project;
-	// a phone runs a build made for it: without a kind, the release build (the project's kind-less build targets simulators)
-	const kind = opts.kind ?? (phone ? PHYSICAL_APP_KIND : undefined);
+	// a phone runs a build made for it: without a kind, the release build (the project's kind-less build targets simulators);
+	// a kind-less build that is the dev build is that build, under its one key (`app ensure --kind dev` warms `warden dev`)
+	const kind =
+		opts.kind ?? (phone ? PHYSICAL_APP_KIND : kindlessIsDev(project.data.project, platform) ? "dev" : undefined);
 	if (kind !== undefined) return prepareKind(ctx, deps, platform, project.data, kind, opts);
 	const hash = await fingerprint(ctx, project.data, platform);
 	return hash.success ? ok({ project: project.data, hash: hash.data }) : hash;
@@ -461,6 +466,46 @@ async function ensureCmd(
 	return 0;
 }
 
+/** `--kind`: the native fingerprint a kind's build is cached under, and its cache hash (no JS key: release has none). */
+async function kindFingerprint(
+	ctx: CommandContext,
+	project: ProjectContext,
+	platform: Platform,
+	kind: BuildKind
+): AsyncResult<{ nativeFp: string; hash?: string }> {
+	const fps = await kindFingerprints({
+		exec: ctx.exec,
+		project: project.project,
+		platform,
+		kind,
+		env: ctx.env,
+		memo: { store: ctx.store(), now: ctx.now() },
+	});
+	if (!fps.success) return fps;
+	const { nativeFp } = fps.data;
+	log(ctx, `${platform} ${kind} native fingerprint: ${ctx.ui.color.bold(nativeFp)}`);
+	if (kind === "release") return ok({ nativeFp });
+	return ok({ nativeFp, hash: kindHash(kind === "dev" ? { kind, nativeFp } : { kind: "simulator-base", nativeFp }) });
+}
+
+/** One platform's printed fingerprint: the project's cache key, or with `--kind` the kind's native fingerprint + hash. */
+async function platformFingerprint(
+	ctx: CommandContext,
+	project: ProjectContext,
+	platform: Platform,
+	kind: BuildKind | undefined
+): AsyncResult<{ key: string; native?: string; hash?: string }> {
+	if (kind !== undefined) {
+		const fp = await kindFingerprint(ctx, project, platform, kind);
+		return fp.success
+			? ok({ key: fp.data.nativeFp, ...(fp.data.hash !== undefined ? { hash: fp.data.hash } : {}) })
+			: fp;
+	}
+	const hash = await fingerprint(ctx, project, platform);
+	if (!hash.success) return hash;
+	return ok({ key: hash.data.key, ...(hash.data.js !== undefined ? { native: hash.data.native } : {}) });
+}
+
 async function fingerprintCmd(
 	ctx: CommandContext,
 	platformArg: string | undefined,
@@ -473,16 +518,20 @@ async function fingerprintCmd(
 		if (!p.success) return fail(ctx, "fingerprint", p.error);
 		platforms.push(p.data);
 	}
+	const kind = opts.kind === undefined ? undefined : parseKind(opts.kind);
+	if (kind !== undefined && !kind.success) return fail(ctx, "fingerprint", kind.error);
 	const project = await loadContext(ctx, projectOptions(opts), platforms.length === 1 ? platforms[0] : undefined);
 	if (!project.success) return fail(ctx, "fingerprint", project.error);
 	const fingerprints: Partial<Record<Platform, string>> = {};
 	const native: Partial<Record<Platform, string>> = {};
+	const hashes: Partial<Record<Platform, string>> = {};
 	const failed = await withSpinner(ctx, `fingerprinting ${platforms.join(" + ")}…`, async (sctx) => {
 		for (const platform of platforms) {
-			const hash = await fingerprint(sctx, project.data, platform);
-			if (!hash.success) return hash.error;
-			fingerprints[platform] = hash.data.key;
-			if (hash.data.js !== undefined) native[platform] = hash.data.native;
+			const fp = await platformFingerprint(sctx, project.data, platform, kind?.data);
+			if (!fp.success) return fp.error;
+			fingerprints[platform] = fp.data.key;
+			if (fp.data.native !== undefined) native[platform] = fp.data.native;
+			if (fp.data.hash !== undefined) hashes[platform] = fp.data.hash;
 		}
 		return undefined;
 	});
@@ -496,8 +545,10 @@ async function fingerprintCmd(
 			projectKey: project.data.projectKey,
 			root: project.data.project.root,
 			...(project.data.project.variant !== undefined ? { variant: project.data.project.variant } : {}),
+			...(kind !== undefined ? { kind: kind.data } : {}),
 			fingerprints,
 			...(Object.keys(native).length > 0 ? { native } : {}),
+			...(Object.keys(hashes).length > 0 ? { hashes } : {}),
 		},
 		text
 	);
@@ -537,6 +588,12 @@ export function createAppCommand(deps: AppDeps): Command {
 				.option("--project <dir>", "project directory (default: cwd)")
 				.option("--bundle-id <id>", "override the bundle id / package")
 				.option("--variant <name>", "fingerprint this projects[].variants build")
+				.addOption(
+					new Option(
+						"--kind <kind>",
+						"print the native fingerprint this build kind is cached under (simulator: the base `builds import --kind simulator-base` files under)"
+					).choices(BUILD_KINDS)
+				)
 				.option("--json", "machine-readable output")
 				.action(async (platform, opts) => done(await fingerprintCmd(ctx, platform, opts)));
 		},

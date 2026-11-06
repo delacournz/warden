@@ -74,7 +74,7 @@ export function iosDeviceBuildCommand(
 	const xcodebuild = [
 		"RCT_NO_LAUNCH_PACKAGER=1 xcodebuild",
 		'-workspace "$ws"',
-		'-scheme "${ws%.xcworkspace}"',
+		`-scheme "\${ws%.xcworkspace}"`,
 		`-configuration ${configuration}`,
 		"-destination generic/platform=iOS",
 		`-derivedDataPath ${IOS_DEVICE_DERIVED_DATA}`,

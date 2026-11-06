@@ -30,6 +30,26 @@ enum XcodeInfo {
   }
 }
 
+/// What the helper was built with: `manifest.json` beside the executable (`{ version, idb, xcode, builtAt }`, written
+/// by `native/scripts/build.ts`). `health` reports it next to the host's Xcode, so a log shows a toolchain mismatch.
+enum HelperManifest {
+  static func parse(_ data: Data) -> JSON? {
+    guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+    var fields: [String: JSON] = [:]
+    for key in ["version", "idb", "xcode", "builtAt"] {
+      if let value = object[key] as? String { fields[key] = .string(value) }
+    }
+    return fields.isEmpty ? nil : .object(fields)
+  }
+
+  static func load(executable: URL? = Bundle.main.executableURL) -> JSON? {
+    guard let dir = executable?.resolvingSymlinksInPath().deletingLastPathComponent(),
+      let data = try? Data(contentsOf: dir.appendingPathComponent("manifest.json"))
+    else { return nil }
+    return parse(data)
+  }
+}
+
 extension Session {
   /// Fields shared by the `ready` event and `health`.
   func identityFields(bridgeStatus: BridgeStatus, lastFailure: BridgeHealth.Failure? = nil) -> [String: JSON] {
@@ -83,6 +103,14 @@ extension Session {
     var fields = identityFields(bridgeStatus: status, lastFailure: bridgeHealth.lastFailure)
     fields["idb"] = .string(BuildInfo.idb)
     fields["xcode"] = .string(XcodeInfo.describe())
+    if let built = HelperManifest.load() { fields["builtWith"] = built }
+    if let at = frontmostGate.lastUnresolvedAt {
+      fields["frontmost"] = [
+        "unresolvedAgoMs": .int(max(0, Int((ProcessInfo.processInfo.systemUptime - at) * 1000))),
+        "method": .string(frontmostPolicy.method.rawValue),
+      ]
+    }
+    if let recycles = bridgeReaper.healthJSON { fields["bridgeRecycles"] = recycles }
     fields["coreSimulatorVersion"] = coreSimulatorVersion.map(JSON.string) ?? .null
     fields["state"] = .string(Session.describe(simulator.state))
     fields["uptimeMs"] = .int(uptimeMs)

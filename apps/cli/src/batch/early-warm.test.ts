@@ -58,15 +58,17 @@ const held = (...udids: string[]) => ({
 });
 
 describe("startEarlyWarm", () => {
-	test("a leg's devices are warmed the moment they are leased, before anything settles", async () => {
+	test("a leg's warm-up starts the moment it is leased, one device after the other", async () => {
 		const f = fake();
 		f.deps.legCounts = [2];
 		const warm = startEarlyWarm(f.deps);
 		expect(f.started).toEqual([]);
 		warm.leased(held("U1", "U2"), 0);
 		await Bun.sleep(0);
-		expect(f.started.sort()).toEqual(["U1", "U2"]);
+		expect(f.started).toEqual(["U1"]);
 		f.release("U1");
+		await Bun.sleep(0);
+		expect(f.started).toEqual(["U1", "U2"]);
 		f.release("U2");
 		const done = await warm.settled();
 		expect(done.devices.map((d) => [d.worker, d.udid, d.ok])).toEqual([
@@ -97,6 +99,43 @@ describe("startEarlyWarm", () => {
 			"/logs/warm-2.log",
 			"/logs/warm-3.log",
 		]);
+	});
+
+	test("legs leased together still warm one device at a time, in lease order", async () => {
+		const f = fake();
+		f.deps.legCounts = [1, 1, 1];
+		const warm = startEarlyWarm(f.deps);
+		warm.leased(held("A1"), 0);
+		warm.leased(held("B1"), 1);
+		warm.leased(held("C1"), 2);
+		await Bun.sleep(0);
+		expect(f.started).toEqual(["A1"]);
+		f.release("A1");
+		await Bun.sleep(0);
+		expect(f.started).toEqual(["A1", "B1"]);
+		f.release("B1", "fail");
+		await Bun.sleep(0);
+		expect(f.started).toEqual(["A1", "B1", "C1"]);
+		f.release("C1");
+		const done = await warm.settled();
+		expect(done.devices.map((d) => [d.worker, d.ok])).toEqual([
+			[0, true],
+			[1, false],
+			[2, true],
+		]);
+	});
+
+	test("abort ends the queue of legs that have not started", async () => {
+		const f = fake();
+		f.deps.legCounts = [1, 1];
+		const warm = startEarlyWarm(f.deps);
+		warm.leased(held("A1"), 0);
+		warm.leased(held("B1"), 1);
+		await Bun.sleep(0);
+		warm.abort();
+		const done = await warm.settled();
+		expect(f.started).toEqual(["A1"]);
+		expect(done.devices.map((d) => d.ok)).toEqual([false, false]);
 	});
 
 	test("a failed warm-up is a warning in the outcome, not a printed line", async () => {

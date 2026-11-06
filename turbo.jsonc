@@ -105,7 +105,8 @@
 		},
 
 		// changeset-config.test imports apps/cli/scripts/release and reads every workspace
-		// package.json, the changeset config and the workflows; workflows.test reads .github/workflows.
+		// package.json, the changeset config and the workflows; workflows.test reads .github/workflows;
+		// e2e-action.test runs .github/actions/e2e/artifacts.sh and reads its action.yml.
 		"@delacour/warden-release#typecheck": {
 			"dependsOn": ["transit", "@delacour/warden#transit"],
 			"cache": true,
@@ -122,7 +123,8 @@
 				"$TURBO_ROOT$/packages/*/package.json",
 				"$TURBO_ROOT$/scripts/*/package.json",
 				"$TURBO_ROOT$/.changeset/config.json",
-				"$TURBO_ROOT$/.github/workflows/**"
+				"$TURBO_ROOT$/.github/workflows/**",
+				"$TURBO_ROOT$/.github/actions/**"
 			]
 		},
 

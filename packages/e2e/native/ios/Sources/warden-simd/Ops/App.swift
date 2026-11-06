@@ -108,15 +108,20 @@ extension Session {
   /// once, so the next probe compares instead of asking launchd.
   func launch(_ request: LaunchRequest) async throws -> JSON {
     bundlePids.remember(nil, for: request.bundleId)
+    // the first read of a just-launched app is slow on a loaded host: give it the cold deadline (`BridgeWarmth`)
+    bridgeWarmth.markCold()
     let launched = try await simulator.application.launch(request.configuration)
-    bundlePids.remember(launched.processIdentifier, for: request.bundleId)
+    bundlePids.rememberLaunch(launched.processIdentifier, for: request.bundleId)
     return LaunchRequest.reply(pid: launched.processIdentifier)
   }
 
   /// Ends the app's process. A bundle with no running process answers `terminated: false`: either launchd said so
   /// outright, or the kill failed and a lookup afterwards finds no process either.
   func terminate(_ request: TerminateRequest) async throws -> JSON {
-    defer { bundlePids.remember(nil, for: request.bundleId) }
+    defer {
+      bundlePids.remember(nil, for: request.bundleId)
+      bundlePids.forgetLaunch(of: request.bundleId)
+    }
     do {
       try await simulator.application.kill(bundleID: request.bundleId)
     } catch {

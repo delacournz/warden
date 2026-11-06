@@ -1,5 +1,176 @@
 # @delacour/warden
 
+## 0.14.0
+
+### Minor Changes
+
+- [#208](https://github.com/delacournz/warden/pull/208) [`a277f23`](https://github.com/delacournz/warden/commit/a277f23cfb91b85dcf4b5b60028397dc76841526) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - iOS: the first accessibility read after the helper starts, a guest is recycled or an app launches gets a 12 s bridge deadline instead of 4 s, and a stall on it no longer sends the next 20 s of reads to the host `ax` reader (which drops testIDs on static text); a second stall on the same cold guest still does
+  - iOS: `warden-simd` warms its bridge in the background at start and after each launch, and a read that arrives meanwhile waits for that read instead of starting a second slow one
+  - iOS: the driver waits 20 s for a read while the bridge is cold, so it no longer times out before the helper's own deadline
+  - New `WARDEN_SIMD_BRIDGE_COLD_DEADLINE_MS` (default 12000) sets the cold deadline; the driver's cold-read timeout follows it
+
+- [#212](https://github.com/delacournz/warden/pull/212) [`2c6c311`](https://github.com/delacournz/warden/commit/2c6c3112ef7ac33cfd18a5f59a04e19505a15202) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - On an iOS read that fell back from the bridge to host `ax`, a plain `getByTestId` whose React component has the same rect as a node on that read now resolves to that node: `text()`, `read()`, `allTexts()`, `toHaveText`, `toContainText`, `isVisible()`, `tap({ until })` and every action work as on a whole read, instead of failing `READ_DEGRADED` or `NOT_ACTIONABLE`.
+  - A component host `ax` does not show at all (a plain View) answers `text()`, `read().text`, `allTexts()`, `toHaveText` and `toContainText` from the text it renders in the React tree.
+
+### Patch Changes
+
+- [#213](https://github.com/delacournz/warden/pull/213) [`01a1675`](https://github.com/delacournz/warden/commit/01a1675c15cc3ee50ad1836a278725844a4523f0) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - iOS: a read that leaves the in-sim accessibility bridge now says why in the run's evidence: `results.jsonl` gets a `bridge` field (`fallbacks`, plus the `first` and `last` such read with their reason or error code), the `driver.snapshot` span in `trace.jsonl` carries the stall (`stallStage` `connect` / `read` / `warm-up` / `cooldown`, `stallReadMs` against `stallDeadlineMs`, `stallCold`, `stallGuestAgeMs`, `stallCooldownMs`, `stallProbes`), and `screen-at-failure.txt` notes on its second line that the tree was read on `ax` after a stall
+
+- [#207](https://github.com/delacournz/warden/pull/207) [`4f92d77`](https://github.com/delacournz/warden/commit/4f92d771ccde66585cc908099a8b0955ae48fc5c) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - A spec read that fell back from the iOS bridge to host `ax` (or came back as an empty root) no longer counts a missing node as absent: `toBeHidden`, `.not.toBeVisible`, `toHaveCount(0)`, `waitFor({ state: "hidden" | "detached" })` and `isHidden()` keep polling instead of passing vacuously.
+  - A plain `getByTestId` on such a read asks the React tree first when the app has devtools, and uses its presence and rect.
+  - New error code `READ_DEGRADED` when nothing could confirm the locator before the timeout; the message names `fellBackFrom` and the read backend.
+
+- [#211](https://github.com/delacournz/warden/pull/211) [`657fc3f`](https://github.com/delacournz/warden/commit/657fc3fcc83ca6539939bf18d4b1a9abab41f1fd) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - iOS: while the accessibility bridge is skipped after a stall, `warden-simd` checks it in the background with one cheap hit-test (1.5 s deadline, at most every 5 s) and goes back to it as soon as it answers, instead of after the full 20 s; a silent check keeps reads on `ax` so no read pays the 4 s bridge deadline again
+  - iOS: a spec look that fell back to `ax` is returned at once instead of waiting up to 4 s on a second read through a silent bridge; the next look is back on `axbridge` once the check saw it answer
+  - iOS: a read that asks for `backend: "axbridge"` during the skip waits only for the background check, then fails with `E_TIMEOUT` if the bridge is still silent
+  - iOS: a cold guest whose background warm-up stalled is used again once the check sees it answer, instead of staying on `ax` until the next launch
+
+- [#206](https://github.com/delacournz/warden/pull/206) [`b1121d2`](https://github.com/delacournz/warden/commit/b1121d2ddb129021a6988f4a22da66089e6d6a4b) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - iPhone runner: an accessibility refusal during a `snapshot` (`kAXError…`, "Failed to get matching snapshot") no longer ends the runner; the read is retried once on the phone, then answered `E_AX_UNAVAILABLE` (retryable).
+  - iPhone runner: an op that holds XCUITest past its timeout is answered `E_TIMEOUT` (`detail.stage: "deadline"`) instead of hanging the runner; until it returns, other ops answer `E_TIMEOUT` (`detail.stage: "busy"`) at once and `health` reports `state: "busy"`.
+  - iPhone and simulator helpers: an element XCUITest cannot place (a null or infinite frame) is a zero-area, not hittable element, and a non-finite number is `null` on the wire, instead of failing the whole reply.
+
+- [#214](https://github.com/delacournz/warden/pull/214) [`6c9f267`](https://github.com/delacournz/warden/commit/6c9f2673886b78d7a8f6c34dbcc1725412a898f0) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - iOS: when the accessibility bridge stalls after it had already answered, `warden-simd` ends the stuck guest so the next read starts on a fresh one with the cold first-read deadline (at most 3 times per helper, then the background check alone brings it back)
+  - iOS: the background check of a silent bridge backs off (every 5 s, doubling up to 30 s) and gets the cold deadline on a guest that is starting again, so a slow host can bring the bridge back instead of staying on `ax` for good; while it stays silent reads stay on `ax` without restarting the 20 s skip
+  - iOS: bridge stall evidence (`results.jsonl` `bridge`, the `driver.snapshot` span's `stallRecycles` / `stallRecyclesExhausted`, `screen-at-failure.txt`) names how many stalled guests the helper had recycled and whether it had any left
+
+- [#209](https://github.com/delacournz/warden/pull/209) [`fda83f9`](https://github.com/delacournz/warden/commit/fda83f9306e0a03d88602b3fd4deb0fa677d15e9) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - iOS `device.settle()` fallbacks (`via: "snapshot"` and `via: "hash"`) now wait for at least 500 ms of unchanged screen, whatever `quietMs` asks: a navigation push shows both screens at their final frames for 300-460 ms, and the old 250 ms window could settle on that mixed tree.
+- Updated dependencies []:
+  - @delacour/warden-e2e@0.14.0
+
+## 0.13.0
+
+### Minor Changes
+
+- [#202](https://github.com/delacournz/warden/pull/202) [`bd0848d`](https://github.com/delacournz/warden/commit/bd0848dcc5fc0947b155d6c80ce2e22ac8a1ff1b) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - Host-spec limits are now off by default (changed default, hence minor): a claim boots the devices it asks for, with no RAM/CPU budget, no boot queue, no memory-pressure hold, and a `--max` that is not given no longer defaults to cores / 4 (the pool is uncapped). Opt back in with `WARDEN_CAPACITY=on` (`1` / `true` / `yes`); then the budget, queue and defaulted `--max` work as before. A `--max` you pass or set in config always holds. In CI (`CI=true` / `1` or `GITHUB_ACTIONS=true`) the RAM headroom defaults to 0 when limits are on, so a 7 GB runner no longer ends up with a 0 MB budget; `WARDEN_CAPACITY_HEADROOM_GB` still wins. `WARDEN_CAPACITY=off` is still accepted and is the default. `warden capacity` and `warden queue` still show the numbers and now say whether limits are enforced (`enforced` in `--json`; `capacity --json` keeps `enabled` as the same value). The `WARDEN_WARM=1` warm pool is no longer capped by the host budget unless limits are on.
+
+- [#203](https://github.com/delacournz/warden/pull/203) [`e011293`](https://github.com/delacournz/warden/commit/e0112939e0be432962c9ff3c91adb3af3258a0d9) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - New `warden ci cache --json` prints the cache groups a CI job saves between runs (`builds`, `repack`, `golden`): each key, its paths, and for the golden the `warden golden import` / `export --allow-unsettled` commands to run around it. Flags: `--project`, `--prefix`, `--profile`, `--js-input`, `--golden-dir`
+  - The e2e GitHub Action gains `cache: github|none` and a `cache-groups` output: `none` skips `actions/cache` and the golden export but still imports the golden, so any cache (a Namespace volume, another CI) can store the listed paths
+
+- [#203](https://github.com/delacournz/warden/pull/203) [`e011293`](https://github.com/delacournz/warden/commit/e0112939e0be432962c9ff3c91adb3af3258a0d9) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - `warden golden export --allow-unsettled` exports a golden whose first boot never settled (`"unsettled": true` in `--json`), so a CI runner too small to settle one caches it instead of building it on every run. Without the flag the refusal now names it.
+  - A simulator base, repack, dev or release build whose files a CI cache restored without `warden.db` is registered on first use (`"source": "restored"` in `warden builds --json`) instead of being rebuilt.
+  - Builds are moved into the cache from a staging dir, so an interrupted copy never leaves a half-written build behind.
+
+- [#215](https://github.com/delacournz/warden/pull/215) [`ee1398f`](https://github.com/delacournz/warden/commit/ee1398ff6d53959e2d38b28b2c1d848bb836205a) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - The e2e GitHub Action collects what a run leaves behind into artifact groups, `report`, `batches`, `logs` (native build logs), `app` (a tarball of the builds the run used) and `golden` (a tarball of the golden simulator archive, for `warden golden import`), and uploads each as `<artifact-name>-<group>`. The report and batches, one `warden-e2e` artifact before, are now `warden-e2e-report` and `warden-e2e-batches`
+  - New `artifacts` input: `all` (default: every group after a green run, `report,batches,golden` after a failed one), `none`, or a list of groups. The golden is exported only when it was built and is not in `~/warden-goldens` yet, never built to upload it
+  - New `upload-artifacts` input: `false` collects without uploading. New outputs `artifact-groups` and `artifact-paths` (`{group: [path]}`) for uploading with your own steps
+
+- [#199](https://github.com/delacournz/warden/pull/199) [`78878ac`](https://github.com/delacournz/warden/commit/78878ac3d752da069febd38b8dfa28bbc49d7b11) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - An `e2e.<suite>` can pin the iOS simulator runtime with `runtime` (`latest`, `iOS-26-5` or `26.5`), and `warden e2e --runtime <runtime>` overrides it. The run's devices and the golden they clone are the ones for that runtime, so `warden golden key --profile <p> --runtime <r>` names the archive the run uses. A runtime that is not installed fails the run before any claim, listing the installed runtimes, instead of falling back to another. `warden e2e`, `claim` and `batch` now also reuse an existing pool simulator when the runtime is given as a version (`26.5`, `27.0`), which only matched the `iOS-26-5` spelling before.
+
+- [#200](https://github.com/delacournz/warden/pull/200) [`666de1c`](https://github.com/delacournz/warden/commit/666de1c0c76c64aaa0f50ddffb39efd9dff21f8d) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - `@delacour/warden-e2e` exports `run(command, options?)`: runs a shell string (`sh -c`) or an argv on the host from a spec and resolves `{ ok, exitCode, stdout, stderr, ms, json() }`, so a spec can seed a backend or call a script without importing from `bun`. Options `cwd`, `env`, `input`, `timeout` (default `60s`, then `TIMEOUT`) and `check` (default true).
+  - New `E2eError` code `RUN_FAILED`: a `run` command exited non-zero or could not start.
+
+### Patch Changes
+
+- [#205](https://github.com/delacournz/warden/pull/205) [`d3b09fc`](https://github.com/delacournz/warden/commit/d3b09fc4edbb935b184570926b6ddf2a397a4fa5) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - iOS reads that fell back to the host `ax` reader after an `axbridge` stall are read again on `axbridge`, so `getByTestId` on static text (which `ax` drops) still matches on slow CI runners; a guest that stays silent is retried at most every 5 s
+
+- [#203](https://github.com/delacournz/warden/pull/203) [`e011293`](https://github.com/delacournz/warden/commit/e0112939e0be432962c9ff3c91adb3af3258a0d9) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - `warden builds import --kind simulator-base` warns when the `.app` has no `application-identifier` entitlement (an app built with `CODE_SIGNING_ALLOWED=NO`, whose Keychain calls fail with `errSecMissingEntitlement` / -34018 in the simulator) and says to build with `CODE_SIGN_IDENTITY=-`; `--json` gains `applicationIdentifier`.
+  - The driver warm-up waits for `simctl bootstatus` before it starts a device's helper, so a golden clone that is still booting no longer answers the first snapshots with silence.
+  - Driver warm-up of separate `devices` legs runs one leg after the other, as the devices of one leg already did, instead of every leg at once.
+  - A host too small for one device (a 7 GB CI runner, where the 8 GB headroom leaves no budget) admits a lone claim while nothing else is booted, instead of queueing it for the whole `--wait`.
+
+- [#216](https://github.com/delacournz/warden/pull/216) [`41b5f97`](https://github.com/delacournz/warden/commit/41b5f97f54b71d8d0d14dc68c8e5322ec78e9cd1) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - `warden doctor --fetch-helper` downloads nothing when a `warden-simd` the driver picks first is already there (`WARDEN_SIMD`, `WARDEN_HELPER_DIR`, one next to the binary, a source build), and says where; `--json` reports `helperFetch.status` `present` or `fetched`.
+  - Run from a checkout whose version has no release yet (a version-bump branch), `warden doctor --fetch-helper` takes the latest release's helper with a warning instead of failing on a missing `SHA256SUMS`.
+
+- [#203](https://github.com/delacournz/warden/pull/203) [`e011293`](https://github.com/delacournz/warden/commit/e0112939e0be432962c9ff3c91adb3af3258a0d9) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - `warden e2e` / `warden batch` no longer trust `--serve-ready` when their own `--serve` died: a serve that exits before ready (a stale server held its port and answered the check) fails the run with `serve exited (N) before ready` and the serve log tail, a serve that exits mid-run kills the jobs and fails the run with `serve exited (N) during the run`, and a `--serve-ready` that already answers before serve starts warns `something is already listening on PORT`.
+
+- [#201](https://github.com/delacournz/warden/pull/201) [`b0a943b`](https://github.com/delacournz/warden/commit/b0a943b2c0459752a6b955ce0643c05a2cc5498a) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - The `serve` of an e2e suite is documented as one process per run: started before the first spec and stopped after the last, shared by every device, leg, retry, `passes` repeat and shard, and never restarted. Specs must isolate their own state in it (for example a unique user per test). A test suite now holds `warden e2e` to this for `count`, `isolate`, `retry`, `passes`, `--devices`, a failing run and SIGINT.
+
+- [#203](https://github.com/delacournz/warden/pull/203) [`e011293`](https://github.com/delacournz/warden/commit/e0112939e0be432962c9ff3c91adb3af3258a0d9) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - `warden e2e`, `warden ui` and the specs find the `warden-simd` that `warden doctor --fetch-helper` staged under `$WARDEN_HOME/simd/<version>`. Before, a release binary with the helper fetched there (not next to it) failed every run with `E_HELPER_MISSING: warden-simd not found`.
+  - A native fingerprint command that exits cleanly but prints nothing (seen on a loaded CI runner) is run once more; if it is still empty the error names the command, its directory and stderr, not `(empty)` alone.
+  - Spec processes only get `WARDEN_HELPER_DIR` when `warden-simd` is in that directory. A directory without it (a release binary whose helper `doctor --fetch-helper` staged under `$WARDEN_HOME`, a checkout that never built it) made every spec fail with `E_HELPER_MISSING` instead of falling through to the staged copy.
+
+- [#196](https://github.com/delacournz/warden/pull/196) [`d5e7d04`](https://github.com/delacournz/warden/commit/d5e7d04d2fbab57ba75a41ebb9d5ec84c6e8ae0a) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - Driver warm-up retries a device's first snapshot with backoff (2 s after the first failure, then 5 s) until the 2 min per-device budget is spent, instead of giving up after one try, and warms devices one after the other instead of all at once. On a loaded host the in-sim bridge can stay silent longer than a single snapshot, which left devices cold and failed each device's first spec; warming several at once made that worse. Each failed try is logged to `warm-<n>.log`.
+- Updated dependencies [[`094a1a9`](https://github.com/delacournz/warden/commit/094a1a9f1fac176aea617473ce0240526b4baa97), [`e011293`](https://github.com/delacournz/warden/commit/e0112939e0be432962c9ff3c91adb3af3258a0d9)]:
+  - @delacour/warden-e2e@0.13.0
+
+## 0.12.1
+
+### Patch Changes
+
+- [#193](https://github.com/delacournz/warden/pull/193) [`b0b992b`](https://github.com/delacournz/warden/commit/b0b992b802e68e5e6da6b14620cda760595d1a7a) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - A simulator repack is now valid only for the base it was cloned from. After `warden builds import --kind simulator-base` replaces the base under the same native fingerprint (a CI build with another signature or entitlements), `warden repack` and `warden e2e` repack instead of installing a repack of the old base. `warden repack --json` reports `reason: "base-changed"` when it does, and devices reinstall the new repack. A repack made by an older warden is rebuilt once (`reason: "base-unrecorded"`).
+- Updated dependencies []:
+  - @delacour/warden-e2e@0.12.1
+
+## 0.12.0
+
+### Minor Changes
+
+- [#189](https://github.com/delacournz/warden/pull/189) [`87f4caf`](https://github.com/delacournz/warden/commit/87f4caf773c0f173cdb1a2f5ca7781d5cc64f2f8) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - `warden e2e` prints a tail of the app's native log (at most 20 lines, errors and faults first, unresolved `<compose failure>` lines skipped) under a failed test; the full `native.log` stays in the evidence folder.
+  - iOS `native.log` now includes info and debug lines, and warden makes sure the simulator keeps private values readable (`log config --mode private_data:on`) before the app runs. `WARDEN_NATIVE_LOG_PRIVATE=0` opts out.
+  - A `native.log` whose messages mostly could not be resolved (`<compose failure>`) is noted in the trace as `native log: N of M messages unresolved`.
+
+### Patch Changes
+
+- [#192](https://github.com/delacournz/warden/pull/192) [`8813a2b`](https://github.com/delacournz/warden/commit/8813a2ba9850559ea1e09ea204bde422b3126ff8) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - Building an iOS golden simulator writes `AutomationEnabled` into the shut-down golden's plist on the host instead of running `simctl spawn defaults write` in the booted sim. The in-sim write timed out on the iOS 27 runtime on CI, which failed `warden golden export` and made `warden claim` fall back from a clone to a fresh boot. Existing recipe-2 goldens are still reused.
+- Updated dependencies []:
+  - @delacour/warden-e2e@0.12.0
+
+## 0.11.0
+
+### Minor Changes
+
+- [#185](https://github.com/delacournz/warden/pull/185) [`1451eae`](https://github.com/delacournz/warden/commit/1451eaed5f9cbf71bcfb6e9bbb45485b46c2ca42) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - Anonymous usage telemetry, on by default. One `command` event per run: the command (`ui press`, `e2e`), the names (never the values) of the flags you typed, `--json`, `ios` or `android`, how many suites `e2e` was asked for, how it ended, how long it took, the exit code and the class name of an error. Never source, paths, suite or test names, bundle ids, UDIDs, URLs or error messages. The first run prints a notice to stderr (held back under `--quiet`); stdout and `--json` are never touched. `hook`, `heartbeat`, `version`, completion and background workers send nothing; `dev` and `mcp` report when they start.
+  - `warden telemetry [status|enable|disable] [--json]` shows or switches it. `WARDEN_TELEMETRY_DISABLED=1`, `DELACOUR_TELEMETRY_DISABLED=1` or `DO_NOT_TRACK=1` turn it off and win over `enable`; `DELACOUR_TELEMETRY_DEBUG=1` prints the request to stderr instead of sending it. Dev and local builds never report. What is sent: [CLI reference](https://warden.co.nz/docs/reference/cli#telemetry).
+
+### Patch Changes
+
+- [#178](https://github.com/delacournz/warden/pull/178) [`0326eb2`](https://github.com/delacournz/warden/commit/0326eb2740b8520d02666b9f89b0572a8c3c80ff) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - iOS e2e and `warden ui`: when the native `settle` cannot bind the simulator's AX observer (`E_AX_UNAVAILABLE`, `AXObserverAddNotification(4002) failed with AX error -25204 (kAXErrorCannotComplete)`, seen on GitHub-hosted `xcode-27` runners while snapshots read fine by pid), that settle polls snapshot hashes instead of failing the step. After two in a row the session stops asking the helper's settle (each try cost about 3 s), with one log line. A native settle that works in between resets the count. The settle span records `nativeError: "E_AX_UNAVAILABLE"` and `via: "hash"`.
+- Updated dependencies []:
+  - @delacour/warden-e2e@0.11.0
+
+## 0.10.0
+
+### Minor Changes
+
+- [#176](https://github.com/delacournz/warden/pull/176) [`8690beb`](https://github.com/delacournz/warden/commit/8690beb4f61b42ba2cfa8786c54e47217d8197c7) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - `warden e2e` under GitHub Actions annotates each failed test on its spec file at the line it failed (`::error`, `::warning` for an optional spec) and appends a table of failed tests to the job's step summary
+  - `warden e2e --json-lines` streams NDJSON on stdout: a `test` event as each test finishes, then a `report` event with the whole report
+  - `warden e2e` ends with test totals, the error most failed tests share, and where the evidence is
+  - `e2e-report.json`: a failed test carries `line`, where it failed in the spec
+
+- [#171](https://github.com/delacournz/warden/pull/171) [`4b17786`](https://github.com/delacournz/warden/commit/4b177863f4a284806f93475eb3b08fc31f8bd96b) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - iOS e2e and `warden ui`: when the simulator cannot name its frontmost app (seen on GitHub-hosted `macos-26` runners: every snapshot failed with `The simulator's accessibility service did not answer a frontmost request` or `named no frontmost application` while the app drew fine), snapshots are read by pid instead: the app warden launched, else SpringBoard. Before, the host fallback asked the same lookup and failed too.
+  - New `WARDEN_SIMD_FRONTMOST_COOLDOWN_S` (default 20, `0` always asks first) sets how long snapshots skip the frontmost lookup after it failed (doubling while it keeps failing, up to 5 min), and `WARDEN_SIMD_FRONTMOST_METHOD` (`window-server` default, `running-board`, `center-point`) sets how the in-sim bridge finds the frontmost app. On GitHub-hosted `macos-26` runners `running-board` makes the first read fast.
+  - These accessibility failures are now retryable `E_TIMEOUT` / `E_AX_UNAVAILABLE` instead of `E_INTERNAL`, so a locator keeps polling.
+  - `trace.jsonl`: every `driver.snapshot` span names its reader (`backend`). A pid read adds `targetPid` / `targetSource`. A failed snapshot records both readers' errors (`bridgeError`, `axError`, `axReason`) and the helper's state once per failure run: `bridge`, `bridgeLastError`, `hostXcode`, `helperXcode`, `coreSimulator`.
+
+### Patch Changes
+
+- [#172](https://github.com/delacournz/warden/pull/172) [`a708b7b`](https://github.com/delacournz/warden/commit/a708b7be434f90456672323311b31729066b9565) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - `warden dev` dashboard: a running row spins and counts its time up, and the session row is a green dot with the session's age.
+  - The selected row is a highlight bar while the list has focus; the right side's first line names the row, its state (`running 12s`, `✓ done 1.3s`, `✗ failed`) and how far the log is scrolled.
+  - When a key's row finishes (`s`, `R`, `M` …) the footer shows its outcome for 3 seconds; the header shows `✗ metro exited (<code>)` once Metro dies.
+  - The `?` overlay groups warden's keys under navigate, app & device, Metro and perf, and the list footer names `r`, `s`, `M` and `p` while they fit.
+
+- [#173](https://github.com/delacournz/warden/pull/173) [`1f8f46c`](https://github.com/delacournz/warden/commit/1f8f46c1b42fe7026c9092384a9e6f1d2973389a) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - iOS goldens: a build is promoted only when `AutomationEnabled` is on disk in the shut-down golden's Accessibility preferences. The in-sim `defaults write` can exit 0 before it is flushed. A golden already on the machine without it is deleted and rebuilt, and `warden golden import` skips an archive without it.
+  - `warden golden export` refuses (exit 1) a golden that was still busy when its first boot's settle wait ran out (`not settled after 300s … using it anyway`). That golden stays usable on the machine, but a CI cache no longer carries it to every later run. The mark lives in the golden's device dir, so an export in a later process sees it too.
+
+- [#167](https://github.com/delacournz/warden/pull/167) [`48fad71`](https://github.com/delacournz/warden/commit/48fad7171aa295db5d8fb5355223e4d6c600a85e) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - `@delacour/warden` and its platform packages now link to [warden.co.nz](https://warden.co.nz) as their npm homepage, and `@delacour/warden-e2e` links to the e2e docs.
+
+- [#170](https://github.com/delacournz/warden/pull/170) [`f1742de`](https://github.com/delacournz/warden/commit/f1742dee3abc5a0dc76a3166329ad845cc9c8237) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - The `@delacour/warden` and `@delacour/warden-e2e` npm pages carry descriptions and keywords for iOS simulators, Android emulators, AI coding agents and React Native / Expo e2e testing, so npm search finds them.
+- Updated dependencies []:
+  - @delacour/warden-e2e@0.10.0
+
+## 0.9.0
+
+### Minor Changes
+
+- [#154](https://github.com/delacournz/warden/pull/154) [`323dff6`](https://github.com/delacournz/warden/commit/323dff6c00776b61f1606cbb9c230ee1f09b0858) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - `warden builds import <App.app> --kind simulator-base [--hash <nativeFp>]`: file a Release simulator `.app` built by another CI job as the base `warden e2e` / `warden repack` clone, so a fresh runner repacks its JS in seconds instead of building the native app again. The hash defaults to warden's own fingerprint of the project. The import refuses a device build, an `.app` without a slice for this Mac, another bundle id, a Debug or expo-dev-client build, and an executable that lost its mode bits; an embedded `main.jsbundle` is left out of the cached copy (`strippedBundle` in `--json`). `--hash` is now optional with `--kind`.
+  - `warden app fingerprint [platform] --kind dev|simulator|release`: print the native fingerprint that kind's build is cached under, plus its cache hash (`hashes` in `--json`, `<fp>:base` for the simulator base).
+  - `warden golden key | export <dir> | import <dir>` (iOS): carry the golden image between machines through a CI cache. `key` prints the golden's name (Xcode build, runtime build, device type and recipe), `export` copies the golden into `<dir>/<name>/`, and `import` registers each archive that matches this machine through `simctl create`, with no CoreSimulator restart. A stale, broken or missing archive is skipped with the reason and the golden is built on first claim as before.
+
+- [#153](https://github.com/delacournz/warden/pull/153) [`ca36e38`](https://github.com/delacournz/warden/commit/ca36e38edea7da8e0173e8291a42ba2d629b18d0) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - iOS e2e and `warden ui`: when the simulator's accessibility bridge stops answering, a `snapshot` no longer times out after 10 s with `E_TIMEOUT`. The read moves to the host accessibility reader after 4 s, the next reads go straight there, and the bridge is asked again 20 s later. Seen on GitHub-hosted `macos-26` runners (3 vCPU), where every spec failed `did not become visible` and the warm-up logged `not warm: snapshot failed: E_TIMEOUT`.
+  - iOS `app.launch` waits up to 10 s (was 3 s) for the helper to follow the new process before the first read; it still returns as soon as it does. Launch spans on a slow host no longer show `rebind: "timeout"` on every launch.
+  - New `WARDEN_SIMD_BRIDGE_DEADLINE_MS` (default 4000, `0` turns the deadline off) and `WARDEN_SIMD_BRIDGE_COOLDOWN_S` (default 20, `0` never skips the bridge) tune it.
+  - The `driver.snapshot` span in `trace.jsonl` now carries `backend` and `fallback` when a read did not come from the bridge, so a CI run shows why.
+
+### Patch Changes
+
+- [#148](https://github.com/delacournz/warden/pull/148) [`7844304`](https://github.com/delacournz/warden/commit/7844304079e81c562043f32bec2ad8a27353e7b1) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - Simulated camera on iOS simulators: a video recording stopped before the encoder took its first frame (a short take, or any take on a busy host) no longer fails with "The operation could not be completed"; the recording holds the frame it started on.
+
+- [#152](https://github.com/delacournz/warden/pull/152) [`36586e8`](https://github.com/delacournz/warden/commit/36586e8f6c685da303b1466f9b46d8762b3ae411) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - `warden app ensure --kind dev` now warms the cache `warden dev` reads: one dev build per native fingerprint, keyed `<fingerprint>:dev`, shared by `warden dev`, `warden app ensure` (with or without `--kind dev`), `run|batch --app`, `warden ui open` and `warden e2e --dev`. Before, `warden dev` missed a build `app ensure --kind dev` had made and built its own copy.
+  - A dev build cached by an earlier warden under the plain `<fingerprint>` key (or found in a legacy cache dir) is reused as that build, and a device it is already installed on is not reinstalled: no rebuild after upgrading.
+  - Applies when the project's own build is the dev build (Debug, default or identical `build` command, no variant, no `fingerprint.include: "native+js"`, no `kinds.dev.env`); other projects keep their kind-less build as before. `warden app ensure` with no `--kind` reports `hash: "<fingerprint>:dev"` and `kind: "dev"` in `--json` for such projects.
+- Updated dependencies []:
+  - @delacour/warden-e2e@0.9.0
+
 ## 0.8.0
 
 ### Minor Changes
