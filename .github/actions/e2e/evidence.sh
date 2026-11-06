@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Prints each failed spec's screen-at-failure.txt into the job log, one collapsible group per file.
 set -uo pipefail
+echo "::group::busiest processes"
+ps -Ao pid,pcpu,etime,command -r | head -12 | cut -c1-200
+echo "::endgroup::"
 batches="$HOME/.warden/batches"
 if [ ! -d "$batches" ]; then echo "no batch directory at $batches"; exit 0; fi
 found=0
