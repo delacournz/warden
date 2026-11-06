@@ -26,7 +26,7 @@ on:
         type: string
         default: ""
       count:
-        description: Simulators in parallel (empty = 2)
+        description: Simulators in parallel (empty = 1)
         type: string
         default: ""
       retry:
@@ -140,8 +140,8 @@ jobs:
         with:
           working-directory: apps/example
           suite: example
-          # 12 cores / 28 GB (mac-medium): two golden clones boot side by side and split the specs.
-          count: ${{ inputs.count || '2' }}
+          # 1 until the iOS accessibility bridge stops stalling on a second sim (count 2 stalled the second sim's warm-up).
+          count: ${{ inputs.count || '1' }}
           retry: ${{ inputs.retry || '1' }}
           args: ${{ github.event_name == 'workflow_dispatch' && inputs.args || '--specs onboarding,settings,sign-in' }}
           warden-version: ${{ (inputs.warden-version || 'source') == 'source' && 'none' || inputs.warden-version }}
