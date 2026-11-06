@@ -140,12 +140,26 @@ jobs:
             xcrun simctl spawn "$udid" log show --last 45m --style compact --predicate 'subsystem CONTAINS[c] "accessibility" OR process == "SpringBoard" OR process == "backboardd" OR process == "CoreSimulatorBridge" OR process CONTAINS[c] "SimulatorFrameworkBridge"' > "$out/axlog-$udid.txt" 2>&1
             echo "== probe before" > "$out/probe-$udid.txt"
             perl -e "alarm 40; exec @ARGV" "$simd" --health --udid "$udid" >> "$out/probe-$udid.txt" 2>&1
-            sb=$(awk '/SpringBoard.app\/SpringBoard/ {print $1}' "$out/children-$udid.txt" | head -1)
-            echo "== kill SpringBoard $sb $(date -u +%T)" >> "$out/probe-$udid.txt"
-            [ -n "$sb" ] && kill -9 "$sb"
-            sleep 20
-            echo "== probe after $(date -u +%T)" >> "$out/probe-$udid.txt"
+            grep -q '"bridge":"failed"' "$out/probe-$udid.txt" || continue
+            pkill -9 -f "warden-simd.*$udid"
+            for g in $(ps -axo pid=,ppid=,args= | awk -v p="$lp" '$2==p && /SimulatorFrameworkBridge/ {print $1}'); do kill -9 "$g"; done
+            sleep 5
+            echo "== probe after killing guests+helper $(date -u +%T)" >> "$out/probe-$udid.txt"
             perl -e "alarm 40; exec @ARGV" "$simd" --health --udid "$udid" >> "$out/probe-$udid.txt" 2>&1
+            bb=$(ps -axo pid=,ppid=,args= | awk -v p="$lp" '$2==p && /\/backboardd/ {print $1}' | head -1)
+            echo "== kill backboardd $bb $(date -u +%T)" >> "$out/probe-$udid.txt"
+            [ -n "$bb" ] && kill -9 "$bb"
+            sleep 30
+            echo "== probe after backboardd $(date -u +%T)" >> "$out/probe-$udid.txt"
+            perl -e "alarm 40; exec @ARGV" "$simd" --health --udid "$udid" >> "$out/probe-$udid.txt" 2>&1
+            echo "== reboot $(date -u +%T)" >> "$out/probe-$udid.txt"
+            xcrun simctl shutdown "$udid" >> "$out/probe-$udid.txt" 2>&1
+            xcrun simctl boot "$udid" >> "$out/probe-$udid.txt" 2>&1
+            perl -e "alarm 120; exec @ARGV" xcrun simctl bootstatus "$udid" -b > /dev/null 2>&1
+            sleep 10
+            echo "== probe after reboot $(date -u +%T)" >> "$out/probe-$udid.txt"
+            perl -e "alarm 40; exec @ARGV" "$simd" --health --udid "$udid" >> "$out/probe-$udid.txt" 2>&1
+            xcrun simctl spawn "$udid" log show --last 5m --style compact --predicate 'eventMessage CONTAINS "auto-register for pid"' > "$out/axlog-after-reboot-$udid.txt" 2>&1
           done
           ls -la "$out"
       - name: Upload diag
