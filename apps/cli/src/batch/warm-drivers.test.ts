@@ -385,6 +385,33 @@ describe("warmDrivers: a wedged accessibility service", () => {
 		expect(log).toContain("snapshot ok");
 	});
 
+	test("a try that failed fast (no timeout) never asks to recover: a fresh home screen names no frontmost app", async () => {
+		const f = fixture(undefined, { autoRetry: true });
+		let n = 0;
+		const one = fake(
+			"U0",
+			async () => {
+				n++;
+				return n < 3
+					? err("E_AX_UNAVAILABLE: The simulator's accessibility service named no frontmost application")
+					: ok(null);
+			},
+			{ stoppable: true }
+		);
+		let recovers = 0;
+		const helper: WarmHelper = {
+			...one.helper,
+			recover: async () => {
+				recovers++;
+				return { kind: "recovered", note: "restarted backboardd" };
+			},
+		};
+		const out = await warmDrivers(f.run, { connect: async (udid) => ok(udid === "U0" ? helper : fake(udid).helper) });
+		expect(out.devices[0]).toMatchObject({ ok: true });
+		expect(out.devices[0]?.axRecovery).toBeUndefined();
+		expect(recovers).toBe(0);
+	});
+
 	test("a service that is not wedged keeps retrying the same helper", async () => {
 		const f = fixture(undefined, { autoRetry: true });
 		let n = 0;

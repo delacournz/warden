@@ -16,8 +16,8 @@ export type WarmHelper = {
 	 */
 	stop?: () => Promise<void>;
 	/**
-	 * clear a wedged in-sim accessibility service (see `e2e/ax-wedge`): asked after each failed snapshot from the second
-	 * on, until one recovers (at most one recovery per device). `recovered` means the device's UI stack was restarted
+	 * clear a wedged in-sim accessibility service (see `e2e/ax-wedge`): asked after each snapshot that timed out, until
+	 * one recovers (at most one recovery per device). `recovered` means the device's UI stack was restarted
 	 * and this helper stopped, so the warm loop connects a fresh one; `not-wedged` / `failed` leave this helper in use
 	 */
 	recover?: () => Promise<WarmRecovery>;
@@ -126,6 +126,13 @@ function pause(run: WarmRun, ms: number, stop: AbortSignal): Promise<boolean> {
  */
 const RECOVER_FROM_TRY = 1;
 
+/**
+ * A wedged accessibility service shows only as reads that time out (`E_TIMEOUT`, `did not answer within …`). A try
+ * that failed fast (a fresh home screen names no frontmost app) never asks to recover: the sim log can carry the
+ * wedge marker on a sim that still answers, and a needless restart quits the app.
+ */
+const TIMED_OUT = /E_TIMEOUT|did not answer within/;
+
 /** The helper in use, whether the device was recovered already (one recovery per device) and what became of it. */
 type Recovering = { helper: WarmHelper; recovered: boolean; record?: AxRecoveryRecord };
 
@@ -174,8 +181,8 @@ async function recoverOnce(
 
 /**
  * Snapshot with backoff until one succeeds or the budget or `stop` ends it (the last error). The budget counts the
- * clock and, as a floor, the time slept, so a clock that stands still cannot retry forever. After each failed try
- * the helper may recover a wedged device (once), after which the loop carries on with the helper it reconnected.
+ * clock and, as a floor, the time slept, so a clock that stands still cannot retry forever. After each try that timed
+ * out the helper may recover a wedged device (once), after which the loop carries on with the helper it reconnected.
  */
 async function snapshotUntilWarm(
 	run: WarmRun,
@@ -196,7 +203,8 @@ async function snapshotUntilWarm(
 		const spent = Math.max(run.now() - started, waited);
 		if (givingUp(stop, spent + wait >= budgetMs, attempt, lastError, note))
 			return ended(state, state.helper, lastError);
-		const reconnectError = attempt >= RECOVER_FROM_TRY ? await recoverOnce(connect, udid, state, note) : undefined;
+		const ask = attempt >= RECOVER_FROM_TRY && TIMED_OUT.test(lastError);
+		const reconnectError = ask ? await recoverOnce(connect, udid, state, note) : undefined;
 		if (reconnectError !== undefined) return ended(state, undefined, reconnectError);
 		if (!(await pause(run, wait, stop.signal))) return ended(state, state.helper, lastError);
 		waited += wait;
