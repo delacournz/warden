@@ -267,6 +267,12 @@ final class BridgeReaper: @unchecked Sendable {
   var allowsRecycle: Bool { lock.withLock { spent < maxRecycles } }
   /// Every recycle this helper may do is spent: a stalled guest is left to the cooldown and the probe.
   var exhausted: Bool { !allowsRecycle }
+  /// `health`'s `bridgeRecycles`: nil until a recycle ran.
+  var healthJSON: JSON? {
+    let (count, max) = lock.withLock { (spent, maxRecycles) }
+    guard count > 0 else { return nil }
+    return ["count": .int(count), "exhausted": .bool(count >= max)]
+  }
   /// The recycle in flight, else the last one (tests wait on it).
   var current: Task<Void, Never>? { lock.withLock { inFlight ?? latest } }
 
@@ -341,6 +347,11 @@ struct BridgeStallReport: Sendable, Equatable {
   var cooldownRemainingMs: Int?
   /// Bridge reads and background probes that failed in a row since the bridge last answered, this one included.
   var probes: Int
+  /// Stalled guests this helper recycled before this read (`BridgeReaper.recycles`); a recycle this stall starts is
+  /// in the next report.
+  var recycles = 0
+  /// Every recycle this helper may do was spent before this read (`BridgeReaper.exhausted`).
+  var recyclesExhausted = false
 
   var json: JSON {
     var fields: [String: JSON] = ["stage": .string(stage.rawValue), "cold": .bool(cold), "probes": .int(probes)]
@@ -348,6 +359,8 @@ struct BridgeStallReport: Sendable, Equatable {
     if let deadlineMs { fields["deadlineMs"] = .int(deadlineMs) }
     if let guestAgeMs { fields["guestAgeMs"] = .int(guestAgeMs) }
     if let cooldownRemainingMs { fields["cooldownRemainingMs"] = .int(cooldownRemainingMs) }
+    if recycles > 0 { fields["recycles"] = .int(recycles) }
+    if recyclesExhausted { fields["recyclesExhausted"] = .bool(true) }
     return .object(fields)
   }
 }
@@ -460,12 +473,13 @@ extension Session {
     }
 
     let cold = warmth.isCold
+    let recycled = (count: reaper?.recycles ?? 0, exhausted: reaper?.exhausted ?? false)
     func report(_ stage: BridgeStallReport.Stage, readMs: Int? = nil, deadlineMs: Int? = nil) -> BridgeStallReport {
       BridgeStallReport(
         stage: stage, readMs: readMs, deadlineMs: deadlineMs,
         guestAgeMs: guestAgeSeconds().map { Int(($0 * 1000).rounded()) }, cold: cold,
         cooldownRemainingMs: gate.cooldownRemainingMs(now: now(), cooldownSeconds: policy.cooldownSeconds),
-        probes: gate.failuresInARow)
+        probes: gate.failuresInARow, recycles: recycled.count, recyclesExhausted: recycled.exhausted)
     }
 
     let reason: String

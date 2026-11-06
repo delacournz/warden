@@ -203,6 +203,8 @@ final class StalledGuestRecycleTests: XCTestCase {
     let count = await GuestRecycling.endStalledGuests(
       udid: udid, wedge: wedge, reaper: reaper, monitor: monitor, now: 30, settleSeconds: 0)
     XCTAssertEqual(count, 1)
+    XCTAssertEqual(
+      wedge.guestAge(now: 30), 0, accuracy: 0.001, "the next stall report's guestAgeMs counts from the recycle")
     await reader.waitOpened(2)
     XCTAssertEqual(reader.requests, 2)
     await monitor.stop()

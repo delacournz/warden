@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bridgeEvidence } from "./bridge-evidence";
+import { testResultSchema } from "./results";
 import type { TraceEvent } from "./trace";
 
 const span = (detail: Record<string, string | number | boolean>, ok = true, code?: string): TraceEvent => ({
@@ -72,6 +73,14 @@ describe("bridgeEvidence", () => {
 			first: { code: "E_TIMEOUT", stage: "read", cold: false, probes: 3 },
 			last: { code: "E_TIMEOUT", stage: "read", cold: false, probes: 3 },
 		});
+	});
+
+	test("the recycles the helper had spent go into results.jsonl", () => {
+		const evidence = bridgeEvidence();
+		evidence.observe(span({ ...stalled(4, false), stallRecycles: 3, stallRecyclesExhausted: true }));
+		const summary = evidence.summary();
+		expect(summary?.last).toMatchObject({ recycles: 3, recyclesExhausted: true });
+		expect(testResultSchema.shape.bridge.parse(summary)).toEqual(summary);
 	});
 
 	test("a fallback without a stall report (an older helper) still counts", () => {
