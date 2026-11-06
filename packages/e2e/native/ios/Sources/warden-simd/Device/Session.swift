@@ -79,6 +79,8 @@ final class Session: @unchecked Sendable {
   let bridgeStall = BridgeStallGate()
   /// Whether the guest has answered since it last went cold (start, recycle, launch); cold reads get the longer deadline.
   let bridgeWarmth = BridgeWarmth()
+  /// The background check that ends a stall cooldown once the guest answers again (`BridgeProbe`).
+  let bridgeProbe = BridgeProbe()
   /// The per-read bridge deadline and the cooldown after a stall (`WARDEN_SIMD_BRIDGE_DEADLINE_MS` / `_COOLDOWN_S`).
   let bridgeDeadline = BridgeDeadline.configured()
   /// When the frontmost lookup last failed, so reads go by pid for `frontmostPolicy.cooldownSeconds`.

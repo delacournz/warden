@@ -54,12 +54,25 @@ final class BridgeStallTests: XCTestCase {
     policy: BridgeDeadline? = nil,
     health: BridgeHealth = BridgeHealth(),
     clock: Clock = Clock(),
+    recovery: BridgeRecovery? = nil,
     calls: Calls
   ) async throws -> AXOutcome<String> {
     try await Session.readAX(
       requested: requested, bridge: bridge, host: host, recover: { _ in calls.bump("recover") },
-      policy: policy ?? self.policy, gate: gate, warmth: warmth, health: health, now: { clock.now },
-      log: { calls.add($0) }, bridgeName: "available")
+      policy: policy ?? self.policy, gate: gate, warmth: warmth, health: health, recovery: recovery,
+      now: { clock.now }, log: { calls.add($0) }, bridgeName: "available")
+  }
+
+  /// A probe whose liveness check is `check`, counted as `probe` calls.
+  private func recovery(
+    _ calls: Calls, deadlineMs: Int = 100, check: @escaping @Sendable () async throws -> Void
+  ) -> BridgeRecovery {
+    BridgeRecovery(
+      probe: BridgeProbe(deadlineMs: deadlineMs, intervalSeconds: 5),
+      check: {
+        calls.bump("probe")
+        try await check()
+      })
   }
 
   private func slow(_ ms: Int, _ calls: Calls) -> @Sendable () async throws -> String {
@@ -183,7 +196,7 @@ final class BridgeStallTests: XCTestCase {
     let outcome = try await Session.readAX(
       requested: nil, bridge: slow, host: answer("ax", calls), recover: { _ in },
       policy: BridgeDeadline(readMs: nil, cooldownSeconds: 20), gate: BridgeStallGate(), warmth: BridgeWarmth(),
-      health: BridgeHealth(), now: { 0 }, log: { _ in }, bridgeName: "available")
+      health: BridgeHealth(), recovery: nil, now: { 0 }, log: { _ in }, bridgeName: "available")
     XCTAssertEqual(outcome.backend, .axbridge)
   }
 
@@ -376,5 +389,163 @@ final class BridgeStallTests: XCTestCase {
       warmth: warmth, policy: coldPolicy, calls: calls)
     XCTAssertEqual(outcome.backend, .ax)
     XCTAssertLessThan(ContinuousClock.now - started, .seconds(1))
+  }
+
+  // MARK: detached recovery probe
+
+  func testTheProbeHasItsOwnShortDeadlineAndBackOff() {
+    XCTAssertEqual(BridgeProbe.defaultDeadlineMs, 1500)
+    XCTAssertLessThan(BridgeProbe.defaultDeadlineMs, BridgeDeadline().readMs ?? 0, "shorter than a user read")
+    XCTAssertGreaterThanOrEqual(BridgeProbe.defaultIntervalSeconds, 5)
+  }
+
+  func testAReadInTheCooldownAnswersOnAxAtOnceAndProbesInTheBackground() async throws {
+    let calls = Calls()
+    let gate = BridgeStallGate()
+    let clock = Clock()
+    gate.recordStall(at: clock.now)
+    let recovery = recovery(calls) { try await Task.sleep(for: .milliseconds(300)) }
+    let started = ContinuousClock.now
+    let outcome = try await read(
+      bridge: answer("bridge", calls), host: answer("ax", calls), gate: gate, clock: clock, recovery: recovery,
+      calls: calls)
+    XCTAssertEqual(outcome.backend, .ax)
+    XCTAssertLessThan(ContinuousClock.now - started, .milliseconds(250), "the caller never waits for the probe")
+    try await Task.sleep(for: .milliseconds(50))
+    XCTAssertEqual(calls.count("probe"), 1)
+    XCTAssertEqual(calls.count("bridge"), 0, "the probe is not a full tree read")
+  }
+
+  func testAProbeThatAnswersEndsTheCooldownSoTheNextReadUsesTheBridge() async throws {
+    let calls = Calls()
+    let gate = BridgeStallGate()
+    let health = BridgeHealth()
+    let clock = Clock()
+    gate.recordStall(at: clock.now)
+    health.recordFailure("stalled")
+    let recovery = recovery(calls) {}
+    _ = try await read(
+      bridge: answer("bridge", calls), host: answer("ax", calls), gate: gate, health: health, clock: clock,
+      recovery: recovery, calls: calls)
+    let probed = await recovery.probe.current?.value
+    XCTAssertEqual(probed, .answered)
+    XCTAssertNil(gate.skipReason(now: clock.now, cooldownSeconds: 20))
+    XCTAssertNil(health.lastFailure)
+    let next = try await read(
+      bridge: answer("bridge", calls), host: answer("ax", calls), gate: gate, clock: clock, recovery: recovery,
+      calls: calls)
+    XCTAssertEqual(next.backend, .axbridge)
+    XCTAssertNil(next.fallback)
+  }
+
+  func testProbesNeverStackAndWaitOutTheBackOff() async throws {
+    let calls = Calls()
+    let gate = BridgeStallGate()
+    let clock = Clock()
+    gate.recordStall(at: clock.now)
+    let recovery = recovery(calls, deadlineMs: 100) { try await Task.sleep(for: .seconds(30)) }
+    for _ in 0..<3 {
+      _ = try await read(
+        bridge: answer("bridge", calls), host: answer("ax", calls), gate: gate, clock: clock, recovery: recovery,
+        calls: calls)
+    }
+    _ = await recovery.probe.current?.value
+    XCTAssertEqual(calls.count("probe"), 1, "reads during a probe join it")
+    let first = await recovery.probe.current?.value
+    XCTAssertEqual(first, .silent(afterMs: 100))
+
+    clock.advance(2)
+    _ = try await read(
+      bridge: answer("bridge", calls), host: answer("ax", calls), gate: gate, clock: clock, recovery: recovery,
+      calls: calls)
+    XCTAssertEqual(calls.count("probe"), 1, "no probe inside the back-off")
+
+    clock.advance(3)
+    _ = try await read(
+      bridge: answer("bridge", calls), host: answer("ax", calls), gate: gate, clock: clock, recovery: recovery,
+      calls: calls)
+    _ = await recovery.probe.current?.value
+    XCTAssertEqual(calls.count("probe"), 2, "the next probe after 5 s")
+  }
+
+  func testASilentProbeKeepsTheCooldownSoNoUserReadPaysTheFullDeadline() async throws {
+    let calls = Calls()
+    let gate = BridgeStallGate()
+    let clock = Clock()
+    gate.recordStall(at: clock.now)
+    let recovery = recovery(calls) { try await Task.sleep(for: .seconds(30)) }
+    clock.advance(15)
+    _ = try await read(
+      bridge: hang(calls), host: answer("ax", calls), gate: gate, clock: clock, recovery: recovery, calls: calls)
+    _ = await recovery.probe.current?.value
+    clock.advance(10)
+    let later = try await read(
+      bridge: hang(calls), host: answer("ax", calls), gate: gate, clock: clock, recovery: recovery, calls: calls)
+    XCTAssertEqual(later.backend, .ax)
+    XCTAssertEqual(calls.count("bridge"), 0, "25 s after the stall the bridge is still only probed")
+  }
+
+  func testAnExplicitBridgeReadInTheCooldownWaitsOnlyForTheProbe() async throws {
+    let calls = Calls()
+    let gate = BridgeStallGate()
+    let clock = Clock()
+    gate.recordStall(at: clock.now)
+    let recovery = recovery(calls, deadlineMs: 100) { try await Task.sleep(for: .seconds(30)) }
+    let started = ContinuousClock.now
+    do {
+      _ = try await read(
+        requested: .axbridge, bridge: hang(calls), host: answer("ax", calls), gate: gate,
+        policy: BridgeDeadline(readMs: 4000, cooldownSeconds: 20), clock: clock, recovery: recovery, calls: calls)
+      XCTFail("expected a timeout")
+    } catch {
+      let wire = WireError.from(error)
+      XCTAssertEqual(wire.code, .timeout)
+      XCTAssertTrue(wire.message.contains("axbridge"), wire.message)
+    }
+    XCTAssertLessThan(ContinuousClock.now - started, .seconds(1), "the probe deadline, not the 4 s read deadline")
+    XCTAssertEqual(calls.count("bridge"), 0)
+    XCTAssertEqual(calls.count("ax"), 0, "an explicit read never answers from another reader")
+
+    do {
+      _ = try await read(
+        requested: .axbridge, bridge: hang(calls), host: answer("ax", calls), gate: gate, clock: clock,
+        recovery: recovery, calls: calls)
+      XCTFail("expected a timeout")
+    } catch {
+      XCTAssertEqual(WireError.from(error).code, .timeout)
+    }
+    XCTAssertEqual(calls.count("probe"), 1, "inside the back-off an explicit read fails without probing")
+  }
+
+  func testAnExplicitBridgeReadInTheCooldownReadsOnceTheProbeAnswers() async throws {
+    let calls = Calls()
+    let gate = BridgeStallGate()
+    let clock = Clock()
+    gate.recordStall(at: clock.now)
+    let outcome = try await read(
+      requested: .axbridge, bridge: answer("bridge", calls), host: answer("ax", calls), gate: gate, clock: clock,
+      recovery: recovery(calls) {}, calls: calls)
+    XCTAssertEqual(outcome.backend, .axbridge)
+    XCTAssertEqual(calls.count("probe"), 1)
+    XCTAssertEqual(calls.count("bridge"), 1)
+  }
+
+  func testAProbeLiftsAStalledWarmUpSoTheGuestIsNotLeftOnAxForTheSpell() async throws {
+    let calls = Calls()
+    let gate = BridgeStallGate()
+    let warmth = BridgeWarmth()
+    let clock = Clock()
+    _ = await warmth.warmUp(deadlineMs: 50, log: { _ in }) { try await Task.sleep(for: .seconds(30)) }?.value
+    let recovery = recovery(calls) {}
+    let first = try await read(
+      bridge: answer("bridge", calls), host: answer("ax", calls), gate: gate, warmth: warmth, policy: coldPolicy,
+      clock: clock, recovery: recovery, calls: calls)
+    XCTAssertEqual(first.backend, .ax)
+    _ = await recovery.probe.current?.value
+    XCTAssertFalse(warmth.isCold, "the probe answered: the guest is warm")
+    let next = try await read(
+      bridge: answer("bridge", calls), host: answer("ax", calls), gate: gate, warmth: warmth, policy: coldPolicy,
+      clock: clock, recovery: recovery, calls: calls)
+    XCTAssertEqual(next.backend, .axbridge)
   }
 }

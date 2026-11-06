@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { el, failWith, fakeDriver, snapshotOf } from "../driver/driver.testing";
+import { el, fakeDriver, snapshotOf } from "../driver/driver.testing";
 import type { Snapshot } from "../driver/driver.types";
 import { Runtime } from "./context";
 import { testHost } from "./screen.testing";
@@ -11,66 +11,47 @@ const lossy: Snapshot = {
 };
 const whole = snapshotOf([el("text", { id: "error", label: "Too short" })], { backend: "axbridge" });
 
-type Setup = {
-	bridge: "answers" | "stalls";
-	probes: () => number;
-	runtime: Runtime;
-	clock: ReturnType<typeof testHost>["clock"];
-};
-
-/** A device whose default read is the lossy `ax` one; an explicit `axbridge` read answers or stalls. */
-function setup(bridge: Setup["bridge"]): Setup {
-	let probes = 0;
+/**
+ * A device whose default reads come back from `ax` while its bridge guest is silent, then from `axbridge` once the
+ * helper's background probe brought it back. Counts the explicit `axbridge` reads a look makes.
+ */
+function setup(screens: () => Snapshot) {
+	let explicit = 0;
 	const driver = fakeDriver({
-		screens: [lossy],
+		screens,
 		onCall: (call) => {
-			if (call.method !== "snapshot" || call.opts?.backend !== "axbridge") return undefined;
-			probes += 1;
-			return bridge === "answers"
-				? { data: whole }
-				: failWith("E_TIMEOUT", "the axbridge guest did not answer within 4000 ms");
+			if (call.method === "snapshot" && call.opts?.backend === "axbridge") explicit += 1;
+			return undefined;
 		},
 	});
 	const host = testHost(driver, { cache: true });
-	return { bridge, probes: () => probes, runtime: new Runtime(host), clock: host.clock };
+	return { explicit: () => explicit, runtime: new Runtime(host), driver };
 }
 
 describe("a look that came back degraded", () => {
-	test("is read again on axbridge, and the whole snapshot is returned", async () => {
-		const { runtime, probes } = setup("answers");
+	test("is answered at once, with no read of its own on axbridge (the helper probes the bridge)", async () => {
+		const { runtime, explicit } = setup(() => lossy);
 		const result = await runtime.tryObserve({ alerts: false });
-		expect(result.ok && result.observed.snapshot).toBe(whole);
-		expect(probes()).toBe(1);
+		expect(result.ok && result.observed.snapshot).toBe(lossy);
+		expect(explicit()).toBe(0);
 	});
 
-	test("keeps the ax snapshot when the bridge is still silent", async () => {
-		const { runtime, probes } = setup("stalls");
-		const result = await runtime.tryObserve({ alerts: false });
-		expect(result.ok && result.observed.snapshot.backend).toBe("ax");
-		expect(probes()).toBe(1);
+	test("the next look reads the device, and gets the whole snapshot once the bridge is back", async () => {
+		let bridgeBack = false;
+		const { runtime, explicit } = setup(() => (bridgeBack ? whole : lossy));
+		await runtime.tryObserve({ alerts: false });
+		bridgeBack = true;
+		const next = await runtime.tryObserve({ alerts: false });
+		expect(next.ok && next.observed.snapshot).toBe(whole);
+		expect(explicit()).toBe(0);
 	});
 
-	test("a silent bridge is not asked again until the back-off has passed", async () => {
-		const { runtime, probes, clock } = setup("stalls");
+	test("polling a degraded screen costs one read per look, never an extra one", async () => {
+		const { runtime, driver, explicit } = setup(() => lossy);
 		await runtime.tryObserve({ alerts: false });
 		await runtime.tryObserve({ alerts: false });
 		await runtime.tryObserve({ alerts: false });
-		expect(probes()).toBe(1);
-		await clock.sleep(6000);
-		await runtime.tryObserve({ alerts: false });
-		expect(probes()).toBe(2);
-	});
-
-	test("a snapshot that did not fall back costs no extra read", async () => {
-		let probes = 0;
-		const driver = fakeDriver({
-			screens: [whole],
-			onCall: (call) => {
-				if (call.method === "snapshot" && call.opts?.backend === "axbridge") probes += 1;
-				return undefined;
-			},
-		});
-		await new Runtime(testHost(driver, { cache: true })).tryObserve({ alerts: false });
-		expect(probes).toBe(0);
+		expect(driver.calls.filter((call) => call.method === "snapshot")).toHaveLength(3);
+		expect(explicit()).toBe(0);
 	});
 });

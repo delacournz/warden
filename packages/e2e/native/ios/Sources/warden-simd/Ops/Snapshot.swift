@@ -211,8 +211,28 @@ extension Session {
     return try await Session.readAX(
       requested: primary == .ax ? .ax : requested, bridge: bridge, host: host,
       recover: { pid in await self.recoverBridge(pid: pid) }, policy: bridgeDeadline, gate: bridgeStall,
-      warmth: bridgeWarmth, health: bridgeHealth, now: { ProcessInfo.processInfo.systemUptime },
+      warmth: bridgeWarmth, health: bridgeHealth, recovery: bridgeRecovery(),
+      now: { ProcessInfo.processInfo.systemUptime },
       log: { OpLog.shared.log(.warn, $0, op: op) }, bridgeName: self.bridge.name)
+  }
+
+  /// The recovery probe's liveness check: one hit-test at the middle of the screen through the bridge, which answers
+  /// a single element instead of the whole tree. Nil without a bridge.
+  func bridgeRecovery() -> BridgeRecovery? {
+    guard let reader = axBridgeReader else { return nil }
+    let screen = self.screen
+    let point = CGPoint(x: max(1, screen.width / 2), y: max(1, screen.height / 2))
+    return BridgeRecovery(
+      probe: bridgeProbe,
+      check: { _ = try await reader.hitTest(at: point, options: AccessibilityRequestOptions()) })
+  }
+
+  /// Starts a recovery probe in the background (no-op inside its back-off or without a bridge).
+  func probeBridge() {
+    guard let recovery = bridgeRecovery() else { return }
+    _ = Session.startProbe(
+      recovery, gate: bridgeStall, warmth: bridgeWarmth, health: bridgeHealth,
+      now: { ProcessInfo.processInfo.systemUptime }, log: { OpLog.shared.log(.info, $0, op: "probe") })
   }
 
   func buildOptions(interactiveOnly: Bool = false, maxDepth: Int? = nil, maxNodes: Int? = nil, document: AccessibilityScreenInfo?)
@@ -490,6 +510,7 @@ extension Session {
         self.bridgeStall.skipReason(
           now: ProcessInfo.processInfo.systemUptime, cooldownSeconds: self.bridgeDeadline.cooldownSeconds) != nil
       {
+        self.probeBridge()
         return nil
       }
       let generation = self.bridgeWarmth.generation
