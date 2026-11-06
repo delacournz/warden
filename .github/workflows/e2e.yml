@@ -139,13 +139,13 @@ jobs:
             plutil -p "$HOME/Library/Developer/CoreSimulator/Devices/$udid/data/Library/Preferences/com.apple.Accessibility.plist" > "$out/axprefs-$udid.txt" 2>&1
             xcrun simctl spawn "$udid" log show --last 45m --style compact --predicate 'subsystem CONTAINS[c] "accessibility" OR process == "SpringBoard" OR process == "backboardd" OR process == "CoreSimulatorBridge" OR process CONTAINS[c] "SimulatorFrameworkBridge"' > "$out/axlog-$udid.txt" 2>&1
             echo "== probe before" > "$out/probe-$udid.txt"
-            timeout 40 "$simd" --health --udid "$udid" >> "$out/probe-$udid.txt" 2>&1
+            perl -e "alarm 40; exec @ARGV" "$simd" --health --udid "$udid" >> "$out/probe-$udid.txt" 2>&1
             sb=$(awk '/SpringBoard.app\/SpringBoard/ {print $1}' "$out/children-$udid.txt" | head -1)
             echo "== kill SpringBoard $sb $(date -u +%T)" >> "$out/probe-$udid.txt"
             [ -n "$sb" ] && kill -9 "$sb"
             sleep 20
             echo "== probe after $(date -u +%T)" >> "$out/probe-$udid.txt"
-            timeout 40 "$simd" --health --udid "$udid" >> "$out/probe-$udid.txt" 2>&1
+            perl -e "alarm 40; exec @ARGV" "$simd" --health --udid "$udid" >> "$out/probe-$udid.txt" 2>&1
           done
           ls -la "$out"
       - name: Upload diag
