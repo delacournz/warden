@@ -35,11 +35,12 @@ final class BridgeStallReportTests: XCTestCase {
     warmth: BridgeWarmth = .warmed(),
     ticks: Ticks = Ticks(),
     guestAge: Double? = 7.5,
-    recovery: BridgeRecovery? = nil
+    recovery: BridgeRecovery? = nil,
+    reaper: BridgeReaper? = nil
   ) async throws -> AXOutcome<String> {
     try await Session.readAX(
       requested: requested, bridge: bridge, host: host, recover: { _ in }, policy: policy, gate: gate,
-      warmth: warmth, health: BridgeHealth(), recovery: recovery, now: { ticks.now }, log: { _ in },
+      warmth: warmth, health: BridgeHealth(), recovery: recovery, reaper: reaper, now: { ticks.now }, log: { _ in },
       bridgeName: "available", guestAgeSeconds: { guestAge })
   }
 
@@ -170,5 +171,41 @@ final class BridgeStallReportTests: XCTestCase {
       XCTAssertEqual(stall["probes"], .int(2))
       XCTAssertNil(stall["readMs"], "no tree read was made")
     }
+  }
+
+  func testAStallReportsTheGuestsRecycledBeforeIt() async throws {
+    let reaper = BridgeReaper(maxRecycles: 2) { 1 }
+    let ticks = Ticks()
+    let gate = BridgeStallGate()
+    let first = try await read(bridge: hang, host: host, gate: gate, ticks: ticks, reaper: reaper)
+    XCTAssertEqual(first.fallback?.stall?.recycles, 0, "the recycle this stall starts is not in its own report")
+    await reaper.current?.value
+    ticks.advance(25)
+    let second = try await read(bridge: hang, host: host, gate: gate, warmth: .warmed(), ticks: ticks, reaper: reaper)
+    XCTAssertEqual(second.fallback?.stall?.recycles, 1)
+    XCTAssertEqual(second.fallback?.stall?.recyclesExhausted, false)
+    await reaper.current?.value
+    ticks.advance(25)
+    let third = try await read(bridge: hang, host: host, gate: gate, warmth: .warmed(), ticks: ticks, reaper: reaper)
+    XCTAssertEqual(third.fallback?.stall?.recycles, 2)
+    XCTAssertEqual(third.fallback?.stall?.recyclesExhausted, true)
+  }
+
+  func testTheReportJSONCarriesRecyclesOnlyOnceOneRan() {
+    var report = BridgeStallReport(
+      stage: .read, readMs: 4001, deadlineMs: 4000, guestAgeMs: 300, cold: true, cooldownRemainingMs: nil, probes: 1)
+    XCTAssertNil(report.json["recycles"])
+    XCTAssertNil(report.json["recyclesExhausted"])
+    report.recycles = 3
+    report.recyclesExhausted = true
+    XCTAssertEqual(report.json["recycles"], .int(3))
+    XCTAssertEqual(report.json["recyclesExhausted"], .bool(true))
+  }
+
+  func testHealthNamesTheRecyclesOnceOneRan() async {
+    let reaper = BridgeReaper(maxRecycles: 1) { 2 }
+    XCTAssertNil(reaper.healthJSON, "nothing to say before a recycle")
+    await reaper.recycleAfterStall(log: { _ in })?.value
+    XCTAssertEqual(reaper.healthJSON, ["count": 1, "exhausted": true])
   }
 }

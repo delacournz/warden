@@ -284,6 +284,10 @@ export function noteHelperHealth(health: HealthData): void {
 	if (health.builtWith?.xcode) noteSpanDetail("helperXcode", health.builtWith.xcode);
 	if (health.coreSimulatorVersion) noteSpanDetail("coreSimulator", health.coreSimulatorVersion);
 	if (health.frontmost) noteSpanDetail("frontmostUnresolvedAgoMs", health.frontmost.unresolvedAgoMs);
+	if (health.bridgeRecycles) {
+		noteSpanDetail("bridgeRecycles", health.bridgeRecycles.count);
+		noteSpanDetail("bridgeRecyclesExhausted", health.bridgeRecycles.exhausted);
+	}
 }
 
 /** The wait before the next cold snapshot try, or undefined once the budget is spent. */

@@ -21,6 +21,10 @@ export const bridgeStallSchema = z.looseObject({
 	cooldownRemainingMs: z.number().optional(),
 	/** bridge reads that failed in a row, this one included */
 	probes: z.number(),
+	/** stalled guests the helper recycled before this read; absent while none was */
+	recycles: z.number().optional(),
+	/** every recycle the helper may do was spent before this read; absent while some are left */
+	recyclesExhausted: z.boolean().optional(),
 });
 
 export type BridgeStall = {
@@ -31,6 +35,8 @@ export type BridgeStall = {
 	cold: boolean;
 	cooldownRemainingMs?: number;
 	probes: number;
+	recycles?: number;
+	recyclesExhausted?: boolean;
 };
 
 /** Span field ↔ stall field; booleans and numbers stay scalars. */
@@ -42,6 +48,8 @@ const SPAN_FIELDS = [
 	["stallCold", "cold"],
 	["stallCooldownMs", "cooldownRemainingMs"],
 	["stallProbes", "probes"],
+	["stallRecycles", "recycles"],
+	["stallRecyclesExhausted", "recyclesExhausted"],
 ] as const satisfies readonly (readonly [string, keyof BridgeStall])[];
 
 /** Only the fields of the schema, so a newer helper's extra keys stay off the span and out of the results. */
@@ -51,6 +59,8 @@ export function toBridgeStall(wire: z.infer<typeof bridgeStallSchema>): BridgeSt
 	if (wire.deadlineMs !== undefined) stall.deadlineMs = wire.deadlineMs;
 	if (wire.guestAgeMs !== undefined) stall.guestAgeMs = wire.guestAgeMs;
 	if (wire.cooldownRemainingMs !== undefined) stall.cooldownRemainingMs = wire.cooldownRemainingMs;
+	if (wire.recycles !== undefined) stall.recycles = wire.recycles;
+	if (wire.recyclesExhausted !== undefined) stall.recyclesExhausted = wire.recyclesExhausted;
 	return stall;
 }
 
@@ -76,11 +86,13 @@ export function bridgeStallFromSpan(detail: SpanDetail | undefined): BridgeStall
 		["stallDeadlineMs", "deadlineMs"],
 		["stallGuestAgeMs", "guestAgeMs"],
 		["stallCooldownMs", "cooldownRemainingMs"],
+		["stallRecycles", "recycles"],
 	] as const;
 	for (const [key, field] of numbers) {
 		const value = detail[key];
 		if (typeof value === "number") stall[field] = value;
 	}
+	if (typeof detail.stallRecyclesExhausted === "boolean") stall.recyclesExhausted = detail.stallRecyclesExhausted;
 	return stall;
 }
 
@@ -100,5 +112,9 @@ export function formatBridgeStall(stall: BridgeStall): string {
 	if (stall.guestAgeMs !== undefined) parts.push(`guest ${seconds(stall.guestAgeMs)} old`);
 	if (stall.cooldownRemainingMs !== undefined) parts.push(`cooldown ${seconds(stall.cooldownRemainingMs)} left`);
 	parts.push(`${stall.probes} failed bridge reads in a row`);
+	if (stall.recycles !== undefined) {
+		const guests = stall.recycles === 1 ? "guest" : "guests";
+		parts.push(`${stall.recycles} stalled ${guests} recycled${stall.recyclesExhausted === true ? ", none left" : ""}`);
+	}
 	return parts.join(" · ");
 }

@@ -14,6 +14,10 @@ const bridgeReadSchema = z.object({
 	cold: z.boolean().optional(),
 	cooldownRemainingMs: z.number().optional(),
 	probes: z.number().optional(),
+	/** stalled AX guests the helper had recycled (at most 3 per helper) */
+	recycles: z.number().optional(),
+	/** the helper had no recycles left */
+	recyclesExhausted: z.boolean().optional(),
 });
 
 export const testStatusSchema = z.enum(["passed", "failed", "skipped", "timed-out"]);

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bridgeStallFromSpan, formatBridgeStall, noteBridgeStall } from "./bridge-stall";
+import { bridgeStallFromSpan, formatBridgeStall, noteBridgeStall, toBridgeStall } from "./bridge-stall";
 import { collectSpanDetail, type SpanDetail } from "./span-detail";
 
 const stall = {
@@ -10,12 +10,14 @@ const stall = {
 	cold: false,
 	cooldownRemainingMs: 20_000,
 	probes: 2,
+	recycles: 3,
+	recyclesExhausted: true,
 };
 
 describe("bridge stall diagnostics", () => {
 	test("formats every known field on one line", () => {
 		expect(formatBridgeStall(stall)).toBe(
-			"stage read · read 4012 ms of a 4000 ms deadline · warm · guest 31.2 s old · cooldown 20.0 s left · 2 failed bridge reads in a row"
+			"stage read · read 4012 ms of a 4000 ms deadline · warm · guest 31.2 s old · cooldown 20.0 s left · 2 failed bridge reads in a row · 3 stalled guests recycled, none left"
 		);
 	});
 
@@ -36,8 +38,22 @@ describe("bridge stall diagnostics", () => {
 			stallCold: false,
 			stallCooldownMs: 20_000,
 			stallProbes: 2,
+			stallRecycles: 3,
+			stallRecyclesExhausted: true,
 		});
 		expect(bridgeStallFromSpan(notes)).toEqual(stall);
+	});
+
+	test("names the recycles while some are left", () => {
+		expect(formatBridgeStall({ stage: "read", cold: false, probes: 1, recycles: 1 })).toBe(
+			"stage read · warm · 1 failed bridge reads in a row · 1 stalled guest recycled"
+		);
+	});
+
+	test("keeps the recycle fields from the wire and drops unknown ones", () => {
+		expect(
+			toBridgeStall({ stage: "read", cold: false, probes: 1, recycles: 2, recyclesExhausted: false, later: 1 })
+		).toEqual({ stage: "read", cold: false, probes: 1, recycles: 2, recyclesExhausted: false });
 	});
 
 	test("a span without a stall has none", () => {

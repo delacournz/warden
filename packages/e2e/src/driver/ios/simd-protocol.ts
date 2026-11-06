@@ -259,6 +259,8 @@ export const healthDataSchema = z.looseObject({
 	coreSimulatorVersion: z.string().nullish(),
 	/** set while reads go by pid because the frontmost lookup failed */
 	frontmost: z.object({ unresolvedAgoMs: z.number(), method: z.string() }).optional(),
+	/** stalled AX guests this helper recycled; absent until one was */
+	bridgeRecycles: z.object({ count: z.number(), exhausted: z.boolean() }).optional(),
 	state: z.string().optional(),
 	uptimeMs: z.number().optional(),
 });

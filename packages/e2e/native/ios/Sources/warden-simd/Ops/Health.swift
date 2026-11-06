@@ -110,6 +110,7 @@ extension Session {
         "method": .string(frontmostPolicy.method.rawValue),
       ]
     }
+    if let recycles = bridgeReaper.healthJSON { fields["bridgeRecycles"] = recycles }
     fields["coreSimulatorVersion"] = coreSimulatorVersion.map(JSON.string) ?? .null
     fields["state"] = .string(Session.describe(simulator.state))
     fields["uptimeMs"] = .int(uptimeMs)

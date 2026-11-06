@@ -572,6 +572,7 @@ describe("Driver methods over the helper", () => {
 			xcode: "26.6 (17F113)",
 			builtWith: { xcode: "27.1 (27A9275)", idb: "v1.7.7" },
 			coreSimulatorVersion: "1051.55",
+			bridgeRecycles: { count: 3, exhausted: true },
 		};
 		const { driver } = await open((request) =>
 			request.op === "health"
@@ -605,6 +606,8 @@ describe("Driver methods over the helper", () => {
 			hostXcode: "26.6 (17F113)",
 			helperXcode: "27.1 (27A9275)",
 			coreSimulator: "1051.55",
+			bridgeRecycles: 3,
+			bridgeRecyclesExhausted: true,
 		});
 	});
 
