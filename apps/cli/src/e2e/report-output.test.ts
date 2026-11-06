@@ -158,3 +158,58 @@ describe("testEvent", () => {
 		});
 	});
 });
+
+const retried = report(
+	[
+		spec({
+			id: "a01-sign-in",
+			attempts: 2,
+			tests: [{ title: ["M1-A1: signs in"], status: "passed", durationMs: 68_500 }],
+			failures: [
+				{
+					attempt: 1,
+					device: { udid: "U1", name: "iPhone 17" },
+					log: "/h/batches/b1/logs/0-0.log",
+					tests: [
+						{
+							title: ["M1-A1: signs in"],
+							status: "failed",
+							durationMs: 60_650,
+							error: "did not become visible\nmore",
+							line: 22,
+						},
+					],
+				},
+			],
+		}),
+		spec({ id: "a02-ok" }),
+	],
+	true
+);
+
+describe("a spec that passed on a retry", () => {
+	test("annotations: one ::notice per earlier failed test, on its line", () => {
+		expect(annotations(retried, ROOT)).toEqual([
+			"::notice file=e2e/m1/a01-sign-in.e2e.ts,line=22,title=a01-sign-in › M1-A1%3A signs in passed on attempt 2::attempt 1: did not become visible%0Amore",
+		]);
+	});
+	test("step summary: how many passed on a retry, then one row per earlier failed test", () => {
+		const md = stepSummary(retried);
+		expect(md).toContain("### ✅ warden e2e `mobile` (ios): gate passed");
+		expect(md).toContain("1 spec(s) passed on a retry");
+		expect(md).toContain("| 🔁 | a01-sign-in | M1-A1: signs in | 1 of 2 | did not become visible |");
+	});
+	test("an earlier attempt that wrote no results is one row with its log", () => {
+		const r = report(
+			[
+				spec({
+					id: "a05",
+					attempts: 2,
+					failures: [{ attempt: 1, device: { udid: "U1", name: "iPhone 17" }, log: "/h/l.log" }],
+				}),
+			],
+			true
+		);
+		expect(stepSummary(r)).toContain("| 🔁 | a05 | (no test results) | 1 of 2 | log `/h/l.log` |");
+	});
+});

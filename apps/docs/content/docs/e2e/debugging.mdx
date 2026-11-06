@@ -49,7 +49,7 @@ Every run writes under a batch directory, `$WARDEN_HOME/batches/<id>` (the `--re
 | What | Where |
 |---|---|
 | verdict per spec, and per test (`tests[]`) | stderr, and `e2e-report.json` (`--json` prints it, `--report <file>` copies it, `--json-lines` streams each test then the report) |
-| failures on the PR (GitHub Actions) | an `::error` annotation per failed test at its spec line, and a table in the job's step summary, both automatic |
+| failures on the PR (GitHub Actions) | an `::error` annotation per failed test at its spec line, a `::notice` per test a retried spec failed before it passed, and a table of each in the job's step summary, all automatic |
 | every test's status, duration and error | `e2e/<worker>-<seq>/results.jsonl` (`WARDEN_E2E_OUT`) |
 | a failed test's evidence | `e2e/<worker>-<seq>/<spec>/<test>-<hash>/` |
 | a spec process's output | `logs/<worker>-<seq>-<job>.log` (`<job>` is `shard-<k>` under device isolation, the spec id with `isolate: "spec"`), screenshot next to it |
@@ -68,7 +68,7 @@ Every run writes under a batch directory, `$WARDEN_HOME/batches/<id>` (the `--re
 | `console.jsonl`, `network.jsonl` | dev client only, when devtools were attached: the JS console and network requests |
 | `screenshots/` | `device.screenshot(name)` images as `NNN-name.png`, from any test |
 | `results.jsonl` | one line per finished test, skipped ones included: `file`, `title[]`, `status` (`passed`, `failed`, `skipped`, `timed-out`), `durationMs`, `startedAt`, `error` (`message`, `code`, `stack`), `artifacts`, `device` (`udid`, `platform`, `name`). With retries only the final attempt is written |
-| `e2e-report.json` | each spec's `verdict`, `attempts` and `tests[]` (`title`, `status`, `durationMs`, `error`, `artifacts`), a `device`, `log` and `screenshot` for a spec whose last attempt failed; top-level `suite`, `platform`, `base`, `isolate`, `headless`, `batchDir`, `only` and each device's `setup` |
+| `e2e-report.json` | each spec's `verdict`, `attempts` and `tests[]` (`title`, `status`, `durationMs`, `error`, `artifacts`, `bridge`), a `device`, `log` and `screenshot` for a spec whose last attempt failed, and `failures[]` for a spec that was retried: each earlier failed attempt's `attempt`, `device`, `log`, `screenshot` and failed `tests[]`, so a spec that passed on a retry keeps what it met first; top-level `suite`, `platform`, `base`, `isolate`, `headless`, `batchDir`, `only` and each device's `setup` |
 
 `<spec>` is the spec's path under the suite's `specsDir` without `.e2e.ts`; `<test-title>` is a slug of the describe and test titles. On a later pass the worker directory is `<worker>-<seq>-p<pass>`. A by-hand run writes under `WARDEN_E2E_OUT` (default `.warden-e2e/<timestamp>` in the current directory).
 

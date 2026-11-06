@@ -310,3 +310,69 @@ describe("perf artifacts and budgets", () => {
 		expect(judgeJob([A], [t], 1, real).get("a")?.tests?.[0]?.perf).toBeUndefined();
 	});
 });
+
+describe("verdicts: the failed attempts before the last", () => {
+	const stack = "E2eError: did not become visible\n    at <anonymous> (/specs/b.e2e.ts:12:3)";
+	const bridge = {
+		fallbacks: 2,
+		first: { reason: "stall", stage: "read" },
+		last: { reason: "stall", stage: "cooldown" },
+	};
+	const bFailed = result("/specs/b.e2e.ts", "t", "failed", {
+		error: { message: "did not become visible", stack },
+		artifacts: { dir: "/art/b-1", files: ["failure.png"] },
+		bridge,
+	});
+	const attempts = new Map([
+		["0:0", new Set(["a", "b"])],
+		["0:1", new Set(["b"])],
+	]);
+
+	test("a spec that passed on its retry keeps what its first attempt met", async () => {
+		const s = session([
+			{ exitCode: 1, results: [res("a", "t"), bFailed] },
+			{ exitCode: 0, results: [res("b", "t")] },
+		]);
+		const out = await verdicts([A, B], s.session, shape, io(s.files, { attempts }));
+		const b = out.specs[1];
+		expect(b?.verdict).toBe("passed");
+		expect(b?.failures).toEqual([
+			{
+				attempt: 1,
+				device: { udid: "U0", name: "iPhone" },
+				log: "/logs/0-0-shard-0.log",
+				screenshot: "/art/b-1/failure.png",
+				tests: [
+					{
+						title: ["t"],
+						status: "failed",
+						durationMs: 1250,
+						error: "did not become visible",
+						line: 12,
+						artifacts: "/art/b-1",
+						bridge,
+					},
+				],
+			},
+		]);
+		expect(out.specs[0]).not.toHaveProperty("failures");
+	});
+
+	test("a spec that failed twice lists the first attempt only: the last one is the verdict itself", async () => {
+		const s = session([
+			{ exitCode: 1, results: [res("a", "t"), bFailed] },
+			{ exitCode: 1, results: [res("b", "t", "failed")] },
+		]);
+		const out = await verdicts([A, B], s.session, shape, io(s.files, { attempts }));
+		expect(out.specs[1]?.failures?.map((f) => f.attempt)).toEqual([1]);
+		expect(out.specs[1]?.log).toBe("/logs/0-1-shard-0.log");
+	});
+
+	test("an attempt that wrote no results is listed without tests: its exit code failed the spec", async () => {
+		const s = session([{ exitCode: 1 }, { exitCode: 0, results: [res("a", "t"), res("b", "t")] }]);
+		const out = await verdicts([A, B], s.session, shape, io(s.files));
+		expect(out.specs[0]?.failures).toEqual([
+			{ attempt: 1, device: { udid: "U0", name: "iPhone" }, log: "/logs/0-0-shard-0.log" },
+		]);
+	});
+});
