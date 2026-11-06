@@ -1567,9 +1567,21 @@ async function stopResidentHosts(ctx: CommandContext, name: string, devices: rea
 /**
  * One pool from its claim to its first job, on its own devices only (12-3): setup (slim, then the
  * command), then Metro's open beside the late-window hide. A device whose setup fails, or that cannot
- * reach Metro (Android, 12-7), is dropped, and its warm helper closed.
+ * reach Metro (Android, 12-7), is dropped, and its warm helper closed. However it ends, the early warm-up
+ * then knows nothing else works on these devices: only from then may it reboot one (a wedged accessibility
+ * service), so a reboot never cuts an install, a setup command or the dev client's launch short.
  */
-async function preparePool(
+async function preparePool(...a: Parameters<typeof preparePoolDevices>): Promise<PreparedPool> {
+	const [, , , , , pool, o] = a;
+	try {
+		return await preparePoolDevices(...a);
+	} finally {
+		for (const d of pool.devices) o.warm?.prepared(d.udid);
+	}
+}
+
+/** `preparePool`'s work. */
+async function preparePoolDevices(
 	ctx: CommandContext,
 	deps: BatchDeps,
 	args: BatchArgs,
