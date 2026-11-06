@@ -262,6 +262,10 @@ const SERVE_KILL_GRACE_MS = 15_000;
 /** SIGTERM → SIGKILL for a timed-out job. */
 const JOB_KILL_GRACE_MS = 5_000;
 const READY_POLL_MS = 500;
+/** after the ready check first passes: serve that lost its port to a stale listener exits within this, and its answer was not its own */
+const READY_SETTLE_MS = 1_000;
+/** lines of serve.log in the error of a serve that exited */
+const SERVE_LOG_TAIL_LINES = 12;
 /** the grid is redrawn this often, and at once on every event: what changes between events is the clocks, which show whole seconds */
 const FRAME_MS = 1_000;
 
@@ -393,12 +397,56 @@ async function waitReady(
 	const deadline = ctx.now() + serve.timeoutMs;
 	for (;;) {
 		if (aborted()) return err("interrupted while waiting for serve");
-		if (await deps.probe(ready)) return ok(undefined);
+		await Promise.resolve();
+		if (exitCode !== undefined) return err(`serve exited (${exitCode}) before ready`);
+		if (await deps.probe(ready)) {
+			// the check is answered by whatever holds the port: a stale server from an earlier run passes it while this
+			// run's own serve is failing with EADDRINUSE. Give a dying serve the moment it needs, then trust the answer.
+			await deps.sleep(READY_SETTLE_MS);
+			if (exitCode !== undefined) {
+				return err(`serve exited (${exitCode}) before ready: the ready check was answered by something else`);
+			}
+			return ok(undefined);
+		}
 		await Promise.resolve();
 		if (exitCode !== undefined) return err(`serve exited (${exitCode}) before ready`);
 		if (ctx.now() >= deadline) return err(`serve not ready after ${Math.round(serve.timeoutMs / 1000)}s`);
 		await deps.sleep(READY_POLL_MS);
 	}
+}
+
+/** The port a ready check looks at (tcp, or the http URL's), undefined for a file check. */
+function readyPort(spec: ReadySpec): number | undefined {
+	if (spec.kind === "tcp") return spec.port;
+	if (spec.kind !== "http") return undefined;
+	const url = new URL(spec.url);
+	return Number(url.port) || (url.protocol === "https:" ? 443 : 80);
+}
+
+/** `something is already listening on PORT (pid N)` when the ready check passes before serve is spawned; undefined otherwise. */
+async function staleListener(
+	ctx: CommandContext,
+	deps: BatchDeps,
+	ready: ReadySpec | undefined
+): Promise<string | undefined> {
+	const port = ready ? readyPort(ready) : undefined;
+	if (!ready || port === undefined || !(await deps.probe(ready))) return undefined;
+	const lsof = await ctx
+		.exec(["lsof", "-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-t"])
+		.catch(() => ({ exitCode: 1, stdout: "", stderr: "" }));
+	const pids = lsof.exitCode === 0 ? lsof.stdout.trim().split(/\s+/).filter(Boolean) : [];
+	const who = pids.length > 0 ? ` (pid ${pids.join(", ")})` : "";
+	return `something is already listening on ${port}${who}: stop it or change the port, or this run's serve fails with EADDRINUSE and the ready check is answered by the old process`;
+}
+
+/** The last lines of the serve log, for an error that names why serve died. */
+async function serveLogTail(deps: BatchDeps, log: string): Promise<string> {
+	const text = await deps.readFile(log).catch(() => "");
+	const lines = text
+		.trimEnd()
+		.split("\n")
+		.filter((line) => line !== "");
+	return lines.slice(-SERVE_LOG_TAIL_LINES).join("\n");
 }
 
 type Device = BatchWorker & {
@@ -1348,6 +1396,8 @@ type RunContext = {
 	hooks: SessionHooks & { name: string };
 	running: Set<ProcHandle>;
 	interrupted: () => boolean;
+	/** serve exited while the run was using it: report it, stop the jobs and fail the run */
+	serveDied: (code: number, log: string) => void;
 	signal: AbortSignal;
 };
 
@@ -1458,10 +1508,20 @@ async function startServe(
 	const log = join(o.r.logDir, "serve.log");
 	const ready = serve.ready ? parseReadySpec(expandText(serve.ready.spec, o.vars), serve.ready.cwd) : ok(undefined);
 	if (!ready.success) return ready;
+	const stale = await staleListener(ctx, deps, ready.data);
+	if (stale !== undefined) warn(ctx, `warden ${o.r.name}: ${stale}`);
 	const proc = deps.spawn(["sh", "-c", expandText(serve.cmd, o.vars)], { env: o.env, log, group: true, cwd: o.cwd });
 	o.services.serve = proc;
 	const up = await waitReady(ctx, deps, serve, ready.data, proc, o.r.interrupted);
-	return up.success ? up : err(`${up.error} (log: ${log})`);
+	if (!up.success) {
+		const tail = up.error.startsWith("serve exited") ? await serveLogTail(deps, log) : "";
+		return err(`${up.error} (log: ${log})${tail ? `\n${tail}` : ""}`);
+	}
+	// teardown clears `services.serve` before it stops it: an exit while it is still set is serve dying under the run
+	void proc.exited.then((code) => {
+		if (o.services.serve === proc) o.r.serveDied(code, log);
+	});
+	return up;
 }
 
 type PreparedPool = { pool: Pool; live: Device[]; setups?: DeviceSetup[] };
@@ -1919,8 +1979,15 @@ async function supervise(
 		hooks,
 		running: new Set<ProcHandle>(),
 		interrupted: () => controller.signal.aborted,
+		serveDied: (code, log) => {
+			serveExit = code;
+			reportError(ctx, hooks.name, `serve exited (${code}) during the run, failing it (log: ${log})`);
+			controller.abort();
+			for (const job of r.running) job.kill("SIGTERM");
+		},
 		signal: controller.signal,
 	};
+	let serveExit: number | undefined;
 	const screenshots = new Map<string, string>();
 	const logs = new Map<string, string>();
 	const resultFiles = new Map<string, string>();
@@ -1938,7 +2005,7 @@ async function supervise(
 	const pctx: CommandContext = { ...ctx, err: say };
 	const fail = (message: string, extra: Partial<SessionResult> = {}): SessionResult => {
 		reportError(ctx, r.name, message);
-		return { code: r.interrupted() ? 130 : 1, ...extra };
+		return { code: r.interrupted() && serveExit === undefined ? 130 : 1, ...extra };
 	};
 	const teardown = () => teardownServices(deps, services);
 	try {
@@ -2018,7 +2085,7 @@ async function supervise(
 		await report(ctx, deps, args, screen.cast ? { ...done, cast: screen.cast } : done);
 		if (!r.interrupted()) await shutdownDevices(ctx, hooks, session, summary);
 		return {
-			code: exitFor(r.interrupted(), summary.ok),
+			code: serveExit !== undefined ? 1 : exitFor(r.interrupted(), summary.ok),
 			batchDir,
 			summary,
 			screenshots,

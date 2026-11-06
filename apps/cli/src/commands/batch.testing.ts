@@ -58,6 +58,10 @@ export function harness(
 		ready?: () => boolean;
 		isTTY?: boolean;
 		serveExitsOnKill?: boolean;
+		/** with `manual`: a killed job exits (143) instead of running on */
+		jobsExitOnKill?: boolean;
+		/** serve dies the moment it is spawned with this exit code (a port already taken, a bad command) */
+		serveExitsAtStart?: number;
 		/** overrides `exitCodes`: the exit code for one job spawn, from its env */
 		exitCodeFor?: (env: Record<string, string | undefined>) => number;
 		/** the failure-screenshot capture: "fail" resolves false, "throw" rejects */
@@ -121,6 +125,10 @@ export function harness(
 				h.events.push(
 					daemon ? `${daemon}:start` : spawnOpts.setup ? `setup:${spawnOpts.env.WARDEN_UDID}` : `job:${job}`
 				);
+				if (daemon === "serve" && opts.serveExitsAtStart !== undefined) {
+					const code = opts.serveExitsAtStart;
+					queueMicrotask(() => resolveExit(code));
+				}
 				if (!daemon && !opts.manual)
 					queueMicrotask(() => resolveExit(opts.exitCodeFor?.(spawnOpts.env) ?? opts.exitCodes?.[job ?? ""] ?? 0));
 				return {
@@ -130,6 +138,7 @@ export function harness(
 						entry.kills.push(signal);
 						h.events.push(`${daemon ?? `job:${job}`}:${signal}`);
 						if (daemon && opts.serveExitsOnKill !== false) resolveExit(143);
+						if (!daemon && opts.manual && opts.jobsExitOnKill) resolveExit(143);
 					},
 				};
 			},

@@ -216,7 +216,8 @@ describe("warden e2e", () => {
 		const h = harness();
 		expect(await createE2eCommand(h.deps).run(c)).toBe(0);
 		expect(h.serve()?.cmd).toEqual(["sh", "-c", "bun api"]);
-		expect(h.probes).toEqual([{ kind: "tcp", host: "127.0.0.1", port: 9000 }]);
+		// probed before serve is spawned (a stale listener) and again for the ready wait
+		expect(h.probes).toEqual(Array(2).fill({ kind: "tcp", host: "127.0.0.1", port: 9000 }));
 		for (const s of [h.serve(), ...h.jobs()]) {
 			expect(s?.opts.env.WARDEN_PORT_0).toBe("8091");
 			expect(s?.opts.env.WARDEN_PORTS).toBe("8091");
@@ -234,7 +235,7 @@ describe("warden e2e", () => {
 		const h = harness();
 		expect(await createE2eCommand(h.deps).run(c)).toBe(0);
 		expect(h.serve()?.cmd).toEqual(["sh", "-c", "bun api --port 8091"]);
-		expect(h.probes).toEqual([{ kind: "tcp", host: "127.0.0.1", port: 8091 }]);
+		expect(h.probes).toEqual(Array(2).fill({ kind: "tcp", host: "127.0.0.1", port: 8091 }));
 		const job = h.jobs()[0];
 		expect(job?.opts.env.WARDEN_PORT).toBe("8091");
 		expect(job?.opts.env.AGENT_DEVICE_STATE_DIR).toBeUndefined();
