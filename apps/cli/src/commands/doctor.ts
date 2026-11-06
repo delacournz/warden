@@ -3,6 +3,8 @@ import { delimiter, join } from "node:path";
 import { isLeaseAlive, processAlive } from "@delacour/warden-core/liveness";
 import { androidTools } from "@delacour/warden-core/providers/android";
 import { MIGRATIONS, wardenHome } from "@delacour/warden-core/store";
+import { type HelperLocation, locateHelper } from "@delacour/warden-e2e/driver/ios/locate-helper";
+import { ok, type Result } from "@delacour/warden-types/result";
 import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { codexDetected } from "../hooks/agents";
@@ -14,7 +16,7 @@ import { emit, plural } from "../output";
 import { RULE_MD, staleSkillFiles } from "../skill";
 import { SYMBOLS } from "../ui";
 import { type BuildInfo, currentBuild } from "../update/build-info";
-import { fetchHelper, tarExtractHelper } from "../update/fetch-helper";
+import { type FetchedHelper, fetchHelper, tarExtractHelper } from "../update/fetch-helper";
 import { type InstallOrigin, installOrigin } from "../update/install-origin";
 import type { Fetch } from "../update/npm-registry";
 import { describePackageInstall, detectPackageInstall, upgradeCommand } from "../update/package-install";
@@ -265,9 +267,62 @@ export type DoctorDeps = {
 	fetch: Fetch;
 	/** `--leases` inventory / pid / filesystem (default: the real ones) */
 	leases?: LeaseDoctorDeps;
+	/** `--fetch-helper` may take the latest release's helper when this version has no release (builds from a checkout) */
+	fallbackToLatest?: boolean;
 };
 
-type FetchedHelperReport = { dir: string; url: string; sha256: string };
+/** `fetched`: downloaded into `$WARDEN_HOME/simd/<version>`; `present`: a helper that wins over that one was already there. */
+type HelperFetchReport =
+	| ({ status: "fetched" } & FetchedHelper)
+	| { status: "present"; path: string; source: HelperLocation["source"] };
+
+/**
+ * The helper the driver would pick ahead of `$WARDEN_HOME/simd/<version>` (an env override, one next to the binary,
+ * a source build): a fetched copy would never be used, so there is nothing to fetch.
+ */
+function helperAheadOfHome(ctx: CommandContext, helper: HelperDeps): HelperLocation | undefined {
+	const located = locateHelper({
+		env: ctx.env,
+		execPath: helper.execPath,
+		importDir: helper.importDir,
+		wardenHome: wardenHome(ctx.env),
+		exists: helper.exists,
+		realpath: helper.realpath,
+	});
+	return located.success ? located.data : undefined;
+}
+
+async function fetchHelperFor(
+	ctx: CommandContext,
+	deps: DoctorDeps,
+	json: boolean
+): Promise<Result<HelperFetchReport>> {
+	const present = helperAheadOfHome(ctx, deps.helper);
+	if (present) {
+		if (!json) ctx.out(`warden-simd already at ${present.path} (${present.source}): nothing to fetch`);
+		return ok({ status: "present", path: present.path, source: present.source });
+	}
+	const result = await fetchHelper({
+		fetch: deps.fetch,
+		extract: tarExtractHelper(ctx.exec),
+		env: ctx.env,
+		platform: deps.helper.platform,
+		arch: deps.helper.arch,
+		version: deps.helper.version,
+		wardenHome: wardenHome(ctx.env),
+		fallbackToLatest: deps.fallbackToLatest === true,
+	});
+	if (!result.success) return result;
+	if (result.data.release === "latest") {
+		ctx.err(
+			ctx.ui.color.yellow(
+				`warden doctor: --fetch-helper: no release v${deps.helper.version} yet, took the latest release's warden-simd`
+			)
+		);
+	}
+	if (!json) ctx.out(`fetched warden-simd → ${result.data.dir} (${result.data.url})`);
+	return ok({ status: "fetched", ...result.data });
+}
 
 async function doctor(
 	ctx: CommandContext,
@@ -275,23 +330,14 @@ async function doctor(
 	opts: { json: boolean; fetchHelper: boolean }
 ): Promise<number> {
 	const { color } = ctx.ui;
-	let fetched: FetchedHelperReport | undefined;
+	let fetched: HelperFetchReport | undefined;
 	if (opts.fetchHelper) {
-		const result = await fetchHelper({
-			fetch: deps.fetch,
-			extract: tarExtractHelper(ctx.exec),
-			env: ctx.env,
-			platform: deps.helper.platform,
-			arch: deps.helper.arch,
-			version: deps.helper.version,
-			wardenHome: wardenHome(ctx.env),
-		});
+		const result = await fetchHelperFor(ctx, deps, opts.json);
 		if (!result.success) {
 			ctx.err(color.red(`warden doctor: --fetch-helper: ${result.error}`));
 			return 1;
 		}
 		fetched = result.data;
-		if (!opts.json) ctx.out(`fetched warden-simd → ${fetched.dir} (${fetched.url})`);
 	}
 	const checks = await runChecks(ctx, deps.helper);
 	const ok = checks.every((c) => c.status !== "fail");
@@ -347,4 +393,8 @@ export function createDoctorCommand(deps: DoctorDeps): Command {
 	});
 }
 
-export const doctorCommand: Command = createDoctorCommand({ helper: realHelperDeps(), fetch: (url) => fetch(url) });
+export const doctorCommand: Command = createDoctorCommand({
+	helper: realHelperDeps(),
+	fetch: (url) => fetch(url),
+	fallbackToLatest: currentBuild().channel !== "release",
+});

@@ -166,7 +166,7 @@ On a spec failure read `screen-at-failure.txt` and `failure.png` in the test's e
 ## Helper
 
 - `warden doctor` shows helper health. `degraded` means the accessibility guest is present but its last read failed; the next good read clears it.
-- No helper (exit 3): `warden doctor --fetch-helper`. Intel Macs have none.
+- No helper (exit 3): `warden doctor --fetch-helper`. Intel Macs have none. It fetches nothing when a helper ahead of `$WARDEN_HOME/simd` exists (env override, next to the binary, source build). From a checkout whose version has no release yet, it takes the latest release's helper and warns.
 - Two helpers on one simulator: reads stay correct but settle falls to ~2.5 s. Keep one helper per leased simulator: `warden ui close --udid <udid>` or kill the stale `warden-simd --udid <udid>`.
 - A stuck helper: `warden ui close --udid <udid>`; the next call restarts it.
 - Android has a helper too, the resident `warden __android-host` (log: `$WARDEN_HOME/android-host/<serial>.log`). If it is stuck, run `warden ui close --serial <serial>`. `WARDEN_ANDROID_HOST=0` drives in-process (slower: each call reopens adb + uiad). If you run from source, `ui close` after editing driver code, because the host only notices a changed `cli.ts`.

@@ -7,7 +7,14 @@ import { bunExec } from "@delacour/warden-core/exec";
 import { err, ok } from "@delacour/warden-types/result";
 import { fakeHelperDist } from "../npm/helper.testing";
 import { packHelper } from "../npm/helper-asset";
-import { type ExtractHelper, fetchHelper, helperBaseUrl, helperHomeDir, tarExtractHelper } from "./fetch-helper";
+import {
+	type ExtractHelper,
+	fetchHelper,
+	helperBaseUrl,
+	helperHomeDir,
+	latestHelperBaseUrl,
+	tarExtractHelper,
+} from "./fetch-helper";
 
 const sha = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 const TGZ = new TextEncoder().encode("pretend tarball");
@@ -29,6 +36,7 @@ function extractor(calls: Array<{ bytes: Uint8Array; dir: string }>): ExtractHel
 }
 
 const BASE = "https://github.com/delacournz/warden/releases/download/v0.3.0";
+const LATEST = "https://github.com/delacournz/warden/releases/latest/download";
 const input = (overrides: Partial<Parameters<typeof fetchHelper>[0]>): Parameters<typeof fetchHelper>[0] => ({
 	fetch: serve({}),
 	extract: extractor([]),
@@ -38,6 +46,15 @@ const input = (overrides: Partial<Parameters<typeof fetchHelper>[0]>): Parameter
 	version: "0.3.0",
 	wardenHome: "/home/.warden",
 	...overrides,
+});
+
+describe("latestHelperBaseUrl", () => {
+	test("the latest GitHub release of WARDEN_RELEASE_REPO", () => {
+		expect(latestHelperBaseUrl({})).toBe(LATEST);
+		expect(latestHelperBaseUrl({ WARDEN_RELEASE_REPO: "me/fork" })).toBe(
+			"https://github.com/me/fork/releases/latest/download"
+		);
+	});
 });
 
 describe("helperBaseUrl", () => {
@@ -68,7 +85,12 @@ describe("fetchHelper", () => {
 		);
 		expect(result).toEqual({
 			success: true,
-			data: { dir: "/home/.warden/simd/0.3.0", url: `${BASE}/warden-simd-darwin-arm64.tgz`, sha256: sha(TGZ) },
+			data: {
+				dir: "/home/.warden/simd/0.3.0",
+				url: `${BASE}/warden-simd-darwin-arm64.tgz`,
+				sha256: sha(TGZ),
+				release: "version",
+			},
 		});
 		expect(asked).toEqual([`${BASE}/SHA256SUMS`, `${BASE}/warden-simd-darwin-arm64.tgz`]);
 		expect(calls).toHaveLength(1);
@@ -120,6 +142,64 @@ describe("fetchHelper", () => {
 		);
 		if (offline.success) throw new Error("expected failure");
 		expect(offline.error).toContain("ENOTFOUND");
+	});
+
+	test("fallbackToLatest: a version with no release takes the latest release's helper, staged under this version", async () => {
+		const asked: string[] = [];
+		const calls: Array<{ bytes: Uint8Array; dir: string }> = [];
+		const result = await fetchHelper(
+			input({
+				fallbackToLatest: true,
+				fetch: serve(
+					{
+						[`${LATEST}/SHA256SUMS`]: `${sha(TGZ)}  warden-simd-darwin-arm64.tgz\n`,
+						[`${LATEST}/warden-simd-darwin-arm64.tgz`]: TGZ,
+					},
+					asked
+				),
+				extract: extractor(calls),
+			})
+		);
+		expect(result).toEqual({
+			success: true,
+			data: {
+				dir: "/home/.warden/simd/0.3.0",
+				url: `${LATEST}/warden-simd-darwin-arm64.tgz`,
+				sha256: sha(TGZ),
+				release: "latest",
+			},
+		});
+		expect(asked).toEqual([`${BASE}/SHA256SUMS`, `${LATEST}/SHA256SUMS`, `${LATEST}/warden-simd-darwin-arm64.tgz`]);
+		expect(calls[0]?.dir).toBe("/home/.warden/simd/0.3.0");
+	});
+
+	test("fallbackToLatest only on a 404: never past an HTTP error, never away from WARDEN_HELPER_URL", async () => {
+		const asked: string[] = [];
+		const down = await fetchHelper(
+			input({
+				fallbackToLatest: true,
+				fetch: async (url) => {
+					asked.push(url);
+					return new Response("", { status: 503 });
+				},
+			})
+		);
+		expect(down.success).toBe(false);
+		expect(asked).toEqual([`${BASE}/SHA256SUMS`]);
+
+		const mirrored: string[] = [];
+		const mirror = await fetchHelper(
+			input({ fallbackToLatest: true, env: { WARDEN_HELPER_URL: "http://localhost:9/h" }, fetch: serve({}, mirrored) })
+		);
+		expect(mirror.success).toBe(false);
+		expect(mirrored).toEqual(["http://localhost:9/h/SHA256SUMS"]);
+	});
+
+	test("no release for the version and none latest: the error names both", async () => {
+		const result = await fetchHelper(input({ fallbackToLatest: true }));
+		if (result.success) throw new Error("expected failure");
+		expect(result.error).toContain(`${BASE}/SHA256SUMS not found`);
+		expect(result.error).toContain(`${LATEST}/SHA256SUMS not found`);
 	});
 
 	test("an extract failure is returned", async () => {
