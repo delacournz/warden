@@ -148,11 +148,49 @@ describe("settings", () => {
 });
 ```
 
-- `describe(title, body)` groups tests; the group title is part of every test title. `describe(title, { serial }, body)` takes `serial` only for parity: bun runs a file's tests one after another unless `--concurrent`.
-- `beforeEach` / `afterEach` hooks run outermost scope first / innermost first, and are typed with the base fixtures (`app`, `device`, `screen`, `platform`); `afterEach` runs even when the test failed. To get the fixtures `test.extend` added, register the hook on the extended test (`it.beforeEach(({ account }) => …)`, `it.afterEach`): it is typed with that test's fixtures and runs only for tests made with it (or extended from it). `beforeAll` / `afterAll` run once per file or `describe` with the same base fixtures and never see the ones added by `test.extend`.
+- `describe(title, body)` groups tests; the group title is part of every test title. The body runs while bun collects the tests, before any device exists: it gets no fixtures and is not awaited. A body that takes arguments or is `async` is `INVALID_ARGUMENT`. Device work goes in a hook or a test.
+- `beforeEach` / `afterEach` hooks run outermost scope first / innermost first, and are typed with the base fixtures (`app`, `device`, `screen`, `platform`); `afterEach` runs even when the test failed. To get the fixtures `test.extend` added, register the hook on the extended test (`it.beforeEach(({ account }) => …)`, `it.afterEach`): it is typed with that test's fixtures and runs only for tests made with it (or extended from it). `beforeAll` / `afterAll` run once per file or `describe` with the same base fixtures and never see the ones added by `test.extend`. Each `beforeAll` / `afterAll` runs like a small test: the scope's timeout, its steps in its own `trace.jsonl`, and on failure the same `failure.png`, `screen-at-failure.txt` and logs plus one `failed` (or `timed-out`) line in `results.jsonl` titled with the describe titles and `beforeAll`. bun runs none of the group's tests after a failed `beforeAll`. The fixtures a hook gets work only inside it: keep one in a variable and use it in a test, and it fails with `SESSION`. Tests use their own `{ app, device, screen }`; they all drive the same device and app.
 - `test.use({ timeout, actionTimeout, assertionTimeout, launch, systemAlerts })` applies to every test in the current file or `describe`. `launch: "none"` skips the fresh `app.open()` before each test. Put `test.use({ timeout })` above the tests it is for: after a test in the same scope bun has already fixed that test's timeout, and warden prints a warning. An unknown `systemAlerts` value is `INVALID_ARGUMENT`.
 - `actionTimeout` (default 30 s) bounds each tap, fill and wait for an element; `assertionTimeout` (default 5 s) bounds each `expect(locator)`.
 - `systemAlerts: "accept" | "dismiss" | "off"` (default `"off"`) answers an alert that is in the way. With `"accept"` or `"dismiss"`, a locator read, action or `expect` that sees an alert on top answers it (`device.alert("accept")` or `"dismiss"`) and looks again on a fresh screen, three answers at most per look. It answers every alert, the app's own as well as the system's, so leave it `"off"` for a test that asserts on an alert. iOS's "Open in …?" sheet is the exception: `"dismiss"` answers it with Open (Cancel would only throw away a link the test opened), and while `device.openLink` is waiting on a link no read answers any alert, because `openLink` answers the sheet itself.
+
+### One launch for a group of tests
+
+`describe.serial` (or `describe(title, { serial: true }, body)`) turns a group into one chain on one app launch. Use it when several checks share an expensive start, such as a launch plus sign-in:
+
+```ts title="e2e/sign-in-codes.e2e.ts"
+import { afterAll, beforeAll, describe, expect, test } from "@delacour/warden-e2e";
+
+describe.serial("sign-in codes", () => {
+  beforeAll(async ({ screen }) => {
+    await screen.getByTestId("email").fill("ada@example.com");
+    await screen.getByTestId("send-code").tap({ until: screen.getByTestId("code") });
+  });
+
+  afterAll(async ({ app }) => {
+    await app.open({ args: ["--sign-out"] });
+  });
+
+  test("an old code is refused once a new one is sent", async ({ screen }) => {
+    await screen.getByTestId("resend-code").tap();
+    await screen.getByTestId("code").fill("111111");
+    await expect(screen.getByTestId("code-error")).toBeVisible();
+  });
+
+  test("the latest code signs in", async ({ screen }) => {
+    await screen.getByTestId("code").fill("222222");
+    await expect(screen.getByTestId("home")).toBeVisible();
+  });
+});
+```
+
+- The runner opens the app once, before the group's first `beforeAll` (`launch` step), and never between its tests. `test.use({ launch: "none" })` in the group skips that open too.
+- Each test starts where the one before it stopped. Write the tests in the order they run, and leave the app in the state the next one expects.
+- Once a test fails, the rest of the group is not run: each gets a `skipped` line in `results.jsonl` with code `SKIPPED`, naming the test that failed. `afterAll` still runs.
+- `retry` on a test in the group is `INVALID_ARGUMENT`: a retried attempt would start from the screen the failed one left. `warden e2e` passes rerun the whole spec instead.
+- Every test still has its own deadline, steps, `trace.jsonl` and failure artifacts.
+
+Prefer this to one long test that runs every check: each check gets its own result line, and a failure names it.
 
 ### Your own fixtures
 
@@ -221,7 +259,7 @@ For a server the whole suite needs, or a step once per device, use the suite's `
 
 ## Imports and errors
 
-`@delacour/warden-e2e` exports `test`, `describe`, `beforeAll`, `beforeEach`, `afterEach`, `afterAll`, `expect`, `run`, `E2eError`, `WARDEN_E2E_VERSION` and the types `RunOptions`, `RunResult`, `RunCommand`, `App`, `OpenOptions`, `OpenWaitUntil`, `Device`, `Screen`, `Locator`, `LocatorReading`, `TapOptions`, `TapUntil`, `PinchOptions`, `RotateOptions`, `ScreenGestures`, `ScreenPinchOptions`, `ScreenRotateOptions`, `ScreenPathOptions`, `SystemAlerts` and `TestFixtures`. Everything else is internal.
+`@delacour/warden-e2e` exports `test`, `describe` (and `describe.serial`), `beforeAll`, `beforeEach`, `afterEach`, `afterAll`, `expect`, `run`, `E2eError`, `WARDEN_E2E_VERSION` and the types `RunOptions`, `RunResult`, `RunCommand`, `App`, `OpenOptions`, `OpenWaitUntil`, `Device`, `Screen`, `Locator`, `LocatorReading`, `TapOptions`, `TapUntil`, `PinchOptions`, `RotateOptions`, `ScreenGestures`, `ScreenPinchOptions`, `ScreenRotateOptions`, `ScreenPathOptions`, `SystemAlerts` and `TestFixtures`. Everything else is internal.
 
 Every failure a spec sees is an `E2eError` (`instanceof` works) with a `code`: `LOCATOR_NOT_FOUND`, `LOCATOR_AMBIGUOUS`, `INVALID_LOCATOR`, `ACTION_FAILED`, `NOT_ACTIONABLE`, `TIMEOUT`, `INVALID_ARGUMENT`, `ASSERTION`, `SESSION`, `DRIVER`, `PERF_BUDGET`, `RUN_FAILED` or `READ_DEGRADED` (an iOS read fell back from the bridge to host `ax`, or came back empty, and nothing, not even the React tree for a plain `getByTestId`, could confirm the locator present or absent before the timeout; such a read never makes `toBeHidden` or `.not.toBeVisible` pass). A locator failure carries the screen as text (`screen`); an ambiguous one the number of `matches`. `WARDEN_E2E_VERSION` is the package version: the preload exits 2 in a spec process whose `@delacour/warden-e2e` version differs from the `warden` that started it (`WARDEN_VERSION`; a by-hand run compares nothing).
 

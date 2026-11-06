@@ -3,10 +3,11 @@ import type { Platform } from "../driver/driver.types";
 import { missingRequirements, type Requirement } from "../driver/requirements";
 import { E2eError } from "../errors";
 import { getSession } from "../session";
-import { buildBaseFixtures, type FixtureEntry, type FixtureSetup, runAttempt, runnerTiming } from "./attempt";
+import { type FixtureEntry, type FixtureSetup, runAttempt, runHookAttempt, runnerTiming, skipInChain } from "./attempt";
 import { callerFile } from "./callsite";
 import { type BaseFixtures, SYSTEM_ALERTS } from "./fixtures.types";
 import {
+	chainOf,
 	createScope,
 	currentScope,
 	type Hook,
@@ -18,6 +19,9 @@ import {
 	type Scope,
 	type UseOptions,
 } from "./scope";
+
+/** A `describe.serial` chain's first failed test (its titles), once one has failed for good (no retries left). */
+const brokenChains = new WeakMap<Scope, readonly string[]>();
 
 export type TestOptions = {
 	/** ms for the whole attempt (hooks included); beats `test.use({ timeout })` */
@@ -96,6 +100,14 @@ function registerTest<F extends object>(
 	const defaults = registrationDefaults();
 	const use = resolveUse(scope, defaults, options.timeout);
 	const retry = options.retry ?? 0;
+	const chain = chainOf(scope);
+	if (chain !== undefined && retry > 0) {
+		throw new E2eError(
+			"INVALID_ARGUMENT",
+			`test("${title}"): retry is not allowed in a describe.serial group: a retried test would start from the app ` +
+				"state its failed attempt left behind. Retry the whole spec instead (warden e2e passes)"
+		);
+	}
 
 	const wrongPlatform =
 		options.platforms !== undefined &&
@@ -111,17 +123,25 @@ function registerTest<F extends object>(
 	let attempts = 0;
 	const run = async (): Promise<void> => {
 		attempts += 1;
-		await runAttempt<F>(getSession(), {
-			file,
-			title: path,
-			scope,
-			fixtures,
-			body,
-			...(options.timeout !== undefined ? { timeout: options.timeout } : {}),
-			only,
-			final: attempts > retry,
-			bunTimeoutMs,
-		});
+		const session = getSession();
+		const broken = chain === undefined ? undefined : brokenChains.get(chain);
+		if (broken !== undefined) skipInChain(session, { file, title: path, only }, broken);
+		try {
+			await runAttempt<F>(session, {
+				file,
+				title: path,
+				scope,
+				fixtures,
+				body,
+				...(options.timeout !== undefined ? { timeout: options.timeout } : {}),
+				only,
+				final: attempts > retry,
+				bunTimeoutMs,
+			});
+		} catch (error) {
+			if (chain !== undefined && attempts > retry) brokenChains.set(chain, path);
+			throw error;
+		}
 	};
 	const bunOptions = { timeout: bunTimeoutMs, retry };
 
@@ -204,19 +224,76 @@ function makeTest<F extends object>(fixtures: readonly FixtureEntry[]): TestApi<
 export const test: TestApi<BaseFixtures> = makeTest<BaseFixtures>([]);
 
 export type DescribeOptions = {
-	/** accepted for API parity: bun runs a file's tests one after another unless `--concurrent` */
+	/**
+	 * Make the group one chain (same as `describe.serial`): the app is opened once, before the group's `beforeAll`,
+	 * and not between its tests; once a test fails the rest are not run (`skipped`, code `SKIPPED`); `retry` is
+	 * rejected. `test.use({ launch: "none" })` in the group skips that one open too.
+	 */
 	serial?: boolean;
 };
 
-export function describe(title: string, body: () => void): void;
-export function describe(title: string, options: DescribeOptions, body: () => void): void;
-export function describe(title: string, second: DescribeOptions | (() => void), third?: () => void): void {
-	const body = typeof second === "function" ? second : third;
-	const options = typeof second === "function" ? {} : second;
-	if (body === undefined) throw new E2eError("INVALID_ARGUMENT", `describe("${title}"): the body is missing`);
-	const scope = createScope(title, options.serial === true);
-	bunDescribe(title, () => runInScope(scope, body));
+/**
+ * A `describe` body runs while bun collects the tests, before any device session exists, so it gets no fixtures
+ * and is not awaited. Device work goes in `beforeAll` / `beforeEach` or a test.
+ */
+export type DescribeBody = () => void;
+
+export type DescribeApi = {
+	(title: string, body: DescribeBody): void;
+	(title: string, options: DescribeOptions, body: DescribeBody): void;
+	/** `describe(title, { serial: true }, body)`: tests share one app launch and stop at the first failure */
+	serial(title: string, body: DescribeBody): void;
+};
+
+function rejectBody(title: string, problem: string): never {
+	throw new E2eError(
+		"INVALID_ARGUMENT",
+		`describe("${title}"): ${problem}. A describe body runs while tests are collected, before any device exists: ` +
+			"put setup in beforeAll(async ({ app, device, screen }) => …) and use describe.serial to keep one app " +
+			"launch across the group's tests"
+	);
 }
+
+function registerDescribe(title: string, options: DescribeOptions, body: DescribeBody | undefined): void {
+	if (body === undefined) throw new E2eError("INVALID_ARGUMENT", `describe("${title}"): the body is missing`);
+	if (body.length > 0) rejectBody(title, "the body takes arguments, but describe passes no fixtures");
+	const file = callerFile();
+	const scope = createScope(title, options.serial === true);
+	bunDescribe(title, () => {
+		// the chain's one launch, registered before the body's hooks so it runs before its beforeAll
+		if (scope.serial && chainOf(scope) === scope) {
+			bunBeforeAll(() =>
+				runHookAttempt(getSession(), {
+					file,
+					title: [...scope.title, "launch"],
+					scope,
+					kind: "launch",
+					run: async ({ app }) => {
+						if (resolveUse(scope, registrationDefaults()).launch === "fresh") await app.open();
+					},
+				})
+			);
+		}
+		const returned: unknown = runInScope(scope, body);
+		if (returned instanceof Promise) {
+			returned.catch(() => undefined);
+			rejectBody(title, "the body is async, but describe never awaits it");
+		}
+	});
+}
+
+/** Groups tests; the group title is part of every test title. `describe.serial` makes the group one chain. */
+export const describe: DescribeApi = Object.assign(
+	(title: string, second: DescribeOptions | DescribeBody, third?: DescribeBody): void => {
+		if (typeof second === "function") registerDescribe(title, {}, second);
+		else registerDescribe(title, second, third);
+	},
+	{
+		serial(title: string, body: DescribeBody): void {
+			registerDescribe(title, { serial: true }, body);
+		},
+	}
+);
 
 /** Runs before every test in this scope, outermost scope first; receives the test's `{ app, device, screen, platform }`. */
 export function beforeEach(hook: Hook): void {
@@ -228,25 +305,23 @@ export function afterEach(hook: Hook): void {
 	currentScope().afterEach.push(hook);
 }
 
-async function sharedFixtures(scope: Scope): Promise<BaseFixtures> {
-	const session = getSession();
-	const defaults = session.env;
-	const use = resolveUse(scope, {
-		timeoutMs: defaults.timeoutMs,
-		actionTimeoutMs: defaults.actionTimeoutMs,
-		assertionTimeoutMs: defaults.assertionTimeoutMs,
-	});
-	return buildBaseFixtures(session, session.signal, use);
+function registerAll(kind: "beforeAll" | "afterAll", hook: Hook): void {
+	const scope = currentScope();
+	const file = callerFile();
+	const register = kind === "beforeAll" ? bunBeforeAll : bunAfterAll;
+	register(() => runHookAttempt(getSession(), { file, title: [...scope.title, kind], scope, kind, run: hook }));
 }
 
-/** Once per file/`describe`, before its first test; receives the base fixtures (not the `extend` ones). */
+/**
+ * Once per file/`describe`, before its first test, with `{ app, device, screen, platform }` of its own (not the
+ * `extend` ones): the scope's deadline, steps in its own `trace.jsonl`, failure capture and a `failed` results line
+ * titled `[...describe, "beforeAll"]`. Kept fixtures fail with `SESSION` inside a test: tests use their own.
+ */
 export function beforeAll(hook: Hook): void {
-	const scope = currentScope();
-	bunBeforeAll(async () => hook(await sharedFixtures(scope)));
+	registerAll("beforeAll", hook);
 }
 
-/** Once per file/`describe`, after its last test. */
+/** Once per file/`describe`, after its last test (also after a failure); run like {@link beforeAll}. */
 export function afterAll(hook: Hook): void {
-	const scope = currentScope();
-	bunAfterAll(async () => hook(await sharedFixtures(scope)));
+	registerAll("afterAll", hook);
 }
