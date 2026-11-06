@@ -34,6 +34,14 @@ describe("recoverAxWedge", () => {
 		expect(calls).toHaveLength(1);
 	});
 
+	test("log show's own invocation line names the marker (in its args): that is no wedge, and the predicate leaves it out", async () => {
+		const calls: string[][] = [];
+		const self = `Timestamp Ty Process[PID:TID]\n2026-11-06 18:21:15.014 Df log[94977:0] [com.apple.log:] log run noninteractively, parent: 92654 (launchd_sim), args: 'log' 'show' '--last' '5m' '--style' 'compact' '--predicate' 'eventMessage CONTAINS "${AX_WEDGE_MARKER}"'\n`;
+		const out = await recoverAxWedge(fakeExec([[LOG, { stdout: self }]], calls), "U1");
+		expect(out.kind).toBe("not-wedged");
+		expect(calls[0]?.join(" ")).toContain('process != "log"');
+	});
+
 	test("a log that cannot be read is a failure, and backboardd is left alone", async () => {
 		const calls: string[][] = [];
 		const out = await recoverAxWedge(fakeExec([[LOG, { exitCode: 1, stderr: "Invalid device state" }]], calls), "U1");
