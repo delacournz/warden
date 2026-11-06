@@ -9,7 +9,7 @@ name: e2e
 # develop's. `workflow_dispatch` on develop seeds the shared entries every PR can restore.
 #
 # Runner: the `runner` input (e.g. `namespace-profile-mac-small`), else the repo variable WARDEN_E2E_RUNNER, else
-# `macos-26`. Checkout and caches are GitHub's own actions, so any macOS label works.
+# `macos-26`, with the suite on its newest Xcode 27. Checkout and caches are GitHub's own actions, so any macOS label works.
 on:
   pull_request:
     branches: [develop]
@@ -147,10 +147,23 @@ jobs:
           path: packages/e2e/native/dist
           key: ${{ steps.simd-cache.outputs.cache-primary-key }}
 
+      # The suite runs on the newest Xcode 27 the image ships (macos-26 defaults to an older one).
+      - name: Pick Xcode 27
+        id: xcode27
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          xcodes=(/Applications/Xcode_27*.app)
+          xcode=$(printf '%s\n' "${xcodes[@]}" | sort -V | tail -1)
+          [ -n "$xcode" ] || { echo "no Xcode 27 on this runner; installed:" /Applications/Xcode*.app >&2; exit 1; }
+          echo "path=$xcode" >> "$GITHUB_OUTPUT"
+          echo "Xcode 27: $xcode"
+
       - id: e2e
         uses: ./.github/actions/e2e
         with:
           working-directory: apps/example
+          xcode-path: ${{ steps.xcode27.outputs.path }}
           suite: example
           # 1 until the iOS accessibility bridge stops stalling on a second sim (count 2 stalled the second sim's warm-up).
           count: ${{ inputs.count || '1' }}
