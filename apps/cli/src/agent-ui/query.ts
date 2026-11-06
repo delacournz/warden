@@ -1,5 +1,5 @@
 import type { Driver, Snapshot } from "@delacour/warden-e2e/driver/driver.types";
-import { settleByHash, snapshotHash } from "@delacour/warden-e2e/driver/settle";
+import { HASH_FALLBACK_MIN_QUIET_MS, settleByHash, snapshotHash } from "@delacour/warden-e2e/driver/settle";
 import { fieldValue } from "@delacour/warden-e2e/screen/actions";
 import { textOf } from "@delacour/warden-e2e/screen/locator";
 import { indexSnapshot, type NodeEntry, type NodeIndex } from "@delacour/warden-e2e/screen/nodes";
@@ -24,8 +24,8 @@ import { type ElementJson, elementJson, storeSnapshot } from "./snapshot";
 
 /** `wait stable` looks at the screen this often (a quiet window is judged on a fixed beat, so no back-off). */
 export const POLL_MS = 100;
-/** `wait stable` with no number: the screen must hold still this long. */
-export const DEFAULT_STABLE_MS = 250;
+/** `wait stable` with no ms: long enough that a navigation push (mixed tree still for 300-460 ms) is not taken as stable. */
+export const DEFAULT_STABLE_MS = HASH_FALLBACK_MIN_QUIET_MS;
 
 const IS_STATES = ["visible", "hittable", "enabled", "checked", "selected", "focused"] as const;
 export type IsState = (typeof IS_STATES)[number];
