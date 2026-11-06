@@ -9,7 +9,7 @@ name: e2e
 # develop's. `workflow_dispatch` on develop seeds the shared entries every PR can restore.
 #
 # Runner: the `runner` input (e.g. `namespace-profile-mac-small`), else the repo variable WARDEN_E2E_RUNNER, else
-# `macos-26`. A `namespace-*` label swaps in Namespace's checkout and cache volume; any other runs GitHub-only actions.
+# `macos-26`. Checkout and caches are GitHub's own actions, so any macOS label works.
 on:
   pull_request:
     branches: [develop]
@@ -63,17 +63,8 @@ jobs:
   example:
     runs-on: ${{ inputs.runner || vars.WARDEN_E2E_RUNNER || 'macos-26' }}
     timeout-minutes: 50
-    env:
-      # Namespace-only actions (checkout mirror, cache volume) fail on a GitHub-hosted runner.
-      NAMESPACE: ${{ startsWith(inputs.runner || vars.WARDEN_E2E_RUNNER || 'macos-26', 'namespace-') }}
     steps:
-      - if: env.NAMESPACE == 'true'
-        uses: namespacelabs/nscloud-checkout-action@66f2dc6f6c42a8ac6c4e53473c4840006822831e # v9.0.1
-        with:
-          persist-credentials: false
-
-      - if: env.NAMESPACE != 'true'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -90,20 +81,11 @@ jobs:
       # `source` also builds warden-simd from this checkout (`packages/e2e/native/dist`, which the driver prefers over
       # `$WARDEN_HOME/simd`), so a helper change is tested here and a version with no release yet (the version PR)
       # needs no download: the action's `warden doctor --fetch-helper` finds it and fetches nothing. Same toolchain
-      # and (on a namespace-* runner) cache volume as ci's native job and the release build (newest Xcode, for the build only).
+      # as ci's native job and the release build (newest Xcode, for the build only).
       - if: (inputs.warden-version || 'source') == 'source'
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version-file: package.json
-
-      - if: (inputs.warden-version || 'source') == 'source' && env.NAMESPACE == 'true'
-        uses: namespacelabs/nscloud-cache-action@1124a6f3ce44e5cf84cc22111530961f4d2a15f9 # v1.7.0
-        with:
-          cache: |
-            swiftpm
-          path: |
-            ~/Library/Caches/warden-idb
-            packages/e2e/native/ios/.build
 
       - name: Pick the newest Xcode for the helper build
         id: xcode
@@ -130,6 +112,20 @@ jobs:
         with:
           path: packages/e2e/native/dist
           key: warden-simd-${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode.outputs.build }}-${{ steps.xcode.outputs.sources }}
+
+      # Only on a dist/ miss: the pinned idb checkout and SwiftPM's dependency + build caches, keyed on the pins and
+      # the Xcode, so a helper source change rebuilds incrementally instead of from a cold clone.
+      - name: Cache the helper's dependencies
+        if: (inputs.warden-version || 'source') == 'source' && steps.simd-cache.outputs.cache-hit != 'true'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/Library/Caches/warden-idb
+            ~/Library/Caches/org.swift.swiftpm
+            packages/e2e/native/ios/.build
+          key: warden-simd-deps-${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode.outputs.build }}-${{ hashFiles('packages/e2e/native/idb.lock.json', 'packages/e2e/native/ios/Package.swift') }}
+          restore-keys: |
+            warden-simd-deps-${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode.outputs.build }}-
 
       - name: Build warden-simd from this checkout
         if: (inputs.warden-version || 'source') == 'source' && steps.simd-cache.outputs.cache-hit != 'true'
