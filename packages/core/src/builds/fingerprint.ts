@@ -67,19 +67,33 @@ export function fingerprintArgv(
 	return bin ? [bin, ...args] : ["bunx", "--bun", "@expo/fingerprint", ...args];
 }
 
-/** Compute the native fingerprint of `project` for `platform` (runs in the project root). */
-export async function computeFingerprint(exec: Exec, project: Project, platform: Platform): AsyncResult<string> {
+/** Wait before the one retry of a fingerprint command that exited cleanly with nothing on stdout. */
+const EMPTY_RETRY_WAIT_MS = 2_000;
+
+/**
+ * Compute the native fingerprint of `project` for `platform` (runs in the project root). A command that exits 0
+ * with nothing on stdout (seen on a loaded CI runner, no stderr, once the run had booted a simulator) is run once more
+ * after a short wait; if it is still empty, the error says what ran.
+ */
+export async function computeFingerprint(
+	exec: Exec,
+	project: Project,
+	platform: Platform,
+	wait: (ms: number) => Promise<void> = (ms) => Bun.sleep(ms)
+): AsyncResult<string> {
 	const argv = fingerprintArgv(project, platform);
-	const res = await exec(argv, {
-		cwd: project.root,
-		env: { EXPO_NO_TELEMETRY: "1" },
-		timeoutMs: FINGERPRINT_TIMEOUT_MS,
-	});
+	const run = () =>
+		exec(argv, { cwd: project.root, env: { EXPO_NO_TELEMETRY: "1" }, timeoutMs: FINGERPRINT_TIMEOUT_MS });
+	let res = await run();
+	if (res.exitCode === 0 && res.stdout.trim() === "") {
+		await wait(EMPTY_RETRY_WAIT_MS);
+		res = await run();
+	}
 	if (res.exitCode !== 0) return err(`fingerprint failed: ${execError(argv, res)}`);
 	const hash = parseFingerprintOutput(res.stdout);
-	if (hash.success || res.stdout.trim() !== "" || res.stderr.trim() === "") return hash;
-	// a clean exit with nothing on stdout: the reason is on stderr
-	return err(`${hash.error}; stderr: ${res.stderr.trim().slice(-300)} (command: ${argv.join(" ")})`);
+	if (hash.success || res.stdout.trim() !== "") return hash;
+	const stderr = res.stderr.trim() === "" ? "" : `; stderr: ${res.stderr.trim().slice(-300)}`;
+	return err(`${hash.error} (exit 0 twice, in ${project.root}, command: ${argv.join(" ")})${stderr}`);
 }
 
 /** Where `computeCacheKey` keeps the native hash between runs (17-5); absent = always run the fingerprint. */
