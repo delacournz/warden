@@ -150,7 +150,7 @@ Pin the action to a commit SHA or release tag. In order, it:
 2. Installs bun from npm (`npm i -g bun@<version>`) when none is on `PATH`, so it needs no third-party action; `bun-version` defaults to the root `packageManager`. Runs `install-command` (default `bun install --frozen-lockfile`) with `npm-token` as `NPM_TOKEN`.
 3. Installs the release binary of `warden-version` (checksum verified) and runs `warden doctor --fetch-helper`.
 4. Restores the three caches below, imports `app-path` when given, then runs `warden e2e` with `--report` and the inputs as flags.
-5. On failure prints every `screen-at-failure.txt` into the job log (one `::group::` each) and always uploads the report plus `~/.warden/batches` as an artifact (`retention-days`, default 3).
+5. On failure prints every `screen-at-failure.txt` into the job log (one `::group::` each), then collects the run's [artifacts](#artifacts) and uploads each group as its own artifact (`retention-days`, default 3).
 6. After a green run only, and only when `save-cache` is `true`, saves the caches. Restore and save are separate steps, so a failed run saves nothing.
 
 | Input | Default | Meaning |
@@ -170,9 +170,43 @@ Pin the action to a commit SHA or release tag. In order, it:
 | `cache-prefix` | `warden-e2e-v1` | change it to drop every cache |
 | `js-inputs` | `src assets app.config.ts index.ts metro.config.js package.json` | git pathspecs that key the repack cache; mirror `kinds.simulator.jsInputs` |
 | `save-cache` | `true` | `false` on pull requests |
-| `retention-days`, `artifact-name` | `3`, `warden-e2e` | the evidence artifact |
+| `artifacts` | `all` | groups to collect: `all`, `none`, or a list of `report,batches,logs,app,golden` (see [Artifacts](#artifacts)) |
+| `upload-artifacts` | `true` | `false` collects without uploading: upload from `artifact-paths` yourself |
+| `retention-days`, `artifact-name` | `3`, `warden-e2e` | how long the artifacts are kept; their name prefix (`warden-e2e-report`, …) |
 
-Outputs: `report-path` (absolute), `passed` (`true` / `false`) and `cache-groups` (the JSON below). The job fails when the gate fails.
+Outputs: `report-path` (absolute), `passed` (`true` / `false`), `cache-groups` (the JSON below), `artifact-groups` (comma list) and `artifact-paths` (JSON, see [Artifacts](#artifacts)). The job fails when the gate fails.
+
+### Artifacts
+
+After the run, pass or fail, the action collects what it left on the runner into groups and uploads each as `<artifact-name>-<group>`:
+
+| Group | What | Size |
+|---|---|---|
+| `report` | `e2e-report.json` | KB |
+| `batches` | `~/.warden/batches`: per-spec logs, `results.jsonl`, `screen-at-failure.txt`, `metro.log` | KB to MB |
+| `logs` | `~/.warden/logs`: native build logs | MB |
+| `app` | `app.tar`: the `.app` / `.apk` builds the run used (`warden builds ls`, last used since the suite started), paths kept relative to `$HOME` (`.warden/builds/<project>/…/App.app`) so a base and its repack never clash | ~100 MB each |
+| `golden` | `golden.tar`: the golden simulator archive from `~/warden-goldens`. `tar -xf golden.tar -C ~/warden-goldens && warden golden import ~/warden-goldens` restores it on a Mac with the same Xcode and runtime | GBs |
+
+`app` and `golden` are tarballs because `upload-artifact` drops the executable bit and follows symlinks: a raw `.app` would not launch and a raw golden would not import. They are written to `$RUNNER_TEMP/warden-artifacts`, so the golden needs its size again in free disk.
+
+`all` (the default) is every group after a green run and `report,batches,golden` after a failed one: a failed run's golden is what reproduces it. List groups to pick your own (`artifacts: report,batches`), or `none` to collect nothing. The golden is never built just to upload it: a run that broke before building one has no `golden` group. When it was built but not archived, collecting it runs `warden golden export --allow-unsettled`, and the cache save reuses that archive.
+
+To upload with your own steps, set `upload-artifacts: false` and read `artifact-paths`, `{report, batches, logs, app, golden}` each a list of absolute paths (empty when not collected):
+
+```yaml
+- id: e2e
+  uses: delacournz/warden/.github/actions/e2e@<sha>
+  with:
+    working-directory: apps/mobile
+    artifacts: report,batches,app
+    upload-artifacts: false
+- if: always()
+  uses: actions/upload-artifact@v4
+  with:
+    name: mobile-app
+    path: ${{ join(fromJSON(steps.e2e.outputs.artifact-paths).app, fromJSON('"\n"')) }}
+```
 
 ### The caches
 
@@ -186,7 +220,7 @@ A native build is minutes of `xcodebuild`, the JS bundle about 3.5 minutes on a 
 
 ### Bring your own cache
 
-With `cache: none` the action never calls `actions/cache`. It still imports the golden from `~/warden-goldens` before the run and, after a green run with `save-cache: true`, exports it there, so a cache you control only has to move directories. `warden ci cache --json` (the action's `cache-groups` output) lists them, on any CI:
+With `cache: none` the action never calls `actions/cache`. It still imports the golden from `~/warden-goldens` before the run, but never exports it for the cache: a golden your cache already restored would be exported for nothing. When your cache missed it, run the golden's `beforeSave` after a green run, then save the directory. Collecting the `golden` [artifact](#artifacts) (in the default `all`) already archives a missing golden there, so `beforeSave` then has nothing left to do. `warden ci cache --json` (the action's `cache-groups` output) lists them, on any CI:
 
 ```json
 {
@@ -202,7 +236,7 @@ With `cache: none` the action never calls `actions/cache`. It still imports the 
 }
 ```
 
-A `paths` group is stored as it is (a `!` path is left out of the one before it). An `archive` group needs its commands around it: `afterRestore` after you restore it, `beforeSave` before you save it. The action runs both for you. Run it from the project (`--project <dir>`), with the same `--prefix`, `--profile` and `--js-input` you pass the action. On a runner with a persistent cache volume (Namespace, a self-hosted Mac), mount the paths and skip the keys:
+A `paths` group is stored as it is (a `!` path is left out of the one before it). An `archive` group needs its commands around it: `afterRestore` after you restore it, `beforeSave` before you save it. With `cache: none` the action runs `afterRestore` for you; `beforeSave` is yours. Run it from the project (`--project <dir>`), with the same `--prefix`, `--profile` and `--js-input` you pass the action. On a runner with a persistent cache volume (Namespace, a self-hosted Mac), mount the paths and skip the keys:
 
 ```yaml
 - uses: namespacelabs/nscloud-cache-action@v1
@@ -214,6 +248,10 @@ A `paths` group is stored as it is (a `!` path is left out of the one before it)
   with:
     working-directory: apps/mobile
     cache: none
+- name: Keep the golden on the volume
+  if: success()
+  working-directory: apps/mobile
+  run: '[ -n "$(ls -A ~/warden-goldens 2>/dev/null)" ] || warden golden export ~/warden-goldens --allow-unsettled'
 ```
 
 On another CI, key each group by its `key` and restore before `warden e2e`:
@@ -223,7 +261,7 @@ groups=$(warden ci cache --json --project apps/mobile)
 # restore every group's paths under its key, then:
 warden golden import ~/warden-goldens
 warden e2e --project apps/mobile
-# after a green run: warden golden export ~/warden-goldens --allow-unsettled, then save each group under its key
+# after a green run, only when the golden missed: warden golden export ~/warden-goldens --allow-unsettled; then save each group under its key
 ```
 
 ### Reuse an app built earlier in the workflow
@@ -251,7 +289,7 @@ Build the `.app` with ad-hoc signing and pass it in. `CODE_SIGNING_ALLOWED=NO` l
 | ``xcrun simctl list devices … did not finish within 30s`` | the first CoreSimulator call of a cold image, under a native build's load | the action calls it once before the run; keep `count` at 1 on a 3-core runner |
 | first spec on each simulator fails, the rest pass | the in-sim bridge is up but silent | `retry: 1`; warm-up retries its snapshot for 120 s and warms one device at a time |
 | `errSecMissingEntitlement` / `-34018` in the app | simulator app built with `CODE_SIGNING_ALLOWED=NO` | build with `CODE_SIGN_IDENTITY=-` |
-| golden "not settled after 300s" | a loaded 3-core runner | the run still works. The action exports it with `warden golden export --allow-unsettled`, so the next run restores it instead of building it again. A bigger runner settles it |
+| golden "not settled after 300s" | a loaded 3-core runner | the run still works. With `cache: github` the action exports it with `warden golden export --allow-unsettled`, so the next run restores it instead of building it again. A bigger runner settles it |
 | `warden: command not found` | `warden-version: none` without an earlier install | install warden first or leave the default |
 | `bun: command not found` after a blocked `setup-bun` | an allowlist blocks third-party actions | the action never uses one: leave `bun-version` empty or pin it |
 | cache never hits | the key moved: Xcode image, fingerprint or `js-inputs` changed | read the `Key the caches` step: it prints the fingerprint and golden name |
