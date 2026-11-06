@@ -1,6 +1,6 @@
 name: e2e
 
-# warden's own iOS e2e suite (`apps/example`) on a hosted macOS runner, through the reusable action
+# warden's own iOS e2e suite (`apps/example`) on a Namespace macOS runner (`namespace-profile-mac-medium`, as `ci`'s native job), through the reusable action
 # in .github/actions/e2e. Separate from `ci` (the signoff escape hatch) so it never slows a PR that
 # touches nothing it covers: pull requests only run it for the paths below.
 #
@@ -32,7 +32,7 @@ on:
   workflow_dispatch:
     inputs:
       runner:
-        description: runs-on label (default the repo variable WARDEN_E2E_RUNNER, else xcode-27)
+        description: runs-on label (default the repo variable WARDEN_E2E_RUNNER, else namespace-profile-mac-medium)
         type: string
         default: ""
       count:
@@ -67,10 +67,10 @@ concurrency:
 
 jobs:
   example:
-    runs-on: ${{ inputs.runner || vars.WARDEN_E2E_RUNNER || 'xcode-27' }}
+    runs-on: ${{ inputs.runner || vars.WARDEN_E2E_RUNNER || 'namespace-profile-mac-medium' }}
     timeout-minutes: 50
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: namespacelabs/nscloud-checkout-action@66f2dc6f6c42a8ac6c4e53473c4840006822831e # v9.0.1
         with:
           persist-credentials: false
 
