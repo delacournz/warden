@@ -86,7 +86,8 @@ export async function settleByHash(poll: () => Promise<string>, deps: SettleDeps
 	}
 }
 
-function tuple(element: Element): string {
+/** One element as `(role, identifier, label, value, frame to 1 pt)`: what `snapshotHash` hashes, per node. */
+export function elementKey(element: Element): string {
 	const { x, y, width, height } = element.frame;
 	return JSON.stringify([
 		element.role,
@@ -103,6 +104,6 @@ function tuple(element: Element): string {
 /** Stable fingerprint over `(role, identifier, label, value, frame)` of every node in preorder. */
 export function snapshotHash(snapshot: Pick<Snapshot, "flat">): string {
 	let text = "";
-	for (const element of snapshot.flat) text += `${tuple(element)}\n`;
+	for (const element of snapshot.flat) text += `${elementKey(element)}\n`;
 	return Bun.hash(text).toString(36);
 }
