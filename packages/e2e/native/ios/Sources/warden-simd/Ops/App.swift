@@ -108,6 +108,8 @@ extension Session {
   /// once, so the next probe compares instead of asking launchd.
   func launch(_ request: LaunchRequest) async throws -> JSON {
     bundlePids.remember(nil, for: request.bundleId)
+    // the first read of a just-launched app is slow on a loaded host: give it the cold deadline (`BridgeWarmth`)
+    bridgeWarmth.markCold()
     let launched = try await simulator.application.launch(request.configuration)
     bundlePids.rememberLaunch(launched.processIdentifier, for: request.bundleId)
     return LaunchRequest.reply(pid: launched.processIdentifier)
