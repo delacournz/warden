@@ -97,6 +97,8 @@ warden doctor --fetch-helper
 
 Downloads `warden-simd-darwin-arm64.tgz` and `SHA256SUMS` from the GitHub release `v<version>` (or `WARDEN_HELPER_URL`), checks the tarball against the sum, and unpacks it into `$WARDEN_HOME/simd/<version>/`. Nothing is unpacked when the checksum does not match. Then it runs the usual checks, so the `sim-helper` rows show the result. It exits 1 if the download fails or the machine is not macOS arm64.
 
+It downloads nothing when a helper the driver would pick first is already there (`WARDEN_SIMD`, `WARDEN_HELPER_DIR`, one next to the binary, a source build in `packages/e2e/native/dist`), and says where (`--json`: `helperFetch.status` `present`, else `fetched`). Running from a checkout (not a release binary), a version with no release yet (a version-bump branch) takes the latest release's helper, with a warning (`helperFetch.release` `latest`); `WARDEN_HELPER_URL` turns that off.
+
 ## How it is shipped
 
 - npm: `@delacour/warden-darwin-arm64` carries `bin/warden-simd` and its resources next to `bin/warden`. The package.json records the helper build under `warden.helper`.
