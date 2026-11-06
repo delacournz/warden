@@ -27,7 +27,13 @@ const BASH = existsSync("/bin/bash") ? "/bin/bash" : "bash";
 
 type Group = (typeof GROUPS)[number];
 type Collected = { groups: Group[]; paths: Record<Group, string[]>; archived: boolean; stdout: string };
-type RunOpts = { artifacts: string; passed: boolean; goldenBuilt?: boolean; goldenArchived?: boolean };
+type RunOpts = {
+	artifacts: string;
+	passed: boolean;
+	goldenBuilt?: boolean;
+	goldenArchived?: boolean;
+	goldenCacheHit?: boolean;
+};
 
 const STUB = `#!/bin/sh
 case "$1 $2" in
@@ -84,6 +90,7 @@ function collect(opts: RunOpts): Collected {
 			STARTED: "2000",
 			PROFILE: "",
 			STUB_BUILT: opts.goldenBuilt === true ? "1" : "0",
+			GOLDEN_CACHE_HIT: opts.goldenCacheHit === true ? "true" : "",
 		},
 	});
 	expect(proc.exitCode).toBe(0);
@@ -112,6 +119,41 @@ describe("artifacts.sh", () => {
 		expect(run.groups).toEqual(["report", "batches", "logs", "golden"]);
 		expect(run.paths.logs).toEqual([join(home, ".warden", "logs")]);
 		expect(run.paths.app).toEqual([]);
+	});
+
+	test("all after a green run skips a golden restored from the cache: the cache already holds those bytes", () => {
+		const run = collect({
+			artifacts: "all",
+			passed: true,
+			goldenBuilt: true,
+			goldenArchived: true,
+			goldenCacheHit: true,
+		});
+		expect(run.groups).toEqual(["report", "batches", "logs", "app"]);
+		expect(run.paths.golden).toEqual([]);
+		expect(existsSync(join(home, "warden-artifacts", "golden.tar"))).toBe(false);
+	});
+
+	test("all after a failed run keeps a golden restored from the cache: it reproduces the failure", () => {
+		const run = collect({
+			artifacts: "all",
+			passed: false,
+			goldenBuilt: true,
+			goldenArchived: true,
+			goldenCacheHit: true,
+		});
+		expect(run.paths.golden).toEqual([join(home, "warden-artifacts", "golden.tar")]);
+	});
+
+	test("an explicit golden in the list is collected after a green run, cache hit or not", () => {
+		const run = collect({
+			artifacts: "golden",
+			passed: true,
+			goldenBuilt: true,
+			goldenArchived: true,
+			goldenCacheHit: true,
+		});
+		expect(run.paths.golden).toEqual([join(home, "warden-artifacts", "golden.tar")]);
 	});
 
 	test("logs are always collected, whatever the artifacts input says", () => {
@@ -190,6 +232,11 @@ describe("action.yml artifacts", () => {
 			expect(upload?.if).toContain("inputs.upload-artifacts == 'true'");
 			expect(upload?.with?.path).toBe(`\${{ steps.artifacts.outputs.${group} }}`);
 		}
+	});
+
+	test("the collection knows whether the golden came from the cache", () => {
+		const collectStep = action.runs.steps.find((s) => s.id === "artifacts") as Step & { env?: Record<string, string> };
+		expect(collectStep.env?.GOLDEN_CACHE_HIT).toBe(`\${{ steps.golden-cache.outputs.cache-hit }}`);
 	});
 
 	test("the cache export reuses the golden the collection archived", () => {
