@@ -84,5 +84,6 @@ export function toSnapshot(data: SnapshotData, takenAt: number): Snapshot {
 		truncated: data.truncated,
 	};
 	if (data.modal) snapshot.modal = data.modal;
+	if (data.fallback?.from === "axbridge") snapshot.fellBackFrom = "axbridge";
 	return snapshot;
 }

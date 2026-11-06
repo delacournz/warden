@@ -63,6 +63,9 @@ const REACT_THROTTLE_MS = 450;
 /** One React tree read gives up after this long, so a stuck page cannot eat the action timeout. */
 const REACT_TIMEOUT_MS = 2000;
 
+/** After a read of the first reader failed to answer, it is not asked again for this long (the probe may itself wait out a deadline). */
+const FIRST_READER_RETRY_MS = 5000;
+
 /** What a look at the screen may do beyond reading it. */
 export type ObserveOptions = {
 	/**
@@ -81,6 +84,8 @@ export class Runtime {
 	private reactCache: { key: string; at: number; matches: ReactMatch[] } | undefined;
 	/** the index of each snapshot, so a snapshot that several reads share is indexed once */
 	private readonly indexed = new WeakMap<Snapshot, NodeIndex>();
+	/** the time before which a degraded look is not retried on its first reader, after that reader failed to answer */
+	private firstReaderRetryAt = 0;
 
 	constructor(readonly host: ScreenHost) {}
 
@@ -130,15 +135,32 @@ export class Runtime {
 			const before = options.withPrevious === true && canObserve(driver) ? driver.previous?.() : undefined;
 			const result = canObserve(driver) ? await driver.observe({ reuse }) : await driver.snapshot();
 			if (!result.success) return { ok: false, error: result.error };
+			const snapshot = await this.restoreDegraded(driver, result.data);
 			const observation: Observation = {
 				ok: true,
-				observed: { driver, snapshot: result.data, index: this.indexOf(result.data) },
+				observed: { driver, snapshot, index: this.indexOf(snapshot) },
 			};
 			if (before !== undefined) observation.earlier = this.earlierThan(driver, before, result.data);
 			if (options.alerts === false || answered >= MAX_ALERT_ANSWERS) return observation;
-			if (!(await this.answeredAlert(driver, result.data))) return observation;
+			if (!(await this.answeredAlert(driver, snapshot))) return observation;
 			reuse = false;
 		}
+	}
+
+	/**
+	 * A snapshot the driver answered from a fallback reader (`Snapshot.fellBackFrom`, iOS `ax` after `axbridge` stalled)
+	 * can lack what the first reader has: React Native testIDs on static text. Such a look is read once more on the
+	 * first reader, and that read replaces it when it answers. When it does not (the guest is still silent) the
+	 * fallback snapshot stands and the first reader is left alone for `FIRST_READER_RETRY_MS`, so a dead guest costs a
+	 * poll one deadline, not one per attempt. Every locator and matcher looks through here, so none needs its own rule.
+	 */
+	private async restoreDegraded(driver: Driver, snapshot: Snapshot): Promise<Snapshot> {
+		const first = snapshot.fellBackFrom;
+		if (first === undefined || this.clock.now() < this.firstReaderRetryAt) return snapshot;
+		const again = await driver.snapshot({ backend: first });
+		if (again.success && again.data.backend === first) return again.data;
+		this.firstReaderRetryAt = this.clock.now() + FIRST_READER_RETRY_MS;
+		return snapshot;
 	}
 
 	/** What came before `look`, given the cache's answer from just before it was taken. */
