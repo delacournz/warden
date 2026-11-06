@@ -72,6 +72,8 @@ Builds:
   repack [platform]             bundle this worktree's JS into the cached
                                 simulator build (seconds; builds the base once
                                 per native fingerprint)
+  ci                            CI helpers: cache prints the cache keys and
+                                paths a CI job saves between runs
   builds                        list, remove, prune (LRU) and import cached
                                 native app builds
 
@@ -2029,6 +2031,41 @@ Options:
   --force          repack even when this JS is already cached
   --json           machine-readable output
   -h, --help       display help for command"
+`;
+
+exports[`help output warden ci --help (and nested subcommands) 1`] = `
+"$ warden ci --help
+Usage: warden ci [options] [command]
+
+CI helpers: cache prints the cache keys and paths a CI job saves between runs
+
+Options:
+  -h, --help      display help for command
+
+Commands:
+  cache           print the CI cache groups (builds, repack, golden): each key,
+                  its paths, and the golden's import/export commands
+  help [command]  display help for command
+
+$ warden ci cache --help
+Usage: warden ci cache [options]
+
+print the CI cache groups (builds, repack, golden): each key, its paths, and the
+golden's import/export commands
+
+Options:
+  --platform <platform>  ios (default; the only one with cacheable builds and a
+                         golden)
+  --project <dir>        project directory (default: cwd)
+  --prefix <prefix>      prefix of every key (default: warden-e2e-v1)
+  --profile <slug>       device profile of the golden (default: iphone-17)
+  --js-input <pathspec>  git pathspec of the JS bundle's input, repeatable; keys
+                         the repack group (default: src assets app.config.ts
+                         index.ts metro.config.js package.json)
+  --golden-dir <dir>     where the golden is archived (default:
+                         ~/warden-goldens)
+  --json                 machine-readable output
+  -h, --help             display help for command"
 `;
 
 exports[`help output warden ui --help (and nested subcommands) 1`] = `
