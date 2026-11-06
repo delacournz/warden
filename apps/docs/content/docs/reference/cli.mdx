@@ -61,7 +61,7 @@ Lease iOS sims / Android emulators — reuse, boot or create — booted and read
 | `--profile <slug>` | `iphone-17` / first AVD | device profile, e.g. `iphone-17`, `pixel-10` |
 | `--runtime <runtime>` | `latest` | `latest`, `iOS-26-5`, `26.5` … |
 | `--count <n>` | `1` | how many devices |
-| `--max <n>` | what the machine's capacity allows | max warden devices of this profile (pool size; machine-wide boots are capped by [capacity](/docs/sims/capacity)) |
+| `--max <n>` | uncapped (with `WARDEN_CAPACITY=on`: what the machine's capacity allows) | max warden devices of this profile (pool size; with `WARDEN_CAPACITY=on` machine-wide boots are also capped by [capacity](/docs/sims/capacity)) |
 | `--wait <duration>` | `30m` | how long to wait for a free device or a slot in the boot queue, e.g. `10m` |
 | `--no-wait` | | fail fast instead of queueing |
 | `--priority <interactive\|high\|normal\|low\|N>` | `WARDEN_PRIORITY`, else per command | boot queue priority; see [Capacity & queue](/docs/sims/capacity) |
@@ -73,7 +73,7 @@ Lease iOS sims / Android emulators — reuse, boot or create — booted and read
 
 ### `warden capacity` / `warden queue`
 
-`warden capacity [--json]` prints the host budget (RAM, performance cores), what is booted (warden and foreign), per-device cost, the binding dimension and memory pressure. `warden queue [--json]` lists claims waiting for a boot slot: position, effective priority, age, owner. See [Capacity & queue](/docs/sims/capacity).
+`warden capacity [--json]` prints the host budget (RAM, performance cores), what is booted (warden and foreign), per-device cost, the binding dimension and memory pressure. `warden queue [--json]` lists claims waiting for a boot slot: position, effective priority, age, owner. Both print the numbers and say whether capacity limits are enforced (`enforced` in `--json`); they are not by default, `WARDEN_CAPACITY=on` enforces them. See [Capacity & queue](/docs/sims/capacity).
 
 ### `warden release [leaseIds...]`
 

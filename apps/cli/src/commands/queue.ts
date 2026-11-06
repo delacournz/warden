@@ -8,6 +8,7 @@ import {
 	type WaitReason,
 } from "@delacour/warden-core/queue";
 import { describeOwner, ownerLocation, type Platform } from "@delacour/warden-core/types";
+import { capacityEnabled } from "../capacity-deps";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { emit, plural, table } from "../output";
@@ -71,7 +72,13 @@ function queue(ctx: CommandContext, json: boolean): number {
 	const waiting = ordered.filter((e) => isDeviceWaitReason(e.reason));
 	const rows: QueueRow[] = [...gated, ...waiting].map((e) => queueRow(e, gated, now));
 	const { color } = ctx.ui;
-	const text =
+	const enforced = capacityEnabled(ctx.env);
+	const note = color.dim(
+		enforced
+			? "capacity limits enforced (WARDEN_CAPACITY=on)"
+			: "capacity limits not enforced (WARDEN_CAPACITY=on to enforce)"
+	);
+	const list =
 		rows.length === 0
 			? color.dim("queue empty")
 			: table(
@@ -91,7 +98,8 @@ function queue(ctx: CommandContext, json: boolean): number {
 						pidCell(r, color),
 					])
 				);
-	emit(ctx, json, { queue: rows }, text, { scope: "queue", detail: plural(rows.length, "waiting claim") });
+	const text = `${list}\n${note}`;
+	emit(ctx, json, { queue: rows, enforced }, text, { scope: "queue", detail: plural(rows.length, "waiting claim") });
 	return 0;
 }
 

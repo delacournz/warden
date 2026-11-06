@@ -11,6 +11,7 @@ import {
 } from "@delacour/warden-core/providers/devicectl.fixtures";
 import { simctlDevicesJson } from "@delacour/warden-core/providers/ios.fixture";
 import type { InventoryDevice, Lease } from "@delacour/warden-core/types";
+import { buildCapacityDeps } from "./capacity-deps";
 import {
 	bootedByClaim,
 	claimedJson,
@@ -19,8 +20,10 @@ import {
 	leasePidFor,
 	parseClaimFlags,
 	resolveAutoProfile,
+	resolveDefaultMax,
 	resolveOwner,
 	resolvePriority,
+	UNCAPPED_POOL,
 	withNamedPhysical,
 } from "./claim-flags";
 import type { HideStart } from "./sim-windows";
@@ -584,5 +587,34 @@ describe("parseClaimFlags biometrics", () => {
 			off.success ? off.data.request.profile : ""
 		);
 		expect(plain.success && plain.data.request.profile.endsWith("+bio")).toBe(false);
+	});
+});
+
+describe("resolveDefaultMax", () => {
+	const flags = (max?: string) => {
+		const parsed = parseClaimFlags("ios", max === undefined ? {} : { max }, 4);
+		if (!parsed.success) throw new Error(parsed.error);
+		return parsed.data;
+	};
+
+	test("capacity off: a defaulted max (cores / 4) is dropped", () => {
+		const f = flags();
+		expect(f.request.max).toBe(1);
+		expect(resolveDefaultMax(f.request, undefined, f).max).toBe(UNCAPPED_POOL);
+	});
+
+	test("capacity off: an explicit --max still caps", () => {
+		const f = flags("2");
+		expect(resolveDefaultMax(f.request, undefined, f).max).toBe(2);
+	});
+
+	test("capacity on: a defaulted max grows to the budget's room, an explicit one stays", async () => {
+		ctx = testContext([]);
+		ctx.env = { ...ctx.env, ...OWNER_ENV, WARDEN_CAPACITY: "on", WARDEN_CAPACITY_HEADROOM_GB: "8" };
+		const capacity = await buildCapacityDeps(ctx, resolveOwner(ctx));
+		const defaulted = flags();
+		expect(resolveDefaultMax(defaulted.request, capacity, defaulted).max).toBeGreaterThan(defaulted.request.max);
+		const explicit = flags("2");
+		expect(resolveDefaultMax(explicit.request, capacity, explicit).max).toBe(2);
 	});
 });

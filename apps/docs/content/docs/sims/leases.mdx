@@ -40,7 +40,7 @@ warden claim android --profile pixel-10 --no-wait
 | `--wait <duration>` | `30m` | how long to wait for a free device or a slot in the [boot queue](/docs/sims/capacity) |
 | `--no-wait` | | fail at once instead of queueing |
 | `--priority <interactive\|high\|normal\|low\|N>` | `WARDEN_PRIORITY`, else per command | boot queue priority |
-| `--max <n>` | what the machine's capacity allows | max warden devices of this profile (pool size) |
+| `--max <n>` | uncapped (with `WARDEN_CAPACITY=on`: what the machine's capacity allows) | max warden devices of this profile (pool size) |
 | `--headless` / `--no-headless` | `WARDEN_HEADLESS`, else off | iOS: close the claimed sims' Simulator.app windows instead of tiling them; see [Headless](/docs/sims/headless) |
 | `--adopt` | | allow allocating foreign (non-warden) devices |
 

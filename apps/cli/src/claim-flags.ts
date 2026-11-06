@@ -462,13 +462,20 @@ function unlockOptions(flags: ClaimFlags, options: ClaimHideOptions) {
 	};
 }
 
-/** A defaulted `--max` grows to what the host's capacity budget has room for. */
-function widenToCapacity(
+/** The pool size of a claim whose `--max` was not given and capacity limits are off: no cap. */
+export const UNCAPPED_POOL = Number.MAX_SAFE_INTEGER;
+
+/**
+ * A defaulted `--max` (cores / 4, a host-spec figure) is dropped when capacity limits are off, and grows to
+ * what the host's capacity budget has room for when they are on. A `--max` the user gave (flag or config) stays.
+ */
+export function resolveDefaultMax(
 	request: DeviceRequest,
 	capacity: Awaited<ReturnType<typeof buildCapacityDeps>>,
-	flags: ClaimFlags
+	flags: Pick<ClaimFlags, "maxDefaulted">
 ): DeviceRequest {
-	if (!capacity || !flags.maxDefaulted) return request;
+	if (!flags.maxDefaulted) return request;
+	if (!capacity) return { ...request, max: UNCAPPED_POOL };
 	const room = maxConcurrent(request.platform, capacity.budget, capacity.config);
 	return { ...request, max: Math.max(request.max, room) };
 }
@@ -518,7 +525,7 @@ export async function claimWithFlags(
 		if (!unlocked.success) return unlocked;
 	}
 	const capacity = await buildCapacityDeps(ctx, owner);
-	const request = widenToCapacity(allowed.data, capacity, flags);
+	const request = resolveDefaultMax(allowed.data, capacity, flags);
 	const slim = resolveSlim({ ...flags.slim, env: ctx.env });
 	if (!slim.success) return slim;
 	const outcome = await claimDevices({
