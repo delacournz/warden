@@ -256,6 +256,39 @@ describe("tap({ until }) watches the screen between presses", () => {
 		expect(driver.callsOf("tap")).toHaveLength(1);
 	});
 
+	test("a screen that only lost nodes (the screen a navigation left, a keyboard going down) did not react: the press is sent again", async () => {
+		const { driver, host, screen, pressTimes } = leftovers();
+		await screen.getByTestId("tab-settings").tap({ until: screen.getByTestId("settings-email") });
+		expect(pressTimes).toHaveLength(2);
+		expect(pressTimes[1]).toBeGreaterThanOrEqual(750);
+		expect(pressTimes[1]).toBeLessThanOrEqual(1000);
+		expect(driver.callsOf("tap")).toHaveLength(2);
+		expect(host.clock.elapsed()).toBeLessThan(4000);
+	});
+
+	test("a press that takes its target away landed, even when nothing new shows", async () => {
+		let pressed = false;
+		const driver = fakeDriver({
+			screens: () =>
+				snapshotOf([
+					el("text", { id: "title", label: "Welcome" }),
+					...(pressed
+						? []
+						: [el("button", { id: "next", label: "Next", frame: { x: 24, y: 600, width: 300, height: 44 } })]),
+				]),
+			onCall: (call) => {
+				if (call.method === "tap") pressed = true;
+				return undefined;
+			},
+		});
+		const host = testHost(driver, { cache: true });
+		await createScreen(host)
+			.getByTestId("next")
+			.tap({ until: createScreen(host).getByText("Plan") });
+		expect(driver.callsOf("tap")).toHaveLength(1);
+		expect(host.clock.elapsed()).toBe(4000);
+	});
+
 	test("a function until keeps the fixed window", async () => {
 		const { driver, host, screen } = setup(99);
 		await screen.getByTestId("next").tap({ until: titleIs(screen.getByTestId("title"), "Plan"), retries: 1 });
@@ -263,6 +296,47 @@ describe("tap({ until }) watches the screen between presses", () => {
 		expect(host.clock.elapsed()).toBe(4000);
 	});
 });
+
+/**
+ * The todos tab right after sign-in: the screen it replaced (sliding out) and the keyboard (going down) are still in
+ * the tree when Settings is first pressed, and leave it 300 ms later. The first press is dropped (the transition is
+ * still running); a press after that shows the settings screen. Records the clock at each press.
+ */
+function leftovers() {
+	const pressTimes: number[] = [];
+	const holder: { now?: () => number } = {};
+	let settings = false;
+	const driver = fakeDriver({
+		screens: () => {
+			const now = holder.now?.() ?? 0;
+			const leaving =
+				pressTimes.length === 0 || now - (pressTimes[0] ?? 0) < 300
+					? [
+							el("other", { id: "sign-in-screen", frame: { x: -121, y: 0, width: 402, height: 874 } }),
+							el("keyboard", { frame: { x: 0, y: 874, width: 402, height: 301 } }),
+						]
+					: [];
+			const content = settings
+				? [el("text", { id: "settings-email", label: "grace@example.com" })]
+				: [el("other", { id: "todos-screen", frame: { x: 0, y: 0, width: 402, height: 791 } })];
+			return snapshotOf([
+				...leaving,
+				...content,
+				el("button", { id: "tab-settings", label: "Settings", frame: { x: 201, y: 791, width: 201, height: 49 } }),
+			]);
+		},
+		onCall: (call) => {
+			if (call.method === "tap") {
+				pressTimes.push(holder.now?.() ?? 0);
+				if (pressTimes.length >= 2) settings = true;
+			}
+			return undefined;
+		},
+	});
+	const host = testHost(driver, { cache: true });
+	holder.now = host.clock.now;
+	return { driver, host, screen: createScreen(host), pressTimes };
+}
 
 /** `setup`, recording the clock at each press. */
 function setupTimed(landingTap: number) {
