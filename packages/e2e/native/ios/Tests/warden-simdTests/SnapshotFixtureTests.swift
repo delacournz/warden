@@ -91,6 +91,50 @@ final class SnapshotFixtureTests: XCTestCase {
     }
   }
 
+  /// Native secure inputs that are not React Native (a SwiftUI `SecureField`, a UIKit `UITextField` with
+  /// `isSecureTextEntry`, with and without a placeholder) on host `ax`: `TextField` with the `SecureTextField` trait
+  /// empty, focused and filled, like React Native's.
+  func testHostReaderNativeSecureFieldsAreSecureEmptyOrFilled() throws {
+    for (name, uikitValue) in [
+      ("native-secure-host-empty.document.json", "UIKit password"),
+      ("native-secure-host-filled.document.json", "•••••••"),
+    ] {
+      let nodes = try builtNodes(name)
+      let fields = nodes.filter { $0.rawType == "TextField" }
+      XCTAssertEqual(fields.count, 3, name)
+      for field in fields { XCTAssertEqual(field.role, .securefield, name) }
+      XCTAssertEqual(nodes.first { $0.identifier == "swiftui-secure" }?.value, "SwiftUI password", name)
+      XCTAssertEqual(nodes.first { $0.identifier == "uikit-secure" }?.value, uikitValue, name)
+    }
+  }
+
+  /// A web page (Safari) over the bridge: `<input type=text>` and `<input type=password>` are
+  /// `WebAccessibilityObjectWrapper` with the text-entry trait, the password one also `SecureTextField`, empty,
+  /// focused and filled.
+  func testBridgeWebInputsAreFieldsEmptyOrFilled() throws {
+    for (name, password) in [
+      ("web-secure-bridge-empty.document.json", "Password"),
+      ("web-secure-bridge-filled.document.json", "•••••••"),
+    ] {
+      let nodes = try builtNodes(name)
+      let inputs = nodes.filter { $0.rawType == "WebAccessibilityObjectWrapper" && $0.traits.contains("text-entry") }
+      XCTAssertEqual(inputs.count, 3, name)
+      let user = try XCTUnwrap(inputs.first { $0.label == "User" }, name)
+      XCTAssertEqual(user.role, .textfield, name)
+      XCTAssertEqual(user.value, "Username", name)
+      let pass = try XCTUnwrap(inputs.first { $0.label == "Pass" }, name)
+      XCTAssertEqual(pass.role, .securefield, name)
+      XCTAssertEqual(pass.value, password, name)
+      XCTAssertEqual(inputs.filter { $0.role == .securefield }.count, 2, name)
+    }
+  }
+
+  private func builtNodes(_ name: String) throws -> [Element] {
+    let document = try DocumentFixture.document(name)
+    return ElementBuilder.build(document.elements, options: Session.buildOptions(screen: screen, document: document.screen))
+      .elements.flatMap(\.preorder)
+  }
+
   // MARK: alerts
 
   func testHostReaderAlertPayloadMatchesGolden() throws {
