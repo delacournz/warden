@@ -49,6 +49,7 @@ import {
 } from "./queries";
 import { describeExpression, exactlyOne, type LocatorExpression, type Query, resolve } from "./query";
 import { type ReactMatch, reactTapPoint } from "./react-locator";
+import { mergeReactMatches } from "./react-merge";
 import type { QueryRole } from "./roles";
 import { normalizeText, type TextMatch } from "./text";
 
@@ -277,7 +278,9 @@ export class Locator {
 	/**
 	 * What `observed` says about this locator. A whole read, or one with matches, is the accessibility tree's answer. A
 	 * degraded read with no match is asked of the React tree (plain `getByTestId` with devtools): it answers presence or
-	 * absence; otherwise the look is `unknown`, and no caller may take it as "absent".
+	 * absence; otherwise the look is `unknown`, and no caller may take it as "absent". A component whose rect is an
+	 * accessibility node's (the fallback reader kept the node, dropped the testID) resolves to that node, so text,
+	 * visibility and actions read it like any match; one with no such node stays a React-only match.
 	 */
 	async resolveIn(observed: Observed): Promise<Resolved> {
 		const entries = resolve(this.expr, observed.index);
@@ -287,7 +290,9 @@ export class Locator {
 		const testId = plainTestId(this.expr);
 		const lookup = testId === undefined ? undefined : await this.rt.reactLookup(testId, observed);
 		if (lookup === undefined || !lookup.answered) return { kind: "unknown", read };
-		return lookup.matches.length === 0 ? { kind: "nodes", entries } : { kind: "react", matches: lookup.matches };
+		if (lookup.matches.length === 0) return { kind: "nodes", entries };
+		const merged = mergeReactMatches(lookup.matches, observed.index);
+		return merged === undefined ? { kind: "react", matches: lookup.matches } : { kind: "nodes", entries: merged };
 	}
 
 	/** Why the React tree did not settle a degraded look, for the `READ_DEGRADED` message. */
@@ -392,16 +397,28 @@ export class Locator {
 	}
 
 	text(): Promise<string> {
-		return this.traced("text", async () => textOf((await this.single()).entry));
+		return this.traced("text", async () => {
+			const { entries, react, observed } = await this.conclusive();
+			if (react !== undefined) return this.reactText(this.reactOnly(react, observed), observed);
+			if (entries.length === 0 && (await this.reactCandidates(observed)).length > 0) {
+				throw new E2eError("NOT_ACTIONABLE", `${this} ${REACT_ONLY}`, this.rt.excerpt(observed.snapshot));
+			}
+			return textOf(this.exactlyOne(entries, observed));
+		});
 	}
 
 	allTexts(): Promise<string[]> {
 		return this.traced("allTexts", async () => {
 			const { entries, react, observed } = await this.conclusive();
-			if (react !== undefined)
-				throw new E2eError("NOT_ACTIONABLE", `${this} ${REACT_ONLY}`, this.rt.excerpt(observed.snapshot));
+			if (react !== undefined) return react.map((match) => this.reactText(match, observed));
 			return entries.map(textOf);
 		});
+	}
+
+	/** The text the React tree reported for a component of a degraded read that no accessibility node stands for. */
+	private reactText(match: ReactMatch, observed: Observed): string {
+		if (match.text !== undefined) return normalizeText(match.text);
+		throw new E2eError("NOT_ACTIONABLE", `${this} ${REACT_ONLY}`, this.rt.excerpt(observed.snapshot));
 	}
 
 	value(): Promise<string> {
@@ -410,9 +427,9 @@ export class Locator {
 
 	isVisible(): Promise<boolean> {
 		return this.traced("isVisible", async () => {
-			const { react, observed } = await this.conclusive();
+			const { entries, react, observed } = await this.conclusive();
 			if (react !== undefined) return reactVisible(this.reactOnly(react, observed), observed);
-			return this.visibleIn(observed);
+			return entries.length > 0 && this.exactlyOne(entries, observed).visible;
 		});
 	}
 
@@ -426,7 +443,11 @@ export class Locator {
 	read(): Promise<LocatorReading> {
 		return this.traced("read", async () => {
 			const { entries, react, observed } = await this.conclusive();
-			if (react !== undefined) return { visible: reactVisible(this.reactOnly(react, observed), observed) };
+			if (react !== undefined) {
+				const match = this.reactOnly(react, observed);
+				const visible = reactVisible(match, observed);
+				return match.text === undefined ? { visible } : { visible, text: normalizeText(match.text) };
+			}
 			if (entries.length === 0) return { visible: false };
 			const entry = this.exactlyOne(entries, observed);
 			return {
@@ -439,10 +460,15 @@ export class Locator {
 	}
 
 	/** Whether this locator's one match is visible in `observed`; no match is not visible, several matches throw. */
-	visibleIn(observed: Observed): boolean {
-		const entries = resolve(this.expr, observed.index);
-		if (entries.length === 0) return false;
-		return this.exactlyOne(entries, observed).visible;
+	/**
+	 * Whether `observed` shows this locator, without waiting: a degraded read is resolved like `resolveIn` (the React
+	 * tree's node or rect), and one nothing could settle counts as not shown yet.
+	 */
+	async shownIn(observed: Observed): Promise<boolean> {
+		const resolved = await this.resolveIn(observed);
+		if (resolved.kind === "unknown") return false;
+		if (resolved.kind === "react") return reactVisible(this.reactOnly(resolved.matches, observed), observed);
+		return resolved.entries.length > 0 && this.exactlyOne(resolved.entries, observed).visible;
 	}
 
 	async isHidden(): Promise<boolean> {
@@ -740,7 +766,7 @@ export class Locator {
 			watch.unchanged = 0;
 			return { done: false, state: undefined };
 		}
-		if (until.visibleIn(observation.observed)) return { done: true, value: "arrived" };
+		if (await until.shownIn(observation.observed)) return { done: true, value: "arrived" };
 		if (snapshotHash(observation.observed.snapshot) === watch.pressedOn) watch.unchanged += 1;
 		else {
 			watch.changed = true;

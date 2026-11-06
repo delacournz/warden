@@ -1,7 +1,17 @@
 import { describe, expect, test } from "bun:test";
 import { el, snapshotOf } from "../driver/driver.testing";
 import { E2eError } from "../errors";
-import { degradedHost, ERROR_COMPONENT, emptyRootSnapshot, lossySnapshot } from "../screen/degraded.testing";
+import {
+	type DegradedOptions,
+	degradedHost,
+	EMAIL_ERROR_COMPONENT,
+	EMAIL_ERROR_TEXT,
+	ERROR_COMPONENT,
+	emptyRootSnapshot,
+	FORM_ERROR_COMPONENT,
+	lossySnapshot,
+	measuredLossySnapshot,
+} from "../screen/degraded.testing";
 import { createScreen } from "../screen/screen";
 import { staticDriver, testHost } from "../screen/screen.testing";
 import { LocatorAssertions } from "./matchers";
@@ -109,5 +119,43 @@ describe("a healthy read is unchanged", () => {
 	test("a match found on a degraded read is judged as usual", async () => {
 		const { screen } = setup({ screen: () => lossySnapshot([el("text", { label: "Too short", id: "error" })]) });
 		await new LocatorAssertions(screen.getByTestId("error"), { negate: false }).toBeVisible({ timeout: 500 });
+	});
+});
+
+describe("text matchers on a degraded read", () => {
+	function assertOn(testId: string, react: DegradedOptions["react"], negate = false) {
+		const { screen } = setup({ screen: () => measuredLossySnapshot(), react });
+		return new LocatorAssertions(screen.getByTestId(testId), { negate });
+	}
+
+	test("toHaveText passes on the node the React rect names", async () => {
+		await assertOn("sign-in-email-error", () => [EMAIL_ERROR_COMPONENT]).toHaveText(EMAIL_ERROR_TEXT, { timeout: 500 });
+	});
+
+	test("toHaveText with the wrong text fails as an assertion, with the node's text", async () => {
+		const error = await failure(
+			assertOn("sign-in-email-error", () => [EMAIL_ERROR_COMPONENT]).toHaveText("Nope", { timeout: 300 })
+		);
+		expect(error.code).toBe("ASSERTION");
+		expect(error.message).toContain(EMAIL_ERROR_TEXT);
+	});
+
+	test("toHaveText / toContainText judge the React tree's text when no node has its rect", async () => {
+		await assertOn("sign-in-error", () => [FORM_ERROR_COMPONENT]).toHaveText(
+			"This account is locked. Try another email.",
+			{ timeout: 500 }
+		);
+		await assertOn("sign-in-error", () => [FORM_ERROR_COMPONENT]).toContainText("locked", { timeout: 500 });
+		const error = await failure(
+			assertOn("sign-in-error", () => [FORM_ERROR_COMPONENT]).toHaveText("Welcome", { timeout: 300 })
+		);
+		expect(error.code).toBe("ASSERTION");
+		expect(error.message).toContain("React tree");
+	});
+
+	test("a React-only component without text cannot pass toHaveText", async () => {
+		const error = await failure(assertOn("error", () => [ERROR_COMPONENT]).toHaveText("x", { timeout: 300 }));
+		expect(error.code).toBe("ASSERTION");
+		expect(error.message).toContain("only in the React tree");
 	});
 });
