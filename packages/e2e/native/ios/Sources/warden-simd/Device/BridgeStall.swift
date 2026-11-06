@@ -71,6 +71,8 @@ final class BridgeWarmth: @unchecked Sendable {
   private var spell = 0
   private var exemptStallUsed = false
   private var inFlight: (spell: Int, task: Task<WarmUp, Never>)?
+  /// The spell whose warm-up is still reading; nil once it ended.
+  private var runningSpell: Int?
 
   init() {}
 
@@ -93,6 +95,7 @@ final class BridgeWarmth: @unchecked Sendable {
       spell += 1
       exemptStallUsed = !exemptStall
       inFlight = nil
+      runningSpell = nil
     }
   }
 
@@ -128,6 +131,7 @@ final class BridgeWarmth: @unchecked Sendable {
       let generation = spell
       let started = ContinuousClock.now
       let task = Task<WarmUp, Never> { [weak self] in
+        defer { self?.endRunning(generation) }
         do {
           _ = try await Session.bounded({ try await read() }, deadlineMs: deadlineMs)
           self?.noteSuccess(generation: generation)
@@ -144,8 +148,18 @@ final class BridgeWarmth: @unchecked Sendable {
         }
       }
       inFlight = (generation, task)
+      runningSpell = generation
       return task
     }
+  }
+
+  private func endRunning(_ generation: Int) {
+    lock.withLock { if runningSpell == generation { runningSpell = nil } }
+  }
+
+  /// The current spell's warm-up while it is still reading (a probe joins it instead of a second read on the guest).
+  var running: Task<WarmUp, Never>? {
+    lock.withLock { runningSpell == spell && inFlight?.spell == spell ? inFlight?.task : nil }
   }
 
   /// The outcome of the current spell's warm-up, waited for; nil when none ran or the guest has answered since (a
@@ -616,11 +630,26 @@ extension Session {
 
   /// Starts (or joins) a recovery probe whose outcome updates the gate, the guest's warmth and health. A probe on a
   /// cold guest gets the cold deadline: it runs in the background, and a guest that is starting again cannot answer
-  /// within the short one on a slow host.
+  /// within the short one on a slow host. While the guest's warm-up is still reading (after a recycle, say) no probe
+  /// starts: the warm-up stands in for it, and its answer ends the cooldown the same way.
   static func startProbe(
     _ recovery: BridgeRecovery, policy: BridgeDeadline, gate: BridgeStallGate, warmth: BridgeWarmth,
     health: BridgeHealth, now: @escaping @Sendable () -> Double, log: @escaping @Sendable (String) -> Void
   ) -> Task<BridgeProbe.Outcome, Never>? {
+    if let warmUp = warmth.running {
+      // the guest serialises reads: a probe beside its warm-up would only queue a second cold read behind it
+      return Task {
+        switch await warmUp.value {
+        case .warmed:
+          health.recordSuccess()
+          gate.recordSuccess()
+          log("axbridge warm-up answered; reads use axbridge again")
+          return .answered
+        case let .stalled(afterMs): return .silent(afterMs: afterMs)
+        case .failed: return .failed("the axbridge warm-up failed")
+        }
+      }
+    }
     let generation = warmth.generation
     let deadlineMs = warmth.isCold ? max(recovery.probe.deadlineMs, policy.coldDeadlineMs ?? 0) : nil
     return recovery.probe.start(now: now(), deadlineMs: deadlineMs, check: recovery.check) { outcome, elapsedMs in
