@@ -395,6 +395,7 @@ Prints what a CI job caches between runs: `builds` (the native simulator base), 
 | `--profile <slug>` | `iphone-17` | device profile of the golden |
 | `--js-input <pathspec>` | `src assets app.config.ts index.ts metro.config.js package.json` | repeatable; the repack key hashes `git ls-files -s` of these |
 | `--golden-dir <dir>` | `~/warden-goldens` | where the golden is archived |
+| `--suite <name>` | the only suite | e2e suite whose `golden` applies: `golden` is `null` unless it sets `golden: true` |
 | `--json` | | the groups as JSON |
 
 ### `warden repack <ios|android>`

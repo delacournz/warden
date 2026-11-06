@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { DEFAULT_PROFILE } from "@delacour/warden-core/config.defaults";
 import { wardenHome } from "@delacour/warden-core/store";
 import type { AsyncResult } from "@delacour/warden-types/result";
-import { ok } from "@delacour/warden-types/result";
+import { err, ok } from "@delacour/warden-types/result";
 import {
 	type CacheGroup,
 	cacheGroups,
@@ -26,6 +26,11 @@ export type CiDeps = {
 	nativeFingerprint: (ctx: CommandContext, dir: string) => AsyncResult<string>;
 	/** the golden's name for `profile` (absent = warden's default) */
 	goldenName: (ctx: CommandContext, profile: string | undefined) => AsyncResult<string>;
+	/**
+	 * Does the e2e suite found from `dir` (named, or the only one) clone from a golden? With no suite named, a
+	 * config that does not pick one answers true, so the golden group stays.
+	 */
+	suiteGolden: (ctx: CommandContext, dir: string, suite: string | undefined) => AsyncResult<boolean>;
 };
 
 const defaultCiDeps: CiDeps = {
@@ -43,6 +48,12 @@ const defaultCiDeps: CiDeps = {
 		});
 		return fps.success ? ok(fps.data.nativeFp) : fps;
 	},
+	async suiteGolden(ctx, dir, suite) {
+		const { findSuite } = await import("@delacour/warden-core/affected/affected");
+		const found = await findSuite(ctx.exec, dir, suite, ctx.git, ctx.env);
+		if (found.success) return ok(found.data.golden);
+		return suite === undefined ? ok(true) : err(found.error.message);
+	},
 	async goldenName(ctx, profile) {
 		const { goldenInfo } = await import("@delacour/warden-core/golden/ios-golden-archive");
 		const { goldenDeps } = await import("../golden-deps");
@@ -58,6 +69,7 @@ type CacheOpts = {
 	profile?: string;
 	jsInput?: string[];
 	goldenDir?: string;
+	suite?: string;
 	json?: true;
 };
 
@@ -78,22 +90,27 @@ async function cacheCmd(ctx: CommandContext, deps: CiDeps, opts: CacheOpts): Pro
 		if (!native.success) return native;
 		const js = await jsInputsHash(sctx.exec, dir, opts.jsInput ?? DEFAULT_JS_INPUTS);
 		if (!js.success) return js;
+		const enabled = await deps.suiteGolden(sctx, dir, opts.suite);
+		if (!enabled.success) return enabled;
+		if (!enabled.data) return ok({ native: native.data, js: js.data, golden: undefined });
 		const golden = await deps.goldenName(sctx, opts.profile);
 		if (!golden.success) return golden;
 		return ok({ native: native.data, js: js.data, golden: golden.data });
 	});
 	if (!facts.success) return fail(ctx, facts.error);
 	const home = ctx.env.HOME ?? homedir();
-	const groups = cacheGroups({
+	const all = cacheGroups({
 		prefix: opts.prefix ?? DEFAULT_CACHE_PREFIX,
 		runner: runnerTag(ctx.env, ctx.os ?? process.platform, process.arch),
 		nativeFingerprint: facts.data.native,
 		js: facts.data.js,
-		golden: facts.data.golden,
+		golden: facts.data.golden ?? "",
 		wardenHome: wardenHome(ctx.env),
 		goldenDir: opts.goldenDir === undefined ? resolve(home, "warden-goldens") : resolve(ctx.cwd, opts.goldenDir),
 		...(opts.profile !== undefined ? { profile: opts.profile } : {}),
 	});
+	// a suite without golden: no group, so a CI job neither restores, builds nor saves one
+	const groups = { ...all, golden: facts.data.golden === undefined ? null : all.golden };
 	if (opts.json) {
 		ctx.out(JSON.stringify(groups, null, 2));
 		return 0;
@@ -106,7 +123,10 @@ async function cacheCmd(ctx: CommandContext, deps: CiDeps, opts: CacheOpts): Pro
 				: "";
 		return `${color.bold(name.padEnd(7))} ${group.key}\n  ${group.paths.join(" ")}${around}`;
 	};
-	ctx.out([line("builds", groups.builds), line("repack", groups.repack), line("golden", groups.golden)].join("\n"));
+	const golden = groups.golden
+		? line("golden", groups.golden)
+		: `${color.bold("golden ")} off (the suite creates fresh simulators)`;
+	ctx.out([line("builds", groups.builds), line("repack", groups.repack), golden].join("\n"));
 	return 0;
 }
 
@@ -134,6 +154,10 @@ export function createCiCommand(deps: CiDeps = defaultCiDeps): Command {
 					collect
 				)
 				.option("--golden-dir <dir>", "where the golden is archived (default: ~/warden-goldens)")
+				.option(
+					"--suite <name>",
+					"e2e suite whose golden setting applies: golden is null unless it sets golden: true (default: the only suite)"
+				)
 				.option("--json", "machine-readable output")
 				.action(async (o) => done(await cacheCmd(ctx, deps, o)));
 		},

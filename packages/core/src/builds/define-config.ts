@@ -762,6 +762,14 @@ export interface WardenE2eSuite {
 	 */
 	biometrics?: boolean | undefined;
 	/**
+	 * iOS: simulators the run creates are cloned from a golden image (a first-booted, settled simulator built once
+	 * per profile and runtime). Off: each is a fresh `simctl create` and first boot, and `warden ci cache --suite`
+	 * prints no golden group. Existing pool devices are reused either way; `WARDEN_GOLDEN=0` turns it off everywhere.
+	 *
+	 * @default false
+	 */
+	golden?: boolean | undefined;
+	/**
 	 * What happens to the state of the devices of this run when they are released: `"erase"` (iOS: shutdown +
 	 * `simctl erase`; Android: uninstalls the third-party apps), `"uninstall"` (removes the user-installed apps) or
 	 * `"none"`. Only warden-created simulators and emulators are reclaimed, never foreign, golden or physical

@@ -2064,6 +2064,8 @@ Options:
                          index.ts metro.config.js package.json)
   --golden-dir <dir>     where the golden is archived (default:
                          ~/warden-goldens)
+  --suite <name>         e2e suite whose golden setting applies: golden is null
+                         unless it sets golden: true (default: the only suite)
   --json                 machine-readable output
   -h, --help             display help for command"
 `;
