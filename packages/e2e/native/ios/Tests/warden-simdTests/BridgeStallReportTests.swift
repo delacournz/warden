@@ -191,6 +191,27 @@ final class BridgeStallReportTests: XCTestCase {
     XCTAssertEqual(third.fallback?.stall?.recyclesExhausted, true)
   }
 
+  func testTheFirstReadOfARecycledGuestReportsACold() async throws {
+    let reaper = BridgeReaper(maxRecycles: 2) { 1 }
+    let ticks = Ticks()
+    let gate = BridgeStallGate()
+    let warmth = BridgeWarmth.warmed()
+    _ = try await read(bridge: hang, host: host, gate: gate, warmth: warmth, ticks: ticks, reaper: reaper)
+    await reaper.current?.value
+    ticks.advance(25)
+    let next = try await read(
+      bridge: hang, host: host, gate: gate, warmth: warmth, ticks: ticks, guestAge: 0.2, reaper: reaper)
+    let report = try XCTUnwrap(next.fallback?.stall)
+    XCTAssertEqual(report.stage, .read)
+    XCTAssertTrue(report.cold)
+    XCTAssertEqual(report.deadlineMs, 300)
+    XCTAssertEqual(report.guestAgeMs, 200, "the guest's age restarts with the recycle")
+    XCTAssertNil(report.cooldownRemainingMs, "its first stall is exempt: no cooldown")
+    XCTAssertEqual(report.probes, 2)
+    XCTAssertEqual(report.recycles, 1)
+    XCTAssertFalse(report.recyclesExhausted)
+  }
+
   func testTheReportJSONCarriesRecyclesOnlyOnceOneRan() {
     var report = BridgeStallReport(
       stage: .read, readMs: 4001, deadlineMs: 4000, guestAgeMs: 300, cold: true, cooldownRemainingMs: nil, probes: 1)
