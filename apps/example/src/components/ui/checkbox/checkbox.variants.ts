@@ -81,9 +81,8 @@ export const CHECKBOX_BORDER_WIDTH = 1;
  * Tailwind substitutes each step into the utilities that use it and emits no
  * `--radius-xs` variable at all. `--radius` is the only one that survives to
  * runtime, so anything computing a corner in JavaScript has to do the
- * multiplication itself. `checkbox.variants.test.ts` pins both numbers against
- * `tokens.css`, so retuning the scale fails the build rather than quietly
- * leaving the fill behind.
+ * multiplication itself. Both numbers must stay in step
+ * with `tokens.css`, or retuning the scale quietly leaves the fill behind.
  */
 export const CHECKBOX_RADIUS_MULTIPLIER: Record<"sm" | "xs", number> = { xs: 0.4, sm: 0.6 };
 
@@ -110,7 +109,7 @@ export const CHECKBOX_RADIUS_MULTIPLIER: Record<"sm" | "xs", number> = { xs: 0.4
  * away from the border the moment anyone did. Clamped at zero so a
  * square-cornered theme draws a square fill rather than a negative radius.
  *
- * Pure, so the whole matrix is reachable from `bun test`. See AGENTS.md.
+ * Pure, so the whole matrix is unit-testable. See AGENTS.md.
  */
 export function resolveCheckboxFillRadius(size: CheckboxSize, radius: number): number {
 	const step = CHECKBOX_RADIUS_MULTIPLIER[CHECKBOX_RADIUS_STEP[size]];
@@ -184,8 +183,7 @@ export const CHECKBOX_INVALID_BORDER_TOKEN = "destructive";
  * `opacity-50` for a disabled checkbox goes on the **row**, so the label fades
  * with the box it names rather than standing at full strength beside a ghost.
  *
- * Free of React Native imports so it stays unit-testable — `bun test` cannot
- * parse React Native's Flow-typed source. See AGENTS.md.
+ * Free of React Native imports so it stays pure and unit-testable. See AGENTS.md.
  */
 export const checkboxVariants = tv({
 	slots: {
@@ -240,7 +238,7 @@ export const checkboxVariants = tv({
 			start: {},
 			// `flex-row-reverse` rather than a branch in the JSX: the box is
 			// rendered first either way, so the decision stays a class and the whole
-			// matrix stays reachable from `bun test`.
+			// matrix stays unit-testable.
 			end: { root: "flex-row-reverse", label: "grow" },
 		},
 		// The empty `false` branches are load-bearing typing, not placeholders.
@@ -328,7 +326,7 @@ export const CHECKBOX_HIT_SLOP: Record<CheckboxSize, number> = { sm: 13, md: 12,
  * instead of a tick — so the two collapse to one visual state here and the tv()
  * axis is named for that rather than for `checked`.
  *
- * Pure, so the matrix is reachable from `bun test`. See AGENTS.md.
+ * Pure, so the matrix is unit-testable. See AGENTS.md.
  */
 export function resolveCheckboxFilled({
 	isChecked,
@@ -369,7 +367,7 @@ export type CheckboxFieldAxes = { isInvalid?: boolean; isDisabled?: boolean };
  * `??` throughout and never `||`, so an explicit `false` opts a control out of
  * an invalid field rather than reading as an absence.
  *
- * Pure, so the whole ladder is reachable from `bun test`. See AGENTS.md.
+ * Pure, so the whole ladder is unit-testable. See AGENTS.md.
  */
 export function resolveCheckboxAxes({
 	own,
@@ -397,7 +395,7 @@ export function resolveCheckboxAxes({
  * Always a new array: React bails out of a re-render on an unchanged reference,
  * so a mutation here would flip the state and leave the screen alone.
  *
- * Pure, so it is reachable from `bun test`. See AGENTS.md.
+ * Pure, so it is unit-testable. See AGENTS.md.
  */
 export function toggleCheckedValue(current: readonly string[], value: string): string[] {
 	return current.includes(value) ? current.filter((entry) => entry !== value) : [...current, value];
@@ -409,7 +407,7 @@ export function toggleCheckedValue(current: readonly string[], value: string): s
  * A size, never a class. The checkbox's own step names map onto `TEXT_SIZES`'
  * own, so the two scales stay level without either restating the other.
  *
- * Pure, so it is reachable from `bun test`. See AGENTS.md.
+ * Pure, so it is unit-testable. See AGENTS.md.
  */
 export function resolveCheckboxLabelSize(size: CheckboxSize): TextSize {
 	switch (size) {
@@ -430,7 +428,7 @@ export function resolveCheckboxLabelSize(size: CheckboxSize): TextSize {
  * `Text.Label`'s own `text-foreground`. The same contract `resolveFieldTextColor`
  * uses, and it is what lets the label say "leave it alone".
  *
- * Pure, so it is reachable from `bun test`. See AGENTS.md.
+ * Pure, so it is unit-testable. See AGENTS.md.
  */
 export function resolveCheckboxLabelColor(isInvalid: boolean): TextColor | undefined {
 	return isInvalid ? "destructive" : undefined;
@@ -444,7 +442,7 @@ export function resolveCheckboxLabelColor(isInvalid: boolean): TextColor | undef
  * making a tap between two checkboxes ambiguous, which is worse than the target
  * being merely adequate.
  *
- * Pure, so it is reachable from `bun test`. See AGENTS.md.
+ * Pure, so it is unit-testable. See AGENTS.md.
  */
 export function resolveCheckboxHitSlop({
 	size,
@@ -469,7 +467,7 @@ export function resolveCheckboxHitSlop({
  * between invalid and focus, expressed as a pair of endpoints instead of a
  * compound variant.
  *
- * Pure, so the whole matrix is reachable from `bun test`. See AGENTS.md.
+ * Pure, so the whole matrix is unit-testable. See AGENTS.md.
  */
 export function resolveCheckboxBorderTokens({ color, isInvalid }: { color: CheckboxColor; isInvalid: boolean }): {
 	rest: string;

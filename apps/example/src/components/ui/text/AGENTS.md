@@ -1,9 +1,9 @@
 # Text
 
 The library's type scale, and the one component that reproduces React Native's
-own text inheritance through classNames. Compound root plus twelve presets:
+own text inheritance through classNames. Compound root plus thirteen presets:
 `Display`, `Title`, `Header`, `Subheader`, `Paragraph`, `Label`, `Caption`,
-`Overline`, and the four inline ones — `Strong`, `Emphasis`, `Link`, `Code`.
+`Overline`, `Kicker`, and the four inline ones — `Strong`, `Emphasis`, `Link`, `Code`.
 
 `import { Text } from "@/components/ui/text";`
 
@@ -15,7 +15,6 @@ own text inheritance through classNames. Compound root plus twelve presets:
 | `text.tsx` | Root, all twelve presets, the `Object.assign` surface — the pure-preset carve-out to one file per part, see [Compound component layout](../../../AGENTS.md#compound-component-layout) |
 | `text.context.tsx` | `TextClassProvider`, `useTextClass()` |
 | `text.variants.ts` | Pure `tv()` + `resolveTextClass`, no RN imports |
-| `text.variants.test.ts` | |
 
 ## Design
 
@@ -61,6 +60,12 @@ own text inheritance through classNames. Compound root plus twelve presets:
   so Tailwind v4's logical-property utilities resolve to a value RN rejects.
   `transform: "none"` emits `normal-case` rather than an empty string, so it can
   actually clear an `Overline`'s `uppercase`.
+- **`Kicker` is the mono, 10-point, 0.2em-tracked label — an opt-in sibling of
+  `Overline`, not a replacement.** Its size and tracking are the `--text-kicker`
+  and `--tracking-kicker` tokens in `tokens.css`, registered with
+  `tailwind-merge` as a pair (`KICKER_TOKEN`) so `text-kicker` is read as a
+  size and never as a colour. `font-mono` is deliberate: it labels, it does not
+  read as a sentence. Nothing in the default look uses it.
 - **A nested `Text.Code` cannot be padded.** A nested `<Text>` is laid out by the
   platform's text engine — an `NSAttributedString` run on iOS, a `Span` on
   Android — and both ignore padding, margin and border radius on an inner

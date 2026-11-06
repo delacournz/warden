@@ -76,6 +76,10 @@ export type ButtonGroupContextValue = {
 	isDisabled?: boolean;
 	/** Press treatment for members. Unset falls back to `fade` — see `resolveButtonFeedback`. */
 	feedback?: PressableFeedback;
+	/** Members join into one shape. False, each keeps its own corner and the run takes a gap. */
+	isAttached: boolean;
+	/** The group spans its parent. Horizontal members then split it — see `isStretched`. */
+	isFullWidth: boolean;
 };
 
 export type ButtonGroupItemContextValue = ButtonGroupContextValue & {
@@ -83,6 +87,12 @@ export type ButtonGroupItemContextValue = ButtonGroupContextValue & {
 	position: ButtonGroupPosition;
 	/** Overlap the member before it, so the shared edge is drawn once. */
 	isSeamed: boolean;
+	/**
+	 * Take an equal share of a full-width horizontal run — `flex-1 basis-0`.
+	 * A custom member that should split the run reads this; one that should
+	 * keep its content width ignores it, as `Button.Group.Text` does.
+	 */
+	isStretched: boolean;
 };
 
 const ButtonGroupContext = createContext<ButtonGroupContextValue | null>(null);

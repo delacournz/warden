@@ -46,11 +46,15 @@ export const ScreenFlatList = forwardRef(function ScreenFlatListRender<ItemT>(
 		contentContainerClassName,
 		ListHeaderComponent: ListHeaderComponentProp,
 		ListFooterComponent: ListFooterComponentProp,
+		onScroll,
 		...props
 	}: ScreenFlatListProps<ItemT>,
 	ref: ForwardedRef<FlatList<ItemT>>
 ): ReactElement {
-	const { scrollHandler, insetTopAnimatedStyle, insetBottomAnimatedStyle } = useScreenScrollInsets("standard");
+	const { scrollHandler, insetTopAnimatedStyle, insetBottomAnimatedStyle } = useScreenScrollInsets(
+		"standard",
+		onScroll
+	);
 
 	const ListHeaderComponent = useMemo<ReactElement>(
 		() => (

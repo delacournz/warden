@@ -269,7 +269,7 @@ export const SWITCH_INVALID_CONTENT_TEXT_CLASS = "text-destructive-foreground";
  * No slot worn by a `View` carries `text-*`; a glyph's colour is a token handed
  * to an `IconDefaultsProvider`. See AGENTS.md rule 1.
  *
- * Free of React Native imports so it stays unit-testable — `bun test` cannot
+ * Free of React Native imports so it stays unit-testable — a bare JS runtime cannot
  * parse React Native's Flow-typed source. See AGENTS.md.
  */
 export const switchVariants = tv({
@@ -361,7 +361,7 @@ export type SwitchAxes = {
  * A `Field` reaches the two *state* axes only. It cannot acquire a paint axis by
  * accident, and a test pins that.
  *
- * Pure, so the whole matrix is reachable from `bun test`. See AGENTS.md.
+ * Pure, so the whole matrix is unit-testable. See AGENTS.md.
  */
 export function resolveSwitchAxes({ own, field }: { own?: SwitchOwnAxes; field?: SwitchFieldAxes | null }): SwitchAxes {
 	return {
@@ -406,7 +406,7 @@ export function resolveSwitchThumbTokens({ color, isInvalid }: { color: SwitchCo
  * wrote none wants the default rather than an empty capsule.
  *
  * Takes an array of "is this child a thumb" rather than the children themselves,
- * so it stays free of React and reachable from `bun test` — the trade
+ * so it stays free of React and unit-testable — the trade
  * `resolveIndicatorPlacement` already makes.
  */
 export function hasThumbChild(isThumb: readonly boolean[]): boolean {
@@ -454,7 +454,7 @@ export function switchTravel({
  * happens to be declared first, and a tidy-up that reorders the file crashes the
  * UI thread. See AGENTS.md under **Slider**.
  *
- * Pure, so `bun test` reaches the whole matrix.
+ * Pure, so a unit test reaches the whole matrix.
  */
 export function resolveSwitchRelease({
 	progress,
@@ -492,7 +492,7 @@ export type SwitchContentPlacement = "start" | "end";
  * an `IconDefaultsProvider` and a `TextClassProvider` respectively take — the
  * asymmetry AGENTS.md's **Theming** section sets out.
  *
- * Pure, so `bun test` reaches the whole matrix.
+ * Pure, so a unit test reaches the whole matrix.
  */
 export function resolveSwitchContentTreatment({
 	color,

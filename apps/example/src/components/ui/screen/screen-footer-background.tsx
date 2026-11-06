@@ -35,17 +35,14 @@ export const ScreenFooterBackground = memo(function ScreenFooterBackground({
 	const debug = useScreenDebug();
 	const slots = screenVariants({ placement });
 
-	const borderStyle = useAnimatedStyle(
-		() => ({
-			opacity: resolveFooterBorderOpacity({
-				contentHeight: contentHeight.value,
-				fadeOnScroll,
-				layoutHeight: layoutHeight.value,
-				scrollY: scrollY.value,
-			}),
+	const borderStyle = useAnimatedStyle(() => ({
+		opacity: resolveFooterBorderOpacity({
+			contentHeight: contentHeight.value,
+			fadeOnScroll,
+			layoutHeight: layoutHeight.value,
+			scrollY: scrollY.value,
 		}),
-		[fadeOnScroll]
-	);
+	}));
 
 	return (
 		<View

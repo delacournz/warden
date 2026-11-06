@@ -1,9 +1,9 @@
-import { Children, isValidElement, type ReactElement, type ReactNode, useMemo } from "react";
+import { type ReactElement, type ReactNode, useMemo } from "react";
 import { View, type ViewProps } from "react-native";
 import { Pressable } from "@/components/ui/pressable";
 import { Text } from "@/components/ui/text";
 import { type AvatarGroupContextValue, AvatarGroupProvider } from "./avatar.context";
-import { resolveAvatarGroup, resolveAvatarOverflowLabel } from "./avatar.utils";
+import { flattenAvatarChildren, resolveAvatarGroup, resolveAvatarOverflowLabel } from "./avatar.utils";
 import { type AvatarSize, avatarVariants, resolveAvatarOverlap } from "./avatar.variants";
 
 export type AvatarGroupProps = ViewProps & {
@@ -113,7 +113,7 @@ export function AvatarGroup({
 	children,
 	...props
 }: AvatarGroupProps): ReactElement {
-	const items = Children.toArray(children).filter(isValidElement);
+	const items = flattenAvatarChildren(children);
 	const { visible, overflow } = resolveAvatarGroup({ count: items.length, max, total });
 	const shift = resolveAvatarOverlap({ size: size ?? "md", overlap });
 	const count = visible + (overflow > 0 ? 1 : 0);

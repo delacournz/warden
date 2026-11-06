@@ -14,6 +14,7 @@ whole-screen states.
 | `index.ts` | → `@/components/ui/screen` |
 | `screen.tsx` | The `Object.assign` compound surface |
 | `screen-root.tsx` | The root box and its provider — see below for why it is split out |
+| `screen-scroll-source.tsx` | The bridge publishing the screen's scroll values as a `ScrollSource` — internal |
 | `screen-navbar.tsx` | `Screen.Navbar`, plus its own nested surface |
 | `screen-navbar-title.tsx` | `Screen.Navbar.Title` |
 | `screen-navbar-subtitle.tsx` | `Screen.Navbar.Subtitle` |
@@ -24,7 +25,7 @@ whole-screen states.
 | `screen-header.tsx` | `Screen.Header` |
 | `screen-footer.tsx` | `Screen.Footer` |
 | `screen-footer-background.tsx` | The footer's backing and its top hairline — internal |
-| `screen-scroll-shadow.tsx` | `Screen.ScrollShadow`, and `SCROLL_SHADOW_EDGES` |
+| `screen-scroll-shadow.tsx` | `Screen.ScrollShadow`, and its two axes — `SCROLL_SHADOW_EDGES` and `SCROLL_SHADOW_ANCHORS` |
 | `screen-scroll-area.tsx` | `Screen.ScrollArea` |
 | `screen-flat-list.tsx` | `Screen.FlatList` |
 | `screen-section-list.tsx` | `Screen.SectionList` |
@@ -33,11 +34,11 @@ whole-screen states.
 | `screen-loading.tsx` | `Screen.Loading` |
 | `screen-error.tsx` | `Screen.Error` |
 | `screen-list-component.tsx` | A list header/footer prop, as a node — internal |
+| `screen-scroll-handler.ts` | `classifyScrollHandler` — sorts a caller's `onScroll` into JS or worklet, no RN imports |
 | `screen-debug.ts` | `SCREEN_DEBUG_COLORS` |
 | `screen.context.tsx` | `ScreenProvider`, `useScreen()`, `useScreenContext()`, `useScreenPart()`, `useScreenDebug()` |
 | `screen.types.ts` | Prop types shared by two or more parts |
 | `screen.variants.ts` | Pure `tv()` slots + the footer maths, no RN imports |
-| `screen.variants.test.ts` | |
 | `use-screen-scroll-insets.ts` | The reserve every scrollable shares |
 
 ## Design
@@ -121,6 +122,20 @@ whole-screen states.
 
 ## Lists
 
+- **A caller's `onScroll` is composed with the screen's tracking, never
+  swapped for it.** Every scrollable but `ChatList` takes one, and hands it to
+  `useScreenScrollInsets` rather than spreading it. Spread before the screen's
+  handler it never ran; spread after, it replaced the handler and froze
+  `scrollY`, `contentHeight` and `layoutHeight` — so `ScrollShadow`, the
+  navbar's scroll border and every `ScrollSource` effect stopped moving the
+  moment a consumer listened to the scroll. A `useAnimatedScrollHandler` result
+  runs beside the tracking on the UI thread through `useComposedEventHandler`; a
+  plain function is called back on the JS thread with `{ nativeEvent }` only,
+  because a worklet holds the native payload, not React Native's synthetic
+  wrapper. Prefer the worklet form for anything frame-bound.
+- **`Screen.ChatList` takes no `onScroll`.** Its engines own the scroll for
+  anchoring and the keyboard lift, so the prop is omitted from its types rather
+  than half-supported.
 - **`Screen.ChatList` is a discriminated union on `variant`.** `legend`
   (default) takes chronological oldest-first data and LegendList's own
   `renderItem`; `flat` is an inverted `FlatList` with newest-first data and RN's.
@@ -179,7 +194,7 @@ whole-screen states.
   flush against the chrome wants the line from the first frame — with the fade
   always on, screens re-added a border by hand, which is the signal the default
   was wrong. Both ramps are written out rather than calling Reanimated's
-  `interpolate`, so they stay reachable from `bun test`, and both clamp at each
+  `interpolate`, so they stay unit-testable, and both clamp at each
   end because a rubber-banded overscroll reports a negative offset.
 
 ## ScrollShadow
@@ -244,6 +259,14 @@ draw rather than reaching for the keyword after all.
 own height to arrive reads as lagging the finger; a quarter puts it there while
 the first row is still leaving.
 
+## Accessibility
+
+- **A page's title is a heading.** `Screen.Navbar.Title` (a string child) and `Screen.Error`'s title
+  render with `accessibilityRole="header"`, so a screen reader can land on the page title and
+  rotor through headings. `Screen.Loading` takes its title through `Navbar.Title`, so it gets the
+  same role. A non-string `Navbar.Title` child is passed through untouched — give it the role
+  yourself. `Navbar.Subtitle` is not a heading.
+
 ## API
 
 - **There is no `Navbar.Action`.** [`Button`](../button/AGENTS.md) already owns that vocabulary —
@@ -265,6 +288,16 @@ the first row is still leaving.
 - **A nested `<Screen>` passes the outer context through** rather than shadowing
   it, so `Screen.Loading` returned from inside a screen does not start a second,
   unread set of measurements.
+- **A screen publishes a `ScrollSource`.** `ScreenRoot` mounts
+  `ScreenScrollSourceBridge` inside its provider, which hands the same
+  `scrollY` / `contentHeight` / `layoutHeight` to a `ScrollSourceProvider`
+  (`hooks/use-scroll-source.tsx`) as `offset` / `contentSize` / `layoutSize`,
+  vertical, with no ref. That is what lets the scroll family — `ScrollFade`,
+  `ScrollBlur`, `ScrollCanvas`, `ScrollHeader`; see [The scroll family's shared
+  code](../../../AGENTS.md#the-scroll-familys-shared-code) — work inside a
+  `<Screen>` with no wiring. It adds no handler and no new shared value — the
+  scrollables write exactly what they did — and the import points one way,
+  screen to hook, so installing the hook never pulls `Screen` in after it.
 
 ## Dependencies
 
