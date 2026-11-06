@@ -1809,6 +1809,8 @@ Options:
   --platform <platform>  ios (default); android has no portable golden
   --profile <slug>       device profile (default: iphone-17)
   --runtime <runtime>    runtime: latest, iOS-26-5, 26.5 …
+  --allow-unsettled      export a golden whose first boot never settled (a host
+                         too small to settle one, e.g. a 3-core CI runner)
   --json                 machine-readable output
   -h, --help             display help for command
 

@@ -19,6 +19,7 @@ import { findNodeBin } from "../node-bin";
 import type { Platform } from "../types";
 import { baseIdentity } from "./base-identity";
 import {
+	adoptKindDir,
 	diskSize,
 	findRepack,
 	findSimulatorBase,
@@ -295,6 +296,14 @@ export async function repackApp(input: RepackInput): AsyncResult<RepackResult> {
 
 	let reason: RepackReason | undefined;
 	const reuse = async (): Promise<RepackResult | undefined> => {
+		adoptKindDir(store, {
+			env: input.env,
+			projectKey,
+			platform,
+			profile: `${project.eas?.profile ?? LOCAL_PROFILE}:simulator`,
+			key: repack,
+			now: input.now(),
+		});
 		const hit = findRepack(store, query);
 		if (!hit || (input.force && hit.createdAt < startedAt)) return undefined;
 		const meta = await readRepackMeta(dirname(hit.path));
