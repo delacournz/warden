@@ -63,7 +63,7 @@ export default function SignIn() {
 			<Screen.ScrollArea contentContainerClassName="gap-5 px-5" keyboardAware>
 				<Text.Paragraph color="muted">Any email works. Passwords need 8+ characters.</Text.Paragraph>
 				{error?.field === "form" ? (
-					<Alert status="destructive" testID="sign-in-error">
+					<Alert accessible status="destructive" testID="sign-in-error">
 						<Alert.Indicator />
 						<Alert.Content>
 							<Alert.Title>Can't sign in</Alert.Title>
@@ -83,7 +83,9 @@ export default function SignIn() {
 						testID="sign-in-email"
 						value={email}
 					/>
-					<Field.Error testID="sign-in-email-error">{error?.field === "email" ? error.message : null}</Field.Error>
+					<Field.Error accessible testID="sign-in-email-error">
+						{error?.field === "email" ? error.message : null}
+					</Field.Error>
 				</Field>
 				<Field isInvalid={error?.field === "password"}>
 					<Field.Label>Password</Field.Label>
@@ -97,7 +99,7 @@ export default function SignIn() {
 						testID="sign-in-password"
 						value={password}
 					/>
-					<Field.Error testID="sign-in-password-error">
+					<Field.Error accessible testID="sign-in-password-error">
 						{error?.field === "password" ? error.message : null}
 					</Field.Error>
 				</Field>

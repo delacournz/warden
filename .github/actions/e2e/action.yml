@@ -252,7 +252,10 @@ runs:
         # use them: register the cached simulator base again, or warden builds it from source.
         if [ -z "$APP_PATH" ] && [ "$BUILDS_HIT" = "true" ]; then
           while IFS= read -r base; do
-            warden builds import "$base" --kind simulator-base || echo "::warning title=cached base not reused::could not import $base"
+            stage=$(mktemp -d)
+            cp -R "$base" "$stage/"
+            warden builds import "$stage/$(basename "$base")" --kind simulator-base || echo "::warning title=cached base not reused::could not import $base"
+            rm -rf "$stage"
           done < <(find "$HOME/.warden/builds" -path '*/simulator/base/*.app' -maxdepth 6 -type d 2>/dev/null)
         fi
         if [ -n "$APP_PATH" ]; then
