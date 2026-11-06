@@ -72,6 +72,9 @@ inputs:
   save-cache:
     description: Save the build, repack and golden caches after a green run (true on the default branch, false on pull requests).
     default: "true"
+  suite-timeout-minutes:
+    description: Minutes the suite may run before the action stops it (SIGINT, then SIGKILL after 60 s), so a hung run still prints its evidence and uploads the artifact. Keep it under the job timeout.
+    default: "35"
   retention-days:
     description: Days the evidence artifact is kept.
     default: "3"
@@ -271,6 +274,7 @@ runs:
         RETRY: ${{ inputs.retry }}
         EXTRA: ${{ inputs.args }}
         REPORT: ${{ inputs.report-path }}
+        SUITE_TIMEOUT: ${{ inputs.suite-timeout-minutes }}
         WORKSPACE: ${{ github.workspace }}
       run: |
         set -uo pipefail
@@ -284,8 +288,20 @@ runs:
         # shellcheck disable=SC2206
         extra=($EXTRA)
         started=$(date +%s)
-        warden "${args[@]}" ${extra[@]+"${extra[@]}"}
+        warden "${args[@]}" ${extra[@]+"${extra[@]}"} &
+        suite_pid=$!
+        (
+          sleep $(( SUITE_TIMEOUT * 60 ))
+          echo "::error title=suite timed out::warden e2e ran longer than ${SUITE_TIMEOUT} min; stopping it"
+          kill -INT "$suite_pid" 2>/dev/null
+          sleep 60
+          kill -KILL "$suite_pid" 2>/dev/null
+        ) &
+        watchdog_pid=$!
+        wait "$suite_pid"
         code=$?
+        kill "$watchdog_pid" 2>/dev/null
+        pkill -P "$watchdog_pid" 2>/dev/null
         {
           echo "report-path=$report"
           echo "exit-code=$code"

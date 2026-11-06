@@ -14,5 +14,10 @@ while IFS= read -r file; do
   echo
   echo "::endgroup::"
 done < <(find "$batches" -name screen-at-failure.txt -type f | sort)
+while IFS= read -r file; do
+  echo "::group::tail ${file#"$batches"/}"
+  tail -n 40 "$file" | cut -c1-300
+  echo "::endgroup::"
+done < <(find "$batches" -path '*/logs/*.log' -type f | sort | head -n 8)
 if [ "$found" -eq 0 ]; then echo "no screen-at-failure.txt under $batches"; fi
 exit 0
