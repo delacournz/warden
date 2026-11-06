@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { Exec, ExecResult } from "../exec";
 import { createGitFactsCache } from "../git-facts";
 import { openStore, type Store } from "../store";
@@ -29,6 +29,7 @@ import {
 import { computeCacheKey } from "./fingerprint";
 import { projectForKind } from "./kinds";
 import type { AppPhase } from "./resolve";
+import { readCachedSigning } from "./signing-key";
 
 let dir: string;
 let store: Store;
@@ -1229,6 +1230,27 @@ describe("ensureKindBuild", () => {
 			profile: "local:dev",
 		});
 		expect(calls.some((c) => c.includes("expo run:ios") && !c.includes("--configuration Release"))).toBe(true);
+	});
+
+	test("an Android build caches the keystore it was signed with beside the APK", async () => {
+		const root = join(dir, "app");
+		const app = join(root, "android", "app");
+		const exec = fpExec([], () => {
+			mkdirSync(join(app, "build", "outputs", "apk", "debug"), { recursive: true });
+			writeFileSync(join(app, "build", "outputs", "apk", "debug", "app-debug.apk"), "apk");
+			writeFileSync(join(app, "debug.keystore"), "the-keystore");
+			writeFileSync(
+				join(app, "build.gradle"),
+				"signingConfigs { debug { storeFile file('debug.keystore') storePassword 'android' keyAlias 'androiddebugkey' keyPassword 'android' } }\nbuildTypes { debug { signingConfig signingConfigs.debug } }"
+			);
+		});
+		const res = await ensureKindBuild(
+			kindInput(exec, { platform: "android", deviceId: undefined, build: true, now: () => Date.now() })
+		);
+		if (!res.success) throw new Error(res.error);
+		const cached = readCachedSigning(dirname(res.data.appPath));
+		expect(cached).toMatchObject({ alias: "androiddebugkey", storePass: "android", keyPass: "android" });
+		expect(cached && readFileSync(cached.path, "utf8")).toBe("the-keystore");
 	});
 
 	test("the simulator base builds the Release configuration with SKIP_BUNDLING into simulator/base", async () => {

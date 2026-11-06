@@ -1,5 +1,5 @@
 import { realpathSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import type { Exec } from "../exec";
 import { type GitFactsCache, readGitFacts } from "../git-facts";
@@ -50,6 +50,7 @@ import { type BuildLockDeps, buildLockKey, buildTreeLockKey, withBuildLock } fro
 import { overlayDirUnlessRepoConfig } from "./overlay";
 import { readProjectKey } from "./project-key";
 import { type AppPhase, type BuildStepOutcome, type EnsureResult, type ResolveSteps, resolveApp } from "./resolve";
+import { cacheSigning } from "./signing-key";
 
 /** Cache `profile` for builds with no EAS profile (local / imported only). */
 export const LOCAL_PROFILE = "local";
@@ -385,6 +386,7 @@ async function buildHere(
 	if (!built.success) return built;
 	const stored = await cache(built.data.artifact, "build", false);
 	if (!stored.success) return stored;
+	if (built.data.signing) cacheSigning(dirname(stored.data.path), built.data.signing);
 	aliasPostKey(input, stored.data, built.data.postKey, onPostKey);
 	return ok({ kind: "built", path: stored.data.path });
 }

@@ -922,6 +922,26 @@ describe("runLocalBuild: a stale CNG native dir is regenerated before the build"
 		expect(written).toEqual(["h1"]);
 	});
 
+	test("an Android build reports the keystore Gradle signed with, read from the prebuilt project", async () => {
+		const s = cng();
+		const app = join(dir, "app", "android", "app");
+		mkdirSync(app, { recursive: true });
+		writeFileSync(join(app, "debug.keystore"), "ks");
+		writeFileSync(
+			join(app, "build.gradle"),
+			"signingConfigs { debug { storeFile file('debug.keystore') storePassword 'android' keyAlias 'androiddebugkey' keyPassword 'android' } }\nbuildTypes { debug { signingConfig signingConfigs.debug } }"
+		);
+		const { result } = s.run("h1");
+		const built = await result;
+		if (!built.success) throw new Error(built.error);
+		expect(built.data.signing).toEqual({
+			path: join(app, "debug.keystore"),
+			alias: "androiddebugkey",
+			storePass: "android",
+			keyPass: "android",
+		});
+	});
+
 	test("a committed (not git-ignored) native dir is never removed", async () => {
 		const s = cng({ ignored: false });
 		const { result } = s.run("h0");
