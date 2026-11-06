@@ -64,6 +64,17 @@ describe("names, values, secure", () => {
 		expect(entry?.name).toBe("Password");
 	});
 
+	test("a text field whose value is only mask bullets is secure", () => {
+		const entry = indexSnapshot(snap([el("textfield", { value: "•••••••••", label: "Password" })])).entries[0];
+		expect(entry?.secure).toBe(true);
+		expect(entry?.value).toBeUndefined();
+	});
+
+	test("a text field with a real value is not secure", () => {
+		const entry = indexSnapshot(snap([el("textfield", { value: "a•b", label: "Name" })])).entries[0];
+		expect(entry?.secure).toBe(false);
+	});
+
 	test("Android password trait is secure", () => {
 		const entry = indexSnapshot(
 			snap([el("textfield", { rawType: "android.widget.EditText", traits: ["password"], value: "x" })], {
