@@ -125,6 +125,9 @@ struct PointRequest: Sendable {
 /// Why a read moved from `axbridge` to `ax`.
 struct Fallback: Sendable {
   var reason: String
+  /// What the bridge failure looked like (`fallback.stall` on the wire); nil for a fallback that was not a bridge
+  /// failure (an empty tree).
+  var stall: BridgeStallReport? = nil
 }
 
 struct AXOutcome<Value: Sendable>: Sendable {
@@ -213,7 +216,8 @@ extension Session {
       recover: { pid in await self.recoverBridge(pid: pid) }, policy: bridgeDeadline, gate: bridgeStall,
       warmth: bridgeWarmth, health: bridgeHealth, recovery: bridgeRecovery(),
       now: { ProcessInfo.processInfo.systemUptime },
-      log: { OpLog.shared.log(.warn, $0, op: op) }, bridgeName: self.bridge.name)
+      log: { OpLog.shared.log(.warn, $0, op: op) }, bridgeName: self.bridge.name,
+      guestAgeSeconds: { self.quiescence.wedge.guestAge() })
   }
 
   /// The recovery probe's liveness check: one hit-test at the middle of the screen through the bridge, which answers
@@ -288,9 +292,11 @@ extension Session {
       document: document, backend: outcome.backend, screen: screen, interactiveOnly: request.interactiveOnly,
       maxDepth: request.maxDepth, maxNodes: request.maxNodes)
     if let fallback = outcome.fallback {
-      data["fallback"] = [
+      var fields: [String: JSON] = [
         "from": "axbridge", "to": .string(outcome.backend.rawValue), "reason": .string(fallback.reason),
       ]
+      if let stall = fallback.stall { fields["stall"] = stall.json }
+      data["fallback"] = .object(fields)
     }
     if let target {
       data["target"] = ["pid": .int(Int(target.pid)), "source": .string(target.source.rawValue)]

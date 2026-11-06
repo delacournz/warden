@@ -148,6 +148,15 @@ describe("toSnapshot fallback", () => {
 		expect(snapshot.fellBackFrom).toBe("axbridge");
 	});
 
+	test("the helper's stall report rides along with the fallback", () => {
+		const stall = { stage: "read", readMs: 4003, deadlineMs: 4000, guestAgeMs: 900, cold: true, probes: 1 };
+		const snapshot = toSnapshot({ ...data, fallback: { from: "axbridge", to: "ax", reason: "stalled", stall } }, 0);
+		expect(snapshot.bridgeStall).toEqual(stall);
+		expect(toSnapshot({ ...data, fallback: { from: "axbridge", to: "ax", reason: "stalled" } }, 0)).not.toHaveProperty(
+			"bridgeStall"
+		);
+	});
+
 	test("a plain read is not", () => {
 		expect(toSnapshot(data, 0).fellBackFrom).toBeUndefined();
 		expect(toSnapshot({ ...data, backend: "axbridge" }, 0)).not.toHaveProperty("fellBackFrom");

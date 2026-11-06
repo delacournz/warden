@@ -1,5 +1,7 @@
 import { appendFileSync, writeFileSync } from "node:fs";
+import { noteBridgeStall } from "../../driver/bridge-stall";
 import { el, type FakeDriver, fakeDriver, snapshotOf } from "../../driver/driver.testing";
+import { noteSpanDetail } from "../../driver/span-detail";
 import { defaultFixtureFactory } from "../../fixtures";
 import {
 	setDefaultDriverFactory,
@@ -32,6 +34,12 @@ setDefaultDriverFactory(async (env) => {
 		screens: [snapshotOf([el("button", { label: "Sign in", id: "sign-in" }), el("text", { label: "Welcome" })])],
 		onCall(call) {
 			if (call.method === "screenshot" && call.opts?.path !== undefined) writeFileSync(call.opts.path, "PNG");
+			// a helper that read every snapshot on ax after a cold bridge stall (what the iOS driver notes on the span)
+			if (call.method === "snapshot" && process.env.FIXTURE_BRIDGE_STALL === "1") {
+				noteSpanDetail("backend", "ax");
+				noteSpanDetail("fallback", "the axbridge guest did not answer within 12000 ms");
+				noteBridgeStall({ stage: "read", readMs: 12001, deadlineMs: 12000, guestAgeMs: 800, cold: true, probes: 1 });
+			}
 			return undefined;
 		},
 	});

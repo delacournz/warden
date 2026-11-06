@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { bridgeStallSchema } from "../bridge-stall";
 import type { DriverError, DriverErrorCode, Rect, Role, ScreenInfo } from "../driver.types";
 import { driverError } from "../errors";
 
@@ -271,7 +272,15 @@ export const snapshotDataSchema = z.looseObject({
 	elements: z.array(z.custom<WireElement>(isWireElement, { error: (issue) => wireElementProblem(issue.input) })),
 	ms: z.number(),
 	/** set when the helper answered from another backend than asked for (axbridge → ax) */
-	fallback: z.object({ from: z.string(), to: z.string(), reason: z.string() }).optional(),
+	fallback: z
+		.object({
+			from: z.string(),
+			to: z.string(),
+			reason: z.string(),
+			/** what the bridge failure looked like (a helper built before it sends none) */
+			stall: bridgeStallSchema.optional(),
+		})
+		.optional(),
 	/** set when the frontmost app could not be resolved and the helper read this pid instead */
 	target: z.object({ pid: z.number(), source: z.string() }).optional(),
 	readMs: z.number().optional(),

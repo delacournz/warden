@@ -223,11 +223,14 @@ extension WireError {
       var fields = host.detail?.objectValue ?? [:]
       fields["bridgeError"] = .string(both.bridgeReason)
       if fields["axError"] == nil { fields["axError"] = .string(host.message) }
+      if let stall = both.stall { fields["stall"] = stall.json }
       return WireError(host.code, both.localizedDescription, retryable: host.retryable, detail: .object(fields))
     }
     if let error = error as? AccessibilityError { return from(accessibility: error) }
     if let stall = error as? BridgeStalled {
-      return WireError(.timeout, stall.localizedDescription, detail: ["afterMs": .int(stall.afterMs), "stage": "axbridge"])
+      var fields: [String: JSON] = ["afterMs": .int(stall.afterMs), "stage": "axbridge"]
+      if let report = stall.report { fields["stall"] = report.json }
+      return WireError(.timeout, stall.localizedDescription, detail: .object(fields))
     }
     if error is CancellationError { return WireError(.internal, "operation cancelled") }
     if let error = error as? QuiescenceError { return from(quiescence: error) }

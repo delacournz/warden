@@ -100,6 +100,8 @@ final class FrontmostLookupGate: @unchecked Sendable {
 struct AXReadersFailed: Error, LocalizedError, Sendable {
   var bridgeReason: String
   var host: any Error
+  /// What the bridge failure looked like (`detail.stall` on the wire).
+  var stall: BridgeStallReport? = nil
 
   var errorDescription: String? {
     "\(host.localizedDescription) (axbridge before it: \(bridgeReason))"
@@ -155,7 +157,8 @@ extension Session {
         )
         let why =
           "frontmost unresolved: \(reason); read pid \(candidate.pid) (\(candidate.source.rawValue))"
-        outcome.fallback = Fallback(reason: outcome.fallback.map { "\($0.reason); \(why)" } ?? why)
+        outcome.fallback = Fallback(
+          reason: outcome.fallback.map { "\($0.reason); \(why)" } ?? why, stall: outcome.fallback?.stall)
         return TargetedOutcome(outcome: outcome, target: candidate)
       } catch {
         log(

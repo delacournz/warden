@@ -1,3 +1,4 @@
+import { toBridgeStall } from "../bridge-stall";
 import type { Element, Rect, ScreenInfo, Snapshot } from "../driver.types";
 import type { SnapshotData, WireElement } from "./simd-protocol";
 
@@ -85,5 +86,6 @@ export function toSnapshot(data: SnapshotData, takenAt: number): Snapshot {
 	};
 	if (data.modal) snapshot.modal = data.modal;
 	if (data.fallback?.from === "axbridge") snapshot.fellBackFrom = "axbridge";
+	if (data.fallback?.stall) snapshot.bridgeStall = toBridgeStall(data.fallback.stall);
 	return snapshot;
 }

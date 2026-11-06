@@ -263,6 +263,16 @@ e2e/<w>-<seq>[-p<N>]/<specId>/<title>-<hash6>/   trace.jsonl screenshots/ failur
 
 `e2e-report.json`: `{ suite, platform, base?, isolate, ok, headless, batchDir?, specs[], only?, setup? }`. Each spec has `verdict`, `attempts`, `tests[]`; a failed test carries `line` (where it failed in the spec, from the stack) when the spec is on its stack.
 
+iOS bridge stalls (the in-sim accessibility bridge did not answer and the read went to `ax`) show in three places:
+
+| Where | What |
+|---|---|
+| `results.jsonl` `bridge` | `{ fallbacks, first, last }`: how many reads of the test left `axbridge`, and the first and last with `reason` / `code` plus the stall fields below. Absent when every read was on the bridge |
+| `trace.jsonl` `driver.snapshot` span | `fallback` (reason), `stallStage`, `stallReadMs`, `stallDeadlineMs`, `stallGuestAgeMs`, `stallCold`, `stallCooldownMs`, `stallProbes` |
+| `screen-at-failure.txt` line 2 | `# read on ax: axbridge stalled (stage read · read 12004 ms of a 12000 ms deadline · cold (first read) · …)`: that tree may lack testIDs |
+
+Stall fields: `stage` `connect` (no bridge reader) / `read` (a bridge read stalled or failed) / `warm-up` (joined a stalled background warm-up) / `cooldown` (bridge skipped after a stall); `readMs` how long the bridge read ran; `deadlineMs` its deadline (the cold one on a first read); `guestAgeMs` how long the AX guests had been up; `cold` no answer yet since helper start / guest recycle / launch; `cooldownRemainingMs` cooldown left; `probes` bridge reads failed in a row. A helper built before this sends only the reason. Fixes: troubleshooting 112.
+
 `batch.json` jobs (one per attempt) may carry `logDrainMs`: ms spent draining the job's log pipes after it exited, summed over its `passes`.
 
 ## When it fails, in order
