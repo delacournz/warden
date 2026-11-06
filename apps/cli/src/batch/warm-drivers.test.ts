@@ -709,3 +709,107 @@ describe("warmDrivers: reboot when a backboardd restart does not clear the wedge
 		expect(slow.reboots()).toBe(0);
 	});
 });
+
+describe("warmDrivers: a restart that did not clear the wedge, on a real clock (CI run 42264338937)", () => {
+	/**
+	 * A clock that moves only when the fake does work: a read takes its timeout, a reboot its duration, a retry wait its
+	 * length. Timers fire when the clock passes them, in order; the budget deadline among them.
+	 */
+	function clocked() {
+		let clock = 0;
+		const timers: Array<{ due: number; fn: () => void; cancelled: boolean }> = [];
+		const fireDue = () => {
+			for (const t of timers.sort((a, b) => a.due - b.due)) {
+				if (!t.cancelled && t.due <= clock) {
+					t.cancelled = true;
+					t.fn();
+				}
+			}
+		};
+		const advance = async (ms: number) => {
+			clock += ms;
+			fireDue();
+			await Promise.resolve();
+		};
+		const run: WarmRun = {
+			devices: [{ worker: 0, udid: "U0" }],
+			logDir: "/logs",
+			now: () => clock,
+			after: (ms, fn) => {
+				const t = { due: clock + ms, fn, cancelled: false };
+				timers.push(t);
+				// a retry wait passes by itself: nothing else is working meanwhile
+				if (ms <= 5_000) queueMicrotask(() => void advance(ms));
+				return () => {
+					t.cancelled = true;
+				};
+			},
+			writeFile: async () => {},
+		};
+		return { run, advance, now: () => clock };
+	}
+
+	test("rebooted after three timeouts on the fresh helper, inside the grown budget, then warm", async () => {
+		const c = clocked();
+		const timeout = (ms: number) => async () => {
+			await c.advance(ms);
+			return err("E_TIMEOUT: did not answer within the query's 10.0s timeout");
+		};
+		let firstRead = true;
+		const read = (ms: number) => () => {
+			const wait = firstRead ? 20_000 : ms;
+			firstRead = false;
+			return timeout(wait)();
+		};
+		let rebootedAt: number | undefined;
+		const stuck: WarmHelper = {
+			socketPath: "/s/U0.sock",
+			snapshot: read(10_000),
+			close: async () => {},
+			stop: async () => {},
+			recover: async () => ({ kind: "recovered", note: "restarted backboardd" }),
+		};
+		const still: WarmHelper = {
+			socketPath: "/s/U0.sock",
+			snapshot: (() => {
+				let first = true;
+				return async () => {
+					const ms = first ? 20_000 : 10_000;
+					first = false;
+					return timeout(ms)();
+				};
+			})(),
+			close: async () => {},
+			stop: async () => {},
+			reboot: async () => {
+				await c.advance(60_000);
+				rebootedAt = c.now();
+				return { kind: "rebooted" };
+			},
+		};
+		let freshReads = 0;
+		const fresh: WarmHelper = {
+			socketPath: "/s/U0.sock",
+			snapshot: async () => {
+				freshReads++;
+				// a freshly booted home screen: one fast failure, then the read answers
+				if (freshReads === 1) {
+					await c.advance(1_000);
+					return err("E_AX_UNAVAILABLE: named no frontmost application");
+				}
+				await c.advance(1_000);
+				return ok(null);
+			},
+			close: async () => {},
+			stop: async () => {},
+		};
+		const seq = [stuck, still, fresh];
+		let i = 0;
+		const connect: WarmConnect = async () => ok(seq[Math.min(i++, seq.length - 1)] as WarmHelper);
+		const out = await warmDrivers(c.run, { connect });
+		expect(rebootedAt).toBeDefined();
+		expect(out.devices[0]).toMatchObject({ ok: true, axRecovery: { outcome: "rebooted" } });
+		expect(c.now()).toBeGreaterThan(WARM_TIMEOUT_MS);
+		expect(c.now()).toBeLessThan(WARM_TIMEOUT_MS + REBOOT_ALLOWANCE_MS);
+	});
+});
