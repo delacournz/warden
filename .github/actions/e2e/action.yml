@@ -70,7 +70,7 @@ inputs:
       metro.config.js
       package.json
   cache:
-    description: "`github` restores and saves the build, repack and golden caches with actions/cache. `none` leaves storing them to you: the golden is still imported from `~/warden-goldens` but never exported (run the golden's `beforeSave` from `cache-groups` when your cache missed it), and the `cache-groups` output lists every key and path to restore before this step and save after it."
+    description: "`github` restores and saves the build, repack and golden caches with actions/cache. `none` leaves storing them to you: the golden is still imported from `~/warden-goldens` but never exported for the cache (run the golden's `beforeSave` from `cache-groups` when your cache missed it; collecting the `golden` artifact already archives a missing one there), and the `cache-groups` output lists every key and path to restore before this step and save after it."
     default: github
   save-cache:
     description: Save the build, repack and golden caches after a green run (true on the default branch, false on pull requests).
@@ -78,11 +78,17 @@ inputs:
   suite-timeout-minutes:
     description: Minutes the suite may run before the action stops it (SIGINT, then SIGKILL after 60 s), so a hung run still prints its evidence and uploads the artifact. Keep it under the job timeout.
     default: "35"
+  artifacts:
+    description: "What the run leaves behind to collect: `all`, `none`, or a comma list of `report` (e2e-report.json), `batches` (~/.warden/batches: spec logs, results.jsonl, screen-at-failure.txt, metro.log), `logs` (~/.warden/logs: native build logs), `app` (app.tar of the .app / .apk builds the run used), `golden` (golden.tar of the golden simulator, exported to ~/warden-goldens first when it was built but not archived; GBs). Tarballs keep the executable bit and symlinks upload-artifact would lose. `all` is every group after a green run and `report,batches,golden` after a failed one. The `artifact-paths` output lists what was collected."
+    default: all
+  upload-artifacts:
+    description: "Upload each collected group as its own artifact, `<artifact-name>-<group>`. `false` only collects them: upload what you want from the `artifact-paths` output."
+    default: "true"
   retention-days:
-    description: Days the evidence artifact is kept.
+    description: Days the uploaded artifacts are kept.
     default: "3"
   artifact-name:
-    description: Name of the evidence artifact. Give each call in a job its own.
+    description: Prefix of the uploaded artifacts (`<artifact-name>-report`, `-batches`, `-logs`, `-app`, `-golden`). Give each call in a job its own.
     default: warden-e2e
 
 outputs:
@@ -95,6 +101,12 @@ outputs:
   cache-groups:
     description: "`warden ci cache --json`: `{builds, repack, golden}`, each `{kind, key, paths}` (the golden adds `afterRestore` / `beforeSave`). For caching with something other than actions/cache (`cache: none`)."
     value: ${{ steps.keys.outputs.cache-groups }}
+  artifact-groups:
+    description: Comma list of the groups collected (`report,batches,logs,app,golden`), whether or not they were uploaded.
+    value: ${{ steps.artifacts.outputs.groups }}
+  artifact-paths:
+    description: "`{report, batches, logs, app, golden}`, each a list of absolute paths collected (empty when the group was not selected or not produced). With `upload-artifacts: false`, feed them to your own actions/upload-artifact."
+    value: ${{ steps.artifacts.outputs.paths }}
 
 runs:
   using: composite
@@ -105,9 +117,20 @@ runs:
         XCODE_PATH: ${{ inputs.xcode-path }}
         HEADROOM_GB: ${{ inputs.headroom-gb }}
         CACHE: ${{ inputs.cache }}
+        ARTIFACTS: ${{ inputs.artifacts }}
+        UPLOAD: ${{ inputs.upload-artifacts }}
       run: |
         set -euo pipefail
         case "$CACHE" in github|none) ;; *) echo "cache must be github or none, not \"$CACHE\"" >&2; exit 1 ;; esac
+        case "$UPLOAD" in true|false) ;; *) echo "upload-artifacts must be true or false, not \"$UPLOAD\"" >&2; exit 1 ;; esac
+        case "$ARTIFACTS" in
+          all|none) ;;
+          *) for group in $(echo "$ARTIFACTS" | tr ',' ' '); do
+               case "$group" in report|batches|logs|app|golden) ;;
+                 *) echo "artifacts must be all, none or a list of report,batches,logs,app,golden; \"$group\" is none of them" >&2; exit 1 ;;
+               esac
+             done ;;
+        esac
         {
           echo "WARDEN_TELEMETRY_DISABLED=1"
           echo "DO_NOT_TRACK=1"
@@ -317,6 +340,7 @@ runs:
           echo "exit-code=$code"
           echo "passed=$([ "$code" -eq 0 ] && echo true || echo false)"
           echo "seconds=$(( $(date +%s) - started ))"
+          echo "started=$started"
         } >> "$GITHUB_OUTPUT"
         echo "warden e2e exited $code after $(( $(date +%s) - started )) s"
 
@@ -325,15 +349,64 @@ runs:
       shell: bash
       run: bash "$GITHUB_ACTION_PATH/evidence.sh"
 
-    - name: Upload the report and evidence
+    # One artifact per group so a caller downloads only what it needs. `artifacts.sh` documents the groups; it runs
+    # whatever the outcome (a failed run's golden is what reproduces it) and never builds a golden just to upload it.
+    - name: Collect the artifacts
+      id: artifacts
       if: always()
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        ARTIFACTS: ${{ inputs.artifacts }}
+        PASSED: ${{ steps.run.outputs.passed }}
+        STARTED: ${{ steps.run.outputs.started }}
+        PROFILE: ${{ inputs.profile }}
+        REPORT: ${{ steps.run.outputs.report-path || format('{0}/{1}', github.workspace, inputs.report-path) }}
+      run: bash "$GITHUB_ACTION_PATH/artifacts.sh"
+
+    - name: Upload the report artifact
+      if: always() && inputs.upload-artifacts == 'true' && contains(format(',{0},', steps.artifacts.outputs.groups), ',report,')
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
-        name: ${{ inputs.artifact-name }}
-        path: |
-          ${{ steps.run.outputs.report-path || format('{0}/{1}', github.workspace, inputs.report-path) }}
-          ~/.warden/batches
-        if-no-files-found: warn
+        name: ${{ inputs.artifact-name }}-report
+        path: ${{ steps.artifacts.outputs.report }}
+        if-no-files-found: ignore
+        retention-days: ${{ inputs.retention-days }}
+
+    - name: Upload the batches artifact
+      if: always() && inputs.upload-artifacts == 'true' && contains(format(',{0},', steps.artifacts.outputs.groups), ',batches,')
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: ${{ inputs.artifact-name }}-batches
+        path: ${{ steps.artifacts.outputs.batches }}
+        if-no-files-found: ignore
+        retention-days: ${{ inputs.retention-days }}
+
+    - name: Upload the logs artifact
+      if: always() && inputs.upload-artifacts == 'true' && contains(format(',{0},', steps.artifacts.outputs.groups), ',logs,')
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: ${{ inputs.artifact-name }}-logs
+        path: ${{ steps.artifacts.outputs.logs }}
+        if-no-files-found: ignore
+        retention-days: ${{ inputs.retention-days }}
+
+    - name: Upload the app artifact
+      if: always() && inputs.upload-artifacts == 'true' && contains(format(',{0},', steps.artifacts.outputs.groups), ',app,')
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: ${{ inputs.artifact-name }}-app
+        path: ${{ steps.artifacts.outputs.app }}
+        if-no-files-found: ignore
+        retention-days: ${{ inputs.retention-days }}
+
+    - name: Upload the golden artifact
+      if: always() && inputs.upload-artifacts == 'true' && contains(format(',{0},', steps.artifacts.outputs.groups), ',golden,')
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: ${{ inputs.artifact-name }}-golden
+        path: ${{ steps.artifacts.outputs.golden }}
+        if-no-files-found: ignore
         retention-days: ${{ inputs.retention-days }}
 
     - name: Export the golden simulator
@@ -343,7 +416,10 @@ runs:
       working-directory: ${{ inputs.working-directory }}
       env:
         PROFILE: ${{ inputs.profile }}
+        ARCHIVED: ${{ steps.artifacts.outputs.golden-archived }}
       run: |
+        # Collecting the golden artifact already archived it in ~/warden-goldens: never copy GBs twice.
+        if [ "$ARCHIVED" = true ]; then echo "exported=true" >> "$GITHUB_OUTPUT"; exit 0; fi
         profile_args=()
         if [ -n "$PROFILE" ]; then profile_args=(--profile "$PROFILE"); fi
         # A small runner never settles a golden (a 3-core one stays at 150-200 % CPU past the 300 s wait), and every
@@ -385,6 +461,6 @@ runs:
         CODE: ${{ steps.run.outputs.exit-code }}
       run: |
         if [ "$PASSED" != true ]; then
-          echo "::error title=warden e2e failed::exit code ${CODE:-unknown}; see the evidence above and the ${{ inputs.artifact-name }} artifact"
+          echo "::error title=warden e2e failed::exit code ${CODE:-unknown}; see the evidence above and the ${{ inputs.artifact-name }}-batches artifact"
           exit "${CODE:-1}"
         fi
