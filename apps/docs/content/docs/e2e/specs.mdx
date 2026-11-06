@@ -201,11 +201,29 @@ await device.openLink("myapp://todo/42", { until: screen.getByTestId("todo-detai
 
 `alert()` asks the system for an alert once and returns `false` straight away when there is none. When a sheet is up but its buttons are not readable yet it looks again a few times, 200 ms apart.
 
+## Run host commands
+
+A spec runs on your machine under bun, not on the device, so `fetch`, file reads and any npm package already work in it. `run` runs a command or script there, which is the quick way to seed a backend or reset state before a test:
+
+```ts
+import { test, expect, run } from "@delacour/warden-e2e";
+
+test("shows a seeded order", async ({ app, screen }) => {
+  const order = (await run(["bun", "scripts/seed-order.ts", "--json"])).json() as { id: string };
+  await app.open({ url: `myapp://orders/${order.id}` });
+  await expect(screen.getByTestId("order.detail")).toBeVisible();
+});
+```
+
+`run(command, options?)` resolves `{ ok, exitCode, stdout, stderr, ms, json() }`. A string runs with `sh -c`; an array is an argv and runs with no shell, so nothing in it is expanded. Options: `cwd` (default the spec's working directory, the project root under `warden e2e`), `env` (merged over the spec's environment), `input` (written to stdin), `timeout` (default `60s`; the command is killed and the test fails with `TIMEOUT`) and `check` (default `true`: a non-zero exit throws `RUN_FAILED` with the exit code and the end of stderr; `false` returns the result with `ok: false`). In a test the call is one `run` span in `trace.jsonl` with its exit code; the command itself is never recorded, so a token in it stays out of the artifacts.
+
+For a server the whole suite needs, or a step once per device, use the suite's `serve` and `setup` in `warden.config.ts` instead.
+
 ## Imports and errors
 
-`@delacour/warden-e2e` exports `test`, `describe`, `beforeAll`, `beforeEach`, `afterEach`, `afterAll`, `expect`, `E2eError`, `WARDEN_E2E_VERSION` and the types `App`, `OpenOptions`, `OpenWaitUntil`, `Device`, `Screen`, `Locator`, `LocatorReading`, `TapOptions`, `TapUntil`, `PinchOptions`, `RotateOptions`, `ScreenGestures`, `ScreenPinchOptions`, `ScreenRotateOptions`, `ScreenPathOptions`, `SystemAlerts` and `TestFixtures`. Everything else is internal.
+`@delacour/warden-e2e` exports `test`, `describe`, `beforeAll`, `beforeEach`, `afterEach`, `afterAll`, `expect`, `run`, `E2eError`, `WARDEN_E2E_VERSION` and the types `RunOptions`, `RunResult`, `RunCommand`, `App`, `OpenOptions`, `OpenWaitUntil`, `Device`, `Screen`, `Locator`, `LocatorReading`, `TapOptions`, `TapUntil`, `PinchOptions`, `RotateOptions`, `ScreenGestures`, `ScreenPinchOptions`, `ScreenRotateOptions`, `ScreenPathOptions`, `SystemAlerts` and `TestFixtures`. Everything else is internal.
 
-Every failure a spec sees is an `E2eError` (`instanceof` works) with a `code`: `LOCATOR_NOT_FOUND`, `LOCATOR_AMBIGUOUS`, `INVALID_LOCATOR`, `ACTION_FAILED`, `NOT_ACTIONABLE`, `TIMEOUT`, `INVALID_ARGUMENT`, `ASSERTION`, `SESSION` or `DRIVER`. A locator failure carries the screen as text (`screen`); an ambiguous one the number of `matches`. `WARDEN_E2E_VERSION` is the package version: the preload exits 2 in a spec process whose `@delacour/warden-e2e` version differs from the `warden` that started it (`WARDEN_VERSION`; a by-hand run compares nothing).
+Every failure a spec sees is an `E2eError` (`instanceof` works) with a `code`: `LOCATOR_NOT_FOUND`, `LOCATOR_AMBIGUOUS`, `INVALID_LOCATOR`, `ACTION_FAILED`, `NOT_ACTIONABLE`, `TIMEOUT`, `INVALID_ARGUMENT`, `ASSERTION`, `SESSION`, `DRIVER`, `PERF_BUDGET` or `RUN_FAILED`. A locator failure carries the screen as text (`screen`); an ambiguous one the number of `matches`. `WARDEN_E2E_VERSION` is the package version: the preload exits 2 in a spec process whose `@delacour/warden-e2e` version differs from the `warden` that started it (`WARDEN_VERSION`; a by-hand run compares nothing).
 
 ## Failure artifacts
 

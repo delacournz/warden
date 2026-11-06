@@ -11,7 +11,8 @@ export type E2eErrorCode =
 	| "SESSION"
 	| "DRIVER"
 	| "ASSERTION"
-	| "PERF_BUDGET";
+	| "PERF_BUDGET"
+	| "RUN_FAILED";
 
 /** Plain shape of a spec error: what `e2eErr()` accepts and what a `Result` carries. */
 export type E2eErrorShape = {

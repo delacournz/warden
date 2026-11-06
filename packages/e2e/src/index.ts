@@ -49,6 +49,8 @@ export { expect } from "./expect/expect";
 export type { PerfBreach, PerfBudgets } from "./perf/budgets";
 export type { DevicePerf } from "./perf/device-perf";
 export type { PerfMetrics, PerfReport, PerfStartOptions } from "./perf/perf.types";
+export type { Run, RunCommand, RunDuration, RunOptions, RunResult } from "./run";
+export { run } from "./run";
 export type { App, Device, Screen, SystemAlerts, TestFixtures } from "./runner/fixtures.types";
 export { afterAll, afterEach, beforeAll, beforeEach, describe, test } from "./runner/test";
 export type { Locator, LocatorReading, PinchOptions, RotateOptions, TapOptions, TapUntil } from "./screen/locator";
