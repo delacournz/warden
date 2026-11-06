@@ -757,10 +757,10 @@ export class Locator {
 		const withPosition = options.position !== undefined;
 		const spec = { enabled: !withPosition, tapPointOnScreen: !withPosition };
 		const timeoutMs = options.timeout ?? this.rt.actionTimeout();
-		const aimed =
+		const look =
 			(options.until === undefined ? await this.aimFromKept(spec, options.position) : undefined) ??
 			(await this.actionable(spec, timeoutMs, true));
-		const found = "entry" in aimed ? await this.clearOfKeyboard(aimed, spec, options.position, timeoutMs) : aimed;
+		const found = "entry" in look ? await this.clearOfKeyboard(look, spec, options.position, timeoutMs) : look;
 		const point =
 			"react" in found ? reactTapPoint(found.react, options.position) : tapPointOf(found.entry, options.position);
 		const { driver } = found.observed;
