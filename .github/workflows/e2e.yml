@@ -1,12 +1,15 @@
 name: e2e
 
-# warden's own iOS e2e suite (`apps/example`) on a Namespace macOS runner (`namespace-profile-mac-small`), through the reusable action
+# warden's own iOS e2e suite (`apps/example`) on a GitHub-hosted `macos-26` runner (free on a public repo), through the reusable action
 # in .github/actions/e2e. Separate from `ci` (the signoff escape hatch) so it never slows a PR that
 # touches nothing it covers: pull requests only run it for the paths below.
 #
 # Runs on pull requests into develop only (never on a push to develop or main). Caches: a pull request
 # saves its own after a green run (scoped to the PR, so its next push starts warm) and can restore
 # develop's. `workflow_dispatch` on develop seeds the shared entries every PR can restore.
+#
+# Runner: the `runner` input (e.g. `namespace-profile-mac-small`), else the repo variable WARDEN_E2E_RUNNER, else
+# `macos-26`. A `namespace-*` label swaps in Namespace's checkout and cache volume; any other runs GitHub-only actions.
 on:
   pull_request:
     branches: [develop]
@@ -22,7 +25,7 @@ on:
   workflow_dispatch:
     inputs:
       runner:
-        description: runs-on label (default the repo variable WARDEN_E2E_RUNNER, else namespace-profile-mac-small)
+        description: runs-on label, e.g. namespace-profile-mac-small (empty = the repo variable WARDEN_E2E_RUNNER, else macos-26)
         type: string
         default: ""
       count:
@@ -58,10 +61,19 @@ concurrency:
 
 jobs:
   example:
-    runs-on: ${{ inputs.runner || vars.WARDEN_E2E_RUNNER || 'namespace-profile-mac-small' }}
+    runs-on: ${{ inputs.runner || vars.WARDEN_E2E_RUNNER || 'macos-26' }}
     timeout-minutes: 50
+    env:
+      # Namespace-only actions (checkout mirror, cache volume) fail on a GitHub-hosted runner.
+      NAMESPACE: ${{ startsWith(inputs.runner || vars.WARDEN_E2E_RUNNER || 'macos-26', 'namespace-') }}
     steps:
-      - uses: namespacelabs/nscloud-checkout-action@66f2dc6f6c42a8ac6c4e53473c4840006822831e # v9.0.1
+      - if: env.NAMESPACE == 'true'
+        uses: namespacelabs/nscloud-checkout-action@66f2dc6f6c42a8ac6c4e53473c4840006822831e # v9.0.1
+        with:
+          persist-credentials: false
+
+      - if: env.NAMESPACE != 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -78,13 +90,13 @@ jobs:
       # `source` also builds warden-simd from this checkout (`packages/e2e/native/dist`, which the driver prefers over
       # `$WARDEN_HOME/simd`), so a helper change is tested here and a version with no release yet (the version PR)
       # needs no download: the action's `warden doctor --fetch-helper` finds it and fetches nothing. Same toolchain
-      # and Namespace cache volume as ci's native job and the release build (newest Xcode, for the build only).
+      # and (on a namespace-* runner) cache volume as ci's native job and the release build (newest Xcode, for the build only).
       - if: (inputs.warden-version || 'source') == 'source'
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version-file: package.json
 
-      - if: (inputs.warden-version || 'source') == 'source'
+      - if: (inputs.warden-version || 'source') == 'source' && env.NAMESPACE == 'true'
         uses: namespacelabs/nscloud-cache-action@1124a6f3ce44e5cf84cc22111530961f4d2a15f9 # v1.7.0
         with:
           cache: |
