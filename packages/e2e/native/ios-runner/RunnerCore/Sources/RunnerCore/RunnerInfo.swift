@@ -50,10 +50,12 @@ enum RunnerInfo {
   }
 
   /// `health` data: the ready identity plus uptime. `ax.bridge` is `missing` (there is no AX bridge guest on a device).
-  static func health(fields: [String: JSON], uptimeMs: Int, state: String) -> JSON {
+  /// `state` is `serving`, or `busy` with `busy: {op, id, ms}` while an abandoned op holds XCUITest (`WorkGate`).
+  static func health(fields: [String: JSON], uptimeMs: Int, state: String, busy: JSON? = nil) -> JSON {
     var health = fields
     health["state"] = .string(state)
     health["uptimeMs"] = .int(uptimeMs)
+    if let busy { health["busy"] = busy }
     return .object(health)
   }
 }

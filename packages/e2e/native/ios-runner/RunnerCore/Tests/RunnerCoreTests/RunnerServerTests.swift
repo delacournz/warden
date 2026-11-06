@@ -3,8 +3,8 @@ import XCTest
 
 @testable import RunnerCore
 
-/// A loopback client: connect, write lines, read lines. The server runs on its own queue, as it does on `.main` in the
-/// runner.
+/// A loopback client: connect, write lines, read lines. The server runs on its own queue, as it does in the runner (a
+/// serial transport queue; ops go to the main thread through `WorkGate`).
 private final class Client {
   let connection: NWConnection
   private var buffer = LineBuffer()
