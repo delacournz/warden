@@ -745,7 +745,7 @@ describe("warden batch", () => {
 		expect(await createBatchCommand(h.deps).run(c)).toBe(0);
 		expect(h.serve()?.cmd).toEqual(["sh", "-c", "api --port 3000"]);
 		// once before serve is spawned (a stale listener), once for the ready wait
-		const health = { kind: "http", url: "http://127.0.0.1:3000/health" };
+		const health = { kind: "http", url: "http://127.0.0.1:3000/health" } as const;
 		expect(h.probes).toEqual([health, health]);
 		const job = h.jobs()[0];
 		expect(job?.cmd).toEqual(["run", "a", "--api", "http://127.0.0.1:3000"]);

@@ -5,6 +5,7 @@ import type { UiError } from "../agent-ui/output";
 import type { WarmConnect } from "../batch/warm-drivers";
 import type { CommandContext } from "../context";
 import { runnerSourcesFor } from "../ios-runner/sim-sources";
+import { currentBuild } from "../update/build-info";
 
 /** A runner host's start-up failure as the warm step's error text: `<code>: <message> (<hint>)`, the code `warmGate` stops the run on. */
 export function runnerWarmError(error: UiError): string {
@@ -54,6 +55,7 @@ export function warmConnect(ctx: CommandContext): WarmConnect {
 			exec: ctx.exec,
 			socketPath,
 			...(client ? { client } : {}),
+			version: currentBuild().version,
 			runnerSources: runnerSourcesFor(),
 			now: ctx.now,
 		});
