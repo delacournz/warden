@@ -134,6 +134,13 @@ jobs:
             plutil -p "$HOME/Library/Developer/CoreSimulator/Devices/$udid/data/Library/Preferences/com.apple.Accessibility.plist" > "$out/axprefs-$udid.txt" 2>&1
             ls -la "$HOME/Library/Developer/CoreSimulator/Devices/$udid/data/Library/Preferences/" > "$out/prefs-ls-$udid.txt" 2>&1
           done
+          for lp in $(pgrep -f launchd_sim); do
+            for pid in $(pgrep -P "$lp"); do
+              name=$(ps -o comm= -p "$pid" | xargs basename)
+              case "$name" in SpringBoard|backboardd|SimulatorFrameworkBridge-iOS|wardenexample|AccessibilityUIServer|axassetsd|accessibilityd|AXVisualSupportAgent|com.apple.accessibility*|*ccessib*) sample "$pid" 2 -file "$out/sample-$lp-$name-$pid.txt" >/dev/null 2>&1 ;; esac
+            done
+          done
+          for pid in $(pgrep -f warden-simd); do sample "$pid" 2 -file "$out/sample-simd-$pid.txt" >/dev/null 2>&1; done
           log show --last 15m --style compact --predicate 'process == "CoreSimulatorService" OR process == "warden-simd"' > "$out/host-coresim.txt" 2>&1
           ls -la "$out" "$out/simd"
       - name: Upload diag
