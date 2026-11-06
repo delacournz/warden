@@ -48,6 +48,9 @@ inputs:
   npm-token:
     description: Exported as NPM_TOKEN for `install-command` (private registries read it from bunfig.toml / .npmrc).
     default: ${{ github.token }}
+  headroom-gb:
+    description: GB of RAM warden keeps free of simulators (`WARDEN_CAPACITY_HEADROOM_GB`). Empty means 1 on a host with 16 GB or less, warden's own default above.
+    default: ""
   xcode-path:
     description: Xcode to use (`/Applications/Xcode_27.2.app`); sets DEVELOPER_DIR for every later step. Empty keeps the runner's default.
     default: ""
@@ -91,6 +94,7 @@ runs:
       shell: bash
       env:
         XCODE_PATH: ${{ inputs.xcode-path }}
+        HEADROOM_GB: ${{ inputs.headroom-gb }}
       run: |
         set -euo pipefail
         {
@@ -105,7 +109,20 @@ runs:
         fi
         xcodebuild -version
         xcrun simctl list runtimes | sed -n '1,12p'
-        echo "cores: $(sysctl -n hw.ncpu), memory: $(( $(sysctl -n hw.memsize) / 1073741824 )) GB"
+        gb=$(( $(sysctl -n hw.memsize) / 1073741824 ))
+        echo "cores: $(sysctl -n hw.ncpu), memory: $gb GB"
+        # warden keeps max(8 GB, 25%) of RAM free of simulators: on a 7 GB hosted runner that budget is
+        # zero and every claim queues. A runner this small has nothing else to protect but the build.
+        if [ -n "$HEADROOM_GB" ]; then
+          echo "WARDEN_CAPACITY_HEADROOM_GB=$HEADROOM_GB" >> "$GITHUB_ENV"
+        elif [ "$gb" -le 16 ]; then
+          echo "WARDEN_CAPACITY_HEADROOM_GB=1" >> "$GITHUB_ENV"
+        fi
+        # The first CoreSimulator call after boot builds its device sets (10 s to minutes on a cold image).
+        # Make it here, not inside a 30 s timeout of warden's claim while a native build loads the CPUs.
+        start=$(date +%s)
+        xcrun simctl list devices available -j > /dev/null
+        echo "CoreSimulator answered after $(( $(date +%s) - start )) s"
 
     - name: Install bun
       shell: bash
