@@ -10,7 +10,7 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import type { Exec, ExecResult } from "../exec";
 import { androidKeepsSigner, androidRepacker, parseResourceFiles } from "./repack-android";
 
@@ -337,6 +337,32 @@ describe("androidRepacker", () => {
 			expect(res.success && "artifact" in res.data).toBe(true);
 			expect(signedWith(calls)).toEqual([keystore, homeKs()]);
 			expect(existsSync(outDir) ? readdirSync(outDir) : []).toEqual(["app-release.apk"]);
+		});
+
+		test("the keystore cached beside the base signs before the project's and ~/.android's", async () => {
+			const cachedKs = join(dirname(base), "signing.keystore");
+			put(cachedKs, "cached-ks");
+			put(join(dirname(base), "signing.json"), JSON.stringify({ alias: "ca", storePass: "cs", keyPass: "ck" }));
+			const { run, calls } = signing({ [cachedKs]: SHA_BASE, [keystore]: SHA_OTHER, [homeKs()]: SHA_OTHER });
+			const res = await run();
+			expect(res.success && "artifact" in res.data).toBe(true);
+			expect(signedWith(calls)).toEqual([cachedKs]);
+			const sign = toolCalls(calls, "apksigner").find((c) => c.cmd[1] === "sign");
+			expect(sign?.cmd).toContain("pass:cs");
+			expect(sign?.cmd).toContain("ca");
+		});
+
+		test("a fallback reason never carries a credential", async () => {
+			const cachedKs = join(dirname(base), "signing.keystore");
+			put(cachedKs, "cached-ks");
+			put(
+				join(dirname(base), "signing.json"),
+				JSON.stringify({ alias: "ca", storePass: "SECRETPW", keyPass: "SECRETKP" })
+			);
+			const { run } = signing({ [cachedKs]: SHA_OTHER, [keystore]: SHA_OTHER, [homeKs()]: SHA_OTHER });
+			const res = await run();
+			if (!res.success || !("fallback" in res.data)) throw new Error("expected a fallback");
+			expect(res.data.reason).not.toContain("SECRET");
 		});
 
 		test("no keystore matching the base falls back naming the signers, and leaves nothing", async () => {

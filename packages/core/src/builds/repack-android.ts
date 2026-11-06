@@ -4,6 +4,7 @@ import { basename, dirname, join, relative, sep } from "node:path";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import type { Exec, ExecResult } from "../exec";
 import type { ApplyRepack, ApplyRepackInput, ApplyRepackOutput, RepackFallback } from "./repack.types";
+import { readCachedSigning } from "./signing-key";
 
 /** The APK entry RN's gradle plugin writes the bundle to (`bundleAssetName`'s default). */
 const BUNDLE_ENTRY = "assets/index.android.bundle";
@@ -16,8 +17,9 @@ export type AndroidKeystore = { path: string; alias: string; storePass: string; 
 
 export type AndroidRepackerOptions = {
 	/**
-	 * tried first when signing the repack; the default `~/.android/debug.keystore` (`androiddebugkey` / `android`) is
-	 * tried after it. The first whose certificate equals the base's signer signs the repack.
+	 * tried after the keystore cached beside the base APK (the one Gradle signed the base with, saved when warden built
+	 * it) and before the default `~/.android/debug.keystore` (`androiddebugkey` / `android`). The first whose
+	 * certificate equals the base's signer signs the repack.
 	 */
 	keystore?: AndroidKeystore | undefined;
 	/** Android SDK root; default `ANDROID_HOME`, `ANDROID_SDK_ROOT`, then `~/Library/Android/sdk` */
@@ -72,9 +74,13 @@ function findTools(options: AndroidRepackerOptions): { tools: Tools } | { error:
 	};
 }
 
-function resolveKeystores(options: AndroidRepackerOptions): { keystores: AndroidKeystore[] } | { error: string } {
+function resolveKeystores(
+	options: AndroidRepackerOptions,
+	baseArtifact: string
+): { keystores: AndroidKeystore[] } | { error: string } {
 	const path = join(options.home ?? homedir(), ".android", "debug.keystore");
-	const keystores: AndroidKeystore[] = options.keystore ? [options.keystore] : [];
+	const cached = readCachedSigning(dirname(baseArtifact));
+	const keystores: AndroidKeystore[] = [...(cached ? [cached] : []), ...(options.keystore ? [options.keystore] : [])];
 	if (existsSync(path)) keystores.push({ path, alias: "androiddebugkey", storePass: "android", keyPass: "android" });
 	if (keystores.length === 0) {
 		return { error: `no signing keystore: ${path} is missing (run any Android debug build once, or pass a keystore)` };
@@ -334,7 +340,7 @@ type Prepared = { swap: Swap } | { fallback: RepackFallback } | { error: string 
 async function prepare(options: AndroidRepackerOptions, input: ApplyRepackInput): Promise<Prepared> {
 	const found = findTools(options);
 	if ("error" in found) return found;
-	const signing = resolveKeystores(options);
+	const signing = resolveKeystores(options, input.baseArtifact);
 	if ("error" in signing) return signing;
 	const baseSigner = await signerFingerprint(input.exec, found.tools.apksigner, input.baseArtifact);
 	const baseEntries = await listEntries(input.exec, input.baseArtifact);
