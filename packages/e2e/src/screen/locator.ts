@@ -109,6 +109,12 @@ const VERIFY_MS = 1000;
 const CONFIRM_FLOOR_MS = 500;
 /** Quiet time asked of the driver after each scroll step. */
 const SCROLL_SETTLE = { quietMs: 150, timeoutMs: 1000 };
+/**
+ * How long `isVisible()` / `isHidden()` / `count()` look again at a degraded read before `READ_DEGRADED` (capped by the
+ * action timeout): long enough for a stalled bridge's background probe or the React tree to settle it, short enough
+ * that a spec branching on the answer is not held for the whole action timeout.
+ */
+const QUICK_CHECK_WINDOW_MS = 2000;
 
 function assertOptions(verb: string, options: object, allowed: readonly string[]): void {
 	const unknown = Object.keys(options).filter((key) => !allowed.includes(key));
@@ -311,13 +317,15 @@ export class Locator {
 
 	/**
 	 * One look that settles this locator. A whole read answers at once (never waits); a degraded one that cannot say
-	 * whether the locator is there is looked at again until one can, within the action timeout, then `READ_DEGRADED`.
+	 * whether the locator is there is looked at again until one can, within the action timeout (`quick`: within
+	 * `QUICK_CHECK_WINDOW_MS`, for checks a spec branches on), then `READ_DEGRADED`.
 	 */
-	private async conclusive(options: { reuse?: boolean } = {}): Promise<Conclusive> {
-		const first = await this.look(options);
+	private async conclusive(options: { reuse?: boolean; quick?: boolean } = {}): Promise<Conclusive> {
+		const first = await this.look(options.reuse === undefined ? {} : { reuse: options.reuse });
 		const settled = await this.settled(first.observed);
 		if (settled !== undefined) return settled;
-		const timeoutMs = this.rt.actionTimeout();
+		const actionMs = this.rt.actionTimeout();
+		const timeoutMs = options.quick === true ? Math.min(actionMs, QUICK_CHECK_WINDOW_MS) : actionMs;
 		let last: { read: DegradedRead; snapshot: Observed["snapshot"] } | undefined;
 		const result = await this.rt.poll<Conclusive, undefined>(async () => {
 			const observation = await this.rt.tryObserve({ reuse: false });
@@ -388,7 +396,7 @@ export class Locator {
 
 	count(): Promise<number> {
 		return this.traced("count", async () => {
-			const { entries, react } = await this.conclusive();
+			const { entries, react } = await this.conclusive({ quick: true });
 			return react?.length ?? entries.length;
 		});
 	}
@@ -429,7 +437,7 @@ export class Locator {
 
 	isVisible(): Promise<boolean> {
 		return this.traced("isVisible", async () => {
-			const { entries, react, observed } = await this.conclusive();
+			const { entries, react, observed } = await this.conclusive({ quick: true });
 			if (react !== undefined) return reactVisible(this.reactOnly(react, observed), observed);
 			return entries.length > 0 && this.exactlyOne(entries, observed).visible;
 		});
