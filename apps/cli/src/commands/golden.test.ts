@@ -280,6 +280,34 @@ describe("warden golden key | export | import (CI cache)", () => {
 		c.cleanup();
 	});
 
+	/** A clock that moves on every read, so the settle wait (deadline on `now`) runs out with the instant sleep. */
+	function ticking(c: TestContext): TestContext {
+		let t = 1_000_000;
+		c.now = () => {
+			t += 60_000;
+			return t;
+		};
+		return c;
+	}
+
+	test("export of a golden that never settles fails; --allow-unsettled exports it and says so", async () => {
+		const refused = ticking(setupHome(["export", "goldens"], fakeHost({ migrationPolls: 0, cpu: [300] })));
+		seedDevice(refused, "NEW-1");
+		expect(await createGoldenCommand(instant).run(refused)).toBe(1);
+		expect(refused.stderr.join("\n")).toContain("--allow-unsettled");
+		refused.cleanup();
+		ctx = undefined;
+
+		const c = ticking(
+			setupHome(["export", "goldens", "--allow-unsettled", "--json"], fakeHost({ migrationPolls: 0, cpu: [300] }))
+		);
+		seedDevice(c, "NEW-1");
+		expect(await createGoldenCommand(instant).run(c)).toBe(0);
+		expect(JSON.parse(c.stdout.join("\n"))).toMatchObject({ name: GOLDEN, built: true, unsettled: true });
+		expect(existsSync(join(c.cwd, "goldens", GOLDEN, "golden.json"))).toBe(true);
+		c.cleanup();
+	});
+
 	test("import of a missing dir (cache miss) is not an error", async () => {
 		const c = setupHome(["import", "nowhere"], fakeHost());
 		expect(await createGoldenCommand(instant).run(c)).toBe(0);

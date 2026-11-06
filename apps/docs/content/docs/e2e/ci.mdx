@@ -181,7 +181,7 @@ Outputs: `report-path` (absolute) and `passed` (`true` / `false`). The job fails
 | JS repack | `~/.warden/builds/*/ios/*/simulator/repacks` | the fingerprint + a hash of `js-inputs` (`git ls-files -s`) | after a green run on a miss |
 | Golden simulator | `~/warden-goldens` | `warden golden key --profile <p>` (Xcode build, runtime build, device type, recipe) | after a green run on a miss |
 
-A native build is minutes of `xcodebuild`, the JS bundle about 3.5 minutes on a hosted runner, and a cold golden up to five more minutes of first boot and settling. A pull request restores what the default branch saved but never saves (`save-cache: false`), so a branch cannot evict the default branch's entries; a push to the default branch fills them. A JS-only change misses only the repack cache. A new Xcode or runtime image misses only the golden.
+A native build is minutes of `xcodebuild`, the JS bundle about 3.5 minutes on a hosted runner, and a cold golden up to five more minutes of first boot and settling. A pull request restores what the default branch saved but never saves (`save-cache: false`), so a branch cannot evict the default branch's entries; a push to the default branch fills them. A JS-only change misses only the repack cache. A new Xcode or runtime image misses only the golden. The caches hold files, not `warden.db`: a base or repack dir that comes back complete with no row is registered on its first lookup (`warden builds --json` shows `"source": "restored"`) and used as it is.
 
 ### Reuse an app built earlier in the workflow
 
@@ -208,7 +208,7 @@ Build the `.app` with ad-hoc signing and pass it in. `CODE_SIGNING_ALLOWED=NO` l
 | ``xcrun simctl list devices … did not finish within 30s`` | the first CoreSimulator call of a cold image, under a native build's load | the action calls it once before the run; keep `count` at 1 on a 3-core runner |
 | first spec on each simulator fails, the rest pass | the in-sim bridge is up but silent | `retry: 1`; warm-up retries its snapshot for 120 s and warms one device at a time |
 | `errSecMissingEntitlement` / `-34018` in the app | simulator app built with `CODE_SIGNING_ALLOWED=NO` | build with `CODE_SIGN_IDENTITY=-` |
-| golden "not settled after 300s" | a loaded 3-core runner | the run still works; no golden is exported or saved, so the next run settles again. A bigger runner fixes it |
+| golden "not settled after 300s" | a loaded 3-core runner | the run still works. The action exports it with `warden golden export --allow-unsettled`, so the next run restores it instead of building it again. A bigger runner settles it |
 | `warden: command not found` | `warden-version: none` without an earlier install | install warden first or leave the default |
 | `bun: command not found` after a blocked `setup-bun` | an allowlist blocks third-party actions | the action never uses one: leave `bun-version` empty or pin it |
 | cache never hits | the key moved: Xcode image, fingerprint or `js-inputs` changed | read the `Key the caches` step: it prints the fingerprint and golden name |
