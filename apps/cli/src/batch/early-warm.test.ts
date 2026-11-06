@@ -205,4 +205,51 @@ describe("startEarlyWarm", () => {
 		const warm = startEarlyWarm(f.deps);
 		expect(await warm.settled()).toEqual({ devices: [], helpers: [], warnings: [] });
 	});
+
+	test("a device's reboot waits until the run says it is prepared (its install and setup are done)", async () => {
+		const f = fake();
+		let reboots = 0;
+		const wedged: WarmHelper = {
+			socketPath: "/s/U1.sock",
+			snapshot: async () => ({ success: false, error: "E_TIMEOUT" }),
+			close: async () => {},
+			stop: async () => {},
+			recover: async () => ({ kind: "failed", stage: "restart", error: "restart backboardd: exit 3" }),
+			reboot: async () => {
+				reboots++;
+				return { kind: "rebooted" };
+			},
+		};
+		const warm = startEarlyWarm({ ...f.deps, connect: async () => ({ success: true, data: wedged }), legCounts: [1] });
+		warm.leased(held("U1"), 0);
+		await Bun.sleep(5);
+		expect(reboots).toBe(0);
+		warm.prepared("U1");
+		await Bun.sleep(5);
+		expect(reboots).toBe(1);
+		warm.abort();
+		await warm.settled();
+	});
+
+	test("prepared before the warm-up asks: the reboot does not wait", async () => {
+		const f = fake();
+		let reboots = 0;
+		const wedged: WarmHelper = {
+			socketPath: "/s/U1.sock",
+			snapshot: async () => ({ success: false, error: "E_TIMEOUT" }),
+			close: async () => {},
+			recover: async () => ({ kind: "failed", stage: "restart", error: "exit 3" }),
+			reboot: async () => {
+				reboots++;
+				return { kind: "refused", reason: "test" };
+			},
+		};
+		const warm = startEarlyWarm({ ...f.deps, connect: async () => ({ success: true, data: wedged }), legCounts: [1] });
+		warm.prepared("U1");
+		warm.leased(held("U1"), 0);
+		await Bun.sleep(5);
+		expect(reboots).toBe(1);
+		warm.abort();
+		await warm.settled();
+	});
 });
