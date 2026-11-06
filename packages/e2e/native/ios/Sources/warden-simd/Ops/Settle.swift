@@ -859,15 +859,20 @@ extension Session {
     await monitor.start()
   }
 
-  /// Starts a background `axbridge` read while the guest is cold (helper start, after a recycle or a launch's rebind),
-  /// so the first read a caller makes finds it warm or joins this one (`BridgeWarmth.warmUp`). No-op without a bridge
-  /// or with `ax` as the default reader.
+  /// Starts a background `axbridge` read while the guest is cold (helper start, after a stall recycle or a launch's
+  /// rebind), so the first read a caller makes finds it warm or joins this one (`BridgeWarmth.warmUp`); an answer ends
+  /// any stall cooldown. No-op without a bridge or with `ax` as the default reader.
   @discardableResult
   func warmBridge() -> Task<BridgeWarmth.WarmUp, Never>? {
     guard axDefault == "axbridge", let reader = axBridgeReader else { return nil }
     return bridgeWarmth.warmUp(
       deadlineMs: bridgeDeadline.coldDeadlineMs, log: { OpLog.shared.log(.info, $0, op: "warmUp") },
-      read: { _ = try await reader.describe(.frontmost, options: AccessibilityRequestOptions()) })
+      read: { _ = try await reader.describe(.frontmost, options: AccessibilityRequestOptions()) },
+      answered: { [bridgeHealth, bridgeStall] in
+        // a fresh guest that answered (after a recycle) ends the cooldown its stalled predecessor armed
+        bridgeHealth.recordSuccess()
+        bridgeStall.recordSuccess()
+      })
   }
 
   /// Ends this simulator's guests after a stall on a warm guest (`BridgeReaper`); idb starts a new one on the next read.

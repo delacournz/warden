@@ -71,6 +71,8 @@ final class BridgeWarmth: @unchecked Sendable {
   private var spell = 0
   private var exemptStallUsed = false
   private var inFlight: (spell: Int, task: Task<WarmUp, Never>)?
+  /// The spell whose warm-up is still reading; nil once it ended.
+  private var runningSpell: Int?
 
   init() {}
 
@@ -93,6 +95,7 @@ final class BridgeWarmth: @unchecked Sendable {
       spell += 1
       exemptStallUsed = !exemptStall
       inFlight = nil
+      runningSpell = nil
     }
   }
 
@@ -116,9 +119,11 @@ final class BridgeWarmth: @unchecked Sendable {
   }
 
   /// Starts a background read while the guest is cold; joins the one in flight; nil when the guest is warm.
+  /// `answered` runs once when the read answered, before the task ends (the session ends a stall cooldown with it).
   @discardableResult
   func warmUp(
-    deadlineMs: Int?, log: @escaping @Sendable (String) -> Void, read: @escaping @Sendable () async throws -> Void
+    deadlineMs: Int?, log: @escaping @Sendable (String) -> Void, read: @escaping @Sendable () async throws -> Void,
+    answered: @escaping @Sendable () -> Void = {}
   ) -> Task<WarmUp, Never>? {
     lock.withLock { () -> Task<WarmUp, Never>? in
       guard cold else { return nil }
@@ -126,9 +131,11 @@ final class BridgeWarmth: @unchecked Sendable {
       let generation = spell
       let started = ContinuousClock.now
       let task = Task<WarmUp, Never> { [weak self] in
+        defer { self?.endRunning(generation) }
         do {
           _ = try await Session.bounded({ try await read() }, deadlineMs: deadlineMs)
           self?.noteSuccess(generation: generation)
+          answered()
           log("axbridge warm-up answered in \(Session.elapsedMs(since: started)) ms")
           return .warmed
         } catch let stall as BridgeStalled {
@@ -141,8 +148,18 @@ final class BridgeWarmth: @unchecked Sendable {
         }
       }
       inFlight = (generation, task)
+      runningSpell = generation
       return task
     }
+  }
+
+  private func endRunning(_ generation: Int) {
+    lock.withLock { if runningSpell == generation { runningSpell = nil } }
+  }
+
+  /// The current spell's warm-up while it is still reading (a probe joins it instead of a second read on the guest).
+  var running: Task<WarmUp, Never>? {
+    lock.withLock { runningSpell == spell && inFlight?.spell == spell ? inFlight?.task : nil }
   }
 
   /// The outcome of the current spell's warm-up, waited for; nil when none ran or the guest has answered since (a
@@ -242,24 +259,44 @@ final class BridgeProbe: @unchecked Sendable {
 }
 
 /// Ends a guest that stalled after it had answered (`GuestRecycling`), so the next read starts on a fresh one instead
-/// of whatever the stalled one is still doing. A cold guest is never recycled: it is slow, not stuck, and a recycle
-/// would only make it cold again. At most `maxRecycles` per helper (a recycle that found no guest is not counted);
-/// past that the bridge is left to the cooldown and the probe, and the reads stay on `ax` while it is silent.
+/// of whatever the stalled one is still doing. The fresh guest is treated like one the helper just started: cold
+/// deadline, one exempt stall, and `rewarm` (the session's background warm-up) once the recycle is over. A cold guest
+/// is never recycled: it is slow, not stuck, and a recycle would only make it cold again. At most `maxRecycles` per
+/// helper (`WARDEN_SIMD_BRIDGE_MAX_RECYCLES`; a recycle that found no guest is not counted); past that the bridge is
+/// left to the cooldown and the probe, and the reads stay on `ax` while it is silent.
 final class BridgeReaper: @unchecked Sendable {
   static let defaultMaxRecycles = 3
+  static let maxRecyclesEnv = "WARDEN_SIMD_BRIDGE_MAX_RECYCLES"
+
+  /// `WARDEN_SIMD_BRIDGE_MAX_RECYCLES`: a whole number >= 0 (`0` = never recycle); anything else keeps the default,
+  /// with a warning in the log.
+  static func configuredMaxRecycles(
+    _ environment: [String: String] = ProcessInfo.processInfo.environment,
+    log: @Sendable (String) -> Void
+  ) -> Int {
+    guard let raw = environment[maxRecyclesEnv] else { return defaultMaxRecycles }
+    if let count = Int(raw.trimmingCharacters(in: .whitespaces)), count >= 0 { return count }
+    log("\(maxRecyclesEnv)=\"\(raw)\" is not a whole number >= 0; using the default \(defaultMaxRecycles)")
+    return defaultMaxRecycles
+  }
 
   let maxRecycles: Int
   private let recycle: @Sendable () async -> Int
+  private let rewarm: @Sendable () -> Void
   private let lock = NSLock()
   private var spent = 0
   private var told = false
   private var inFlight: Task<Void, Never>?
   private var latest: Task<Void, Never>?
 
-  /// `recycle` ends the guests and answers how many it ended.
-  init(maxRecycles: Int = BridgeReaper.defaultMaxRecycles, recycle: @escaping @Sendable () async -> Int) {
+  /// `recycle` ends the guests and answers how many it ended; `rewarm` starts the warm-up of the guest that follows.
+  init(
+    maxRecycles: Int = BridgeReaper.defaultMaxRecycles, recycle: @escaping @Sendable () async -> Int,
+    rewarm: @escaping @Sendable () -> Void = {}
+  ) {
     self.maxRecycles = maxRecycles
     self.recycle = recycle
+    self.rewarm = rewarm
   }
 
   /// Guests recycled after a stall so far.
@@ -289,6 +326,7 @@ final class BridgeReaper: @unchecked Sendable {
         return nil
       }
       let max = maxRecycles
+      let rewarm = rewarm
       let task = Task<Void, Never> { [weak self] in
         let started = ContinuousClock.now
         let ended = await self?.recycle() ?? 0
@@ -298,6 +336,8 @@ final class BridgeReaper: @unchecked Sendable {
         } else {
           log("axbridge stalled after it had answered: no guest found to recycle")
         }
+        // idb starts the next guest on the next read either way: warm it in the background, like a helper start
+        rewarm()
       }
       inFlight = task
       latest = task
@@ -569,8 +609,9 @@ extension Session {
 
   /// What a stalled bridge read leaves behind. A cold guest's first stall is exempt (asked again next read); any
   /// other arms the cooldown. A stall on a guest that had answered also means the guest is gone or going (idb ends the
-  /// guest of a cancelled request, and the reaper ends one still stuck), so the guest is cold again, without a second
-  /// exempt stall, and is recycled while the budget lasts.
+  /// guest of a cancelled request, and the reaper ends one still stuck), so the guest is cold again. While the budget
+  /// lasts it is recycled and the fresh guest gets the rules of a freshly started one (cold deadline, an exempt stall,
+  /// a warm-up after the recycle); a guest that is not recycled gets no second exempt stall, so stalls cannot loop.
   static func noteStall(
     _ stall: BridgeStalled, generation: Int, coldAtStart: Bool, gate: BridgeStallGate, warmth: BridgeWarmth,
     reaper: BridgeReaper?, now: @escaping @Sendable () -> Double, log: @escaping @Sendable (String) -> Void
@@ -582,17 +623,33 @@ extension Session {
     gate.recordStall(at: now())
     log("axbridge: \(stall.localizedDescription)")
     guard !coldAtStart, warmth.generation == generation else { return }
-    warmth.markCold(exemptStall: false)
+    let recycles = reaper?.allowsRecycle ?? false
+    warmth.markCold(exemptStall: recycles)
     reaper?.recycleAfterStall(log: log)
   }
 
   /// Starts (or joins) a recovery probe whose outcome updates the gate, the guest's warmth and health. A probe on a
   /// cold guest gets the cold deadline: it runs in the background, and a guest that is starting again cannot answer
-  /// within the short one on a slow host.
+  /// within the short one on a slow host. While the guest's warm-up is still reading (after a recycle, say) no probe
+  /// starts: the warm-up stands in for it, and its answer ends the cooldown the same way.
   static func startProbe(
     _ recovery: BridgeRecovery, policy: BridgeDeadline, gate: BridgeStallGate, warmth: BridgeWarmth,
     health: BridgeHealth, now: @escaping @Sendable () -> Double, log: @escaping @Sendable (String) -> Void
   ) -> Task<BridgeProbe.Outcome, Never>? {
+    if let warmUp = warmth.running {
+      // the guest serialises reads: a probe beside its warm-up would only queue a second cold read behind it
+      return Task {
+        switch await warmUp.value {
+        case .warmed:
+          health.recordSuccess()
+          gate.recordSuccess()
+          log("axbridge warm-up answered; reads use axbridge again")
+          return .answered
+        case let .stalled(afterMs): return .silent(afterMs: afterMs)
+        case .failed: return .failed("the axbridge warm-up failed")
+        }
+      }
+    }
     let generation = warmth.generation
     let deadlineMs = warmth.isCold ? max(recovery.probe.deadlineMs, policy.coldDeadlineMs ?? 0) : nil
     return recovery.probe.start(now: now(), deadlineMs: deadlineMs, check: recovery.check) { outcome, elapsedMs in

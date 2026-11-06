@@ -81,7 +81,8 @@ final class Session: @unchecked Sendable {
   let bridgeWarmth = BridgeWarmth()
   /// The background check that ends a stall cooldown once the guest answers again (`BridgeProbe`).
   let bridgeProbe = BridgeProbe()
-  /// Recycles a guest that stalled after it had answered, a few times per helper (`BridgeReaper`); set in `init`.
+  /// Recycles a guest that stalled after it had answered, a few times per helper (`BridgeReaper`,
+  /// `WARDEN_SIMD_BRIDGE_MAX_RECYCLES`); set in `init`.
   private(set) var bridgeReaper = BridgeReaper(maxRecycles: 0) { 0 }
   /// The per-read bridge deadline and the cooldown after a stall (`WARDEN_SIMD_BRIDGE_DEADLINE_MS` / `_COOLDOWN_S`).
   let bridgeDeadline = BridgeDeadline.configured()
@@ -109,7 +110,10 @@ final class Session: @unchecked Sendable {
     self.coreSimulatorVersion = coreSimulatorVersion
     self.resourcesDirectory = resourcesDirectory
     self.startedAt = startedAt
-    self.bridgeReaper = BridgeReaper { [weak self] in await self?.recycleStalledGuest() ?? 0 }
+    self.bridgeReaper = BridgeReaper(
+      maxRecycles: BridgeReaper.configuredMaxRecycles(log: { OpLog.shared.log(.warn, $0, op: "start") }),
+      recycle: { [weak self] in await self?.recycleStalledGuest() ?? 0 },
+      rewarm: { [weak self] in self?.warmBridge() })
   }
 
   /// Bootstraps FBSimulatorControl, requires the simulator to be booted, connects HID, builds the AX readers.
