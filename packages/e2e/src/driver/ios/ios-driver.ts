@@ -12,6 +12,7 @@ import type { E2eEnv } from "../../env";
 import type { ReadsA11yEvents } from "../a11y-events";
 import type { ReadsA11y } from "../a11y-read";
 import type { AlertBackend, ProbesFrontmost, ReadsAlertOn } from "../alerts";
+import { bridgeStallSchema, formatBridgeStall, noteBridgeStall, toBridgeStall } from "../bridge-stall";
 import type { ClockRecorder } from "../clock-recorder";
 import type {
 	AlertInfo,
@@ -44,7 +45,7 @@ import { resolveHelper } from "./locate-helper";
 import { normalizeElement, normalizeElements, toSnapshot } from "./normalize";
 import { createSimctl, type Simctl } from "./simctl";
 import { connectSimd, type RequestOptions, type SimdClient, spawnSimd } from "./simd-client";
-import type { AlertButtonsData, HealthData, OpData, RebindData, SettleData } from "./simd-protocol";
+import type { AlertButtonsData, HealthData, OpData, RebindData, SettleData, SnapshotData } from "./simd-protocol";
 import type { SimdSpawn } from "./simd-transport";
 import { typeTextBudgetMs } from "./type-budget";
 
@@ -254,6 +255,17 @@ export function noteSnapshotError(detail: unknown): void {
 		const value: unknown = (detail as Record<string, unknown>)[from];
 		if (typeof value === "string") noteSpanDetail(to, value);
 	}
+	const stall = bridgeStallSchema.safeParse((detail as Record<string, unknown>).stall);
+	if (stall.success) noteBridgeStall(toBridgeStall(stall.data));
+}
+
+/** Logs a snapshot's reader fallback and leaves its reason and the helper's stall report on the span. */
+function noteFallback(fallback: NonNullable<SnapshotData["fallback"]>, log: Logger | undefined): void {
+	const stall = fallback.stall && toBridgeStall(fallback.stall);
+	const why = stall ? ` (${formatBridgeStall(stall)})` : "";
+	log?.(`[ios] snapshot fell back ${fallback.from} -> ${fallback.to}: ${fallback.reason}${why}`);
+	noteSpanDetail("fallback", fallback.reason);
+	if (stall) noteBridgeStall(stall);
 }
 
 /** Leaves the pid a snapshot read by (when the helper had to name it) on the current span. */
@@ -601,10 +613,7 @@ export function createIosDriver(
 		const { fallback, target } = result.data;
 		if (result.data.backend === "axbridge" && !fallback) warmGeneration = generation;
 		noteSpanDetail("backend", result.data.backend);
-		if (fallback) {
-			opts.log?.(`[ios] snapshot fell back ${fallback.from} -> ${fallback.to}: ${fallback.reason}`);
-			noteSpanDetail("fallback", fallback.reason);
-		}
+		if (fallback) noteFallback(fallback, opts.log);
 		noteSnapshotTarget(target);
 		return { success: true, data: toSnapshot(result.data, now()) } as const;
 	};

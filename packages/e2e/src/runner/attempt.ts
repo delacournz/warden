@@ -7,6 +7,7 @@ import { E2eError } from "../errors";
 import { perfStartFor } from "../perf/device-perf";
 import { type AttemptBinding, attemptSession, type Session } from "../session";
 import { attemptDir, hash6, specIdOf } from "./artifacts";
+import { bridgeEvidence } from "./bridge-evidence";
 import {
 	CAPTURE_TIMEOUT_MS,
 	captureDevtoolsArtifacts,
@@ -237,8 +238,10 @@ async function runAttemptOnce<F extends object>(session: Session, spec: AttemptS
 	const files = new Set<string>();
 	// what this attempt's fixtures and steps run against: the run context, its cleanup context, then a finished one
 	let binding: AttemptBinding | undefined;
+	const bridge = bridgeEvidence();
 	const trace = openTrace(join(dir, "trace.jsonl"), (event) => {
 		files.add("trace.jsonl");
+		bridge.observe(event);
 		print(formatConsoleLine(event, { clock, short, depth: binding?.context.depth ?? 0 }));
 	});
 	const controller = new AbortController();
@@ -283,7 +286,7 @@ async function runAttemptOnce<F extends object>(session: Session, spec: AttemptS
 
 	outcome = failIf(outcome, cleanupErrors.length > 0, () => cleanupErrors[0]);
 
-	return concludeAttempt(session, spec, ctx, { startedAt, device }, outcome, print, clock);
+	return concludeAttempt(session, spec, ctx, { startedAt, device, bridge: bridge.summary() }, outcome, print, clock);
 }
 
 type BodyOutcome = { failed: boolean; failure: unknown; deadlineHit: boolean };
@@ -323,7 +326,7 @@ async function concludeAttempt<F extends object>(
 	session: Session,
 	spec: AttemptSpec<F>,
 	ctx: AttemptContext,
-	run: { startedAt: number; device: TestResult["device"] },
+	run: AttemptRun,
 	outcome: BodyOutcome,
 	print: (line: string | undefined) => void,
 	clock: boolean
@@ -359,10 +362,13 @@ export function softFailureError(failures: readonly E2eError[]): E2eError {
 
 type Outcome = { failed: false } | { failed: true; error: unknown; timedOut: boolean };
 
+/** What `results.jsonl` needs of the attempt beyond its outcome: when, on what, and its bridge fallbacks. */
+type AttemptRun = { startedAt: number; device: TestResult["device"]; bridge: TestResult["bridge"] };
+
 function buildResult<F extends object>(
 	spec: AttemptSpec<F>,
 	ctx: AttemptContext,
-	run: { startedAt: number; device: TestResult["device"] },
+	run: AttemptRun,
 	outcome: Outcome
 ): TestResult {
 	const status: TestResult["status"] = !outcome.failed ? "passed" : outcome.timedOut ? "timed-out" : "failed";
@@ -375,6 +381,7 @@ function buildResult<F extends object>(
 		...(spec.only ? { only: true } : {}),
 		...(outcome.failed ? { error: errorInfo(outcome.error) } : {}),
 		...(ctx.files.size > 0 ? { artifacts: { dir: ctx.dir, files: [...ctx.files].sort() } } : {}),
+		...(run.bridge === undefined ? {} : { bridge: run.bridge }),
 		device: run.device,
 	};
 }

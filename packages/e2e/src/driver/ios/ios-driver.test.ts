@@ -482,6 +482,65 @@ describe("Driver methods over the helper", () => {
 		expect(notes).toEqual({ backend: "ax", fallback: reason });
 	});
 
+	test("a fallback's stall report goes on the span and the log", async () => {
+		const reason = "the axbridge guest did not answer within 12000 ms (stage: bridge read)";
+		const stall = { stage: "read", readMs: 12004, deadlineMs: 12000, guestAgeMs: 2500, cold: true, probes: 1 };
+		const { driver, logs } = await open(() => ({
+			data: { ...snapshotData, backend: "ax", fallback: { from: "axbridge", to: "ax", reason, stall } },
+		}));
+		const notes: SpanDetail = {};
+		const snap = await collectSpanDetail(notes, () => unwrapped(driver.snapshot()));
+		expect(snap.bridgeStall).toEqual(stall);
+		expect(notes).toEqual({
+			backend: "ax",
+			fallback: reason,
+			stallStage: "read",
+			stallReadMs: 12004,
+			stallDeadlineMs: 12000,
+			stallGuestAgeMs: 2500,
+			stallCold: true,
+			stallProbes: 1,
+		});
+		expect(logs.some((line) => line.includes("stage read · read 12004 ms of a 12000 ms deadline · cold"))).toBe(true);
+	});
+
+	test("an explicit bridge read that stalled leaves its stall report on the span", async () => {
+		const { driver } = await open((request) =>
+			request.op === "health"
+				? { error: { code: "E_INTERNAL", message: "no health", retryable: false } }
+				: {
+						error: {
+							code: "E_TIMEOUT",
+							message: "the axbridge guest did not answer within 4000 ms",
+							retryable: true,
+							detail: {
+								afterMs: 4000,
+								stage: "axbridge",
+								stall: {
+									stage: "read",
+									readMs: 4001,
+									deadlineMs: 4000,
+									cold: false,
+									cooldownRemainingMs: 20000,
+									probes: 2,
+								},
+							},
+						},
+					}
+		);
+		const notes: SpanDetail = {};
+		await collectSpanDetail(notes, () => driver.snapshot({ backend: "axbridge" }));
+		expect(notes).toMatchObject({
+			axStage: "axbridge",
+			stallStage: "read",
+			stallReadMs: 4001,
+			stallDeadlineMs: 4000,
+			stallCold: false,
+			stallCooldownMs: 20000,
+			stallProbes: 2,
+		});
+	});
+
 	test("a snapshot read on the bridge names its reader on the span", async () => {
 		const { driver } = await open(() => ({ data: snapshotData }));
 		const notes: SpanDetail = {};

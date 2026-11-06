@@ -225,26 +225,88 @@ struct BridgeRecovery: Sendable {
   var check: @Sendable () async throws -> Void
 }
 
+/// What one bridge fallback or stall looked like, for the client's run evidence (`fallback.stall` on a snapshot,
+/// `detail.stall` on a failed read).
+struct BridgeStallReport: Sendable, Equatable {
+  enum Stage: String, Sendable {
+    /// No bridge reader to ask (the guest never came up).
+    case connect
+    /// A bridge read was made and stalled past its deadline or failed.
+    case read
+    /// The read joined a background warm-up read that stalled, and was not asked again.
+    case warmUp = "warm-up"
+    /// The bridge was skipped: a stall within the cooldown.
+    case cooldown
+  }
+
+  var stage: Stage
+  /// How long the bridge read ran before it stalled or failed; nil when the bridge was not asked.
+  var readMs: Int?
+  /// The deadline that read had (the cold one while the guest is cold); nil when the bridge was not asked or has none.
+  var deadlineMs: Int?
+  /// How long the current AX guests have been up (since helper start or their last recycle / reap).
+  var guestAgeMs: Int?
+  /// The guest had not answered since it last went cold (helper start, recycle, launch): a first read.
+  var cold: Bool
+  /// What is left of the stall cooldown after this read; nil when none is armed.
+  var cooldownRemainingMs: Int?
+  /// Bridge reads and background probes that failed in a row since the bridge last answered, this one included.
+  var probes: Int
+
+  var json: JSON {
+    var fields: [String: JSON] = ["stage": .string(stage.rawValue), "cold": .bool(cold), "probes": .int(probes)]
+    if let readMs { fields["readMs"] = .int(readMs) }
+    if let deadlineMs { fields["deadlineMs"] = .int(deadlineMs) }
+    if let guestAgeMs { fields["guestAgeMs"] = .int(guestAgeMs) }
+    if let cooldownRemainingMs { fields["cooldownRemainingMs"] = .int(cooldownRemainingMs) }
+    return .object(fields)
+  }
+}
+
 /// An `axbridge` read that did not answer within `BridgeDeadline.readMs`.
 struct BridgeStalled: Error, LocalizedError, Sendable {
   var afterMs: Int
+  /// Set by `Session.readAX` before the stall reaches the client.
+  var report: BridgeStallReport?
 
   var errorDescription: String? {
     "the axbridge guest did not answer within \(afterMs) ms (stage: bridge read; the in-sim SimulatorFrameworkBridge guest is up but silent)"
   }
 }
 
-/// When the bridge last stalled, so the reads inside the cooldown skip it.
+/// When the bridge last stalled, so the reads inside the cooldown skip it, and how many bridge reads in a row failed.
 final class BridgeStallGate: @unchecked Sendable {
   private let lock = NSLock()
   private var stalledAt: Double?
+  private var failures = 0
 
   func recordStall(at now: Double) {
     lock.withLock { stalledAt = now }
   }
 
+  /// A bridge read failed (a stall included); returns the failures in a row, this one included.
+  @discardableResult
+  func recordFailure() -> Int {
+    lock.withLock {
+      failures += 1
+      return failures
+    }
+  }
+
   func recordSuccess() {
-    lock.withLock { stalledAt = nil }
+    lock.withLock {
+      stalledAt = nil
+      failures = 0
+    }
+  }
+
+  var failuresInARow: Int { lock.withLock { failures } }
+
+  /// Milliseconds left of the cooldown, or nil when none is armed.
+  func cooldownRemainingMs(now: Double, cooldownSeconds: Double) -> Int? {
+    guard let stalledAt = lock.withLock({ stalledAt }), cooldownSeconds > 0 else { return nil }
+    let left = cooldownSeconds - (now - stalledAt)
+    return left > 0 ? Int((left * 1000).rounded()) : nil
   }
 
   /// Why the bridge is skipped right now, or nil when it may be asked.
@@ -283,7 +345,8 @@ extension Session {
     recovery: BridgeRecovery? = nil,
     now: @escaping @Sendable () -> Double,
     log: @escaping @Sendable (String) -> Void,
-    bridgeName: String
+    bridgeName: String,
+    guestAgeSeconds: @Sendable () -> Double? = { nil }
   ) async throws -> AXOutcome<Value> {
     if requested == .ax {
       guard let host else {
@@ -292,7 +355,17 @@ extension Session {
       return AXOutcome(value: try await host(), backend: .ax, fallback: nil)
     }
 
+    let cold = warmth.isCold
+    func report(_ stage: BridgeStallReport.Stage, readMs: Int? = nil, deadlineMs: Int? = nil) -> BridgeStallReport {
+      BridgeStallReport(
+        stage: stage, readMs: readMs, deadlineMs: deadlineMs,
+        guestAgeMs: guestAgeSeconds().map { Int(($0 * 1000).rounded()) }, cold: cold,
+        cooldownRemainingMs: gate.cooldownRemainingMs(now: now(), cooldownSeconds: policy.cooldownSeconds),
+        probes: gate.failuresInARow)
+    }
+
     let reason: String
+    let stall: BridgeStallReport
     let probe = { () -> Task<BridgeProbe.Outcome, Never>? in
       guard let recovery else { return nil }
       return startProbe(recovery, gate: gate, warmth: warmth, health: health, now: now, log: log)
@@ -303,18 +376,22 @@ extension Session {
         // an explicit read pays the probe's short deadline, never the full read's, while the guest is cooling down
         let outcome = await probe()?.value
         guard outcome == .answered else {
-          throw BridgeStalled(afterMs: recovery?.probe.deadlineMs ?? 0)
+          let probeMs = recovery?.probe.deadlineMs ?? 0
+          throw BridgeStalled(afterMs: probeMs, report: report(.cooldown, deadlineMs: probeMs))
         }
       }
       if requested == nil, host != nil, let skip {
         _ = probe()
         reason = skip
+        stall = report(.cooldown)
       } else if case let .stalled(afterMs)? = await warmth.joinWarmUp(), requested == nil, host != nil {
         _ = probe()
         reason = "axbridge warm-up did not answer within \(afterMs) ms (cold guest)"
+        stall = report(.warmUp, deadlineMs: afterMs)
       } else {
         let generation = warmth.generation
         let deadlineMs = warmth.deadlineMs(policy)
+        let started = ContinuousClock.now
         do {
           let value = try await readRecovering(
             read: { try await bounded(bridge, deadlineMs: deadlineMs) },
@@ -324,6 +401,7 @@ extension Session {
           gate.recordSuccess()
           return AXOutcome(value: value, backend: .axbridge, fallback: nil)
         } catch {
+          let readMs = Session.elapsedMs(since: started)
           if let stall = error as? BridgeStalled {
             if warmth.takeExemptStall(generation: generation) {
               log("axbridge: \(stall.localizedDescription) (cold guest: the bridge is asked again next read)")
@@ -332,8 +410,18 @@ extension Session {
               log("axbridge: \(stall.localizedDescription)")
             }
           }
-          if isBridgeFailure(error) { health.recordFailure(WireError.from(error).message) }
-          guard requested == nil, isBridgeFailure(error), host != nil else { throw error }
+          if isBridgeFailure(error) {
+            health.recordFailure(WireError.from(error).message)
+            gate.recordFailure()
+          }
+          stall = report(.read, readMs: readMs, deadlineMs: deadlineMs)
+          guard requested == nil, isBridgeFailure(error), host != nil else {
+            if var stalled = error as? BridgeStalled {
+              stalled.report = stall
+              throw stalled
+            }
+            throw error
+          }
           reason = WireError.from(error).message
         }
       }
@@ -342,13 +430,14 @@ extension Session {
         throw WireError(.axUnavailable, "the axbridge reader is unavailable (bridge \(bridgeName))")
       }
       reason = "axbridge reader unavailable (bridge \(bridgeName))"
+      stall = report(.connect)
     }
     log("axbridge -> ax fallback: \(reason)")
     do {
       let value = try await host!()
-      return AXOutcome(value: value, backend: .ax, fallback: Fallback(reason: reason))
+      return AXOutcome(value: value, backend: .ax, fallback: Fallback(reason: reason, stall: stall))
     } catch {
-      throw AXReadersFailed(bridgeReason: reason, host: error)
+      throw AXReadersFailed(bridgeReason: reason, host: error, stall: stall)
     }
   }
 
@@ -367,8 +456,10 @@ extension Session {
         log("axbridge probe answered in \(elapsedMs) ms; reads use axbridge again")
       case let .silent(afterMs):
         if !warmth.isCold { gate.recordStall(at: now()) }
+        gate.recordFailure()
         log("axbridge probe did not answer within \(afterMs) ms; reads stay on ax")
       case let .failed(message):
+        gate.recordFailure()
         log("axbridge probe failed: \(message)")
       }
     }

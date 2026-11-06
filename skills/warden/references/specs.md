@@ -341,7 +341,7 @@ WARDEN_UDID=<udid> WARDEN_BUNDLE_ID=<bundleId> \
 - Always: `trace.jsonl`, `screenshots/`.
 - On failure: `failure.png`, `screen-at-failure.txt`, `native.log` (+ iOS `.ips` crash reports) best effort (iOS: read inside the sim with `simctl spawn <udid> log show --info --debug`; private data is made readable first with `log config --mode private_data:on`, `WARDEN_NATIVE_LOG_PRIVATE=0` skips that; a tail of at most 20 lines, errors first, is printed under the failure), plus `console.jsonl` and `network.jsonl` with devtools.
 - With `device.perf` / `--perf`: `perf/report.json`, `perf/report.md`, `perf/session.json`.
-- `<out>/results.jsonl`: one line per test (`file title status durationMs startedAt error? artifacts{dir,files} device`), status `passed | failed | skipped | timed-out`. `files` lists what was written into the attempt dir.
+- `<out>/results.jsonl`: one line per test (`file title status durationMs startedAt error? artifacts{dir,files} bridge? device`; `bridge` = iOS reads that left `axbridge`, see `suites.md`), status `passed | failed | skipped | timed-out`. `files` lists what was written into the attempt dir.
 - Under `warden e2e` the batch dir also holds `e2e-report.json` (verdicts; `--report <file>` copies it).
 - Read `screen-at-failure.txt` first: it is the full AX tree at the failure.
 

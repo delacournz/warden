@@ -2,7 +2,8 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { DevtoolsFacet } from "../devtools/devtools.types";
 import { captureNativeLog, type NativeLogDeps, type NativeTarget } from "../devtools/native-log";
-import type { Driver } from "../driver/driver.types";
+import { formatBridgeStall } from "../driver/bridge-stall";
+import type { Driver, Snapshot } from "../driver/driver.types";
 import type { E2eEnv } from "../env";
 import { renderHeader, renderSnapshot } from "../screen/render";
 
@@ -112,11 +113,22 @@ async function captureSnapshot(driver: Driver, dir: string, ms: number, capture:
 		}
 		const rendered = renderSnapshot(result.data, { interactiveOnly: false, refs: new Map() });
 		const header = renderHeader({ snapshot: result.data, rendered, interactiveOnly: false });
-		writeFileSync(join(dir, SCREEN_AT_FAILURE), `${[header, ...rendered.lines].join("\n")}\n`);
+		const fellBack = fallbackLine(result.data);
+		const lines = fellBack === undefined ? [header, ...rendered.lines] : [header, fellBack, ...rendered.lines];
+		writeFileSync(join(dir, SCREEN_AT_FAILURE), `${lines.join("\n")}\n`);
 		capture.files.push(SCREEN_AT_FAILURE);
 	} catch (cause) {
 		capture.problems.push(`snapshot: ${message(cause)}`);
 	}
+}
+
+/** `# read on ax: axbridge stalled (…)` when the screen was read by a fallback reader: it may lack test ids. */
+function fallbackLine(snapshot: Snapshot): string | undefined {
+	if (snapshot.fellBackFrom === undefined) return undefined;
+	const head = `# read on ${snapshot.backend}: ${snapshot.fellBackFrom}`;
+	return snapshot.bridgeStall === undefined
+		? `${head} did not answer`
+		: `${head} stalled (${formatBridgeStall(snapshot.bridgeStall)})`;
 }
 
 /**

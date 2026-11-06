@@ -237,6 +237,28 @@ describe("only", () => {
 });
 
 describe("retry", () => {
+	test("reads that left the iOS bridge are summed up on the results line", async () => {
+		const run = await runSpec("screen", { FIXTURE_BRIDGE_STALL: "1" });
+		const tapped = byTitle(run, "taps a locator through app, device and screen");
+		const stall = {
+			reason: "the axbridge guest did not answer within 12000 ms",
+			stage: "read",
+			readMs: 12001,
+			deadlineMs: 12000,
+			guestAgeMs: 800,
+			cold: true,
+			probes: 1,
+		};
+		expect(tapped.bridge?.fallbacks).toBeGreaterThan(0);
+		expect(tapped.bridge?.first).toEqual(stall);
+		expect(tapped.bridge?.last).toEqual(stall);
+	});
+
+	test("a run that never left the bridge has no bridge field", async () => {
+		const run = await runSpec("screen");
+		expect(byTitle(run, "taps a locator through app, device and screen")).not.toHaveProperty("bridge");
+	});
+
 	test("only the final attempt writes a results line, every attempt prints", async () => {
 		const run = await runSpec("retry");
 		expect(run.exitCode).toBe(0);
