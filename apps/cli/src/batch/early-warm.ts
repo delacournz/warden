@@ -49,6 +49,11 @@ export type EarlyWarm = {
 	peek: (udid: string) => DeviceWarm | undefined;
 	/** stop waiting for helpers still starting (a late one is closed) */
 	abort: () => void;
+	/**
+	 * nothing else works on `udid` any more (its app install, setup and Metro launch are done, or it was dropped): only
+	 * then may its warm-up reboot it (`WarmRun.quiet`)
+	 */
+	prepared: (udid: string) => void;
 };
 
 /** One settled device's `DeviceWarm` from its `Warmed` outcome, helper and held-back warning. */
@@ -73,6 +78,14 @@ export function startEarlyWarm(deps: EarlyWarmDeps): EarlyWarm {
 	const firstWorker = (leg: number) => deps.legCounts.slice(0, leg).reduce((sum, n) => sum + n, 0);
 	const byDevice = new Map<string, ReturnType<typeof Promise.withResolvers<DeviceWarm>>>();
 	const done = new Map<string, DeviceWarm>();
+	const quiet = new Map<string, ReturnType<typeof Promise.withResolvers<void>>>();
+	const quietOf = (udid: string) => {
+		const known = quiet.get(udid);
+		if (known) return known;
+		const made = Promise.withResolvers<void>();
+		quiet.set(udid, made);
+		return made;
+	};
 	return {
 		leased: (outcome, leg) => {
 			const first = firstWorker(leg);
@@ -86,6 +99,7 @@ export function startEarlyWarm(deps: EarlyWarmDeps): EarlyWarm {
 						after: deps.after,
 						writeFile: deps.writeFile,
 						signal,
+						quiet: (udid) => quietOf(udid).promise,
 					},
 					{
 						connect: deps.connect,
@@ -113,5 +127,6 @@ export function startEarlyWarm(deps: EarlyWarmDeps): EarlyWarm {
 		device: (udid) => byDevice.get(udid)?.promise ?? Promise.resolve({}),
 		peek: (udid) => done.get(udid),
 		abort: () => own.abort(),
+		prepared: (udid) => quietOf(udid).resolve(),
 	};
 }
