@@ -60,6 +60,9 @@ jobs:
   example:
     runs-on: ${{ inputs.runner || vars.WARDEN_E2E_RUNNER || 'namespace-profile-mac-medium' }}
     timeout-minutes: 50
+    env:
+      FBCONTROLCORE_LOGGING: "1"
+      FBCONTROLCORE_DEBUG_LOGGING: "1"
     steps:
       - uses: namespacelabs/nscloud-checkout-action@66f2dc6f6c42a8ac6c4e53473c4840006822831e # v9.0.1
         with:
