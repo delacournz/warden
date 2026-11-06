@@ -65,10 +65,11 @@ type Spec = {
 	strict: boolean;
 	judge(entry: NodeEntry | undefined, count: number, ctx: JudgeContext): Judgement;
 	/**
-	 * Judges a degraded read the React tree answered (the component is there, the accessibility tree lacks it). Absent =
-	 * the matcher needs what only the accessibility tree has (text, value, state): the look stays unknown.
+	 * Judges a degraded read the React tree answered (the component is there, no accessibility node has its rect).
+	 * Absent, or undefined for this look = the matcher needs what the React tree did not report (text, value, state):
+	 * the look stays unknown.
 	 */
-	judgeReact?(matches: readonly ReactMatch[], screen: ScreenSize): Judgement;
+	judgeReact?(matches: readonly ReactMatch[], screen: ScreenSize): Judgement | undefined;
 	/** reads the iOS injected a11y facts into the snapshot before judging, and fails with the `--a11y` screen */
 	a11y?: boolean;
 };
@@ -87,6 +88,12 @@ type ScreenSize = Snapshot["screen"];
 function reactShown(matches: readonly ReactMatch[], screen: ScreenSize): boolean {
 	const [only] = matches;
 	return only !== undefined && only.frame.width > 0 && only.frame.height > 0 && isOnScreen(only.tapPoint, screen);
+}
+
+/** The text the React tree reported for the one match of a degraded read; undefined when it reported none. */
+function reactText(matches: readonly ReactMatch[]): string | undefined {
+	const [only] = matches;
+	return only?.text === undefined ? undefined : normalizeText(only.text);
 }
 
 function missing(): Judgement {
@@ -207,6 +214,11 @@ export class LocatorAssertions {
 					const value = textOf(entry);
 					return judged(matchesText(value, expected, { exact }), JSON.stringify(value));
 				},
+				judgeReact: (matches) => {
+					const value = reactText(matches);
+					if (value === undefined) return undefined;
+					return judged(matchesText(value, expected, { exact }), `${JSON.stringify(value)} (React tree)`);
+				},
 			},
 			options
 		);
@@ -225,6 +237,11 @@ export class LocatorAssertions {
 					if (entry === undefined) return missing();
 					const value = textOf(entry);
 					return judged(containsText(value, expected, ignoreCase), JSON.stringify(value));
+				},
+				judgeReact: (matches) => {
+					const value = reactText(matches);
+					if (value === undefined) return undefined;
+					return judged(containsText(value, expected, ignoreCase), `${JSON.stringify(value)} (React tree)`);
 				},
 			},
 			options
@@ -484,14 +501,15 @@ export class LocatorAssertions {
 		}
 		if (resolved.kind === "react") {
 			const { matches } = resolved;
-			if (spec.judgeReact === undefined) {
-				return { kind: "unsettled", last: { received: "only in the React tree", snapshot: observed.snapshot } };
-			}
-			if (spec.strict && matches.length > 1) {
+			if (spec.strict && matches.length > 1 && spec.judgeReact !== undefined) {
 				const message = `${this.locator} matched ${matches.length} components in the React tree`;
 				throw new E2eError("LOCATOR_AMBIGUOUS", message, rt.excerpt(observed.snapshot), matches.length);
 			}
-			return { kind: "judged", judgement: spec.judgeReact(matches, observed.snapshot.screen), seen: observed.snapshot };
+			const judgement = spec.judgeReact?.(matches, observed.snapshot.screen);
+			if (judgement === undefined) {
+				return { kind: "unsettled", last: { received: "only in the React tree", snapshot: observed.snapshot } };
+			}
+			return { kind: "judged", judgement, seen: observed.snapshot };
 		}
 		const { entries } = resolved;
 		if (spec.strict && entries.length > 1) pickOne(rt, this.locator.expr, entries, observed);

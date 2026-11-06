@@ -1,7 +1,17 @@
 import { describe, expect, test } from "bun:test";
 import { el } from "../driver/driver.testing";
 import { E2eError } from "../errors";
-import { degradedHost, ERROR_COMPONENT, emptyRootSnapshot } from "./degraded.testing";
+import {
+	type DegradedOptions,
+	degradedHost,
+	EMAIL_ERROR_COMPONENT,
+	EMAIL_ERROR_FRAME,
+	EMAIL_ERROR_TEXT,
+	ERROR_COMPONENT,
+	emptyRootSnapshot,
+	FORM_ERROR_COMPONENT,
+	measuredLossySnapshot,
+} from "./degraded.testing";
 import { createScreen } from "./screen";
 import { staticDriver, testHost } from "./screen.testing";
 
@@ -93,5 +103,59 @@ describe("waits and actions on a degraded read", () => {
 		const { screen } = setup({ react: () => [] });
 		const error = await failure(screen.getByTestId("error").tap());
 		expect(error.code).toBe("LOCATOR_NOT_FOUND");
+	});
+});
+
+describe("text and visibility of a testID on a degraded read", () => {
+	function measured(react: DegradedOptions["react"]) {
+		return setup({ screen: () => measuredLossySnapshot(), react });
+	}
+
+	test("the React rect names the accessibility node: text() reads that node", async () => {
+		const { screen } = measured(() => [EMAIL_ERROR_COMPONENT]);
+		expect(await screen.getByTestId("sign-in-email-error").text()).toBe(EMAIL_ERROR_TEXT);
+	});
+
+	test("read() / allTexts() / isVisible() come from the paired node", async () => {
+		const { screen } = measured(() => [EMAIL_ERROR_COMPONENT]);
+		const locator = screen.getByTestId("sign-in-email-error");
+		expect(await locator.read()).toEqual({ visible: true, text: EMAIL_ERROR_TEXT, value: "" });
+		expect(await locator.allTexts()).toEqual([EMAIL_ERROR_TEXT]);
+		expect(await locator.isVisible()).toBe(true);
+	});
+
+	test("tap lands on the paired node's centre", async () => {
+		const { screen, driver } = measured(() => [EMAIL_ERROR_COMPONENT]);
+		await screen.getByTestId("sign-in-email-error").tap();
+		const { x, y, width, height } = EMAIL_ERROR_FRAME;
+		expect(driver.callsOf("tap")[0]?.point).toEqual({ x: x + width / 2, y: y + height / 2 });
+	});
+
+	test("no node with the component's rect: text() is the React tree's text", async () => {
+		const { screen } = measured(() => [FORM_ERROR_COMPONENT]);
+		const locator = screen.getByTestId("sign-in-error");
+		expect(await locator.text()).toBe("This account is locked. Try another email.");
+		expect(await locator.read()).toEqual({ visible: true, text: "This account is locked. Try another email." });
+		expect(await locator.allTexts()).toEqual(["This account is locked. Try another email."]);
+	});
+
+	test("a React-only component without text still cannot answer text()", async () => {
+		const { screen } = measured(() => [ERROR_COMPONENT]);
+		expect((await failure(screen.getByTestId("error").text())).code).toBe("NOT_ACTIONABLE");
+	});
+
+	test("tap({ until }) on a testID the React rect names arrives with one press", async () => {
+		const { screen, driver } = measured(() => [EMAIL_ERROR_COMPONENT]);
+		await screen.getByTestId("sign-in-email").tap({ until: screen.getByTestId("sign-in-email-error") });
+		expect(driver.callsOf("tap")).toHaveLength(1);
+	});
+
+	test("a healthy read never consults the React tree for a node it lacks", async () => {
+		const made = degradedHost({
+			screen: () => ({ ...measuredLossySnapshot(), fellBackFrom: undefined }),
+			react: () => [EMAIL_ERROR_COMPONENT],
+		});
+		const screen = createScreen(made.host);
+		expect(await screen.getByTestId("sign-in-email-error").isHidden()).toBe(true);
 	});
 });

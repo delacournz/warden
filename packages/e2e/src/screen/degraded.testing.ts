@@ -26,9 +26,13 @@ export const ERROR_COMPONENT: TreeComponent = {
  * A device whose every read is `screen` (a degraded one by default) and whose `axbridge` re-read stalls. `react` gives
  * the host devtools whose React tree holds those components (absent = no devtools).
  */
-export function degradedHost(
-	options: { screen?: () => Snapshot; react?: () => TreeComponent[]; actionTimeoutMs?: number } = {}
-): { driver: FakeDriver; host: TestHost; reactReads: () => number } {
+export type DegradedOptions = { screen?: () => Snapshot; react?: () => TreeComponent[]; actionTimeoutMs?: number };
+
+export function degradedHost(options: DegradedOptions = {}): {
+	driver: FakeDriver;
+	host: TestHost;
+	reactReads: () => number;
+} {
 	const screen = options.screen ?? (() => lossySnapshot());
 	const driver = fakeDriver({
 		screens: screen,
@@ -54,3 +58,51 @@ export function degradedHost(
 	}
 	return { driver, host, reactReads: () => reads };
 }
+
+/**
+ * The sign-in field error as read on an iOS 26 simulator (example app, `not-an-email` submitted): `axbridge` has the
+ * StaticText with `identifier: "sign-in-email-error"`, host `ax` the same node, same frame, `identifier: null` (also
+ * when every AX key is requested), so only the rect ties it to its React component.
+ */
+export const EMAIL_ERROR_FRAME = { x: 20, y: 258, width: 362, height: 20 };
+export const EMAIL_ERROR_TEXT = "Enter a valid email address.";
+
+/** That `ax` read: the field above and the error text without its testID. */
+export function measuredLossySnapshot(): Snapshot {
+	return lossySnapshot([
+		el("other", {
+			frame: { x: 0, y: 0, width: 390, height: 844 },
+			children: [
+				el("textfield", {
+					id: "sign-in-email",
+					value: "not-an-email",
+					frame: { x: 21, y: 209, width: 360, height: 42 },
+				}),
+				el("text", { label: EMAIL_ERROR_TEXT, frame: EMAIL_ERROR_FRAME }),
+			],
+		}),
+	]);
+}
+
+/** The React component behind that text: `Field.Error testID="sign-in-email-error"`. */
+export const EMAIL_ERROR_COMPONENT: TreeComponent = {
+	id: 7,
+	name: "Text",
+	testID: "sign-in-email-error",
+	text: EMAIL_ERROR_TEXT,
+	parent: null,
+	rect: EMAIL_ERROR_FRAME,
+};
+
+/**
+ * The form alert: a `View testID="sign-in-error"` around the message. Host `ax` drops the View entirely (no node has
+ * its frame), so the React tree is the only source of its text.
+ */
+export const FORM_ERROR_COMPONENT: TreeComponent = {
+	id: 3,
+	name: "View",
+	testID: "sign-in-error",
+	text: "This account is locked. Try another email.",
+	parent: null,
+	rect: { x: 20, y: 182, width: 362, height: 82 },
+};

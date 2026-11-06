@@ -12,6 +12,8 @@ export type ReactMatch = {
 	testId: string;
 	/** the component's name (`View`, `Button`, ...) */
 	name: string;
+	/** the strings rendered inside it, when the React tree reported any */
+	text?: string;
 };
 
 export type ReactView = { platform: Platform; screen: ScreenInfo };
@@ -54,6 +56,7 @@ export async function lookUpTestIdViaReact(
 			source: "react",
 			testId: testID,
 			name: component.name,
+			...(component.text === undefined ? {} : { text: component.text }),
 		});
 	}
 	return { answered: true, matches };
