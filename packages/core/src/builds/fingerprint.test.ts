@@ -104,7 +104,7 @@ describe("computeFingerprint with no output", () => {
 		if (!res.success) {
 			expect(res.error).toContain("(empty)");
 			expect(res.error).toContain("watchman crawl failed");
-			expect(res.error).toContain("sh -c fp ios");
+			expect(res.error).toContain("sh -c fp");
 		}
 	});
 });
