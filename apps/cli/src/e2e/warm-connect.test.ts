@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExecResult } from "@delacour/warden-core/exec";
+import type { AxWedgeState } from "@delacour/warden-e2e/driver/ax-wedge";
 import { fakeDriver, snapshotOf } from "@delacour/warden-e2e/driver/driver.testing";
 import type { openIosDriver } from "@delacour/warden-e2e/driver/ios/ios-driver";
 import { ok } from "@delacour/warden-types/result";
@@ -187,5 +188,91 @@ describe("warmConnect", () => {
 		expect((await helper.data.recover?.())?.kind).toBe("not-wedged");
 		expect(closed).toBe(0);
 		ctx.cleanup();
+	});
+
+	/** A driver whose helper does the wedge check itself (`axWedge`), answering `state` to a `recover: true` ask. */
+	function helperDriven(state: AxWedgeState, asks: unknown[], closed: { count: number }) {
+		return async () => {
+			const driver = fakeDriver({ screens: [snapshotOf([])] });
+			return ok({
+				...driver,
+				axWedge: async (opts?: { recover?: boolean }) => {
+					asks.push(opts);
+					return ok(state);
+				},
+				close: async () => {
+					closed.count++;
+					await driver.close();
+				},
+			});
+		};
+	}
+
+	test("recover: a helper that checks for the wedge itself restarts backboardd; warden runs no simctl of its own", async () => {
+		const calls: string[][] = [];
+		const ctx = testContext([], { exec: fakeExec([["xcrun simctl bootstatus", {}]], calls) });
+		const asks: unknown[] = [];
+		const closed = { count: 0 };
+		const connect = warmConnect(ctx, {
+			ensureHelper: async () => ok({ socketPath: "/tmp/U1.sock", spawned: false }),
+			openIosDriver: helperDriven(
+				{
+					restarts: 1,
+					maxRestarts: 1,
+					recovering: false,
+					checked: "restarted",
+					last: { outcome: "restarted", agoMs: 10, ms: 2300 },
+				},
+				asks,
+				closed
+			),
+		});
+		const helper = await connect("U1");
+		if (!helper.success) throw new Error(helper.error);
+		const out = await helper.data.recover?.();
+		expect(out).toEqual({ kind: "recovered", note: "warden-simd restarted backboardd in 2300 ms" });
+		expect(asks).toEqual([{ recover: true }]);
+		expect(calls.some((c) => c.join(" ").includes("simctl spawn"))).toBe(false);
+		expect(closed.count).toBe(1);
+		ctx.cleanup();
+	});
+
+	test("recover: the helper's not-wedged and failed verdicts are passed on", async () => {
+		for (const [state, kind] of [
+			[
+				{
+					restarts: 0,
+					maxRestarts: 1,
+					recovering: false,
+					checked: "not-wedged",
+					last: { outcome: "not-wedged", agoMs: 5 },
+				},
+				"not-wedged",
+			],
+			[
+				{
+					restarts: 0,
+					maxRestarts: 1,
+					recovering: false,
+					checked: "failed",
+					last: { outcome: "failed", agoMs: 5, error: "log show: exit 1" },
+				},
+				"failed",
+			],
+			[{ restarts: 0, maxRestarts: 0, recovering: false }, "not-wedged"],
+			[{ restarts: 1, maxRestarts: 1, recovering: false, last: { outcome: "restarted", agoMs: 90_000 } }, "failed"],
+		] as const) {
+			const calls: string[][] = [];
+			const ctx = testContext([], { exec: fakeExec([["xcrun simctl bootstatus", {}]], calls) });
+			const connect = warmConnect(ctx, {
+				ensureHelper: async () => ok({ socketPath: "/tmp/U1.sock", spawned: false }),
+				openIosDriver: helperDriven(state, [], { count: 0 }),
+			});
+			const helper = await connect("U1");
+			if (!helper.success) throw new Error(helper.error);
+			expect((await helper.data.recover?.())?.kind).toBe(kind);
+			expect(calls.some((c) => c.join(" ").includes("simctl spawn"))).toBe(false);
+			ctx.cleanup();
+		}
 	});
 });
