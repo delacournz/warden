@@ -107,11 +107,19 @@ describe("artifacts.sh", () => {
 		expect(run.stdout).not.toContain("exported");
 	});
 
-	test("all after a failed run collects report, batches and golden only", () => {
+	test("all after a failed run collects report, batches, logs and golden, not app", () => {
 		const run = collect({ artifacts: "all", passed: false, goldenBuilt: true });
-		expect(run.groups).toEqual(["report", "batches", "golden"]);
-		expect(run.paths.logs).toEqual([]);
+		expect(run.groups).toEqual(["report", "batches", "logs", "golden"]);
+		expect(run.paths.logs).toEqual([join(home, ".warden", "logs")]);
 		expect(run.paths.app).toEqual([]);
+	});
+
+	test("logs are always collected, whatever the artifacts input says", () => {
+		const logs = [join(home, ".warden", "logs")];
+		for (const passed of [true, false]) {
+			expect(collect({ artifacts: "none", passed }).paths.logs).toEqual(logs);
+			expect(collect({ artifacts: "report", passed }).paths.logs).toEqual(logs);
+		}
 	});
 
 	test("a golden built but not archived is exported, once", () => {
@@ -123,7 +131,7 @@ describe("artifacts.sh", () => {
 
 	test("a golden never built is skipped, not built to upload it", () => {
 		const run = collect({ artifacts: "all", passed: false, goldenBuilt: false });
-		expect(run.groups).toEqual(["report", "batches"]);
+		expect(run.groups).toEqual(["report", "batches", "logs"]);
 		expect(run.archived).toBe(false);
 		expect(run.stdout).toContain("never built");
 	});
@@ -146,11 +154,11 @@ describe("artifacts.sh", () => {
 		expect(listing.some((l) => l.startsWith("l") && l.includes("g-1/link -> /nowhere/data"))).toBe(true);
 	});
 
-	test("a list picks groups, spaces allowed; none collects nothing", () => {
-		expect(collect({ artifacts: "report, logs", passed: false }).groups).toEqual(["report", "logs"]);
+	test("a list picks groups, spaces allowed; none collects only the logs", () => {
+		expect(collect({ artifacts: "report, batches", passed: false }).groups).toEqual(["report", "batches", "logs"]);
 		const none = collect({ artifacts: "none", passed: true, goldenBuilt: true });
-		expect(none.groups).toEqual([]);
-		expect(Object.values(none.paths).flat()).toEqual([]);
+		expect(none.groups).toEqual(["logs"]);
+		expect(Object.values(none.paths).flat()).toEqual([join(home, ".warden", "logs")]);
 	});
 });
 
