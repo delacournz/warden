@@ -33,7 +33,7 @@ test("add a todo", async ({ device, screen }) => {
 | `timeout` | ms for the whole test, hooks included (default 2 min, `spec.timeout`); beats `test.use({ timeout })` |
 | `skip`, `only` | skip the test, or run only this one. A leftover `only` fails the run under `CI` |
 | `platforms` | run only on these platforms, e.g. `["ios"]` |
-| `retry` | extra attempts after a failure; only the last attempt is reported |
+| `retry` | extra attempts after a failure; the last attempt decides, and what the earlier ones met stays in `e2e-report.json` under the spec's `failures[]` |
 
 `test.skip`, `test.only`, `test.skipIf(condition)` and `test.todo(title)` work as in `bun:test` (a `test.todo` fails when bun runs with `--todo`). A test without a body throws `INVALID_ARGUMENT`.
 

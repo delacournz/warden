@@ -406,6 +406,23 @@ function failedTests(spec: SpecVerdict): string[] {
 		});
 }
 
+/**
+ * `warden e2e: <spec> passed on attempt N — attempt M on <device>: <test> — <error> — log <path>`, one
+ * line per earlier attempt that failed a spec which then passed: a flake stays visible on a green run.
+ */
+function retriedLines(spec: SpecVerdict): string[] {
+	const leg = spec.leg !== undefined ? ` [${spec.leg}]` : "";
+	return (spec.failures ?? []).map((f) => {
+		const failed = (f.tests ?? []).filter((t) => t.status === "failed" || t.status === "timed-out");
+		const what =
+			failed.length > 0
+				? failed.map((t) => `${t.title.join(" › ")} — ${t.error?.split("\n")[0] ?? t.status}`).join("; ")
+				: "no test results";
+		const log = f.log ? ` — log ${f.log}` : "";
+		return `warden e2e: ${spec.id}${leg} passed on attempt ${spec.attempts} — attempt ${f.attempt} on ${f.device.name}: ${what}${log}`;
+	});
+}
+
 /** Test counts, the error most failures share (usually the root cause) and, on failure, where the evidence is. */
 function printTotals(ctx: CommandContext, report: E2eReport): void {
 	const { color } = ctx.ui;
@@ -438,6 +455,8 @@ function printVerdict(ctx: CommandContext, report: E2eReport): void {
 		ctx.err(`warden e2e: ${spec.id}${leg} ${tag}${failureDetail(spec)}`);
 		for (const line of failedTests(spec)) ctx.err(color.red(line));
 	}
+	for (const spec of report.specs.filter((f) => f.verdict === "passed" && f.failures !== undefined))
+		for (const line of retriedLines(spec)) ctx.err(color.dim(line));
 	for (const file of report.only ?? []) ctx.err(color.red(`warden e2e: test.only left in ${file}`));
 	printTotals(ctx, report);
 	const passed = report.specs.filter((f) => f.verdict === "passed").length;

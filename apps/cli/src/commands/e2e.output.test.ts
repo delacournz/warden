@@ -61,6 +61,29 @@ describe("warden e2e output", () => {
 		expect(text).toContain("0/1 spec(s) passed — gate failed");
 	});
 
+	test("a spec that passed on its retry prints what its first attempt met, dimmed", async () => {
+		const c = setup(["--files", "src/chat/lazy.tsx", "--retry", "1"]);
+		let attempt = 0;
+		const h: Harness = harness({
+			exitCodeFor: (env) => {
+				attempt += 1;
+				if (env.WARDEN_E2E_OUT)
+					h.files.set(
+						resultsPath(env),
+						attempt === 1
+							? jsonl(spec("chats", "sends", "failed", { error: { message: "snapshot failed: x", stack: stack() } }))
+							: jsonl(spec("chats", "sends", "passed"))
+					);
+				return attempt === 1 ? 1 : 0;
+			},
+		});
+		expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+		const text = c.stderr.join("\n");
+		expect(text).toContain("warden e2e: chats passed on attempt 2 — attempt 1 on ");
+		expect(text).toContain(": sends — snapshot failed: x — log ");
+		expect(text).toContain("1/1 spec(s) passed — gate passed");
+	});
+
 	test("under GitHub Actions: an ::error at the spec line, and the table appended to the step summary", async () => {
 		const c = setup(["--files", "src/chat/lazy.tsx"]);
 		const summary = join(dir, "summary.md");
