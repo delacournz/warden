@@ -237,7 +237,14 @@ function parseImportKind(value: string | undefined): Result<ImportKind | undefin
 /** `<nativeFp>` or `<nativeFp>:base` → `<nativeFp>`. */
 const baseFingerprint = (hash: string) => hash.replace(/:base$/, "");
 
-type ImportTarget = { hash: string; profile: string; layout?: KindLayout; strippedBundle?: boolean };
+type ImportTarget = {
+	hash: string;
+	profile: string;
+	layout?: KindLayout;
+	strippedBundle?: boolean;
+	/** the base's entitlements: false = none (a `-34018` Keychain failure waits in the app), undefined = not known */
+	applicationIdentifier?: boolean;
+};
 
 /**
  * A `simulator-base` import: check the `.app` (simulator slice for this Mac, the project's bundle id, Release), key it on
@@ -273,6 +280,9 @@ async function simulatorBaseTarget(
 		profile: `${opts.profile ?? project.project.eas?.profile ?? LOCAL_PROFILE}:simulator`,
 		layout: { dir: kindDir(ctx.env, project.projectKey, "ios", key), kind: "simulator-base" },
 		strippedBundle: facts.data.embeddedBundle,
+		...(facts.data.applicationIdentifier !== undefined
+			? { applicationIdentifier: facts.data.applicationIdentifier }
+			: {}),
 	});
 }
 
@@ -312,7 +322,13 @@ async function importCmd(ctx: CommandContext, raw: string, opts: ImportOpts): Pr
 				)
 			: ok({ hash: opts.hash ?? "", profile: opts.profile ?? project.data.project.eas?.profile ?? LOCAL_PROFILE });
 	if (!target.success) return fail(ctx, "import", target.error);
-	const { layout, strippedBundle } = target.data;
+	const { layout, strippedBundle, applicationIdentifier } = target.data;
+	if (applicationIdentifier === false) {
+		warn(
+			ctx,
+			`${raw} has no application-identifier entitlement: Keychain calls fail in the simulator with errSecMissingEntitlement (-34018). Build it with CODE_SIGN_IDENTITY=- (ad-hoc signing), not CODE_SIGNING_ALLOWED=NO`
+		);
+	}
 	const stored = await withSpinner(ctx, `importing ${raw} into the build cache…`, () =>
 		storeArtifact({
 			store: ctx.store(),
@@ -333,7 +349,11 @@ async function importCmd(ctx: CommandContext, raw: string, opts: ImportOpts): Pr
 	emit(
 		ctx,
 		opts.json === true,
-		{ ...b, ...(strippedBundle !== undefined ? { strippedBundle } : {}) },
+		{
+			...b,
+			...(strippedBundle !== undefined ? { strippedBundle } : {}),
+			...(applicationIdentifier !== undefined ? { applicationIdentifier } : {}),
+		},
 		`${ctx.ui.color.green("imported")} ${b.platform}${b.kind ? ` ${b.kind}` : ""} ${b.hash} → ${b.path} ${ctx.ui.color.dim(`(${formatSize(b.size)})`)}${note}`
 	);
 	return 0;

@@ -20,9 +20,26 @@ type Plist = { CFBundleIdentifier?: string; CFBundleExecutable?: string; DTPlatf
 const ok = (stdout: string): ExecResult => ({ exitCode: 0, stdout, stderr: "" });
 const missing: ExecResult = { exitCode: 1, stdout: "", stderr: "Could not extract value" };
 
-/** `plutil -extract <key> raw` over `plist`, `lipo -archs` answering `archs`. */
-function fakeExec(plist: Plist, archs = "arm64"): Exec {
+/** What `codesign -d --entitlements :-` answers: a signed app's plist, a refusal, or nothing it can read. */
+type Signature = "entitled" | "no-identifier" | "unsigned" | "unreadable";
+
+const ENTITLEMENTS = (body: string) =>
+	`<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict>${body}</dict></plist>`;
+
+function codesignAnswer(signature: Signature): ExecResult {
+	if (signature === "entitled")
+		return ok(ENTITLEMENTS("<key>application-identifier</key><string>X.com.example.app</string>"));
+	if (signature === "no-identifier") return ok(ENTITLEMENTS("<key>get-task-allow</key><true/>"));
+	if (signature === "unsigned")
+		return { exitCode: 1, stdout: "", stderr: "Example.app: code object is not signed at all" };
+	return { exitCode: 1, stdout: "", stderr: "codesign: not found" };
+}
+
+/** `plutil -extract <key> raw` over `plist`, `lipo -archs` answering `archs`, `codesign` answering `signature`. */
+function fakeExec(plist: Plist, archs = "arm64", signature: Signature = "entitled"): Exec {
 	return async (cmd) => {
+		if (cmd[0] === "codesign") return codesignAnswer(signature);
+
 		if (cmd[0] === "plutil" && cmd[1] === "-extract") {
 			const value = plist[cmd[2] as keyof Plist];
 			return value === undefined ? missing : ok(`${value}\n`);
@@ -58,13 +75,28 @@ describe("checkSimulatorBase", () => {
 		const result = await checkSimulatorBase(fakeExec(RELEASE, "x86_64 arm64"), app(), opts);
 		expect(result).toEqual({
 			success: true,
-			data: { bundleId: "com.example.app", archs: ["x86_64", "arm64"], embeddedBundle: false },
+			data: {
+				bundleId: "com.example.app",
+				archs: ["x86_64", "arm64"],
+				embeddedBundle: false,
+				applicationIdentifier: true,
+			},
 		});
 	});
 
 	test("an embedded main.jsbundle is reported (the import strips it)", async () => {
 		const result = await checkSimulatorBase(fakeExec(RELEASE), app(["main.jsbundle"]), opts);
 		expect(result.success && result.data.embeddedBundle).toBe(true);
+	});
+
+	test.each([
+		["unsigned", "unsigned", false],
+		["signed without an application-identifier", "no-identifier", false],
+		["signed with one", "entitled", true],
+		["codesign unreadable", "unreadable", undefined],
+	] as const)("entitlements: %s → applicationIdentifier %p", async (_name, signature, expected) => {
+		const result = await checkSimulatorBase(fakeExec(RELEASE, "arm64", signature), app(), opts);
+		expect(result.success && result.data.applicationIdentifier).toBe(expected);
 	});
 
 	test("a device build (iphoneos) is refused", async () => {

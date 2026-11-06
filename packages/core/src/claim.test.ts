@@ -953,6 +953,26 @@ describe("claim capacity queue", () => {
 		expect(store.listQueue()).toEqual([]);
 	});
 
+	test("a host too small for even one device still admits a lone claim when nothing else is booted", async () => {
+		const provider = fakeProvider([sim("1", { state: "shutdown" })]);
+		const small = capInput(provider, { request: request({ count: 1 }) });
+		if (small.capacity) small.capacity.budget = { memMb: 0, cpu: 0.5, maxUnits: Number.POSITIVE_INFINITY };
+		const result = await claimDevices(small);
+		expect(result.success).toBe(true);
+		expect(logs.filter((l) => l.startsWith("queued"))).toEqual([]);
+	});
+
+	test("the floor is one device: a second claim on that small host still queues behind the first", async () => {
+		const provider = fakeProvider([sim("1", { state: "booted" }), sim("2", { state: "shutdown" })]);
+		const held = await claimDevices(input(provider, { owner: other, request: request({ count: 1 }) }));
+		expect(held.success).toBe(true);
+		const small = capInput(provider, { request: request({ count: 1 }) });
+		if (small.capacity) small.capacity.budget = { memMb: 0, cpu: 0.5, maxUnits: Number.POSITIVE_INFINITY };
+		const result = await claimDevices(small);
+		expect(result.success).toBe(false);
+		if (!result.success) expect(result.error).toMatch(/cpu binds|mem binds/);
+	});
+
 	test("a full host queues the claim, then admits it once a slot frees", async () => {
 		const provider = await fullHost();
 		let polls = 0;

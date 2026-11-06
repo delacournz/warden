@@ -10,6 +10,12 @@ export type SimulatorBaseFacts = {
 	archs: string[];
 	/** it carries a `main.jsbundle` (built without `SKIP_BUNDLING`): stripped on import, the repack writes its own */
 	embeddedBundle: boolean;
+	/**
+	 * the app's embedded entitlements carry an `application-identifier`; false for an unsigned app or one signed
+	 * without it (`CODE_SIGNING_ALLOWED=NO`), whose Keychain calls fail with errSecMissingEntitlement (-34018) on a
+	 * simulator; undefined when `codesign` could not say
+	 */
+	applicationIdentifier?: boolean;
 };
 
 export type SimulatorBaseCheck = {
@@ -48,6 +54,13 @@ async function plistValue(exec: Exec, app: string, key: string): Promise<string 
 	const run = await exec(["plutil", "-extract", key, "raw", "-o", "-", join(app, "Info.plist")]);
 	const value = run.stdout.trim();
 	return run.exitCode === 0 && value !== "" ? value : undefined;
+}
+
+/** Does the build embed an `application-identifier` entitlement? undefined when `codesign` is no help. */
+async function hasApplicationIdentifier(exec: Exec, app: string): Promise<boolean | undefined> {
+	const run = await exec(["codesign", "-d", "--entitlements", ":-", app]);
+	if (run.exitCode === 0) return run.stdout.includes("application-identifier");
+	return /not signed at all/i.test(run.stderr) ? false : undefined;
 }
 
 /**
@@ -98,5 +111,11 @@ export async function checkSimulatorBase(
 			`${name} is a Debug or dev-client build (${debug}): import a Release build (-configuration Release, no expo-dev-client)`
 		);
 	}
-	return ok({ bundleId, archs, embeddedBundle: existsSync(join(app, "main.jsbundle")) });
+	const applicationIdentifier = await hasApplicationIdentifier(exec, app);
+	return ok({
+		bundleId,
+		archs,
+		embeddedBundle: existsSync(join(app, "main.jsbundle")),
+		...(applicationIdentifier !== undefined ? { applicationIdentifier } : {}),
+	});
 }
