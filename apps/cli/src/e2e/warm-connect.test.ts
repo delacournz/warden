@@ -3,8 +3,12 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExecResult } from "@delacour/warden-core/exec";
+import { fakeDriver, snapshotOf } from "@delacour/warden-e2e/driver/driver.testing";
+import type { openIosDriver } from "@delacour/warden-e2e/driver/ios/ios-driver";
+import { ok } from "@delacour/warden-types/result";
 import { writeState } from "../agent-ui/state";
-import { residentSocket, runnerWarmError, waitBooted } from "./warm-connect";
+import { testContext } from "../testing";
+import { residentSocket, runnerWarmError, waitBooted, warmConnect } from "./warm-connect";
 
 let home: string | undefined;
 afterEach(() => {
@@ -100,5 +104,25 @@ describe("waitBooted", () => {
 	test("a bootstatus that does not finish in time says so", async () => {
 		const note = await waitBooted(async () => answer(124, "", "timed out"), "U3", 5_000);
 		expect(note).toContain("U3");
+	});
+});
+
+describe("warmConnect", () => {
+	test("opens the simulator's driver with no cold bridge budget of its own: the warm loop paces the retries", async () => {
+		const ctx = testContext([]);
+		const opened: Array<Parameters<typeof openIosDriver>[0]> = [];
+		const connect = warmConnect(ctx, {
+			ensureHelper: async () => ok({ socketPath: "/tmp/U1.sock", spawned: false }),
+			openIosDriver: async (options) => {
+				opened.push(options);
+				return ok(fakeDriver({ screens: [snapshotOf([])] }));
+			},
+		});
+		const helper = await connect("U1");
+		expect(helper.success).toBe(true);
+		expect(opened).toHaveLength(1);
+		expect(opened[0]?.coldBridgeBudgetMs).toBe(0);
+		expect(opened[0]?.socketPath).toBe("/tmp/U1.sock");
+		if (helper.success) await helper.data.close();
 	});
 });

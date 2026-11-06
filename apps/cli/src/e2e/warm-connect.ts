@@ -1,6 +1,8 @@
 import type { Exec } from "@delacour/warden-core/exec";
 import { isPhysicalIosId } from "@delacour/warden-core/types";
+import type { openIosDriver as OpenIosDriver } from "@delacour/warden-e2e/driver/ios/ios-driver";
 import { err, ok } from "@delacour/warden-types/result";
+import type { ensureHelper as EnsureHelper } from "../agent-ui/helper";
 import type { UiError } from "../agent-ui/output";
 import type { WarmConnect } from "../batch/warm-drivers";
 import type { CommandContext } from "../context";
@@ -11,6 +13,9 @@ import { currentBuild } from "../update/build-info";
 export function runnerWarmError(error: UiError): string {
 	return `${error.code}: ${error.message}${error.hint ? ` (${error.hint})` : ""}`;
 }
+
+/** What `warmConnect` loads lazily for a simulator; injected by tests. */
+export type WarmConnectDeps = { ensureHelper: typeof EnsureHelper; openIosDriver: typeof OpenIosDriver };
 
 /** How long the warm-up lets a simulator finish booting before it starts the helper: a golden clone's first boot is slow on a loaded host. */
 export const BOOT_WAIT_MS = 90_000;
@@ -38,15 +43,16 @@ export async function waitBooted(exec: Exec, udid: string, timeoutMs = BOOT_WAIT
  * for the jobs (`WARDEN_SIMD_SOCKET`) and after the run, until its idle timeout or a `--shutdown` — and a
  * `stop` (`stopHelper`) for a warm-up that failed, so the device's cold jobs do not run their own helpers
  * beside it (20-1). The helper lifecycle and the iOS driver are imported when the first device warms, so
- * `warden batch` / `e2e` start without them.
+ * `warden batch` / `e2e` start without them (`deps` replaces both: tests). The driver is opened with no cold bridge
+ * budget of its own: `snapshotUntilWarm` paces the retries, and one `snapshot` inside it is one read.
  */
-export function warmConnect(ctx: CommandContext): WarmConnect {
+export function warmConnect(ctx: CommandContext, deps?: WarmConnectDeps): WarmConnect {
 	return async (udid) => {
 		if (isPhysicalIosId(udid)) return warmRunner(ctx, udid);
 		const bootNote = await waitBooted(ctx.exec, udid);
 		if (bootNote !== undefined) ctx.err(`warden: ${bootNote}`);
-		const { ensureHelper } = await import("../agent-ui/helper");
-		const { openIosDriver } = await import("@delacour/warden-e2e/driver/ios/ios-driver");
+		const { ensureHelper } = deps ?? (await import("../agent-ui/helper"));
+		const { openIosDriver } = deps ?? (await import("@delacour/warden-e2e/driver/ios/ios-driver"));
 		const helper = await ensureHelper(ctx, udid, { keepClient: true });
 		if (!helper.success) return err(`${helper.error.message}${helper.error.hint ? ` (${helper.error.hint})` : ""}`);
 		const { client, socketPath } = helper.data;
@@ -58,6 +64,7 @@ export function warmConnect(ctx: CommandContext): WarmConnect {
 			version: currentBuild().version,
 			runnerSources: runnerSourcesFor(),
 			now: ctx.now,
+			coldBridgeBudgetMs: 0,
 		});
 		if (!driver.success) {
 			await client?.close();

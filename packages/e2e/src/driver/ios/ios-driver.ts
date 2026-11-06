@@ -32,6 +32,7 @@ import { driverErr, driverError } from "../errors";
 import { DEFAULT_RADIUS, type GesturePlan, planGesture, rotatePlan } from "../gesture-geometry";
 import type { AuditsNatively } from "../native-audit";
 import type { NetworkProxyPort } from "../network-proxy";
+import { readDeadlineRemaining } from "../read-deadline";
 import { hashFallbackQuietMs, type SettleDetail, settleByHash, snapshotHash } from "../settle";
 import { noteSpanDetail } from "../span-detail";
 import type { PastesText, SelectsAll } from "../typing";
@@ -139,7 +140,8 @@ const REBIND_TIMEOUT_MS = 10_000;
  * How long the first snapshot of a session waits for an in-sim bridge that is up but silent. A freshly cloned
  * simulator on a loaded host can take longer than one read's budget (axbridge 4 s + AX fallback 5 s) to answer the
  * first time, and every read after it is fast, so the first one retries while the failure says "not ready yet".
- * Once a read or a rebind has succeeded the normal per-call budgets apply.
+ * Once a read has succeeded the normal per-call budgets apply. Inside a screen-layer poll (`withReadDeadline`) the
+ * wait also ends at that poll's deadline, so a 5 s assertion is not held for the whole budget.
  */
 export const COLD_BRIDGE_BUDGET_MS = 60_000;
 /** Waits between the cold first snapshot's tries: after the first failure, then after each later one. */
@@ -446,7 +448,10 @@ export function createIosDriver(
 	/** Native settles in a row that could not bind the AX observer (`E_AX_UNAVAILABLE`); at 2 they stop being asked. */
 	let settleAxFailures = 0;
 	let rebindUnsupported = false;
-	/** whether this session has had a successful snapshot or a bound rebind: until then the bridge may still be coming up */
+	/**
+	 * Whether this session has had a successful snapshot: until then the reader's bridge guest may still be coming up.
+	 * A bound `rebind` does not count: it proves the quiescence stream's guest, not the `.exclusive` one that reads.
+	 */
 	let bridgeProven = false;
 	/**
 	 * The helper generation whose bridge last answered a read itself (no `ax` fallback). Any other generation, or a
@@ -651,15 +656,17 @@ export function createIosDriver(
 
 	/**
 	 * `snapshotOnce`, and until the session has had one success (the cold path) a bridge-not-ready failure is retried
-	 * with backoff for up to `COLD_BRIDGE_BUDGET_MS`, so the first read on a fresh simulator waits for the bridge
-	 * instead of failing the first spec. Other errors return at once. The wait is `coldBridgeMs` on the span.
+	 * with backoff for up to `COLD_BRIDGE_BUDGET_MS`, or what is left of the caller's read deadline when that is
+	 * shorter, so the first read on a fresh simulator waits for the bridge instead of failing the first spec without
+	 * outliving the wait it is part of. Other errors return at once. The wait is `coldBridgeMs` on the span.
 	 */
 	async function snapshot(o?: { interactiveOnly?: boolean; backend?: Snapshot["backend"] }): DriverResult<Snapshot> {
 		if (bridgeProven) return snapshotOnce(o);
+		const budgetMs = opts.coldBridgeBudgetMs ?? COLD_BRIDGE_BUDGET_MS;
 		const result = await retryColdSnapshot(() => snapshotOnce(o), {
 			now,
 			sleep,
-			budgetMs: opts.coldBridgeBudgetMs ?? COLD_BRIDGE_BUDGET_MS,
+			budgetMs: Math.min(budgetMs, readDeadlineRemaining() ?? budgetMs),
 			...(opts.log ? { log: opts.log } : {}),
 		});
 		if (result.success) bridgeProven = true;
@@ -739,7 +746,6 @@ export function createIosDriver(
 			return false;
 		}
 		noteRebind(reply.data);
-		if (reply.data.bound) bridgeProven = true;
 		return reply.data.bound;
 	}
 
