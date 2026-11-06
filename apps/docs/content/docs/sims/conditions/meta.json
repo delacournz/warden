@@ -11,6 +11,7 @@
 		"locale",
 		"accessibility",
 		"battery",
+		"keyboard",
 		"events"
 	]
 }
