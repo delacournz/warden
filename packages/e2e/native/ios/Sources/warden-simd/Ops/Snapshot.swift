@@ -211,7 +211,7 @@ extension Session {
     return try await Session.readAX(
       requested: primary == .ax ? .ax : requested, bridge: bridge, host: host,
       recover: { pid in await self.recoverBridge(pid: pid) }, policy: bridgeDeadline, gate: bridgeStall,
-      health: bridgeHealth, now: { ProcessInfo.processInfo.systemUptime },
+      warmth: bridgeWarmth, health: bridgeHealth, now: { ProcessInfo.processInfo.systemUptime },
       log: { OpLog.shared.log(.warn, $0, op: op) }, bridgeName: self.bridge.name)
   }
 
@@ -492,14 +492,18 @@ extension Session {
       {
         return nil
       }
+      let generation = self.bridgeWarmth.generation
       do {
         let document = try await Session.bounded(
           { try await reader.describe(.frontmost, options: readOptions).document },
-          deadlineMs: self.bridgeDeadline.readMs)
+          deadlineMs: self.bridgeWarmth.deadlineMs(self.bridgeDeadline))
+        self.bridgeWarmth.noteSuccess(generation: generation)
         self.bridgeStall.recordSuccess()
         return document
       } catch let stall as BridgeStalled {
-        self.bridgeStall.recordStall(at: ProcessInfo.processInfo.systemUptime)
+        if !self.bridgeWarmth.takeExemptStall(generation: generation) {
+          self.bridgeStall.recordStall(at: ProcessInfo.processInfo.systemUptime)
+        }
         self.bridgeHealth.recordFailure(stall.localizedDescription)
         OpLog.shared.log(.warn, "axbridge: \(stall.localizedDescription)", op: "alertButtons")
         throw stall

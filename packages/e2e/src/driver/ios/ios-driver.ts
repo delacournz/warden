@@ -144,6 +144,23 @@ export const COLD_BRIDGE_BUDGET_MS = 60_000;
 /** Waits between the cold first snapshot's tries: after the first failure, then after each later one. */
 const COLD_BRIDGE_FIRST_WAIT_MS = 2_000;
 const COLD_BRIDGE_WAIT_MS = 5_000;
+/**
+ * warden-simd's deadline for the first `axbridge` read of a cold guest (helper start, a recycled guest, an app just
+ * launched): `BridgeDeadline.defaultColdReadMs`, or `WARDEN_SIMD_BRIDGE_COLD_DEADLINE_MS`. On a 3-vCPU runner that
+ * first read takes 4-11 s; warm reads keep the 4 s deadline.
+ */
+export const BRIDGE_COLD_DEADLINE_MS = 12_000;
+/** What a read past a stalled cold bridge still needs: the host `ax` read it falls back to. */
+const AX_FALLBACK_MARGIN_MS = 8_000;
+/** The request timeout of a read while the bridge is cold, so the client never gives up before the helper's deadline. */
+export const COLD_READ_TIMEOUT_MS = BRIDGE_COLD_DEADLINE_MS + AX_FALLBACK_MARGIN_MS;
+
+/** {@link COLD_READ_TIMEOUT_MS}, following a `WARDEN_SIMD_BRIDGE_COLD_DEADLINE_MS` the helper also reads. */
+export function coldReadTimeoutMs(env: Readonly<Record<string, string | undefined>> = process.env): number {
+	const raw = Number(env.WARDEN_SIMD_BRIDGE_COLD_DEADLINE_MS);
+	const deadline = Number.isFinite(raw) && raw > BRIDGE_COLD_DEADLINE_MS ? raw : BRIDGE_COLD_DEADLINE_MS;
+	return deadline + AX_FALLBACK_MARGIN_MS;
+}
 const GESTURE_MARGIN_MS = 5_000;
 /** `frontmost` is one launchd lookup; a helper that has not answered in this long is busy, and the caller carries on without. */
 const FRONTMOST_TIMEOUT_MS = 3_000;
@@ -237,6 +254,13 @@ export function noteSnapshotError(detail: unknown): void {
 		const value: unknown = (detail as Record<string, unknown>)[from];
 		if (typeof value === "string") noteSpanDetail(to, value);
 	}
+}
+
+/** Leaves the pid a snapshot read by (when the helper had to name it) on the current span. */
+function noteSnapshotTarget(target: { pid: number; source: string } | undefined): void {
+	if (!target) return;
+	noteSpanDetail("targetPid", target.pid);
+	noteSpanDetail("targetSource", target.source);
 }
 
 /** What the helper says about itself after a failed read: bridge state, host vs build Xcode, CoreSimulator. */
@@ -408,6 +432,13 @@ export function createIosDriver(
 	let rebindUnsupported = false;
 	/** whether this session has had a successful snapshot or a bound rebind: until then the bridge may still be coming up */
 	let bridgeProven = false;
+	/**
+	 * The helper generation whose bridge last answered a read itself (no `ax` fallback). Any other generation, or a
+	 * launch since, is a cold bridge: its reads get {@link coldReadTimeoutMs} so they outlast the helper's cold deadline.
+	 */
+	let warmGeneration: number | undefined;
+	const coldTimeoutMs = coldReadTimeoutMs();
+	const readOpts = (): RequestOptions => (warmGeneration === swap.generation() ? {} : { minTimeoutMs: coldTimeoutMs });
 	let gestureUnsupported = false;
 	/** set once the helper did not know an app lifecycle op: it predates them, and `simctl` does app lifecycle */
 	let appOpsOutdated = false;
@@ -551,7 +582,12 @@ export function createIosDriver(
 	let failureDiagnosed = false;
 
 	const fetchSnapshot = async (o?: { interactiveOnly?: boolean; backend?: Snapshot["backend"] }) => {
-		const result = await request("snapshot", params({ interactiveOnly: o?.interactiveOnly, backend: o?.backend }));
+		const generation = swap.generation();
+		const result = await request(
+			"snapshot",
+			params({ interactiveOnly: o?.interactiveOnly, backend: o?.backend }),
+			readOpts()
+		);
 		if (!result.success) {
 			noteSnapshotError(result.error.detail);
 			if (!failureDiagnosed) {
@@ -563,15 +599,13 @@ export function createIosDriver(
 		}
 		failureDiagnosed = false;
 		const { fallback, target } = result.data;
+		if (result.data.backend === "axbridge" && !fallback) warmGeneration = generation;
 		noteSpanDetail("backend", result.data.backend);
 		if (fallback) {
 			opts.log?.(`[ios] snapshot fell back ${fallback.from} -> ${fallback.to}: ${fallback.reason}`);
 			noteSpanDetail("fallback", fallback.reason);
 		}
-		if (target) {
-			noteSpanDetail("targetPid", target.pid);
-			noteSpanDetail("targetSource", target.source);
-		}
+		noteSnapshotTarget(target);
 		return { success: true, data: toSnapshot(result.data, now()) } as const;
 	};
 
@@ -662,6 +696,7 @@ export function createIosDriver(
 	/** After a successful launch: remember the bundle, rebind the stream, then confirm the injected libraries loaded. */
 	async function settleAfterLaunch(bundleId: string): Promise<DriverError | undefined> {
 		lastLaunched = bundleId;
+		warmGeneration = undefined;
 		launchedBundle = bundleId;
 		if (await rebind(bundleId)) launchedBundle = undefined;
 		const loaded = await net?.confirmLoaded();
@@ -776,7 +811,7 @@ export function createIosDriver(
 
 	/** The helper's `alertButtons`: both readers without a `backend`, only that one with it. */
 	async function readAlert(backend?: AlertBackend): DriverResult<AlertInfo | null> {
-		const result = await request("alertButtons", params({ backend }));
+		const result = await request("alertButtons", params({ backend }), readOpts());
 		if (!result.success) return result;
 		return { success: true, data: result.data === null ? null : toAlertInfo(result.data) };
 	}
@@ -837,7 +872,11 @@ export function createIosDriver(
 		health,
 		snapshot,
 		async elementAtPoint(point, o) {
-			const result = await request("elementAtPoint", params({ x: point.x, y: point.y, reachability: o?.reachability }));
+			const result = await request(
+				"elementAtPoint",
+				params({ x: point.x, y: point.y, reachability: o?.reachability }),
+				readOpts()
+			);
 			if (!result.success) return result;
 			return {
 				success: true,

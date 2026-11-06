@@ -11,7 +11,14 @@ import { collectSpanDetail, type SpanDetail } from "../span-detail";
 import { canPasteText, canSelectAll } from "../typing";
 import { type ExecCall, fakeExec, joined } from "./exec.testing";
 import type { InjectFs } from "./inject";
-import { KEY_USAGE, type OpenIosDriverOptions, openIosDriver } from "./ios-driver";
+import {
+	BRIDGE_COLD_DEADLINE_MS,
+	COLD_READ_TIMEOUT_MS,
+	coldReadTimeoutMs,
+	KEY_USAGE,
+	type OpenIosDriverOptions,
+	openIosDriver,
+} from "./ios-driver";
 import { type FakeSimdReply, type FakeSimdRequest, fakeSimd } from "./simd.testing";
 import { spawnSimd } from "./simd-client";
 import { bunSpawn } from "./simd-transport";
@@ -167,6 +174,74 @@ describe("cold bridge", () => {
 		expect(helper.of("snapshot").length).toBeGreaterThan(3);
 		expect(helper.of("snapshot").length).toBeLessThan(40);
 		expect(Number(notes.coldBridgeMs)).toBeGreaterThanOrEqual(50_000);
+	});
+});
+
+describe("cold read timeout", () => {
+	const fellBack = {
+		data: { ...snapshotData, backend: "ax", fallback: { from: "axbridge", to: "ax", reason: "warm-up stalled" } },
+	};
+	const bridgeAnswers: Handler = (request) => {
+		if (request.op === "snapshot") return { data: snapshotData };
+		if (request.op === "rebind") return { data: { bound: true, waitedMs: 700, pid: 4242, restarts: 0 } };
+		return lifecycle(request);
+	};
+	const timeouts = (requests: FakeSimdRequest[]) => requests.map((request) => request.timeoutMs);
+
+	test("the cold timeout outlasts the helper's cold bridge deadline plus an ax read", () => {
+		expect(BRIDGE_COLD_DEADLINE_MS).toBe(12_000);
+		expect(COLD_READ_TIMEOUT_MS).toBeGreaterThanOrEqual(BRIDGE_COLD_DEADLINE_MS + 5_000);
+	});
+
+	test("a longer cold deadline given to the helper stretches the client's timeout with it", () => {
+		expect(coldReadTimeoutMs({})).toBe(COLD_READ_TIMEOUT_MS);
+		expect(coldReadTimeoutMs({ WARDEN_SIMD_BRIDGE_COLD_DEADLINE_MS: "30000" })).toBe(
+			30_000 + COLD_READ_TIMEOUT_MS - BRIDGE_COLD_DEADLINE_MS
+		);
+		expect(coldReadTimeoutMs({ WARDEN_SIMD_BRIDGE_COLD_DEADLINE_MS: "5000" })).toBe(COLD_READ_TIMEOUT_MS);
+		expect(coldReadTimeoutMs({ WARDEN_SIMD_BRIDGE_COLD_DEADLINE_MS: "soon" })).toBe(COLD_READ_TIMEOUT_MS);
+	});
+
+	test("reads get the cold timeout until one comes back from the bridge, then the default", async () => {
+		const { driver, helper } = await open(bridgeAnswers);
+		await unwrapped(driver.snapshot());
+		await unwrapped(driver.snapshot());
+		expect(timeouts(helper.of("snapshot"))).toEqual([COLD_READ_TIMEOUT_MS, 10_000]);
+	});
+
+	test("a read that fell back to ax leaves the bridge cold", async () => {
+		let first = true;
+		const { driver, helper } = await open((request) => {
+			if (request.op === "snapshot" && first) {
+				first = false;
+				return fellBack;
+			}
+			return bridgeAnswers(request);
+		});
+		await unwrapped(driver.snapshot());
+		await unwrapped(driver.snapshot());
+		await unwrapped(driver.snapshot());
+		expect(timeouts(helper.of("snapshot"))).toEqual([COLD_READ_TIMEOUT_MS, COLD_READ_TIMEOUT_MS, 10_000]);
+	});
+
+	test("a launch makes the next read cold again, even after a bound rebind", async () => {
+		const { driver, helper } = await open(bridgeAnswers);
+		await unwrapped(driver.snapshot());
+		await unwrapped(driver.app.launch(BUNDLE));
+		await unwrapped(driver.snapshot());
+		expect(timeouts(helper.of("snapshot"))).toEqual([COLD_READ_TIMEOUT_MS, COLD_READ_TIMEOUT_MS]);
+	});
+
+	test("hit-tests and alert reads on a cold bridge get the cold timeout too", async () => {
+		const { driver, helper } = await open(bridgeAnswers);
+		await unwrapped(driver.elementAtPoint({ x: 1, y: 1 }));
+		if (!canReadAlertOn(driver)) throw new Error("the iOS driver reads alerts through one backend");
+		await driver.alertOn("axbridge");
+		expect(timeouts(helper.of("elementAtPoint"))).toEqual([COLD_READ_TIMEOUT_MS]);
+		expect(timeouts(helper.of("alertButtons"))).toEqual([COLD_READ_TIMEOUT_MS]);
+		await unwrapped(driver.snapshot());
+		await unwrapped(driver.elementAtPoint({ x: 1, y: 1 }));
+		expect(timeouts(helper.of("elementAtPoint"))).toEqual([COLD_READ_TIMEOUT_MS, 10_000]);
 	});
 });
 

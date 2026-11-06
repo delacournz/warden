@@ -201,7 +201,7 @@ final class FrontmostRescueTests: XCTestCase {
           throw AXBridgeError.frontmostUnresolved(method: .windowServer, reason: "no application")
         },
         host: { () async throws -> String in throw silent }, recover: { _ in },
-        policy: BridgeDeadline(readMs: 100, cooldownSeconds: 20), gate: BridgeStallGate(),
+        policy: BridgeDeadline(readMs: 100, cooldownSeconds: 20), gate: BridgeStallGate(), warmth: .warmed(),
         health: BridgeHealth(),
         now: { 0 }, log: { _ in }, bridgeName: "available")
       XCTFail("expected a throw")

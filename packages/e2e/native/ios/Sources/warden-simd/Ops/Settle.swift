@@ -834,6 +834,17 @@ extension Session {
     await monitor.start()
   }
 
+  /// Starts a background `axbridge` read while the guest is cold (helper start, after a recycle or a launch's rebind),
+  /// so the first read a caller makes finds it warm or joins this one (`BridgeWarmth.warmUp`). No-op without a bridge
+  /// or with `ax` as the default reader.
+  @discardableResult
+  func warmBridge() -> Task<BridgeWarmth.WarmUp, Never>? {
+    guard axDefault == "axbridge", let reader = axBridgeReader else { return nil }
+    return bridgeWarmth.warmUp(
+      deadlineMs: bridgeDeadline.coldDeadlineMs, log: { OpLog.shared.log(.info, $0, op: "warmUp") },
+      read: { _ = try await reader.describe(.frontmost, options: AccessibilityRequestOptions()) })
+  }
+
   /// The stream's monitor if a stream was ever opened; never opens one.
   func existingQuiescenceMonitor() -> QuiescenceMonitor? { quiescence.existing }
 
@@ -876,6 +887,7 @@ extension Session {
     guard wedge.wantsReap(), let monitor = quiescence.existing else { return }
     let reaped = await GuestRecycling.endGuests(udid: udid, wedge: wedge, reaper: reaper, monitor: monitor)
     guard !reaped.isEmpty else { return }
+    bridgeWarmth.markCold()
     OpLog.shared.log(
       .info, "quiescence stuck on every process; ended \(reaped.count) AX guest(s) (reap \(wedge.reaps))", op: "settle")
   }
@@ -892,6 +904,7 @@ extension Session {
     let recycled = await RebindPrelude.run(
       bundleId: request.bundleId, pids: bundlePids, udid: udid, wedge: quiescence.wedge, reaper: .system,
       monitor: monitor)
+    if recycled { bridgeWarmth.markCold() }
     let remainingMs = max(0, request.timeoutMs - Session.elapsedMs(since: started))
     let outcome = await monitor.bind(
       bundleId: request.bundleId, timeoutMs: remainingMs,
@@ -901,6 +914,8 @@ extension Session {
       "restarts": .int(outcome.restarts),
     ]
     if recycled { reply["recycled"] = .bool(true) }
+    // the app is up and the stream follows it: read it once in the background so the caller's first read is warm
+    warmBridge()
     if let pid = outcome.pid { reply["pid"] = .int(Int(pid)) }
     if let reason = outcome.reason { reply["reason"] = .string(reason) }
     return .object(reply)
