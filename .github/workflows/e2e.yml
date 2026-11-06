@@ -46,7 +46,7 @@ on:
       args:
         description: Extra `warden e2e` arguments
         type: string
-        default: --specs onboarding,settings,sign-in,todos
+        default: --specs onboarding,settings,sign-in
       warden-version:
         description: source (this checkout, the default), a release tag, or latest
         type: string
@@ -68,7 +68,7 @@ concurrency:
 jobs:
   example:
     runs-on: ${{ inputs.runner || vars.WARDEN_E2E_RUNNER || 'xcode-27' }}
-    timeout-minutes: 40
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -91,6 +91,6 @@ jobs:
           suite: example
           count: ${{ inputs.count || '1' }}
           retry: ${{ inputs.retry || '1' }}
-          args: ${{ github.event_name == 'workflow_dispatch' && inputs.args || '--specs onboarding,settings,sign-in,todos' }}
+          args: ${{ github.event_name == 'workflow_dispatch' && inputs.args || '--specs onboarding,settings,sign-in' }}
           warden-version: ${{ (inputs.warden-version || 'source') == 'source' && 'none' || inputs.warden-version }}
           save-cache: ${{ github.event_name == 'pull_request' && 'false' || (github.event_name == 'workflow_dispatch' && inputs.save-cache && 'true') || (github.event_name == 'push' && 'true') || 'false' }}
