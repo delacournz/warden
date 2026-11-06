@@ -10,8 +10,10 @@ import {
 	centreOf,
 	fieldValue,
 	focusPoint,
+	graphemes,
 	isOnScreen,
 	type Momentum,
+	maskedReading,
 	PINCH_MS,
 	pinchRadius,
 	ROTATE_MS,
@@ -807,6 +809,8 @@ export class Locator {
 		return this.act("fill", async () => {
 			const budget = this.rt.budget(options.timeout);
 			let target = await this.actionable({ enabled: true, tapPointOnScreen: false }, budget.remaining());
+			// decided once: a field that only shows as secure after the first attempt (masked read-back) stays verified
+			const verify = !target.entry.secure;
 			let firstHeld: string | undefined;
 			for (let attempt = 1; ; attempt += 1) {
 				const point = focusPoint(target.entry.element.frame);
@@ -823,14 +827,13 @@ export class Locator {
 						viaFor(attempt, via)
 					)
 				);
-				if (target.entry.secure) return;
+				if (!verify) return;
 				const outcome = await this.confirm(target, text, budget);
 				if (outcome.ok) return;
 				if (attempt === 2) {
-					const earlier = firstHeld === undefined ? "" : ` (first attempt held ${JSON.stringify(firstHeld)})`;
 					throw new E2eError(
 						"ACTION_FAILED",
-						`${this}: fill did not take: expected ${JSON.stringify(text)} but the field holds ${JSON.stringify(outcome.held)}${earlier}`,
+						`${this}: ${fillMismatch(text, target.entry.secure, outcome.held, firstHeld)}`,
 						outcome.screen
 					);
 				}
@@ -1033,7 +1036,12 @@ export class Locator {
 	): Promise<{ ok: true } | { ok: false; held: string; screen: string | undefined }> {
 		const span = Math.max(budget.remaining(), CONFIRM_FLOOR_MS);
 		let lastSeen: Observed["snapshot"] | undefined;
-		const readValue = (found: NodeEntry): string => (text === "" ? fieldValue(found) : rawValue(found));
+		// a field not known as secure when the fill started (an empty one on a read without its secure trait) can read
+		// back masked: its bullets are counted against the typed text
+		const readValue = (found: NodeEntry): string => {
+			if (text === "") return fieldValue(found);
+			return found.secure ? maskedReading(found, text) : rawValue(found);
+		};
 		const outcome = await confirmFieldValue<never>({
 			text,
 			now: this.rt.clock.now,
@@ -1199,6 +1207,13 @@ function clearMethodFor(attempt: number): ClearMethod {
 }
 
 /** What the field shows, placeholder and all (used to compare against what was typed). */
+/** Why a fill failed. A field that reads masked is never quoted the typed text: only its length. */
+function fillMismatch(text: string, secure: boolean, held: string, firstHeld: string | undefined): string {
+	const expected = secure ? `${graphemes(text)} characters (secure)` : JSON.stringify(text);
+	const earlier = firstHeld === undefined ? "" : ` (first attempt held ${JSON.stringify(firstHeld)})`;
+	return `fill did not take: expected ${expected} but the field holds ${JSON.stringify(held)}${earlier}`;
+}
+
 function rawValue(entry: NodeEntry): string {
 	return entry.value ?? (entry.role === "textbox" || entry.role === "searchbox" ? (entry.element.text ?? "") : "");
 }
