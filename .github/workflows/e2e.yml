@@ -127,22 +127,27 @@ jobs:
           set +e
           out="$RUNNER_TEMP/diag"; mkdir -p "$out"
           cp -R "$HOME/.warden/simd" "$out/simd" 2>/dev/null
-          ps -axo pid,ppid,pcpu,etime,command > "$out/ps.txt"
+          ps -axo pid,ppid,pcpu,etime,args > "$out/ps.txt"
+          simd=packages/e2e/native/dist/warden-simd
           for udid in $(xcrun simctl list devices booted -j | jq -r '.devices[][]|.udid'); do
-            xcrun simctl spawn "$udid" launchctl list > "$out/launchctl-$udid.txt" 2>&1
-            xcrun simctl spawn "$udid" log show --last 15m --style compact --predicate 'subsystem CONTAINS[c] "accessibility" OR process CONTAINS[c] "axserver" OR process CONTAINS[c] "SimulatorFrameworkBridge" OR process == "SpringBoard" OR process == "backboardd"' > "$out/axlog-$udid.txt" 2>&1
+            lp=$(pgrep -f "launchd_sim .*Devices/$udid/")
+            ps -axo pid=,ppid=,args= | awk -v p="$lp" '$2==p' > "$out/children-$udid.txt"
+            while read -r pid ppid args; do
+              case "$args" in *SpringBoard*|*backboardd*|*CoreSimulatorBridge*|*AccessibilityUIServer*|*SimulatorFrameworkBridge*|*wardenexample*|*axassetsd*)
+                n=$(basename "${args%% *}"); sample "$pid" 2 -file "$out/sample-$udid-$n-$pid.txt" >/dev/null 2>&1 ;; esac
+            done < "$out/children-$udid.txt"
             plutil -p "$HOME/Library/Developer/CoreSimulator/Devices/$udid/data/Library/Preferences/com.apple.Accessibility.plist" > "$out/axprefs-$udid.txt" 2>&1
-            ls -la "$HOME/Library/Developer/CoreSimulator/Devices/$udid/data/Library/Preferences/" > "$out/prefs-ls-$udid.txt" 2>&1
+            xcrun simctl spawn "$udid" log show --last 45m --style compact --predicate 'subsystem CONTAINS[c] "accessibility" OR process == "SpringBoard" OR process == "backboardd" OR process == "CoreSimulatorBridge" OR process CONTAINS[c] "SimulatorFrameworkBridge"' > "$out/axlog-$udid.txt" 2>&1
+            echo "== probe before" > "$out/probe-$udid.txt"
+            timeout 40 "$simd" --health --udid "$udid" >> "$out/probe-$udid.txt" 2>&1
+            sb=$(awk '/SpringBoard.app\/SpringBoard/ {print $1}' "$out/children-$udid.txt" | head -1)
+            echo "== kill SpringBoard $sb $(date -u +%T)" >> "$out/probe-$udid.txt"
+            [ -n "$sb" ] && kill -9 "$sb"
+            sleep 20
+            echo "== probe after $(date -u +%T)" >> "$out/probe-$udid.txt"
+            timeout 40 "$simd" --health --udid "$udid" >> "$out/probe-$udid.txt" 2>&1
           done
-          for lp in $(pgrep -f launchd_sim); do
-            for pid in $(pgrep -P "$lp"); do
-              name=$(ps -o comm= -p "$pid" | xargs basename)
-              case "$name" in SpringBoard|backboardd|SimulatorFrameworkBridge-iOS|wardenexample|AccessibilityUIServer|axassetsd|accessibilityd|AXVisualSupportAgent|com.apple.accessibility*|*ccessib*) sample "$pid" 2 -file "$out/sample-$lp-$name-$pid.txt" >/dev/null 2>&1 ;; esac
-            done
-          done
-          for pid in $(pgrep -f warden-simd); do sample "$pid" 2 -file "$out/sample-simd-$pid.txt" >/dev/null 2>&1; done
-          log show --last 15m --style compact --predicate 'process == "CoreSimulatorService" OR process == "warden-simd"' > "$out/host-coresim.txt" 2>&1
-          ls -la "$out" "$out/simd"
+          ls -la "$out"
       - name: Upload diag
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
