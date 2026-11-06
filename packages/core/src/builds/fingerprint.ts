@@ -76,7 +76,10 @@ export async function computeFingerprint(exec: Exec, project: Project, platform:
 		timeoutMs: FINGERPRINT_TIMEOUT_MS,
 	});
 	if (res.exitCode !== 0) return err(`fingerprint failed: ${execError(argv, res)}`);
-	return parseFingerprintOutput(res.stdout);
+	const hash = parseFingerprintOutput(res.stdout);
+	if (hash.success || res.stdout.trim() !== "" || res.stderr.trim() === "") return hash;
+	// a clean exit with nothing on stdout: the reason is on stderr
+	return err(`${hash.error}; stderr: ${res.stderr.trim().slice(-300)} (command: ${argv.join(" ")})`);
 }
 
 /** Where `computeCacheKey` keeps the native hash between runs (17-5); absent = always run the fingerprint. */

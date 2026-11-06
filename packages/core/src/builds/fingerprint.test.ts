@@ -96,6 +96,19 @@ describe("computeFingerprint", () => {
 	});
 });
 
+describe("computeFingerprint with no output", () => {
+	test("a clean exit that printed nothing names its stderr, so the cause is in the error", async () => {
+		const exec: Exec = async () => ({ exitCode: 0, stdout: "", stderr: "warn: watchman crawl failed\n" });
+		const res = await computeFingerprint(exec, testProject({ fingerprintCommand: "fp" }), "ios");
+		expect(res.success).toBe(false);
+		if (!res.success) {
+			expect(res.error).toContain("(empty)");
+			expect(res.error).toContain("watchman crawl failed");
+			expect(res.error).toContain("sh -c fp ios");
+		}
+	});
+});
+
 describe("computeCacheKey", () => {
 	function host(js: string) {
 		const exec: Exec = async (cmd) => {
