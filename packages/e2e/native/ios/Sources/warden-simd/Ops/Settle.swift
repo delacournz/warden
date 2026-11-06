@@ -145,6 +145,13 @@ struct StuckTracker: Equatable {
 
 /// Two reads of the same tree at least `quietMs` apart count as settled. Pure; the reads are fed in.
 struct FrameStability: Equatable {
+  /// The shortest window the snapshot fallback waits. A navigation push exposes both screens at their final frames
+  /// for 300-460 ms before the old one leaves the tree, so a shorter window can settle on that mixed tree.
+  static let minQuietMs = 500
+
+  /// The window the fallback uses for a caller's `quietMs`.
+  static func windowMs(quietMs: Int) -> Int { max(quietMs, minQuietMs) }
+
   private var last: Data?
   private var since: Double = 0
 
@@ -597,7 +604,7 @@ actor QuiescenceMonitor {
       case .fallback:
         if now - lastRead >= 0.1, let frame = try? await readFrame() {
           lastRead = Self.clock()
-          if stability.observe(frame, now: lastRead, quietMs: max(quietMs, 150)) {
+          if stability.observe(frame, now: lastRead, quietMs: FrameStability.windowMs(quietMs: quietMs)) {
             Self.trace("settle quiet by snapshot stability after \(Int((lastRead - begun) * 1000)) ms")
             return Outcome(quiet: true, via: "snapshot")
           }

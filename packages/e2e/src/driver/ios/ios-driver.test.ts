@@ -6,7 +6,7 @@ import { canProbeFrontmost, canReadAlertOn } from "../alerts";
 import { el, snapshotOf } from "../driver.testing";
 import type { Driver, Snapshot } from "../driver.types";
 import { fakeProxy } from "../network-proxy.testing";
-import { settleDetailOf } from "../settle";
+import { HASH_FALLBACK_MIN_QUIET_MS, settleDetailOf } from "../settle";
 import { collectSpanDetail, type SpanDetail } from "../span-detail";
 import { canPasteText, canSelectAll } from "../typing";
 import { type ExecCall, fakeExec, joined } from "./exec.testing";
@@ -1297,6 +1297,13 @@ describe("settle", () => {
 		expect(notes.via).toBe("hash");
 		expect(helper.of("settle")).toHaveLength(1);
 		expect(helper.of("snapshot").length).toBeGreaterThanOrEqual(3);
+	});
+
+	test("the hash fallback holds the screen still for at least the minimum fallback window", async () => {
+		const { driver } = await settleSequence(["ax"]);
+		const result = await unwrapped(driver.settle({ quietMs: 250, timeoutMs: 3000 }));
+		expect(result.quiet).toBe(true);
+		expect(result.waitedMs).toBeGreaterThanOrEqual(HASH_FALLBACK_MIN_QUIET_MS);
 	});
 
 	test("two native settles in a row that cannot bind the AX observer: the helper's settle is not asked again", async () => {
