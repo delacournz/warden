@@ -26,7 +26,7 @@ on:
         type: string
         default: ""
       count:
-        description: Simulators in parallel (empty = the suite's)
+        description: Simulators in parallel (empty = 1)
         type: string
         default: ""
       retry:
@@ -93,25 +93,58 @@ jobs:
             ~/Library/Caches/warden-idb
             packages/e2e/native/ios/.build
 
-      - name: Build warden-simd from this checkout
+      - name: Pick the newest Xcode for the helper build
+        id: xcode
         if: (inputs.warden-version || 'source') == 'source'
-        env:
-          NPM_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           xcode=$( (ls -d /Applications/Xcode_*.app /Applications/Xcode-*.app 2>/dev/null || true) | sort -V | tail -1)
-          if [ -n "$xcode" ]; then export DEVELOPER_DIR="$xcode/Contents/Developer"; fi
+          if [ -n "$xcode" ]; then echo "developer-dir=$xcode/Contents/Developer" >> "$GITHUB_OUTPUT"; export DEVELOPER_DIR="$xcode/Contents/Developer"; fi
+          echo "build=$(xcodebuild -version | awk '/Build version/ {print $3}')" >> "$GITHUB_OUTPUT"
+          # Tracked blobs only: hashFiles also hashed untracked files the runner left in these paths, so the key moved
+          # between commits that changed none of them.
+          git ls-files -s packages/e2e/native/idb.lock.json packages/e2e/native/ios/Package.swift packages/e2e/native/ios/Sources \
+            packages/e2e/native/ios-inject packages/e2e/native/scripts/build.ts packages/e2e/native/scripts/deps.ts \
+            packages/e2e/native/scripts/inject.ts packages/e2e/package.json > "$RUNNER_TEMP/simd-inputs"
+          echo "sources=$(shasum -a 256 "$RUNNER_TEMP/simd-inputs" | cut -c1-40)" >> "$GITHUB_OUTPUT"
           xcodebuild -version
+
+      # The built dist/ is keyed on what goes into it (the helper's sources, the inject dylib, the build scripts, the
+      # pinned idb) and the Xcode that builds it: most pull requests touch none of them and skip the ~25 s release build.
+      - name: Restore warden-simd
+        id: simd-cache
+        if: (inputs.warden-version || 'source') == 'source'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: packages/e2e/native/dist
+          key: warden-simd-${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode.outputs.build }}-${{ steps.xcode.outputs.sources }}
+
+      - name: Build warden-simd from this checkout
+        if: (inputs.warden-version || 'source') == 'source' && steps.simd-cache.outputs.cache-hit != 'true'
+        env:
+          NPM_TOKEN: ${{ github.token }}
+          DEVELOPER_DIR: ${{ steps.xcode.outputs.developer-dir }}
+        run: |
+          set -euo pipefail
+          if [ -z "$DEVELOPER_DIR" ]; then unset DEVELOPER_DIR; fi
           bun install --frozen-lockfile
           bun run --cwd packages/e2e native:deps
           bun run --cwd packages/e2e native:build
           ls -l packages/e2e/native/dist/warden-simd
+
+      - name: Save warden-simd
+        if: (inputs.warden-version || 'source') == 'source' && steps.simd-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: packages/e2e/native/dist
+          key: ${{ steps.simd-cache.outputs.cache-primary-key }}
 
       - id: e2e
         uses: ./.github/actions/e2e
         with:
           working-directory: apps/example
           suite: example
+          # 1 until the iOS accessibility bridge stops stalling on a second sim (count 2 stalled the second sim's warm-up).
           count: ${{ inputs.count || '1' }}
           retry: ${{ inputs.retry || '1' }}
           args: ${{ github.event_name == 'workflow_dispatch' && inputs.args || '--specs onboarding,settings,sign-in' }}

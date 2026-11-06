@@ -13,12 +13,15 @@
 # app and golden are tarballs because upload-artifact drops the executable bit and follows symlinks: a raw .app would
 # not launch and a raw golden would not import. Both land in $RUNNER_TEMP/warden-artifacts.
 #
-# `all` follows the outcome: a green run collects every group, a failed one report, batches, logs and golden.
+# `all` follows the outcome: a green run collects every group, a failed one report, batches, logs and golden. A green
+# run skips a golden restored from the cache (GOLDEN_CACHE_HIT=true): the cache already holds those bytes, and the
+# GB upload is the slowest step of a warm run. A golden named in a list is always collected.
 # logs are always collected, whatever ARTIFACTS says (even `none`): they are small and, when the build broke, the
 # only evidence there is.
 #
 # env: ARTIFACTS (all | none | comma list), PASSED (true | other), REPORT (absolute path), PROFILE (may be empty),
-#      STARTED (epoch seconds the suite started; empty collects every cached build)
+#      STARTED (epoch seconds the suite started; empty collects every cached build),
+#      GOLDEN_CACHE_HIT (true when the golden was restored from the cache; may be empty)
 # outputs: groups (comma list), paths (JSON {group: [path]}), one multiline output per group, golden-archived
 set -uo pipefail
 
@@ -32,7 +35,15 @@ trap 'rm -rf "$work"' EXIT
 
 case "$ARTIFACTS" in
   none | "") selected="" ;;
-  all) if [ "${PASSED:-}" = true ]; then selected="$ALL_GROUPS"; else selected="report batches logs golden"; fi ;;
+  all)
+    if [ "${PASSED:-}" != true ]; then
+      selected="report batches logs golden"
+    elif [ "${GOLDEN_CACHE_HIT:-}" = true ]; then
+      selected="report batches logs app"
+    else
+      selected="$ALL_GROUPS"
+    fi
+    ;;
   *) selected=$(echo "$ARTIFACTS" | tr ',' ' ') ;;
 esac
 selected="$selected logs"
