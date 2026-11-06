@@ -48,9 +48,9 @@ on:
         type: string
         default: --all
       warden-version:
-        description: Release tag or latest
+        description: source (this checkout, the default), a release tag, or latest
         type: string
-        default: latest
+        default: source
       save-cache:
         description: Save the caches after a green run
         type: boolean
@@ -74,6 +74,16 @@ jobs:
         with:
           persist-credentials: false
 
+      # `source` runs the checkout's own CLI, so a change to warden is tested by this job; a release tag or
+      # `latest` runs a published binary for comparison. The shim needs the bun and the install the action sets up.
+      - name: Run warden from this checkout
+        if: (inputs.warden-version || 'source') == 'source'
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          printf '#!/bin/sh\nexec bun "%s/apps/cli/src/cli.ts" "$@"\n' "$GITHUB_WORKSPACE" > "$HOME/.local/bin/warden"
+          chmod +x "$HOME/.local/bin/warden"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
       - id: e2e
         uses: ./.github/actions/e2e
         with:
@@ -82,5 +92,5 @@ jobs:
           count: ${{ inputs.count }}
           retry: ${{ inputs.retry || '1' }}
           args: ${{ github.event_name == 'workflow_dispatch' && inputs.args || '--all' }}
-          warden-version: ${{ inputs.warden-version || 'latest' }}
+          warden-version: ${{ (inputs.warden-version || 'source') == 'source' && 'none' || inputs.warden-version }}
           save-cache: ${{ github.event_name == 'pull_request' && 'false' || (github.event_name == 'workflow_dispatch' && inputs.save-cache && 'true') || (github.event_name == 'push' && 'true') || 'false' }}
