@@ -15,7 +15,19 @@ export type WarmHelper = {
 	 * would otherwise each spawn a helper of their own beside it (two quiescence streams on one sim, 20-1)
 	 */
 	stop?: () => Promise<void>;
+	/**
+	 * clear a wedged in-sim accessibility service (see `e2e/ax-wedge`): asked after each failed snapshot from the second
+	 * on, until one recovers (at most one recovery per device). `recovered` means the device's UI stack was restarted
+	 * and this helper stopped, so the warm loop connects a fresh one; `not-wedged` / `failed` leave this helper in use
+	 */
+	recover?: () => Promise<WarmRecovery>;
 };
+
+/** One `WarmHelper.recover` attempt. */
+export type WarmRecovery =
+	| { kind: "recovered"; note: string }
+	| { kind: "not-wedged" }
+	| { kind: "failed"; error: string };
 
 /** Connect to (spawning when needed) the socket helper of one device. */
 export type WarmConnect = (udid: string) => AsyncResult<WarmHelper>;
@@ -103,36 +115,115 @@ function pause(run: WarmRun, ms: number, stop: AbortSignal): Promise<boolean> {
 	});
 }
 
+/** The failed try from which the helper is asked to recover: a cold bridge on a loaded host can miss the first one. */
+const RECOVER_FROM_TRY = 2;
+
+/** Where the snapshot loop ended: `error` undefined = warm. `helper` is the one in use then (a recovery replaces it). */
+type Snapped = { helper: WarmHelper | undefined; error?: string };
+
 /**
- * Snapshot with backoff until one succeeds (undefined) or the budget or `stop` ends it (the last error). The
- * budget counts the clock and, as a floor, the time slept, so a clock that stands still cannot retry forever.
+ * After a failed try: ask the helper to recover (once per device, from `RECOVER_FROM_TRY`). A recovered device gets
+ * a fresh helper through `connect`: the old one stopped itself and its in-sim guest still talks to the dead server.
+ * Returns the helper to retry with, or the reconnect's error.
+ */
+async function maybeRecover(
+	connect: WarmConnect,
+	udid: string,
+	helper: WarmHelper,
+	note: (line: string) => void
+): Promise<{ helper: WarmHelper; recovered: boolean } | { error: string }> {
+	if (!helper.recover) return { helper, recovered: false };
+	const outcome = await helper
+		.recover()
+		.catch((error: unknown): WarmRecovery => ({ kind: "failed", error: message(error) }));
+	if (outcome.kind === "not-wedged") return { helper, recovered: false };
+	if (outcome.kind === "failed") {
+		note(`accessibility service recovery failed: ${outcome.error}`);
+		return { helper, recovered: false };
+	}
+	note(`accessibility service wedged: ${outcome.note}; reconnecting`);
+	try {
+		const fresh = await connect(udid);
+		if (!fresh.success) return { error: fresh.error };
+		note(`connected ${fresh.data.socketPath}`);
+		return { helper: fresh.data, recovered: true };
+	} catch (error) {
+		return { error: message(error) };
+	}
+}
+
+/**
+ * Snapshot with backoff until one succeeds or the budget or `stop` ends it (the last error). The budget counts the
+ * clock and, as a floor, the time slept, so a clock that stands still cannot retry forever. From the second failed
+ * try the helper may recover a wedged device once, after which the loop carries on with the helper it reconnected.
  */
 async function snapshotUntilWarm(
 	run: WarmRun,
-	helper: WarmHelper,
+	connect: WarmConnect,
+	udid: string,
+	first: WarmHelper,
 	budgetMs: number,
 	stop: Stop,
 	note: (line: string) => void
-): Promise<string | undefined> {
+): Promise<Snapped> {
 	const started = run.now();
+	const state: Recovering = { helper: first, recovered: false };
 	let waited = 0;
-	let lastError = "";
 	for (let attempt = 1; ; attempt++) {
-		try {
-			const shot = await helper.snapshot();
-			if (shot.success) return undefined;
-			lastError = `snapshot failed: ${shot.error}`;
-		} catch (error) {
-			lastError = `snapshot failed: ${message(error)}`;
-		}
+		const lastError = await snapshotOnce(state.helper);
+		if (lastError === undefined) return { helper: state.helper };
 		const wait = attempt === 1 ? FIRST_RETRY_WAIT_MS : RETRY_WAIT_MS;
-		const detail = lastError.replace(/^snapshot failed: /, "");
 		const spent = Math.max(run.now() - started, waited);
-		const done = stop.signal.aborted || spent + wait >= budgetMs;
-		note(`snapshot try ${attempt} failed: ${detail}; ${done ? "giving up" : "retrying"}`);
-		if (done || !(await pause(run, wait, stop.signal))) return lastError;
+		if (givingUp(stop, spent + wait >= budgetMs, attempt, lastError, note))
+			return { helper: state.helper, error: lastError };
+		const reconnectError = attempt >= RECOVER_FROM_TRY ? await recoverOnce(connect, udid, state, note) : undefined;
+		if (reconnectError !== undefined) return { helper: undefined, error: reconnectError };
+		if (!(await pause(run, wait, stop.signal))) return { helper: state.helper, error: lastError };
 		waited += wait;
 	}
+}
+
+/** Log a failed try; true when the loop ends on it (budget spent or `stop` aborted). */
+function givingUp(
+	stop: Stop,
+	spent: boolean,
+	attempt: number,
+	lastError: string,
+	note: (line: string) => void
+): boolean {
+	const out = stop.signal.aborted || spent;
+	note(
+		`snapshot try ${attempt} failed: ${lastError.replace(/^snapshot failed: /, "")}; ${out ? "giving up" : "retrying"}`
+	);
+	return out;
+}
+
+/** One snapshot on `helper`: undefined when it succeeded, else the error (never throws). */
+async function snapshotOnce(helper: WarmHelper): Promise<string | undefined> {
+	try {
+		const shot = await helper.snapshot();
+		return shot.success ? undefined : `snapshot failed: ${shot.error}`;
+	} catch (error) {
+		return `snapshot failed: ${message(error)}`;
+	}
+}
+
+/** The helper in use and whether the device was recovered already (one recovery per device). */
+type Recovering = { helper: WarmHelper; recovered: boolean };
+
+/** `maybeRecover` unless the device was recovered already; updates `state`, returns a reconnect's error. */
+async function recoverOnce(
+	connect: WarmConnect,
+	udid: string,
+	state: Recovering,
+	note: (line: string) => void
+): Promise<string | undefined> {
+	if (state.recovered || !state.helper.recover) return undefined;
+	const next = await maybeRecover(connect, udid, state.helper, note);
+	if ("error" in next) return next.error;
+	state.helper = next.helper;
+	state.recovered = next.recovered;
+	return undefined;
 }
 
 /**
@@ -150,20 +241,30 @@ async function warmOne(
 	note: (line: string) => void
 ): Promise<Step> {
 	const started = run.now();
-	let helper: WarmHelper;
+	let first: WarmHelper;
 	try {
 		const connected = await connect(udid);
 		if (!connected.success) return { error: connected.error };
-		helper = connected.data;
+		first = connected.data;
 	} catch (error) {
 		return { error: message(error) };
 	}
-	note(`connected ${helper.socketPath}`);
-	const lastError = await snapshotUntilWarm(run, helper, budgetMs - (run.now() - started), stop, note);
-	if (lastError === undefined) return { helper };
-	if (stop.late() === "interrupt") await helper.close().catch(() => {});
-	else await coldHelper(helper, note);
-	return { error: lastError };
+	note(`connected ${first.socketPath}`);
+	const { helper, error } = await snapshotUntilWarm(
+		run,
+		connect,
+		udid,
+		first,
+		budgetMs - (run.now() - started),
+		stop,
+		note
+	);
+	if (error === undefined && helper) return { helper };
+	if (helper) {
+		if (stop.late() === "interrupt") await helper.close().catch(() => {});
+		else await coldHelper(helper, note);
+	}
+	return { error: error ?? "not warm" };
 }
 
 /** One device's step: its warm-up raced against the budget and the interrupt; a helper that arrives late is discarded. */
