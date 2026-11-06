@@ -52,7 +52,7 @@ npm i -g @delacour/warden && warden install
 warden claim ios --json
 ```
 
-warden reuses a free warden simulator, boots a stopped one or clones a new one, then waits until it is ready. If the host is full the claim waits in the [boot queue](/docs/sims/capacity) (default `--wait 30m`). `--json` prints one document:
+warden reuses a free warden simulator, boots a stopped one or clones a new one, then waits until it is ready. With `WARDEN_CAPACITY=on` and a full host, the claim waits in the [boot queue](/docs/sims/capacity) (default `--wait 30m`); by default nothing queues on host specs. `--json` prints one document:
 
 ```json
 {
@@ -179,7 +179,7 @@ Each agent claims its own device, so five agents get five simulators. For your o
 warden run ios --count 2 --port 8091:20 -- bun run e2e
 ```
 
-`warden batch` hands a list of independent jobs to N devices, next job to whichever frees up first. How many boot at once depends on the host's RAM and CPU: `warden capacity` shows the budget and `warden queue` your place in line. See [Scripts](/docs/sims/scripts) and [Capacity & queue](/docs/sims/capacity).
+`warden batch` hands a list of independent jobs to N devices, next job to whichever frees up first. By default as many boot as you ask for; with `WARDEN_CAPACITY=on` it depends on the host's RAM and CPU, and `warden capacity` shows the budget and `warden queue` your place in line. See [Scripts](/docs/sims/scripts) and [Capacity & queue](/docs/sims/capacity).
 
 ## Keep it as a test
 

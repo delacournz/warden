@@ -32,6 +32,22 @@ describe("warden queue", () => {
 		expect(ctx.stdout.join("\n")).toContain("queue empty");
 	});
 
+	test("says whether capacity limits are enforced", async () => {
+		ctx = testContext([]);
+		expect(await queueCommand.run(ctx)).toBe(0);
+		expect(ctx.stdout.join("\n")).toContain("capacity limits not enforced");
+		ctx.cleanup();
+		ctx = testContext(["--json"]);
+		ctx.env = { ...ctx.env, WARDEN_CAPACITY: "on" };
+		expect(await queueCommand.run(ctx)).toBe(0);
+		expect(JSON.parse(ctx.stdout.join("\n")).enforced).toBe(true);
+		ctx.cleanup();
+		ctx = testContext([]);
+		ctx.env = { ...ctx.env, WARDEN_CAPACITY: "on" };
+		expect(await queueCommand.run(ctx)).toBe(0);
+		expect(ctx.stdout.join("\n")).toContain("capacity limits enforced");
+	});
+
 	test("--json lists rows in queue order with names and aging", async () => {
 		ctx = testContext(["--json"], { now: () => 30 * 60_000 });
 		row(ctx, "q_old_low", PRIORITY.low, 0, "batch");
