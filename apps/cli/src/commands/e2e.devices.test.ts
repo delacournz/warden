@@ -399,6 +399,72 @@ describe("warden e2e", () => {
 			]);
 		});
 
+		/** `udid`'s helper never snapshots and its wedge recovery fails; every other device warms as usual. */
+		const wedged = (h: Harness, c: ReturnType<typeof setup>, udid: string) => {
+			const base = h.deps.warmConnect(c);
+			h.deps.warmConnect = () => async (u) => {
+				const next = await base(u);
+				if (!next.success || u !== udid) return next;
+				return {
+					success: true,
+					data: {
+						...next.data,
+						snapshot: async () => ({
+							success: false,
+							error: "E_TIMEOUT: did not answer within the query's 10.0s timeout",
+						}),
+						recover: async () => ({ kind: "failed", error: "launchctl kickstart exited 1" }),
+					},
+				};
+			};
+		};
+
+		/** Fire the warm-up's retry waits until `done` settles (the warm loop's budget counts them). */
+		const retryUntil = async <T>(h: Harness, done: Promise<T>): Promise<T> => {
+			let settled = false;
+			void done.finally(() => {
+				settled = true;
+			});
+			for (let i = 0; i < 2_000 && !settled; i++) {
+				for (const t of h.timers.filter((t) => (t.ms === 2_000 || t.ms === 5_000) && !t.cancelled)) {
+					t.cancelled = true;
+					t.fire();
+				}
+				await Bun.sleep(1);
+			}
+			return done;
+		};
+
+		test("a device whose wedged accessibility service could not be recovered runs no spec and is quarantined", async () => {
+			const c = setup(["--all", "--count", "2"]);
+			const h = harness();
+			wedged(h, c, "U1");
+			expect(await retryUntil(h, createE2eCommand(h.deps).run(c))).toBe(0);
+			expect(h.jobs().map((j) => j.opts.env.WARDEN_UDID)).toEqual(["U2", "U2"]);
+			const u1 = c.db.listDevices("ios").find((d) => d.id === "U1");
+			expect(u1?.quarantineReason).toBe("accessibility service wedged, recovery failed: launchctl kickstart exited 1");
+			expect(c.db.listDevices("ios").find((d) => d.id === "U2")?.quarantinedAt).toBeUndefined();
+			expect(c.db.listLeases()).toEqual([]);
+			expect(reportOf(h.files, c).warm?.find((w) => w.udid === "U1")).toMatchObject({
+				ok: false,
+				axRecovery: { outcome: "failed", error: "launchctl kickstart exited 1" },
+				quarantined: true,
+			});
+			expect(c.stderr.join("\n")).toContain("U1: accessibility service wedged, recovery failed");
+			expect(c.stderr.join("\n")).toContain("warden sim unquarantine U1");
+		});
+
+		test("every device quarantined: the run fails, naming why, instead of passing on nothing", async () => {
+			const c = setup(["--all"]);
+			const h = harness();
+			wedged(h, c, "U1");
+			expect(await retryUntil(h, createE2eCommand(h.deps).run(c))).toBe(1);
+			expect(h.jobs()).toEqual([]);
+			expect(c.db.listDevices("ios").find((d) => d.id === "U1")?.quarantinedAt).toBeDefined();
+			expect(c.stderr.join("\n")).toContain("no device left to run");
+			expect(reportOf(h.files, c).ok).toBe(false);
+		});
+
 		test("every leased iOS device is warmed before the first job; its jobs get WARDEN_SIMD_SOCKET", async () => {
 			write("src/chat/lazy.tsx", "export const x = 2;\n");
 			write("src/settings/form.tsx", "export const y = 2;\n");
