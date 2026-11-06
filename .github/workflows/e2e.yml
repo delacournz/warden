@@ -1,6 +1,6 @@
 name: e2e
 
-# warden's own iOS e2e suite (`apps/example`) on a GitHub-hosted `macos-26` runner (free on a public repo), through the reusable action
+# warden's own iOS e2e suite (`apps/example`) on GitHub's hosted `xcode-27` runner (macOS 27, Xcode 27; free on a public repo), through the reusable action
 # in .github/actions/e2e. Separate from `ci` (the signoff escape hatch) so it never slows a PR that
 # touches nothing it covers: pull requests only run it for the paths below.
 #
@@ -9,7 +9,8 @@ name: e2e
 # develop's. `workflow_dispatch` on develop seeds the shared entries every PR can restore.
 #
 # Runner: the `runner` input (e.g. `namespace-profile-mac-small`), else the repo variable WARDEN_E2E_RUNNER, else
-# `macos-26`, with the suite on its newest Xcode 27. Checkout and caches are GitHub's own actions, so any macOS label works.
+# `xcode-27` (GitHub's macOS 27 image, public preview; `macos-26` stops at Xcode 26.6, which can't build
+# warden-simd). Checkout and caches are GitHub's own actions, so any macOS label works.
 on:
   pull_request:
     branches: [develop]
@@ -25,7 +26,7 @@ on:
   workflow_dispatch:
     inputs:
       runner:
-        description: runs-on label, e.g. namespace-profile-mac-small (empty = the repo variable WARDEN_E2E_RUNNER, else macos-26)
+        description: runs-on label, e.g. namespace-profile-mac-small (empty = the repo variable WARDEN_E2E_RUNNER, else xcode-27)
         type: string
         default: ""
       count:
@@ -61,7 +62,7 @@ concurrency:
 
 jobs:
   example:
-    runs-on: ${{ inputs.runner || vars.WARDEN_E2E_RUNNER || 'macos-26' }}
+    runs-on: ${{ inputs.runner || vars.WARDEN_E2E_RUNNER || 'xcode-27' }}
     timeout-minutes: 50
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -147,23 +148,10 @@ jobs:
           path: packages/e2e/native/dist
           key: ${{ steps.simd-cache.outputs.cache-primary-key }}
 
-      # The suite runs on the newest Xcode 27 the image ships (macos-26 defaults to an older one).
-      - name: Pick Xcode 27
-        id: xcode27
-        run: |
-          set -euo pipefail
-          shopt -s nullglob
-          xcodes=(/Applications/Xcode_27*.app)
-          xcode=$(printf '%s\n' "${xcodes[@]}" | sort -V | tail -1)
-          [ -n "$xcode" ] || { echo "no Xcode 27 on this runner; installed:" /Applications/Xcode*.app >&2; exit 1; }
-          echo "path=$xcode" >> "$GITHUB_OUTPUT"
-          echo "Xcode 27: $xcode"
-
       - id: e2e
         uses: ./.github/actions/e2e
         with:
           working-directory: apps/example
-          xcode-path: ${{ steps.xcode27.outputs.path }}
           suite: example
           # 1 until the iOS accessibility bridge stops stalling on a second sim (count 2 stalled the second sim's warm-up).
           count: ${{ inputs.count || '1' }}
