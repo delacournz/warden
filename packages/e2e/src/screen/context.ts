@@ -1,6 +1,7 @@
 import type { DevtoolsFacet } from "../devtools/devtools.types";
 import type { Driver, DriverError, DriverResult, Snapshot } from "../driver/driver.types";
 import { canDetectAlerts, canObserve, type PreviousLook } from "../driver/observation-cache";
+import { readDeadlineRemaining, withReadDeadline } from "../driver/read-deadline";
 import { DEFAULT_ASSERTION_TIMEOUT_MS } from "../env";
 import { E2eError } from "../errors";
 import type { SpanOptions, SpanRunner } from "../runner/span";
@@ -228,7 +229,9 @@ export class Runtime {
 
 	/**
 	 * `poll` on this runtime's clock and abort signal; an abort throws instead of returning. `intervalMs` is a fixed gap
-	 * between attempts instead of the back-off schedule.
+	 * between attempts instead of the back-off schedule. The poll's deadline is the read deadline of every driver read
+	 * made inside it (`withReadDeadline`), so a read that waits for the device (the cold iOS bridge) stops with it; a
+	 * poll inside another keeps the nearer deadline.
 	 */
 	async poll<T, S>(
 		step: (attempt: number) => Promise<PollStep<T, S>> | PollStep<T, S>,
@@ -236,13 +239,19 @@ export class Runtime {
 		options: { intervalMs?: number } = {}
 	): Promise<Exclude<PollResult<T, S>, { status: "aborted" }>> {
 		const signal = this.host.signal;
-		const result = await poll(step, {
-			timeoutMs,
-			...(options.intervalMs === undefined ? {} : { intervalMs: options.intervalMs }),
-			...(signal === undefined ? {} : { signal }),
-			now: this.clock.now,
-			sleep: this.clock.sleep,
-		});
+		const outer = readDeadlineRemaining();
+		const deadline = this.clock.now() + (outer === undefined ? timeoutMs : Math.min(timeoutMs, outer));
+		const result = await withReadDeadline(
+			() => deadline - this.clock.now(),
+			() =>
+				poll(step, {
+					timeoutMs,
+					...(options.intervalMs === undefined ? {} : { intervalMs: options.intervalMs }),
+					...(signal === undefined ? {} : { signal }),
+					now: this.clock.now,
+					sleep: this.clock.sleep,
+				})
+		);
 		if (result.status === "aborted") throw abortError(signal);
 		return result;
 	}

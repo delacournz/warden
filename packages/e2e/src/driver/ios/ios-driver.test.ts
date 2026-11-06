@@ -6,6 +6,7 @@ import { canProbeFrontmost, canReadAlertOn } from "../alerts";
 import { el, snapshotOf } from "../driver.testing";
 import type { Driver, Snapshot } from "../driver.types";
 import { fakeProxy } from "../network-proxy.testing";
+import { withReadDeadline } from "../read-deadline";
 import { HASH_FALLBACK_MIN_QUIET_MS, settleDetailOf } from "../settle";
 import { collectSpanDetail, type SpanDetail } from "../span-detail";
 import { canPasteText, canSelectAll } from "../typing";
@@ -114,7 +115,7 @@ describe("cold bridge", () => {
 				},
 			}
 		);
-		return { ...made, sleeps };
+		return { ...made, sleeps, now: () => t };
 	}
 
 	test("the first snapshot times out twice, waits for the bridge, then passes, and the span says how long", async () => {
@@ -136,7 +137,7 @@ describe("cold bridge", () => {
 		expect(sleeps).toEqual([]);
 	});
 
-	test("a bound rebind also proves the bridge", async () => {
+	test("a bound rebind does not prove the bridge: the stream's guest answered, the reader's may still be cold", async () => {
 		let t = 0;
 		const { driver, helper } = await open(
 			(request) => {
@@ -155,7 +156,45 @@ describe("cold bridge", () => {
 		await unwrapped(driver.app.launch(BUNDLE));
 		const result = await driver.snapshot();
 		expect(!result.success && result.error.code).toBe("E_TIMEOUT");
+		expect(helper.of("snapshot").length).toBeGreaterThan(1);
+	});
+
+	test("inside a poll's read deadline the cold wait ends at the deadline, not at the cold budget", async () => {
+		const { driver, helper, sleeps, now } = await coldOpen(Array(40).fill("timeout"));
+		const started = now();
+		const notes: SpanDetail = {};
+		const result = await withReadDeadline(
+			() => started + 5_000 - now(),
+			() => collectSpanDetail(notes, () => driver.snapshot())
+		);
+		expect(!result.success && result.error.code).toBe("E_TIMEOUT");
+		// one 2 s wait fits in 5 s, the 5 s one after it would not
+		expect(sleeps).toEqual([2_000]);
+		expect(helper.of("snapshot")).toHaveLength(2);
+		expect(notes.coldBridgeMs).toBe(2_000);
+	});
+
+	test("a read deadline that is already spent tries once and does not wait", async () => {
+		const { driver, helper, sleeps } = await coldOpen(Array(40).fill("timeout"));
+		const result = await withReadDeadline(
+			() => 0,
+			() => driver.snapshot()
+		);
+		expect(!result.success && result.error.code).toBe("E_TIMEOUT");
+		expect(sleeps).toEqual([]);
 		expect(helper.of("snapshot")).toHaveLength(1);
+	});
+
+	test("a read deadline longer than the cold budget changes nothing", async () => {
+		const { driver, helper, sleeps, now } = await coldOpen(["timeout", "timeout"]);
+		const started = now();
+		const result = await withReadDeadline(
+			() => started + 600_000 - now(),
+			() => driver.snapshot()
+		);
+		expect(result.success).toBe(true);
+		expect(sleeps).toEqual([2_000, 5_000]);
+		expect(helper.of("snapshot")).toHaveLength(3);
 	});
 
 	test("an error that is not the bridge being late is not retried", async () => {

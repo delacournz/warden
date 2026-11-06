@@ -91,7 +91,7 @@ Paths and globs are relative to `warden.config.ts`. Unknown keys are errors.
 | `physical` | off | `true` = any ready physical device, `{ ids: [...] }` = exactly these (adb serials / CoreDevice UDIDs). Also per `devices` leg (a leg's wins). Not with `slim` / `headless` / `biometrics` / `conditions` (config error). Command-line `--physical` / `--serial` / `--udid` win. See "Physical devices" |
 | `reclaim` | `none` | `erase` \| `uninstall` \| `none`: what happens to the suite's devices when they are released. Top-level `reclaim` and `batches.<preset>.reclaim` work the same (suite / preset wins over top level, which wins over `WARDEN_RECLAIM`). See "Reclaim on release" |
 | `biometrics` | off | devices have a fingerprint (Android) / Face ID (iOS) enrolled before any app install. Own pool and golden: profile `<profile>+bio`. Top-level `biometrics` and `batches.<preset>.biometrics` work the same (suite / preset wins over top level); `--biometrics` on claim/run/batch/e2e turns it on for one run |
-| `warmDrivers` | on | iOS: start every device's driver helper before the specs, one device after the other; each retries its first snapshot with backoff (2 s, then 5 s) for up to 2 min before it goes cold |
+| `warmDrivers` | on | iOS: start every device's driver helper before the specs, one device after the other; each retries its first snapshot (one read per try) with backoff (2 s, then 5 s) for up to 2 min before it goes cold |
 
 ### Conditions
 | Key | Default | Meaning |
