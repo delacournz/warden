@@ -59,8 +59,9 @@ func withTimeout<T: Sendable>(
     let work = Task { try await body() }
     let timer = Task {
       do { try await Task.sleep(for: .milliseconds(milliseconds)) } catch { return }
-      work.cancel()
+      // fail first: the cancelled work's own error (a CancellationError) must not win the race to the gate
       gate.fail(makeError())
+      work.cancel()
     }
     Task {
       do {

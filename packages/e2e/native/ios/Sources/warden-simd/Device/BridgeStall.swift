@@ -495,9 +495,12 @@ extension Session {
         // an explicit read pays the probe's short deadline, never the full read's (nor a cold probe's), while the
         // guest is cooling down
         let waitMs = recovery?.probe.deadlineMs ?? 0
+        // a warm guest's probe has that short deadline itself and counts its own outcome before it returns, so it is
+        // awaited as is (a second timer at the same deadline would race it); only a cold probe's wait is cut short
+        let probeIsShort = !warmth.isCold
         let outcome: BridgeProbe.Outcome?
         if let task = probe() {
-          outcome = try? await bounded({ await task.value }, deadlineMs: waitMs)
+          outcome = probeIsShort ? await task.value : try? await bounded({ await task.value }, deadlineMs: waitMs)
         } else {
           outcome = nil
         }
