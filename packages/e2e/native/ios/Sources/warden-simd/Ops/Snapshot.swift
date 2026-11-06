@@ -214,7 +214,7 @@ extension Session {
     return try await Session.readAX(
       requested: primary == .ax ? .ax : requested, bridge: bridge, host: host,
       recover: { pid in await self.recoverBridge(pid: pid) }, policy: bridgeDeadline, gate: bridgeStall,
-      warmth: bridgeWarmth, health: bridgeHealth, recovery: bridgeRecovery(),
+      warmth: bridgeWarmth, health: bridgeHealth, recovery: bridgeRecovery(), reaper: bridgeReaper,
       now: { ProcessInfo.processInfo.systemUptime },
       log: { OpLog.shared.log(.warn, $0, op: op) }, bridgeName: self.bridge.name,
       guestAgeSeconds: { self.quiescence.wedge.guestAge() })
@@ -235,7 +235,7 @@ extension Session {
   func probeBridge() {
     guard let recovery = bridgeRecovery() else { return }
     _ = Session.startProbe(
-      recovery, gate: bridgeStall, warmth: bridgeWarmth, health: bridgeHealth,
+      recovery, policy: bridgeDeadline, gate: bridgeStall, warmth: bridgeWarmth, health: bridgeHealth,
       now: { ProcessInfo.processInfo.systemUptime }, log: { OpLog.shared.log(.info, $0, op: "probe") })
   }
 
@@ -520,6 +520,7 @@ extension Session {
         return nil
       }
       let generation = self.bridgeWarmth.generation
+      let coldAtStart = self.bridgeWarmth.isCold
       do {
         let document = try await Session.bounded(
           { try await reader.describe(.frontmost, options: readOptions).document },
@@ -528,11 +529,11 @@ extension Session {
         self.bridgeStall.recordSuccess()
         return document
       } catch let stall as BridgeStalled {
-        if !self.bridgeWarmth.takeExemptStall(generation: generation) {
-          self.bridgeStall.recordStall(at: ProcessInfo.processInfo.systemUptime)
-        }
+        Session.noteStall(
+          stall, generation: generation, coldAtStart: coldAtStart, gate: self.bridgeStall, warmth: self.bridgeWarmth,
+          reaper: self.bridgeReaper, now: { ProcessInfo.processInfo.systemUptime },
+          log: { OpLog.shared.log(.warn, $0, op: "alertButtons") })
         self.bridgeHealth.recordFailure(stall.localizedDescription)
-        OpLog.shared.log(.warn, "axbridge: \(stall.localizedDescription)", op: "alertButtons")
         throw stall
       }
     }

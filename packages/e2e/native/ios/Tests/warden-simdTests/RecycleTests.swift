@@ -172,3 +172,48 @@ final class RecycleTests: XCTestCase {
     XCTAssertEqual(ended.pids, [], "no stream, so no guest has been started by this helper that could be stuck")
   }
 }
+
+/// A guest that stalls after it had answered is ended (`BridgeReaper` → `GuestRecycling.endStalledGuests`).
+final class StalledGuestRecycleTests: XCTestCase {
+  private let udid = "1A0EC51B-7069-4001-AF8A-432CA3B2D1FD"
+
+  func testWithoutAStreamTheGuestsAreStillEndedAndCountedAsNew() async {
+    let ended = EndedLog()
+    let udid = self.udid
+    let reaper = GuestReaper(
+      list: { [launchd(100, udid: udid), guest(101, parent: 100), guest(900, parent: 999)] }, end: { ended.add($0) })
+    let wedge = WedgeWatch(now: 0, policy: WedgePolicy(minIntervalSeconds: 5, recycleAfterSeconds: 12))
+    let count = await GuestRecycling.endStalledGuests(
+      udid: udid, wedge: wedge, reaper: reaper, monitor: nil, now: 30, settleSeconds: 0)
+    XCTAssertEqual(count, 1)
+    XCTAssertEqual(ended.pids, [101], "only this simulator's guest")
+    XCTAssertEqual(wedge.reaps, 1)
+    XCTAssertEqual(wedge.guestAge(now: 30), 0, accuracy: 0.001)
+  }
+
+  func testWithAStreamItIsReopenedOnAFreshGuest() async {
+    let ended = EndedLog()
+    let udid = self.udid
+    let reaper = GuestReaper(list: { [launchd(100, udid: udid), guest(101, parent: 100)] }, end: { ended.add($0) })
+    let wedge = WedgeWatch(now: 0)
+    let reader = FakeReader()
+    let monitor = QuiescenceMonitor(reader: reader)
+    await monitor.start()
+    await reader.waitOpened(1)
+    let count = await GuestRecycling.endStalledGuests(
+      udid: udid, wedge: wedge, reaper: reaper, monitor: monitor, now: 30, settleSeconds: 0)
+    XCTAssertEqual(count, 1)
+    await reader.waitOpened(2)
+    XCTAssertEqual(reader.requests, 2)
+    await monitor.stop()
+  }
+
+  func testNoGuestFoundChangesNothing() async {
+    let wedge = WedgeWatch(now: 0)
+    let count = await GuestRecycling.endStalledGuests(
+      udid: udid, wedge: wedge, reaper: GuestReaper(list: { [] }, end: { _ in }), monitor: nil, now: 30,
+      settleSeconds: 0)
+    XCTAssertEqual(count, 0)
+    XCTAssertEqual(wedge.reaps, 0)
+  }
+}

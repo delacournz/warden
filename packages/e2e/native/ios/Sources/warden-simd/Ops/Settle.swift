@@ -789,6 +789,24 @@ enum GuestRecycling {
   }
 }
 
+extension GuestRecycling {
+  /// Ends the guests of `udid` after a bridge read stalled on a guest that had answered, and reopens the stream when
+  /// one is open (its guest went with them). Returns how many it ended; none found changes nothing.
+  static func endStalledGuests(
+    udid: String, wedge: WedgeWatch, reaper: GuestReaper, monitor: QuiescenceMonitor?,
+    now: Double = ProcessInfo.processInfo.systemUptime, settleSeconds: Double = 0.15
+  ) async -> Int {
+    if let monitor {
+      return await endGuests(
+        udid: udid, wedge: wedge, reaper: reaper, monitor: monitor, now: now, settleSeconds: settleSeconds
+      ).count
+    }
+    let ended = reaper.reap(udid: udid)
+    if !ended.isEmpty { wedge.didReap(now: now) }
+    return ended.count
+  }
+}
+
 /// What `rebind` does before it waits for the stream to bind: forgets the bundle's remembered pid (the relaunch made
 /// it stale), and replaces guests old enough to be about to wedge, while the launched app is still starting and the
 /// wait for its stream would be paid anyway (`WedgePolicy.recycleAfterSeconds`). Returns whether guests were replaced.
@@ -850,6 +868,12 @@ extension Session {
     return bridgeWarmth.warmUp(
       deadlineMs: bridgeDeadline.coldDeadlineMs, log: { OpLog.shared.log(.info, $0, op: "warmUp") },
       read: { _ = try await reader.describe(.frontmost, options: AccessibilityRequestOptions()) })
+  }
+
+  /// Ends this simulator's guests after a stall on a warm guest (`BridgeReaper`); idb starts a new one on the next read.
+  func recycleStalledGuest() async -> Int {
+    await GuestRecycling.endStalledGuests(
+      udid: udid, wedge: quiescence.wedge, reaper: .system, monitor: quiescence.existing)
   }
 
   /// The stream's monitor if a stream was ever opened; never opens one.
