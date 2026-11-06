@@ -37,6 +37,7 @@ import {
 	hitTestField,
 	tapToFocus,
 } from "./field";
+import { COVER_SCROLL_SWIPE, coverOf, dismissKeyboard, scrollPath } from "./keyboard-cover";
 import type { NodeEntry } from "./nodes";
 import type { PollStep } from "./poll";
 import {
@@ -109,6 +110,9 @@ const VERIFY_MS = 1000;
 const CONFIRM_FLOOR_MS = 500;
 /** Quiet time asked of the driver after each scroll step. */
 const SCROLL_SETTLE = { quietMs: 150, timeoutMs: 1000 };
+
+/** Swipes one tap spends scrolling a target out from under the keyboard. */
+const MAX_COVER_SCROLLS = 3;
 /**
  * How long `isVisible()` / `isHidden()` / `count()` look again at a degraded read before `READ_DEGRADED` (capped by the
  * action timeout): long enough for a stalled bridge's background probe or the React tree to settle it, short enough
@@ -689,6 +693,36 @@ export class Locator {
 	}
 
 	/**
+	 * A target under the on-screen keyboard (the default `software` mode keeps it up) would get the touch on a key. In a
+	 * scroll container it is scrolled into the free part of the screen (at most `MAX_COVER_SCROLLS` swipes, each looked at
+	 * fresh); otherwise, or when scrolling does not clear it, the keyboard is dismissed once (`dismissKeyboard`). Either way
+	 * the match is looked at again, and whatever that look shows is what the action uses: no retry.
+	 */
+	private async clearOfKeyboard(
+		found: Actionable,
+		spec: ActionSpec,
+		position: Point | undefined,
+		timeoutMs: number
+	): Promise<Actionable> {
+		const coverAt = (at: Actionable) => coverOf(at.entry, tapPointOf(at.entry, position), at.observed.snapshot);
+		let current = found;
+		let cover = coverAt(current);
+		if (cover === undefined) return found;
+		const { driver } = found.observed;
+		for (let scrolls = 0; cover?.scroller !== undefined && scrolls < MAX_COVER_SCROLLS; scrolls += 1) {
+			const path = scrollPath(cover.scroller, cover.shift);
+			this.rt.drive("scrollIntoView", await driver.swipe(path.from, path.to, COVER_SCROLL_SWIPE));
+			await driver.settle(SCROLL_SETTLE);
+			current = await this.actionable(spec, timeoutMs);
+			cover = coverAt(current);
+		}
+		if (cover === undefined) return current;
+		this.rt.drive("dismissKeyboard", await dismissKeyboard(driver));
+		await driver.settle(SCROLL_SETTLE);
+		return this.actionable(spec, timeoutMs);
+	}
+
+	/**
 	 * Taps the one visible, enabled match. With `until` it is also the retrying tap: the press on a tab bar or a list row
 	 * right after a navigation is sometimes dropped with nothing on screen to tell, so it checks that `until` shows
 	 * within `windowMs` and presses again, up to `retries` more times.
@@ -722,9 +756,11 @@ export class Locator {
 	private async tapOnce(options: TapOptions): Promise<AimedFrom> {
 		const withPosition = options.position !== undefined;
 		const spec = { enabled: !withPosition, tapPointOnScreen: !withPosition };
-		const found =
+		const timeoutMs = options.timeout ?? this.rt.actionTimeout();
+		const look =
 			(options.until === undefined ? await this.aimFromKept(spec, options.position) : undefined) ??
-			(await this.actionable(spec, options.timeout ?? this.rt.actionTimeout(), true));
+			(await this.actionable(spec, timeoutMs, true));
+		const found = "entry" in look ? await this.clearOfKeyboard(look, spec, options.position, timeoutMs) : look;
 		const point =
 			"react" in found ? reactTapPoint(found.react, options.position) : tapPointOf(found.entry, options.position);
 		const { driver } = found.observed;
@@ -803,9 +839,13 @@ export class Locator {
 	async longPress(options: LongPressOptions = {}): Promise<void> {
 		assertOptions("longPress", options, ["durationMs", "timeout"]);
 		return this.act("longPress", async () => {
-			const { entry, observed } = await this.actionable(
-				{ enabled: true, tapPointOnScreen: true },
-				options.timeout ?? this.rt.actionTimeout()
+			const spec = { enabled: true, tapPointOnScreen: true };
+			const timeoutMs = options.timeout ?? this.rt.actionTimeout();
+			const { entry, observed } = await this.clearOfKeyboard(
+				await this.actionable(spec, timeoutMs),
+				spec,
+				undefined,
+				timeoutMs
 			);
 			const opts = options.durationMs === undefined ? undefined : { durationMs: options.durationMs };
 			this.rt.drive("longPress", await observed.driver.longPress(tapPointOf(entry), opts));

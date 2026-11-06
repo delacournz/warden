@@ -20,7 +20,6 @@ plus `Progress.Header`, `Progress.Label`, `Progress.Output`, `Progress.Track` an
 | `progress.context.tsx` | `ProgressContext`, `useProgress()`, `useProgressContext()`, `useProgressPart()` |
 | `progress.types.ts` | `ProgressRenderProps`, shared by the context and the readout |
 | `progress.variants.ts` | Pure `tv()` slots + the ratio, geometry, formatting and accessibility resolvers |
-| `progress.variants.test.ts` | |
 
 ## Design
 

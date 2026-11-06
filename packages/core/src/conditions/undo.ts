@@ -16,7 +16,7 @@ import {
 } from "./a11y-keys";
 import { cameraFeedDir, clearCameraFeeds } from "./camera-media";
 import { activeConditions, clearCondition } from "./conditions";
-import type { ConditionArea, ConditionRecord } from "./conditions.types";
+import { type ConditionArea, type ConditionRecord, IME_STASH_DEFAULT, IME_STASH_ENABLED } from "./conditions.types";
 import { injectStatePath, neutralizeInjectState } from "./inject-state";
 import { launchSettingsPath, writeLaunchSettings } from "./launch-settings";
 
@@ -94,9 +94,42 @@ function resetCommands(
 			return androidLocaleResets(base, record, deps);
 		case "battery":
 			return [[...base, "shell", "dumpsys", "battery", "reset"]];
+		case "keyboard":
+			return androidKeyboardResets(base, record);
 		default:
 			return [];
 	}
+}
+
+/**
+ * Android `hardware` mode disabled every IME, with the originals stashed in `warden_ime_*` global settings (and
+ * recorded on the lease): put them back exactly, then drop the stash. Without a recorded state the stash itself
+ * is read on the device; with neither, there is nothing to restore.
+ */
+function androidKeyboardResets(base: string[], record: ConditionRecord): string[][] {
+	const drop = [
+		[...base, "shell", "settings", "delete", "global", IME_STASH_ENABLED],
+		[...base, "shell", "settings", "delete", "global", IME_STASH_DEFAULT],
+	];
+	const previous = record.area === "keyboard" ? record.value.previousIme : undefined;
+	if (previous === undefined) {
+		const script = [
+			`e=$(settings get global ${IME_STASH_ENABLED})`,
+			`d=$(settings get global ${IME_STASH_DEFAULT})`,
+			`if [ -n "$e" ] && [ "$e" != null ]; then settings put secure enabled_input_methods "$e"; fi`,
+			`if [ -n "$d" ] && [ "$d" != null ]; then settings put secure default_input_method "$d"; fi`,
+		].join("; ");
+		return [[...base, "shell", "sh", "-c", `'${script}'`], ...drop];
+	}
+	return [
+		...(previous.enabled === ""
+			? []
+			: [[...base, "shell", "settings", "put", "secure", "enabled_input_methods", `'${previous.enabled}'`]]),
+		...(previous.default === ""
+			? []
+			: [[...base, "shell", "settings", "put", "secure", "default_input_method", previous.default]]),
+		...drop,
+	];
 }
 
 /** Android: the timezone back to what it was (or the host's), and the app's locale override removed. */
@@ -189,9 +222,9 @@ function stopOwned(deps: UndoDeps, record: ConditionRecord): { killed: number[];
  * online on the real clock with blank camera feeds; the camera's staged host files are then removed.
  */
 function resetIosInjected(deps: UndoDeps, udid: string, area: ConditionRecord["area"]): string[] {
-	if (area !== "clock" && area !== "network" && area !== "camera") return [];
+	if (area !== "clock" && area !== "network" && area !== "camera" && area !== "keyboard") return [];
 	const home = wardenHome(deps.env);
-	const failed = neutralizeInjectState(injectStatePath(home, udid));
+	const failed = neutralizeInjectState(injectStatePath(home, udid), area);
 	const out = failed ? [failed] : [];
 	if (area !== "camera") return out;
 	try {

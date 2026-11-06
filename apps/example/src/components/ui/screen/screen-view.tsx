@@ -46,7 +46,7 @@ export function ScreenView({ className, style, children, ...props }: ScreenViewP
 			safeAreaBottom: bottom,
 			safeAreaTop: top,
 		});
-	}, [top, bottom]);
+	});
 
 	return (
 		<Animated.View className="flex-1" style={animatedStyle}>

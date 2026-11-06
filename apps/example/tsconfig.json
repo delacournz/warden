@@ -5,6 +5,12 @@
     "paths": {
       "@/*": [
         "./src/*"
+      ],
+      "react-native": [
+        "../../node_modules/react-native/types_generated/index.d.ts"
+      ],
+      "react-native/*": [
+        "../../node_modules/react-native/*"
       ]
     },
     "types": [

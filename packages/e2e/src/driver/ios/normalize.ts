@@ -36,6 +36,14 @@ function optionalFields(node: WireElement): Partial<Element> {
 	return fields;
 }
 
+/**
+ * The bridge reads the on-screen keyboard as a bare `other` (its only marker is the system's `inputView` identifier,
+ * the host view of the keys and the suggestion bar), where XCUITest says `Keyboard`. Both are `keyboard`.
+ */
+function roleOf(node: WireElement): Element["role"] {
+	return node.role === "other" && node.identifier === "inputView" ? "keyboard" : node.role;
+}
+
 export function normalizeElements(
 	wire: readonly WireElement[],
 	screen: ScreenInfo,
@@ -48,7 +56,7 @@ export function normalizeElements(
 		const element: Element = {
 			...optionalFields(node),
 			id: node.id ?? path,
-			role: node.role,
+			role: roleOf(node),
 			rawType: node.rawType,
 			frame: node.frame,
 			depth: node.depth ?? depth,

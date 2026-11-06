@@ -1,3 +1,4 @@
+export type { KeyboardMode } from "@delacour/warden-core/conditions/conditions.types";
 export type {
 	A11yAuditOptions,
 	A11yAuditResult,
@@ -42,7 +43,7 @@ export type {
 	DeviceScreenReader,
 	ScreenReaderSpokenOptions,
 } from "./device-a11y";
-export type { A11yOp, A11yState, CameraState } from "./driver/driver.types";
+export type { A11yOp, A11yState, CameraState, KeyboardResult, KeyboardState } from "./driver/driver.types";
 export { E2eError } from "./errors";
 export type { AnnouncedOptions, PassA11yAuditOptions } from "./expect/a11y-matchers";
 export { expect } from "./expect/expect";

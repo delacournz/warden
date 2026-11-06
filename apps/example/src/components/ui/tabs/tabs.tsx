@@ -108,11 +108,22 @@ function TabsRoot({
 	const order = useMemo(() => resolveTabOrder(values, registered), [values, registered]);
 	const count = order.length;
 
-	const [selected, setSelected] = useControllableState<string | null>({
+	const [chosen, setSelected] = useControllableState<string | null>({
 		value: valueProp,
 		defaultValue: resolveInitialValue(order, defaultValue),
 		onChange: handleValueChange(onValueChange),
 	});
+
+	// A bar with no panels learns its order a commit after mount, so the seed above saw an
+	// empty list and chose nothing. An uncontrolled bar with no `defaultValue` latches the
+	// first value that ever appears, once: a trigger added later, even ahead of it, never
+	// takes the selection back, and a controlled `null` is left alone. `chosen` can only be
+	// `null` here before a press, since a press always selects a string.
+	const seedRef = useRef<string | null>(null);
+	if (seedRef.current === null && valueProp === undefined && defaultValue === undefined) {
+		seedRef.current = order[0] ?? null;
+	}
+	const selected = chosen ?? seedRef.current;
 
 	const selectedIndex = resolveTabIndex(order, selected);
 
@@ -274,8 +285,7 @@ function TabsRoot({
 			if (current === previous) return;
 			visual.value = current;
 			scheduleOnRN(setVisualIndex, current);
-		},
-		[count]
+		}
 	);
 
 	const context = useMemo<TabsContextValue>(

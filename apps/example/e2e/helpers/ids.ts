@@ -63,6 +63,15 @@ export const ids = {
 		pick: "camera-pick",
 		back: "camera-back",
 	},
+	keyboardSheet: {
+		screen: "keyboard-sheet-screen",
+		open: "keyboard-sheet-open",
+		sheet: "keyboard-sheet",
+		input: "keyboard-sheet-input",
+		save: "keyboard-sheet-save",
+		saved: "keyboard-sheet-saved",
+		back: "keyboard-sheet-back",
+	},
 	biometrics: {
 		screen: "bio-screen",
 		status: "bio-status",

@@ -5,6 +5,9 @@ import { parseDuration } from "../duration";
 import {
 	type A11yCondition,
 	type ClockCondition,
+	KEYBOARD_MODES,
+	type KeyboardCondition,
+	type KeyboardMode,
 	type LocationCondition,
 	type NetworkCondition,
 	type NetworkPreset,
@@ -85,6 +88,8 @@ export const conditionsConfigSchema = z
 		/** an IANA timezone (`Asia/Tokyo`) */
 		timezone: z.string().min(1).optional(),
 		a11y: a11yConfigSchema.optional(),
+		/** `software` (on-screen keyboard shows, the default) or `hardware` (hidden, input as from a keyboard) */
+		keyboard: z.enum(KEYBOARD_MODES as readonly [KeyboardMode, ...KeyboardMode[]]).optional(),
 	})
 	.strict();
 
@@ -189,6 +194,7 @@ export type SuiteConditions = {
 	locale?: string;
 	timezone?: string;
 	a11y?: A11yCondition;
+	keyboard?: KeyboardCondition;
 };
 
 /** A config as conditions: shaped values, with a text size resolved. */
@@ -204,6 +210,7 @@ export function normalizeConditions(config: ConditionsConfig): Result<{ conditio
 	if (config.permissions !== undefined) conditions.permissions = config.permissions;
 	if (config.locale !== undefined) conditions.locale = config.locale;
 	if (config.timezone !== undefined) conditions.timezone = config.timezone;
+	if (config.keyboard !== undefined) conditions.keyboard = { mode: config.keyboard };
 	if (config.a11y !== undefined) {
 		const a11y: A11yCondition = { ...config.a11y };
 		if (config.a11y.textSize !== undefined) {

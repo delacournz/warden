@@ -75,7 +75,7 @@ Never import subpaths (`/device`, `/screen/*`, `/env`). Only `.` and `./preload`
 | `appearance(set?)` | `"light" \| "dark"`; returns current |
 | `biometrics.status()` / `enroll()` / `unenroll()` / `match()` / `fail()` | simulated Face ID / Touch ID / fingerprint; each returns `{ enrolled, modality: "face" \| "fingerprint" }` after the op (type `BiometricState`). `match` / `fail` answer the pending prompt. Android `enroll` / `unenroll` and any physical device throw `ACTION_FAILED` (driver `E_UNSUPPORTED`) |
 | `clipboard()` / `setClipboard(text)` | read / write |
-| `hideKeyboard()` | iOS presses Enter (may submit the field); Android presses back |
+| `hideKeyboard()` | iOS resigns the first responder through the injected library (never Return, so no `onSubmitEditing`); an app launched without the library falls back to Enter with a log warning; Android presses back |
 | `screenshot(name)` | saves `<attemptDir>/screenshots/NNN-<slug>.png`, returns the path |
 | `snapshot({ interactiveOnly? })` | AX tree as text (same format as `warden ui snapshot`) |
 | `settle({ quietMs = 250, timeout = 3000 })` | wait for a quiet UI; returns `{ quiet, waitedMs }`; hitting the deadline is not an error |
@@ -114,7 +114,7 @@ await device.location.route([{ lat: 37.33, lon: -122.03 }, { lat: 37.34, lon: -1
 - Only the wall clock moves. A JS timer armed while the clock was ahead waits for the shifted time after `clock.reset()`: re-read the time on demand or relaunch. A large offset breaks TLS (certificate dates).
 - Grant a permission the test needs with `device.permissions.set` before `app.open()` instead of tapping through the prompt: iOS does not always raise it.
 
-### `device.permissions` / `timezone` / `locale` / `a11y` / `battery` / `memoryWarning` / `push` (device settings)
+### `device.permissions` / `timezone` / `locale` / `a11y` / `battery` / `keyboard` / `memoryWarning` / `push` (device settings)
 
 Put back when the test ends (to the suite's `conditions.permissions` / `locale` / `timezone` / `a11y`), recorded on the lease like the conditions above, and each change is a `condition` line in `results.jsonl`. Set permissions before `app.open()`: iOS terminates a running app whose permission changes.
 
@@ -126,6 +126,9 @@ Put back when the test ends (to the suite's `conditions.permissions` / `locale` 
 | `locale(tag \| null, { bundleId? })` | BCP 47 (`"fr-FR"`). Android 13+: per-app, live. iOS: applies to the app launched next |
 | `a11y({ textSize?, boldText?, contrast?, reduceMotion? } \| null)` | `textSize`: a category name (`"accessibility-large"`) or a scale (`1.5`). iOS: text size, contrast, `boldText`, `reduceMotion`, `reduceTransparency`, `buttonShapes`, `differentiateWithoutColor`, `onOffLabels`, `screenReader` (fake VoiceOver flag, `screenReader: { mode: "simulated", engine: "voiceover" }` in the result), applied live. Android: text size, `boldText`, `highContrastText`, `colorInversion`, `reduceMotion` (off by default; `true` zeroes `transition_animation_scale`, which RN reads). Other-platform settings and Android `screenReader` are `skipped` with a reason. Returns `{ applied, skipped, notes }`; only-skipped throws `E_UNSUPPORTED`; `null` resets |
 | `battery({ level?, charging? } \| null)` | Android emulator: real. iOS: status bar only, result has `cosmetic: true`. `null` resets |
+| `keyboard("software" \| "hardware" \| "toggle")` | the on-screen keyboard: `software` (the default on every warden device) keeps it up while the spec types, `hardware` hides it (input as from a connected keyboard); `toggle` flips what this spec has in place. Live, no relaunch; put back to the suite's `conditions.keyboard` (else `software`) when the test ends. iOS: the injected library (every launch carries it; `{ appliesOnLaunch: true }` when the running app was launched without). Android: `hardware` disables every IME (saved on the device and the lease, restored by `software` and on release; the keyboard returns at the next field focus). A target under the keyboard is auto-reached on iOS only; on Android use `hideKeyboard()`. Physical iPhone: `E_UNSUPPORTED` |
+| `keyboardVisible()` | `true` while the keyboard is on screen: iOS reads the accessibility tree, Android the IME window |
+| `expect(device).toHaveKeyboard({ timeout? })` / `.not.toHaveKeyboard()` | polls `keyboardVisible()` (default: the assertion timeout) |
 | `memoryWarning({ bundleId? })` | Android: critical trim to the running app. iOS: throws `E_UNSUPPORTED` |
 | `push({ aps: { … } }, { bundleId? })` | iOS: delivers the payload to the app (4096 bytes max). Android: `E_UNSUPPORTED` |
 
@@ -134,7 +137,10 @@ await device.permissions.set({ location: "denied", notifications: "granted" });
 await app.open();
 await device.a11y({ textSize: "accessibility-large" });
 await device.locale("fr-FR");
+await device.keyboard("hardware");
+await expect(device).not.toHaveKeyboard();
 ```
+A `tap()` / `longPress()` whose target sits under the on-screen keyboard (iOS) scrolls it clear when it is in a scroll view, else dismisses the keyboard once (iOS: the injected library resigns the first responder; Enter only when the app runs without it, with a log warning), then acts: no retry.
 Biometrics practice: set `biometrics: true` on the suite (suites.md) so the device is enrolled before the app is installed (a new enrollment invalidates biometry-bound keys); on iOS the first prompt per app shows "Allow X to use Face ID?", answer it with `device.alert("accept")` before `device.biometrics.match()`; Android emulators have fingerprint only; never add an app-side bypass. `fail()` leaves the prompt open (iOS "Face Not Recognized" alert, Android "Not recognized"): assert that, then cancel the prompt (the app gets `user_cancel`): `device.alert({ button: "Cancel" })` on iOS (it presses again if the press lands while the sheet animates in, and throws `ACTION_FAILED` if the alert stays up), `button_negative` on Android; a `match` / `fail` sent as the sheet appears can be dropped, so present again when nothing changed. warden enrolls an iOS biometrics sim again when a spec process starts (`WARDEN_BIOMETRICS=1`), so a spec that called `unenroll` does not leave a reused sim unenrolled.
 
 ### `device.a11yAudit` / `screenReader` / `announcements` (screen readers and audits)

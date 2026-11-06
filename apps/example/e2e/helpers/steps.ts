@@ -138,6 +138,16 @@ export async function openA11y(
 	await openDeepLink(device, screen, url, ids.a11y.screen);
 }
 
+/** Fresh launch, then the keyboard sheet screen through its deep link (it has no sign-in gate). */
+export async function openKeyboardSheet(
+	app: Pick<App, "open">,
+	device: Pick<Device, "openLink">,
+	screen: Screen
+): Promise<void> {
+	await launch(app, screen);
+	await openDeepLink(device, screen, "warden-example://keyboard-sheet", ids.keyboardSheet.screen);
+}
+
 /** Fresh launch, then the camera screen through its deep link (it has no sign-in gate). */
 export async function openCamera(
 	app: Pick<App, "open">,

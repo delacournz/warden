@@ -1,5 +1,5 @@
 import { createContext, type ReactElement, type ReactNode, use } from "react";
-import type { BadgeColor, BadgeSize, BadgeVariant } from "./badge.variants";
+import type { BadgeColor, BadgeMaterial, BadgeSize, BadgeVariant } from "./badge.variants";
 
 export type BadgeContextValue = {
 	/** Size of the badge. */
@@ -10,6 +10,7 @@ export type BadgeContextValue = {
 	color: BadgeColor;
 	/** Whether the badge is disabled. */
 	isDisabled: boolean;
+	material: BadgeMaterial;
 };
 
 const BadgeContext = createContext<BadgeContextValue | null>(null);

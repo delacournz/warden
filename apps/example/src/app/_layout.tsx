@@ -3,6 +3,7 @@ import { MartianMono_400Regular } from "@expo-google-fonts/martian-mono";
 import { MonaSans_400Regular, MonaSans_800ExtraBold, useFonts } from "@expo-google-fonts/mona-sans";
 import { Stack } from "expo-router";
 import { View } from "react-native";
+import { BottomSheetProvider } from "@/components/ui/bottom-sheet";
 import { DelacourProvider } from "@/components/ui/provider";
 import { NavigationTheme } from "@/lib/expo/navigation-theme";
 import { IS_E2E } from "@/modules/e2e/is-e2e";
@@ -20,7 +21,9 @@ export default function RootLayout() {
 			<NavigationTheme>
 				<SessionProvider>
 					<TodosProvider>
-						<Stack screenOptions={{ headerShown: false }} />
+						<BottomSheetProvider>
+							<Stack screenOptions={{ headerShown: false }} />
+						</BottomSheetProvider>
 					</TodosProvider>
 				</SessionProvider>
 			</NavigationTheme>

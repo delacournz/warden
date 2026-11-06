@@ -290,7 +290,7 @@ export function resolveIndicatorForeground({
  * has passed (a skipped optional step) but never demotes the current one, which
  * would leave a stepper with nowhere the user is.
  *
- * Pure, so the whole matrix is reachable from `bun test`.
+ * Pure, so the whole matrix is unit-testable.
  */
 export function resolveStepStatus({
 	step,

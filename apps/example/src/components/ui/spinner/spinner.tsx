@@ -71,6 +71,7 @@ function SpinnerRoot({
 	return (
 		<SpinnerProvider value={context}>
 			<Animated.View
+				accessible
 				accessibilityRole="progressbar"
 				accessibilityState={{ busy: true }}
 				className={rootClassName}

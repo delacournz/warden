@@ -1,7 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { openAdbSession } from "./adb-session";
 import { fakeAndroidHost, type ShellRule } from "./android-host.testing";
-import { batteryArgvs, createAndroidSettings, permissionArgv, setAppLocaleArgv } from "./android-settings";
+import {
+	batteryArgvs,
+	createAndroidSettings,
+	imeVisibleIn,
+	permissionArgv,
+	setAppLocaleArgv,
+} from "./android-settings";
 
 const PKG = "com.example.app";
 
@@ -267,5 +273,104 @@ describe("android battery, memory warning, push", () => {
 	test("push is E_UNSUPPORTED", async () => {
 		const r = await harness().settings.push({ aps: {} });
 		expect(!r.success && r.error.code).toBe("E_UNSUPPORTED");
+	});
+});
+
+describe("android keyboard", () => {
+	test("the IME window's visibility comes from dumpsys window InputMethod", async () => {
+		expect(imeVisibleIn("    mViewVisibility=0x0\n    isVisible=true\n")).toBe(true);
+		expect(imeVisibleIn("    mViewVisibility=0x8\n    isVisible=false\n")).toBe(false);
+		const shown = harness([{ match: /^dumpsys window InputMethod/, reply: () => "  isVisible=true\n" }]);
+		expect(await shown.settings.keyboardVisible()).toBe(true);
+		expect(await harness().settings.keyboardVisible()).toBe(false);
+	});
+
+	const ENABLED = "com.google.android.inputmethod.latin/.LatinIME;1234:com.google.android.tts/.VoiceIME";
+	const DEFAULT = "com.google.android.inputmethod.latin/.LatinIME";
+	function imeHost(stash?: { enabled: string; default: string }) {
+		const state = { enabled: ENABLED, stash: stash ?? { enabled: "", default: "" } };
+		const rules: ShellRule[] = [
+			{ match: /^settings get secure enabled_input_methods/, reply: () => `${state.enabled || "null"}\n` },
+			{ match: /^settings get secure default_input_method/, reply: () => `${DEFAULT}\n` },
+			{ match: /^settings get global warden_ime_enabled/, reply: () => `${state.stash.enabled || "null"}\n` },
+			{ match: /^settings get global warden_ime_default/, reply: () => `${state.stash.default || "null"}\n` },
+			{
+				match: /^ime list -s/,
+				reply: () => "com.google.android.inputmethod.latin/.LatinIME\ncom.google.android.tts/.VoiceIME\n",
+			},
+			{
+				match: /^ime disable/,
+				reply: () => {
+					state.enabled = "";
+					return "";
+				},
+			},
+		];
+		return harness(rules);
+	}
+
+	test("hardware stashes the IME settings on the device, disables every IME and reports the previous state", async () => {
+		const h = imeHost();
+		const r = await h.settings.keyboard("hardware");
+		expect(r).toEqual({
+			success: true,
+			data: { mode: "hardware", previousIme: { enabled: ENABLED, default: DEFAULT } },
+		});
+		expect(h.host.shell).toContain(`settings put global warden_ime_enabled '${ENABLED}'`);
+		expect(h.host.shell).toContain(`settings put global warden_ime_default ${DEFAULT}`);
+		expect(h.host.shell).toContain("ime disable com.google.android.inputmethod.latin/.LatinIME");
+		expect(h.host.shell).toContain("ime disable com.google.android.tts/.VoiceIME");
+		expect(h.host.shell.some((c) => c.includes("show_ime_with_hard_keyboard"))).toBe(false);
+	});
+
+	test("hardware again keeps the first stash and reports it", async () => {
+		const emptied = harness([
+			{ match: /^settings get secure enabled_input_methods/, reply: () => "null\n" },
+			{ match: /^settings get secure default_input_method/, reply: () => "null\n" },
+			{ match: /^settings get global warden_ime_enabled/, reply: () => `${ENABLED}\n` },
+			{ match: /^settings get global warden_ime_default/, reply: () => `${DEFAULT}\n` },
+		]);
+		const r = await emptied.settings.keyboard("hardware");
+		expect(r).toEqual({
+			success: true,
+			data: { mode: "hardware", previousIme: { enabled: ENABLED, default: DEFAULT } },
+		});
+		expect(emptied.host.shell.some((c) => c.startsWith("settings put global"))).toBe(false);
+		expect(emptied.host.shell.some((c) => c.startsWith("ime disable"))).toBe(false);
+	});
+
+	test("software restores the stashed IME settings exactly and drops the stash", async () => {
+		const h = imeHost({ enabled: ENABLED, default: DEFAULT });
+		const r = await h.settings.keyboard("software");
+		expect(r).toEqual({ success: true, data: { mode: "software" } });
+		expect(h.host.shell).toContain(`settings put secure enabled_input_methods '${ENABLED}'`);
+		expect(h.host.shell).toContain(`settings put secure default_input_method ${DEFAULT}`);
+		expect(h.host.shell).toContain("settings delete global warden_ime_enabled");
+		expect(h.host.shell).toContain("settings delete global warden_ime_default");
+	});
+
+	test("software with nothing stashed changes nothing", async () => {
+		const h = imeHost();
+		const r = await h.settings.keyboard("software");
+		expect(r).toEqual({ success: true, data: { mode: "software" } });
+		expect(h.host.shell.some((c) => c.startsWith("settings put") || c.startsWith("ime "))).toBe(false);
+	});
+
+	test("keyboardState is the mode plus whether the IME window is up", async () => {
+		const h = harness([
+			{ match: /^settings get secure enabled_input_methods/, reply: () => `${ENABLED}\n` },
+			{ match: /^dumpsys window InputMethod/, reply: () => "  isVisible=true\n" },
+		]);
+		expect(await h.settings.keyboardState()).toEqual({ success: true, data: { mode: "software", visible: true } });
+	});
+
+	test("the mode reads back from the IMEs: none enabled is hardware", async () => {
+		const read = (value: string) =>
+			harness([
+				{ match: /^settings get secure enabled_input_methods/, reply: () => `${value}\n` },
+			]).settings.keyboardMode();
+		expect(await read(ENABLED)).toBe("software");
+		expect(await read("")).toBe("hardware");
+		expect(await read("null")).toBe("hardware");
 	});
 });

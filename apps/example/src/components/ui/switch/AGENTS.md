@@ -20,7 +20,6 @@ section to read first — what follows is only where a switch differs.
 | `switch.context.tsx` | `SwitchContext`, `useSwitch()`, `useSwitchContext()`, `useSwitchPart()` |
 | `switch.types.ts` | Prop types shared by two or more parts |
 | `switch.variants.ts` | Pure `tv()` slots + the release worklet, no RN imports |
-| `switch.variants.test.ts` | |
 
 ## Design
 
@@ -54,6 +53,10 @@ section to read first — what follows is only where a switch differs.
   only a state to end up in. `onFinalize` is still the callback because it is the
   one that fires on every path, the never-activated one included — which is
   exactly the path a stationary tap takes.
+- **`isDisabled` is checked in `toggle`, not only on the pan.** `.enabled()` gates
+  the gesture, but a screen reader's activation and an enclosing `Field`'s label
+  press both arrive through `toggle`, so a guard on the pan alone let a disabled
+  switch flip under VoiceOver and TalkBack. The first render test caught it.
 - **`minDistance(0)` and `shouldCancelWhenOutside(false)`**, for the reasons
   [Slider](../slider/AGENTS.md) sets out. The cost is the same one: a drag that
   starts on the switch is the switch's, so you cannot scroll a list by putting
@@ -198,8 +201,7 @@ section to read first — what follows is only where a switch differs.
   component. The failure is silent and nearly invisible: detection returns false,
   a second knob is composed on top of the caller's, and because the two are the
   same size and colour the only symptom is that **anything inside the caller's
-  knob disappears**. `displayName` survives all of it — rule 12 requires one and
-  `display-name.test.ts` enforces that they are present and unique — so that is
+  knob disappears**. `displayName` survives all of it — rule 12 requires one, present and unique — so that is
   what `isSwitchThumbElement` asks for, with reference equality kept only as the
   fast path.
 

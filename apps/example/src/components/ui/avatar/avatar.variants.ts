@@ -7,7 +7,7 @@ export const AVATAR_VARIANTS = ["soft", "solid"] as const;
 /** What the fallback surface means. The same six a `Badge` takes, so the two pair. */
 export const AVATAR_COLORS = ["default", "primary", "success", "warning", "destructive", "info"] as const;
 
-export const AVATAR_SIZES = ["sm", "md", "lg", "xl"] as const;
+export const AVATAR_SIZES = ["sm", "md", "lg", "xl", "2xl"] as const;
 
 /** Where an `Avatar.Badge` is pinned. */
 export const AVATAR_BADGE_PLACEMENTS = ["top-right", "bottom-right"] as const;
@@ -30,6 +30,7 @@ export const AVATAR_SIZE_POINTS: Record<AvatarSize, number> = {
 	md: 40,
 	lg: 48,
 	xl: 64,
+	"2xl": 96,
 };
 
 /**
@@ -108,7 +109,8 @@ export const avatarVariants = tv({
 	slots: {
 		root: "relative",
 		face: "size-full items-center justify-center overflow-hidden rounded-full",
-		image: "absolute inset-0",
+		/** `size-full` too: a bundled asset brings its own width and height, which `inset-0` does not override. */
+		image: "absolute inset-0 size-full",
 		fallbackLabel: "text-center font-medium",
 		/** Edge length the fallback glyph inherits. */
 		icon: "",
@@ -166,6 +168,14 @@ export const avatarVariants = tv({
 				dot: "size-4",
 				overflow: "size-16",
 				overflowLabel: "text-xl",
+			},
+			"2xl": {
+				root: "size-24",
+				fallbackLabel: "text-3xl",
+				icon: "size-icon-2xl",
+				dot: "size-5",
+				overflow: "size-24",
+				overflowLabel: "text-3xl",
 			},
 		},
 		placement: {

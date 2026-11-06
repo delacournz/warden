@@ -10,6 +10,11 @@ import type {
 	PermissionName,
 	PermissionState,
 } from "@delacour/warden-core/conditions/conditions.types";
+import {
+	DEFAULT_KEYBOARD_MODE,
+	KEYBOARD_MODES,
+	type KeyboardMode,
+} from "@delacour/warden-core/conditions/conditions.types";
 import { appliedA11y, resolveTextSize } from "@delacour/warden-core/conditions/text-size";
 import { androidTools } from "@delacour/warden-core/providers/android";
 import { ok, type Result } from "@delacour/warden-types/result";
@@ -588,6 +593,81 @@ export function uiBattery(
 			}
 			default:
 				return fail("usage", `unknown battery action "${action}"`, "set, reset or status");
+		}
+	});
+}
+
+// ---------- keyboard ----------
+
+const isKeyboardMode = (value: string): value is KeyboardMode => (KEYBOARD_MODES as readonly string[]).includes(value);
+
+/** Puts the device on `mode`; the default mode leaves no record (release has nothing to undo), the other one is recorded. */
+async function keyboardSet(
+	ctx: CommandContext,
+	deps: Deps,
+	device: UiDevice,
+	mode: KeyboardMode
+): Promise<Result<UiSuccess, UiError>> {
+	return withPort<UiSuccess>(ctx, deps, device, async (port) => {
+		const applied = fromDriver(await port.keyboard(mode));
+		if (!applied.success) return applied;
+		if (mode === DEFAULT_KEYBOARD_MODE) {
+			forget(ctx, device, "keyboard");
+		} else {
+			const saved = save(ctx, device, "keyboard", { mode });
+			if (!saved.success) return saved;
+		}
+		return success(
+			device,
+			"keyboard-set",
+			`keyboard ${mode}`,
+			{ mode, appliesOnLaunch: applied.data.appliesOnLaunch === true },
+			applied.data.appliesOnLaunch
+				? ["applies to the app launched next: relaunch it (`warden ui open <bundle> --relaunch`)"]
+				: []
+		);
+	});
+}
+
+/**
+ * `warden ui keyboard software|hardware|toggle|status|reset`: the on-screen keyboard. `software` (the default) keeps
+ * it up while warden types, `hardware` hides it. `status` reads the mode and whether a keyboard is on screen now.
+ */
+export function uiKeyboard(ctx: CommandContext, deps: UiDeps, action: string, opts: UiOptionValues): Promise<number> {
+	return runUi(ctx, deps, `keyboard ${action}`, opts, async (device) => {
+		const resolved = await resolveDeps(deps);
+		if (isKeyboardMode(action)) return keyboardSet(ctx, resolved, device, action);
+		switch (action) {
+			case "toggle":
+				return withPort<UiSuccess>(ctx, resolved, device, async (port) => {
+					const current = fromDriver(await port.keyboardState());
+					if (!current.success) return current;
+					return keyboardSet(ctx, resolved, device, current.data.mode === "software" ? "hardware" : "software");
+				});
+			case "reset": {
+				if (recordOf(ctx, device.lease.id, "keyboard") === undefined) {
+					return success(device, "keyboard-reset", "keyboard was not changed", { changed: false });
+				}
+				return withPort<UiSuccess>(ctx, resolved, device, async (port) => {
+					const done = fromDriver(await port.keyboard(DEFAULT_KEYBOARD_MODE));
+					if (!done.success) return done;
+					forget(ctx, device, "keyboard");
+					return success(device, "keyboard-reset", "keyboard reset", { changed: true, mode: DEFAULT_KEYBOARD_MODE });
+				});
+			}
+			case "status":
+				return withPort<UiSuccess>(ctx, resolved, device, async (port) => {
+					const state = fromDriver(await port.keyboardState());
+					if (!state.success) return state;
+					return success(
+						device,
+						"keyboard-status",
+						`keyboard  ${state.data.mode}  ${state.data.visible ? "visible" : "not visible"}`,
+						{ mode: state.data.mode, visible: state.data.visible }
+					);
+				});
+			default:
+				return fail("usage", `unknown keyboard action "${action}"`, "software, hardware, toggle, status or reset");
 		}
 	});
 }

@@ -1,8 +1,16 @@
-import type { PermissionName, PermissionState, TextSize } from "@delacour/warden-core/conditions/conditions.types";
+import {
+	IME_STASH_DEFAULT,
+	IME_STASH_ENABLED,
+	type ImeState,
+	type KeyboardMode,
+	type PermissionName,
+	type PermissionState,
+	type TextSize,
+} from "@delacour/warden-core/conditions/conditions.types";
 import { androidFontScale, resolveTextSize } from "@delacour/warden-core/conditions/text-size";
 import type { ScreenReaderState } from "../../a11y/a11y.types";
 import { badRequest, batteryProblem, localeProblem, timezoneProblem } from "../device-settings";
-import type { A11yOp, A11yState, BatteryOp, BatteryState, Driver, DriverResult } from "../driver.types";
+import type { A11yOp, A11yState, BatteryOp, BatteryState, Driver, DriverResult, KeyboardResult } from "../driver.types";
 import { driverErr } from "../errors";
 import type { AdbSession } from "./adb-session";
 import { shellCommand } from "./android-argv";
@@ -110,7 +118,7 @@ export type AndroidSettingsDeps = {
 
 export type AndroidSettings = Pick<
 	Driver,
-	"permissions" | "timezone" | "locale" | "a11y" | "battery" | "memoryWarning" | "push"
+	"permissions" | "timezone" | "locale" | "a11y" | "battery" | "memoryWarning" | "push" | "keyboard" | "keyboardState"
 >;
 
 type Shelled = { ok: boolean; stdout: string; failure: string | undefined };
@@ -417,6 +425,97 @@ function batteryOp(c: Ctx): Driver["battery"] {
 	};
 }
 
+const nullable = (value: string): string => (value.trim() === "null" ? "" : value.trim());
+
+async function readIme(c: Ctx): Promise<ImeState> {
+	const enabled = await c.shell(settingGetArgv("secure", "enabled_input_methods"));
+	const current = await c.shell(settingGetArgv("secure", "default_input_method"));
+	return { enabled: nullable(enabled.stdout), default: nullable(current.stdout) };
+}
+
+/** What `hardware` mode stashed on the device, or `undefined` when no IME was switched off by it. */
+async function readImeStash(c: Ctx): Promise<ImeState | undefined> {
+	const enabled = await c.shell(settingGetArgv("global", IME_STASH_ENABLED));
+	const current = await c.shell(settingGetArgv("global", IME_STASH_DEFAULT));
+	const state = { enabled: nullable(enabled.stdout), default: nullable(current.stdout) };
+	return state.enabled === "" ? undefined : state;
+}
+
+/**
+ * The mode the device is in: with no IME enabled the on-screen keyboard cannot show (`hardware`). The emulator's
+ * built-in qwerty keyboard is never "external", so `show_ime_with_hard_keyboard` cannot hide it.
+ */
+async function readKeyboardMode(c: Ctx): Promise<KeyboardMode> {
+	return (await readIme(c)).enabled === "" ? "hardware" : "software";
+}
+
+/**
+ * Whether the IME window is up: `dumpsys window InputMethod` says `isVisible=true` while it is (the uiautomator dump
+ * carries the app's window only, so the keyboard is never in the snapshot on Android).
+ */
+export function imeVisibleIn(dump: string): boolean {
+	return /\bisVisible=true\b/.test(dump);
+}
+
+async function readKeyboardVisible(c: Ctx): Promise<boolean> {
+	const read = await c.shell(["dumpsys", "window", "InputMethod"]);
+	return read.ok && imeVisibleIn(read.stdout);
+}
+
+/** `software`: put the device-side stash back exactly, then drop it (nothing stashed: nothing to do). */
+async function restoreImes(c: Ctx): Promise<DriverResult<KeyboardResult>> {
+	const stash = await readImeStash(c);
+	if (stash !== undefined) {
+		const steps: string[][] = [
+			["settings", "put", "secure", "enabled_input_methods", stash.enabled],
+			...(stash.default === "" ? [] : [["settings", "put", "secure", "default_input_method", stash.default]]),
+			["settings", "delete", "global", IME_STASH_ENABLED],
+			["settings", "delete", "global", IME_STASH_DEFAULT],
+		];
+		for (const argv of steps) {
+			const done = await c.must(argv);
+			if (!done.success) return done;
+		}
+	}
+	return { success: true, data: { mode: "software" } };
+}
+
+/** Stash the enabled IMEs and the default on the device, then `ime disable` each. */
+async function hideImes(c: Ctx, current: ImeState): Promise<DriverResult<KeyboardResult>> {
+	const listed = await c.shell(["ime", "list", "-s"]);
+	const ids = listed.stdout
+		.split("\n")
+		.map((line) => line.trim())
+		.filter((line) => line.includes("/"));
+	const steps: string[][] = [
+		["settings", "put", "global", IME_STASH_ENABLED, current.enabled],
+		...(current.default === "" ? [] : [["settings", "put", "global", IME_STASH_DEFAULT, current.default]]),
+		...ids.map((id) => ["ime", "disable", id]),
+	];
+	for (const argv of steps) {
+		const done = await c.must(argv);
+		if (!done.success) return done;
+	}
+	if ((await readIme(c)).enabled !== "") {
+		return driverErr("E_IO", "an input method is still enabled after ime disable", { detail: { serial: c.serial } });
+	}
+	return { success: true, data: { mode: "hardware", previousIme: current } };
+}
+
+/**
+ * `hardware`: no IME is enabled, so no soft keyboard shows and `input text` still types (the stash lives on the
+ * device in `warden_ime_*`, so a later process or release finds it). `software`: the stash put back. Live, no relaunch.
+ */
+function keyboardOp(c: Ctx): Driver["keyboard"] {
+	return async (mode) => {
+		if (mode === "software") return restoreImes(c);
+		const current = await readIme(c);
+		if (current.enabled !== "") return hideImes(c, current);
+		const previous = await readImeStash(c);
+		return { success: true, data: { mode, ...(previous === undefined ? {} : { previousIme: previous }) } };
+	};
+}
+
 function memoryWarningOp(c: Ctx): Driver["memoryWarning"] {
 	return async (opts) => {
 		const app = c.packageOf(opts?.bundleId, "memoryWarning");
@@ -433,7 +532,11 @@ function memoryWarningOp(c: Ctx): Driver["memoryWarning"] {
 	};
 }
 
-export function createAndroidSettings(deps: AndroidSettingsDeps): AndroidSettings & { talkback: TalkBackControl } {
+export function createAndroidSettings(deps: AndroidSettingsDeps): AndroidSettings & {
+	talkback: TalkBackControl;
+	keyboardMode(): Promise<KeyboardMode>;
+	keyboardVisible(): Promise<boolean>;
+} {
 	const { session, serial } = deps;
 
 	async function shell(argv: readonly string[]): Promise<Shelled> {
@@ -500,6 +603,12 @@ export function createAndroidSettings(deps: AndroidSettingsDeps): AndroidSetting
 		locale: localeOp(ctx),
 		a11y: a11yOp(ctx),
 		battery: batteryOp(ctx),
+		keyboard: keyboardOp(ctx),
+		keyboardMode: () => readKeyboardMode(ctx),
+		keyboardVisible: () => readKeyboardVisible(ctx),
+		async keyboardState() {
+			return { success: true, data: { mode: await readKeyboardMode(ctx), visible: await readKeyboardVisible(ctx) } };
+		},
 		memoryWarning: memoryWarningOp(ctx),
 		async push() {
 			return driverErr(

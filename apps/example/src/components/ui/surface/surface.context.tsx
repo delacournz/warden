@@ -1,5 +1,5 @@
 import { createContext, type ReactElement, type ReactNode, use } from "react";
-import type { SurfacePlane, SurfaceVariant } from "./surface.variants";
+import type { SurfaceMaterial, SurfacePlane, SurfaceVariant } from "./surface.variants";
 
 export type SurfaceContextValue = {
 	/** The fill the enclosing surface resolved to — explicit, or stepped from its own parent. */
@@ -10,6 +10,8 @@ export type SurfaceContextValue = {
 	 * plane beneath it through — `null` when there is none.
 	 */
 	plane: SurfacePlane | null;
+	/** What the surface is made of. A `tray` tells the panels inside it to take the inner corner. */
+	material: SurfaceMaterial;
 };
 
 const SurfaceContext = createContext<SurfaceContextValue | null>(null);

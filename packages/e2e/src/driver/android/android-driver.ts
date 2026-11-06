@@ -795,7 +795,12 @@ function buildDriver(
 		});
 		return { success: true, data: { ...applied.data, condition: op } };
 	};
-	const { talkback, ...settings } = createAndroidSettings({
+	const {
+		talkback,
+		keyboardMode: _mode,
+		keyboardVisible: _visible,
+		...settings
+	} = createAndroidSettings({
 		session,
 		serial,
 		...(options.appPackage ? { appPackage: options.appPackage } : {}),
@@ -928,6 +933,11 @@ function buildDriver(
 			...(options.cameraHost ?? createAndroidCameraHost({ serial, exec })),
 		}),
 		...(facts.physical ? physicalConditionOps(`physical Android device ${serial}`) : {}),
+		keyboardState: settings.keyboardState,
+		async dismissKeyboard() {
+			const pressed = await pressButton("back");
+			return pressed.success ? { success: true, data: { via: "back" } } : pressed;
+		},
 		biometrics,
 		app: createAppCommands({
 			session,

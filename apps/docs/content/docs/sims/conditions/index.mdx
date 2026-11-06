@@ -1,10 +1,10 @@
 ---
 title: Device conditions
-description: Change the network, GPS location, clock, biometrics, permissions, camera feed, locale, accessibility settings and battery of a simulator or emulator from a spec, a suite or warden ui, and have it undone on release.
+description: Change the network, GPS location, clock, biometrics, permissions, camera feed, locale, accessibility settings, battery and keyboard of a simulator or emulator from a spec, a suite or warden ui, and have it undone on release.
 icon: Signal
 ---
 
-import { Accessibility, BatteryMedium, BellRing, Camera, Clock, FingerprintPattern, Languages, MapPin, ShieldCheck, Wifi } from "lucide-react";
+import { Accessibility, BatteryMedium, BellRing, Camera, Clock, FingerprintPattern, Keyboard, Languages, MapPin, ShieldCheck, Wifi } from "lucide-react";
 
 <DemoTabs ids={["network", "fault", "location", "clock", "biometrics", "camera", "a11y", "events"]} />
 
@@ -37,6 +37,7 @@ The example app has a Conditions screen (`warden-example://conditions`) and a sp
 <Card icon={<Languages />} title="Locale and timezone" href="/docs/sims/conditions/locale">Another language, region or timezone for the app.</Card>
 <Card icon={<Accessibility />} title="Accessibility settings" href="/docs/sims/conditions/accessibility">Text size, bold text, contrast, reduce motion, screen reader on.</Card>
 <Card icon={<BatteryMedium />} title="Battery" href="/docs/sims/conditions/battery">Level and charging state.</Card>
+<Card icon={<Keyboard />} title="Keyboard" href="/docs/sims/conditions/keyboard">Show or hide the on-screen keyboard.</Card>
 <Card icon={<BellRing />} title="Push and memory warnings" href="/docs/sims/conditions/events">One-off events: a push payload on iOS, a memory trim on Android.</Card>
 </Cards>
 
@@ -55,6 +56,7 @@ Simulators and emulators only: every condition fails `E_UNSUPPORTED` on a physic
 | [Locale and timezone](/docs/sims/conditions/locale) | the next launch | live; locale needs Android 13+ |
 | [Accessibility settings](/docs/sims/conditions/accessibility) | text size, bold, contrast, reduce motion; a simulated screen reader | text size, bold, reduce motion; real TalkBack |
 | [Battery](/docs/sims/conditions/battery) | status bar only | what the app reads |
+| [Keyboard](/docs/sims/conditions/keyboard) | live, in an app launched by warden | live, device-wide |
 | [Push and memory warnings](/docs/sims/conditions/events) | push | memory warning |
 
 On iOS, network and clock reach only an app launched with warden's network dylib: declare them in the suite's `conditions`, or pass `{ relaunch: true }` ([how it reaches the app](/docs/sims/conditions/network#how-it-reaches-the-app)).
@@ -121,6 +123,7 @@ e2e: {
 | `locale` | a BCP 47 tag |
 | `timezone` | an IANA name |
 | `a11y` | `{ textSize?, boldText?, contrast?, reduceMotion? }` |
+| `keyboard` | `"software"` (default) or `"hardware"` |
 
 A suite's key replaces the top-level one for that area. A bad value fails config load. On iOS, declaring `network` or `clock` launches the app with the dylib, which is why the example runs its condition specs in a separate `conditions` suite: the other specs keep a plain launch.
 
@@ -148,6 +151,6 @@ Release, gc and the end of a spec put the device back:
 - network online, faults cleared, the shaping proxy, the flap scheduler and the route ticker stopped
 - the location cleared on iOS (Android keeps the last GPS fix: the emulator cannot unset one)
 - the clock real again; a still-running injected iOS app is reset to online and the real clock
-- permissions reset, text size and contrast or font scale and bold back to defaults, the app locale cleared, the timezone back, the battery real, the camera feed off
+- permissions reset, text size and contrast or font scale and bold back to defaults, the app locale cleared, the timezone back, the battery real, the keyboard back to `software`, the camera feed off
 
 Each change a spec makes is a `condition` line in `results.jsonl`.
