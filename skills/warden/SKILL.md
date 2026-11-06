@@ -73,7 +73,7 @@ Open the reference file for details before acting; this file only routes.
 | fewer daemons on a sim | iOS sims warden creates are slim by default (`--no-slim` / `slim: false` / `WARDEN_SLIM=0` opt out; a plain `claim` never restores). By hand: `warden sim slim <udid>\|--booted [--dry-run\|--restore] [--except <ids>] [--keep <labels>]` |
 | slim categories (`--except` ids) | `warden sim profiles`; common: `store` push/StoreKit, `web` universal links, `search` Spotlight, `pim` Contacts/Calendar pickers, `photos` photo picker |
 | a sim's real memory | `warden sim measure [udid\|--booted]` · `warden devices --mem` |
-| clone / golden / disk | `warden clone <udid\|name>` · `warden golden ensure --profile iphone-17` (`golden ls`, `golden prune`; CI cache: `golden key`, `golden export <dir>`, `golden import <dir>`; every key + path: `warden ci cache --json`, suites.md) · `warden sims` (= `audit`; `prune --dry-run`, then `--yes`; `delete <udid…>`) |
+| clone / golden / disk | `warden clone <udid\|name>` · `warden golden ensure --profile iphone-17` (`golden ls`, `golden prune`; CI cache: `golden key`, `golden export <dir>`, `golden import <dir>`; every key + path: `warden ci cache --json [--suite <name>]`, suites.md; e2e suites skip the golden unless `golden: true`) · `warden sims` (= `audit`; `prune --dry-run`, then `--yes`; `delete <udid…>`) |
 | reclaim dead leases | `warden gc` (auto every 10 min; deletes shut-down ephemeral warden sims; once a day prunes stale goldens, `WARDEN_GOLDEN_PRUNE=0` off; never touches foreign devices) |
 | setup / helper problems | `warden doctor [--fetch-helper]` |
 | lease registry drift | `warden doctor --leases [--fix] [--json]` (exit 1 on drift; `--fix` deletes registry rows only; suites.md "Lease drift") |

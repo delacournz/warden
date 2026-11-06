@@ -33,6 +33,8 @@ type RunOpts = {
 	goldenBuilt?: boolean;
 	goldenArchived?: boolean;
 	goldenCacheHit?: boolean;
+	/** the suite runs without a golden: the action passes an empty GOLDEN_KEY */
+	goldenOff?: boolean;
 };
 
 const STUB = `#!/bin/sh
@@ -91,6 +93,7 @@ function collect(opts: RunOpts): Collected {
 			PROFILE: "",
 			STUB_BUILT: opts.goldenBuilt === true ? "1" : "0",
 			GOLDEN_CACHE_HIT: opts.goldenCacheHit === true ? "true" : "",
+			...(opts.goldenOff === true ? { GOLDEN_KEY: "" } : {}),
 		},
 	});
 	expect(proc.exitCode).toBe(0);
@@ -112,6 +115,13 @@ describe("artifacts.sh", () => {
 		expect(run.paths.golden).toEqual([join(home, "warden-artifacts", "golden.tar")]);
 		expect(run.archived).toBe(true);
 		expect(run.stdout).not.toContain("exported");
+	});
+
+	test("all for a suite without a golden never looks for one, green or failed", () => {
+		const green = collect({ artifacts: "all", passed: true, goldenOff: true });
+		expect(green.stdout).not.toContain("never built");
+		expect(green.groups).toEqual(["report", "batches", "logs", "app"]);
+		expect(collect({ artifacts: "all", passed: false, goldenOff: true }).groups).toEqual(["report", "batches", "logs"]);
 	});
 
 	test("all after a failed run collects report, batches, logs and golden, not app", () => {

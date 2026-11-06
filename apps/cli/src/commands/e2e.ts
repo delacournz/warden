@@ -737,13 +737,19 @@ async function runPlan(
 		...(suite.biometrics === true ? { biometrics: true } : {}),
 		...(config.camera !== undefined ? { camera: true } : {}),
 		...(suite.reclaim !== undefined ? { reclaimConfig: suite.reclaim } : {}),
+		golden: suite.golden,
 	});
 	const [first] = picked.data ?? [];
-	const args = parseBatchArgs(platform, first ? legOpts(first) : { ...batchOpts, ...phoneOpts() }, ctx.cwd, {
-		jobs: { kind: "list", jobs: specs.map((f) => f.id) },
-		cwd: suite.cwd,
-		env: { ...config.env },
-	});
+	const args = parseBatchArgs(
+		platform,
+		first ? legOpts(first) : { ...batchOpts, ...phoneOpts(), golden: suite.golden },
+		ctx.cwd,
+		{
+			jobs: { kind: "list", jobs: specs.map((f) => f.id) },
+			cwd: suite.cwd,
+			env: { ...config.env },
+		}
+	);
 	if (!args.success) return args;
 	const legs = batchLegs(platform, picked.data ?? [], legOpts);
 	if (!legs.success) return legs;

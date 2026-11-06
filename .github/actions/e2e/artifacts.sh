@@ -21,7 +21,8 @@
 #
 # env: ARTIFACTS (all | none | comma list), PASSED (true | other), REPORT (absolute path), PROFILE (may be empty),
 #      STARTED (epoch seconds the suite started; empty collects every cached build),
-#      GOLDEN_CACHE_HIT (true when the golden was restored from the cache; may be empty)
+#      GOLDEN_CACHE_HIT (true when the golden was restored from the cache; may be empty),
+#      GOLDEN_KEY (the golden's cache key; empty when the suite runs without a golden: `all` then skips golden)
 # outputs: groups (comma list), paths (JSON {group: [path]}), one multiline output per group, golden-archived
 set -uo pipefail
 
@@ -46,6 +47,8 @@ case "$ARTIFACTS" in
     ;;
   *) selected=$(echo "$ARTIFACTS" | tr ',' ' ') ;;
 esac
+# a suite without a golden has none to collect: `all` leaves it out (a list naming it still tries)
+if [ "$ARTIFACTS" = all ] && [ -z "${GOLDEN_KEY-unset}" ]; then selected=${selected//golden/}; fi
 selected="$selected logs"
 
 wants() {

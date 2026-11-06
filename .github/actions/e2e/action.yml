@@ -99,7 +99,7 @@ outputs:
     description: "`true` when the gate passed, `false` when a required spec failed or the run broke."
     value: ${{ steps.run.outputs.passed }}
   cache-groups:
-    description: "`warden ci cache --json`: `{builds, repack, golden}`, each `{kind, key, paths}` (the golden adds `afterRestore` / `beforeSave`). For caching with something other than actions/cache (`cache: none`)."
+    description: "`warden ci cache --json`: `{builds, repack, golden}`, each `{kind, key, paths}` (the golden adds `afterRestore` / `beforeSave`; `null` when the suite does not set `golden: true`). For caching with something other than actions/cache (`cache: none`)."
     value: ${{ steps.keys.outputs.cache-groups }}
   artifact-groups:
     description: Comma list of the groups collected (`report,batches,logs,app,golden`), whether or not they were uploaded.
@@ -220,14 +220,17 @@ runs:
       env:
         PREFIX: ${{ inputs.cache-prefix }}
         PROFILE: ${{ inputs.profile }}
+        SUITE: ${{ inputs.suite }}
         JS_INPUTS: ${{ inputs.js-inputs }}
       run: |
         set -euo pipefail
         args=(--json --prefix "$PREFIX")
         if [ -n "$PROFILE" ]; then args+=(--profile "$PROFILE"); fi
+        # A suite without `golden: true` gets `golden: null`: an empty golden-key skips every golden step below.
+        if [ -n "$SUITE" ]; then args+=(--suite "$SUITE"); fi
         while IFS= read -r line; do [ -n "$line" ] && args+=(--js-input "$line"); done <<< "$JS_INPUTS"
         groups=$(warden ci cache "${args[@]}")
-        key() { node -e 'const g=JSON.parse(process.argv[1])[process.argv[2]];process.stdout.write(g.key)' "$groups" "$1"; }
+        key() { node -e 'const g=JSON.parse(process.argv[1])[process.argv[2]];process.stdout.write(g?.key ?? "")' "$groups" "$1"; }
         {
           echo "builds=$(key builds)"
           echo "repack=$(key repack)"
@@ -261,7 +264,7 @@ runs:
         key: ${{ steps.keys.outputs.repack }}
 
     - name: Restore the golden simulator
-      if: inputs.cache == 'github'
+      if: inputs.cache == 'github' && steps.keys.outputs.golden-key != ''
       id: golden-cache
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
@@ -274,16 +277,17 @@ runs:
       env:
         APP_PATH: ${{ inputs.app-path }}
         WORKSPACE: ${{ github.workspace }}
+        GOLDEN_KEY: ${{ steps.keys.outputs.golden-key }}
       run: |
         set -euo pipefail
-        warden golden import ~/warden-goldens
+        if [ -n "$GOLDEN_KEY" ]; then warden golden import ~/warden-goldens; fi
         if [ -n "$APP_PATH" ]; then
           case "$APP_PATH" in /*) app="$APP_PATH" ;; *) app="$WORKSPACE/$APP_PATH" ;; esac
           warden builds import "$app" --kind simulator-base
         fi
 
     - name: Build the golden simulator
-      if: steps.golden-cache.outputs.cache-hit != 'true'
+      if: steps.keys.outputs.golden-key != '' && steps.golden-cache.outputs.cache-hit != 'true'
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       env:
@@ -363,6 +367,7 @@ runs:
         PASSED: ${{ steps.run.outputs.passed }}
         STARTED: ${{ steps.run.outputs.started }}
         GOLDEN_CACHE_HIT: ${{ steps.golden-cache.outputs.cache-hit }}
+        GOLDEN_KEY: ${{ steps.keys.outputs.golden-key }}
         PROFILE: ${{ inputs.profile }}
         REPORT: ${{ steps.run.outputs.report-path || format('{0}/{1}', github.workspace, inputs.report-path) }}
       run: bash "$GITHUB_ACTION_PATH/artifacts.sh"
@@ -414,7 +419,7 @@ runs:
 
     - name: Export the golden simulator
       id: golden-export
-      if: inputs.cache == 'github' && steps.run.outputs.passed == 'true' && inputs.save-cache == 'true' && steps.golden-cache.outputs.cache-hit != 'true'
+      if: inputs.cache == 'github' && steps.keys.outputs.golden-key != '' && steps.run.outputs.passed == 'true' && inputs.save-cache == 'true' && steps.golden-cache.outputs.cache-hit != 'true'
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       env:
