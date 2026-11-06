@@ -30,6 +30,7 @@ A boot fits when summed memory and cpu of everything booted, plus the request, s
 Mixed loads share the budget: on the 48 GB host, 4 iOS + 1 Android fills it. CPU usually binds before memory; `warden capacity` says which.
 
 - **Foreign devices count, never get touched.** Every booted device on the host (warden's and not) uses budget. Foreign ones are never shut down, erased or installed on.
+- **One device is the floor.** A host smaller than one device (a 7 GB CI runner: 8 GB headroom leaves no budget) still admits a claim that boots one device while nothing else is booted. A second claim queues. Set `WARDEN_CAPACITY_HEADROOM_GB` to fit more.
 - **Reuse is free.** Reusing an already-booted free device needs no slot. Only `boot` and `create` do.
 - **Memory pressure gate.** Before admitting a boot warden reads the OS memory pressure (macOS `kern.memorystatus_vm_pressure_level`, Linux `/proc/meminfo`). Anything but `normal` holds new boots even when the budget fits. An unreadable signal counts as `normal`.
 

@@ -152,6 +152,8 @@ Removed: `warmRunners` (use `warmDrivers`).
 
 A fresh runner otherwise builds the simulator base (a Release `xcodebuild`) and the iOS golden (~4 min first boot) every run.
 
+In GitHub Actions use the composite action `delacournz/warden/.github/actions/e2e` (inputs `working-directory suite profile count retry args app-path warden-version bun-version install-command xcode-path headroom-gb report-path cache-prefix js-inputs save-cache retention-days artifact-name`; outputs `report-path`, `passed`): it installs warden and bun (from npm), runs `warden doctor --fetch-helper`, caches the build, the JS repacks and the golden (restore and save separate, save only after a green run with `save-cache: true`, so not on pull requests), prints each `screen-at-failure.txt` into the log and uploads the report plus `~/.warden/batches`. Docs: `/docs/e2e/ci`. By hand, the steps are:
+
 | Step | Command |
 |---|---|
 | base key (the native fp the base is filed under) | `warden app fingerprint ios --kind simulator --json` → `.fingerprints.ios`, `.hashes.ios` (`<fp>:base`). Not `@expo/fingerprint`'s hash |
@@ -160,6 +162,8 @@ A fresh runner otherwise builds the simulator base (a Release `xcodebuild`) and 
 | restore golden | `warden golden import <dir>` (exit 0; missing dir, stale or broken archive, golden already here → skipped with reason; the next claim builds it) |
 | save golden on a cache miss | `warden golden export <dir> [--profile <p>] [--runtime <r>]` (builds it first if missing) → `<dir>/<name>/{golden.json,device/}` (~2 GB). Exit 1 on a golden that never settled (still usable locally). Run it only after a green run (`success()`, never `!cancelled()`) |
 
+- A simulator `.app` built with `CODE_SIGNING_ALLOWED=NO` has no entitlements, so Keychain calls fail with `errSecMissingEntitlement` (-34018): build with `CODE_SIGN_IDENTITY=-`. `builds import` warns when the `.app` has no `application-identifier` (`applicationIdentifier: false` in `--json`).
+- Repack cache for CI: `~/.warden/builds/*/ios/*/simulator/repacks`, keyed on the fingerprint plus a hash of the project's JS inputs; cache the rest of `~/.warden/builds` apart from it.
 - `--kind simulator-base` checks the `.app`: `DTPlatformName` `iphonesimulator`, a slice for this Mac (`arm64` on Apple silicon: `ARCHS=arm64`), `CFBundleIdentifier` = the project's iOS bundle id (`--bundle-id` overrides), no Debug / dev-client payload (`<exe>.debug.dylib`, `EXDevLauncher`, `EXDevMenu`). An embedded `main.jsbundle` is stripped from the cached copy (`strippedBundle: true`); every repack writes its own. Android: not supported (`--kind` is iOS only).
 - `golden import` registers a fresh `-wip` device with `simctl create`, copies the archive over its dir (not `device.plist`), re-points absolute symlinks to the new udid, checks the first-boot migration record and `AutomationEnabled`, then renames it: no CoreSimulatorService restart, other sims untouched. `--platform android` is refused for key / export / import.
 

@@ -277,7 +277,14 @@ describe("warden builds import --kind simulator-base", () => {
 		return app;
 	}
 
-	function setupBase(argv: string[], plist: Record<string, string> = {}, archs = "x86_64 arm64"): TestContext {
+	function setupBase(
+		argv: string[],
+		plist: Record<string, string> = {},
+		archs = "x86_64 arm64",
+		codesign: { stdout?: string; stderr?: string; exitCode?: number } = {
+			stdout: "<key>application-identifier</key>",
+		}
+	): TestContext {
 		const c = testContext(argv);
 		ctx = c;
 		writeFileSync(
@@ -301,6 +308,7 @@ describe("warden builds import --kind simulator-base", () => {
 			]),
 			["plutil", { exitCode: 1 }],
 			["lipo -archs", { stdout: `${archs}\n` }],
+			["codesign -d --entitlements", codesign],
 			["sh -c fp ios", { stdout: JSON.stringify({ hash: FP }) }],
 			["git", { exitCode: 128 }],
 		]);
@@ -327,6 +335,25 @@ describe("warden builds import --kind simulator-base", () => {
 		expect(row?.path).toContain("/simulator/base/App.app");
 		expect(existsSync(join(row?.path ?? "", "main.jsbundle"))).toBe(false);
 		expect(existsSync(join(app, "main.jsbundle"))).toBe(true);
+	});
+
+	test("an app with no application-identifier entitlement imports with a warning naming the signing fix", async () => {
+		const c = setupBase(["import", "src/App.app", "--kind", "simulator-base", "--json"], {}, "arm64", {
+			exitCode: 1,
+			stderr: "App.app: code object is not signed at all",
+		});
+		baseApp(join(c.cwd, "src"));
+		expect(await buildsCommand.run(c)).toBe(0);
+		expect(c.stderr.join("\n")).toContain("application-identifier");
+		expect(c.stderr.join("\n")).toContain("CODE_SIGN_IDENTITY=-");
+		expect(JSON.parse(c.stdout.join("\n"))).toMatchObject({ applicationIdentifier: false });
+	});
+
+	test("an app with the entitlement imports without that warning", async () => {
+		const c = setupBase(["import", "src/App.app", "--kind", "simulator-base", "--json"]);
+		baseApp(join(c.cwd, "src"));
+		expect(await buildsCommand.run(c)).toBe(0);
+		expect(c.stderr.join("\n")).not.toContain("application-identifier");
 	});
 
 	test("--hash <nativeFp> (or <nativeFp>:base) files it under that fingerprint", async () => {
