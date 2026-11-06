@@ -32,6 +32,8 @@ const SIGNED_IN = ["src/app/welcome.tsx", "src/app/sign-in.tsx"];
  * needs the native project and its pods before the build.
  */
 const IOS_NATIVE = "bunx expo prebuild --platform ios --no-install && pod install --project-directory=ios";
+/** Android twin: generate `android/`, then Gradle alone (`expo run:android` installs on whatever emulator is booted). */
+const ANDROID_NATIVE = "bunx expo prebuild --platform android --no-install";
 
 /** Spec discovery + the spec → screen graph `warden affected` uses, shared by every run of the suite. */
 const AFFECTED = {
@@ -103,7 +105,7 @@ const bench = {
 	build: {
 		configuration: "Release",
 		ios: `${IOS_NATIVE} && EXPO_PUBLIC_E2E=1 bunx expo run:ios --configuration Release --no-install --no-bundler`,
-		android: "EXPO_PUBLIC_E2E=1 bunx expo run:android --variant release --no-install --no-bundler",
+		android: `${ANDROID_NATIVE} && cd android && EXPO_PUBLIC_E2E=1 ./gradlew app:assembleRelease`,
 	},
 	fingerprint: { include: "native+js", jsInputs: JS_INPUTS },
 } satisfies WardenVariant;
