@@ -57,6 +57,7 @@ const AFFECTED = {
 		todos: { entries: [...SIGNED_IN, "src/app/(tabs)/todos.tsx"] },
 		"todo-detail": { entries: [...SIGNED_IN, "src/app/(tabs)/todos.tsx", "src/app/todo/[id].tsx"] },
 		settings: { entries: [...SIGNED_IN, "src/app/(tabs)/settings.tsx"] },
+		"todos-journey": { entries: [...SIGNED_IN, "src/app/(tabs)/todos.tsx", "src/app/(tabs)/settings.tsx"] },
 		devtools: { entries: ["src/app/welcome.tsx"] },
 		perf: { entries: [...SIGNED_IN, "src/app/(tabs)/todos.tsx"] },
 		gestures: { entries: ["src/app/welcome.tsx", "src/app/gestures.tsx", "src/modules/gestures"] },
