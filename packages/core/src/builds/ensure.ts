@@ -9,6 +9,7 @@ import type { Owner, Platform } from "../types";
 import { readExpoConfig } from "./app-config";
 import type { InstallMode } from "./app-option.schema";
 import {
+	adoptKindDir,
 	aliasBuild,
 	type BuildSource,
 	buildKindOfKey,
@@ -426,10 +427,25 @@ function adoptKindless(input: EnsureInput): void {
 	}
 }
 
+/** A kind build whose files a CI cache restored without their row: registered, so the cache step finds it. */
+function adoptRestored(input: EnsureInput): void {
+	if (input.kind === undefined) return;
+	const adopted = adoptKindDir(input.store, {
+		env: input.env,
+		projectKey: input.projectKey,
+		platform: input.platform,
+		profile: profileOf(input.project),
+		key: input.kind.key,
+		now: input.now(),
+	});
+	if (adopted) input.log(`using the ${adopted.kind ?? "cached"} build restored at ${adopted.path}`);
+}
+
 /** Wire the real effects (sqlite cache, simctl/adb, eas-cli, local build) into `resolveApp`. */
 export async function ensureApp(input: EnsureInput): AsyncResult<EnsureResult> {
 	const { store, env, project, projectKey, platform, hash } = input;
 	adoptKindless(input);
+	adoptRestored(input);
 	const layout = input.kind && {
 		dir: kindDir(env, projectKey, platform, input.kind.key),
 		kind:
