@@ -248,6 +248,18 @@ runs:
           warden builds import "$app" --kind simulator-base
         fi
 
+    - name: Build the golden simulator
+      if: steps.golden-cache.outputs.cache-hit != 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        PROFILE: ${{ inputs.profile }}
+      run: |
+        set -euo pipefail
+        profile_args=()
+        if [ -n "$PROFILE" ]; then profile_args=(--profile "$PROFILE"); fi
+        warden golden ensure ${profile_args[@]+"${profile_args[@]}"}
+
     - name: Run the suite
       id: run
       shell: bash
