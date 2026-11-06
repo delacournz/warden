@@ -194,7 +194,7 @@ export function parseSimctlDeviceTypes(stdout: string): Result<SimDeviceType[]> 
 }
 
 /** `latest`/undefined → any; else `iOS-26-5`, full identifier, `26.5`, `iOS 26.5`. */
-function runtimeMatches(runtime: SimRuntime, wanted: string | undefined): boolean {
+export function runtimeMatches(runtime: SimRuntime, wanted: string | undefined): boolean {
 	if (wanted === undefined || wanted === "latest") return true;
 	return (
 		runtime.identifier === wanted ||
@@ -230,6 +230,27 @@ export function resolveCreateTarget(
 		return err(`no iOS runtime matching "${runtime ?? "latest"}" supports ${type.name}`);
 	}
 	return ok({ type, runtime: supported });
+}
+
+/**
+ * Refuses a pinned iOS runtime that is not installed, naming the installed ones. `latest` / undefined always pass:
+ * which runtime that is gets decided at claim time. Never picks another runtime for the caller.
+ */
+export async function checkIosRuntime(
+	exec: Exec,
+	wanted: string | undefined,
+	timer?: (ms: number) => Timer
+): AsyncResult<SimRuntime> {
+	const listed = await simctl(timedExec(exec, timer), ["list", "runtimes", "-j"], IOS_TIMEOUTS.listMs);
+	if (!listed.success) return listed;
+	const runtimes = parseSimctlRuntimes(listed.data);
+	if (!runtimes.success) return runtimes;
+	const found = runtimes.data.find((r) => runtimeMatches(r, wanted));
+	if (found) return ok(found);
+	const installed = runtimes.data.map((r) => shortRuntime(r.identifier)).join(", ");
+	return err(
+		`iOS runtime "${wanted}" is not installed (installed: ${installed || "none"}); install it in Xcode > Settings > Components, or pin an installed one`
+	);
 }
 
 /**

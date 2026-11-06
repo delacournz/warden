@@ -147,6 +147,21 @@ describe("allocate", () => {
 		expect(plan.kind === "assign" && plan.steps).toEqual([{ action: "boot", device: good }]);
 	});
 
+	test("a version request (26.5, iOS 26.5) matches the sim's runtime id; 26 matches every 26.x; 26.5 never 26.51", () => {
+		const a = sim({ id: "a", runtime: "iOS-26-5" });
+		const b = sim({ id: "b", runtime: "iOS-27-0" });
+		const pick = (runtime: string): string[] => {
+			const plan = allocate({ inventory: [a, b], leases: [], request: { ...req, runtime }, now: NOW, pidAlive: noPid });
+			return plan.kind === "assign" ? plan.steps.flatMap((s) => (s.action === "create" ? [] : [s.device.id])) : [];
+		};
+		expect(pick("26.5")).toEqual(["a"]);
+		expect(pick("iOS 26.5")).toEqual(["a"]);
+		expect(pick("27.0")).toEqual(["b"]);
+		expect(pick("27")).toEqual(["b"]);
+		expect(pick("iOS-27-0")).toEqual(["b"]);
+		expect(pick("26.51")).toEqual([]);
+	});
+
 	test("runtime latest prefers newest runtime", () => {
 		const older = sim({ id: "old", runtime: "iOS-18-4" });
 		const newer = sim({ id: "new", runtime: "iOS-26-5" });

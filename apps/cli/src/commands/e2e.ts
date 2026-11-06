@@ -21,6 +21,7 @@ import {
 } from "@delacour/warden-core/config.defaults";
 import { parseDuration } from "@delacour/warden-core/duration";
 import { resolveHeadless } from "@delacour/warden-core/headless";
+import { checkIosRuntime } from "@delacour/warden-core/providers/ios";
 import { DEFAULT_SLIM_PROFILE, type SlimProfile, validateProfile } from "@delacour/warden-core/sims/slim.profile";
 import type { Platform } from "@delacour/warden-core/types";
 import type { TestResult } from "@delacour/warden-e2e/runner/results";
@@ -126,13 +127,14 @@ export type E2eReport = {
 	error?: { code: string; message: string; udid: string };
 };
 
-/** The suite's retry / passes and device request (count, profile, biometrics, camera, ports) as option values. */
+/** The suite's retry / passes and device request (count, profile, runtime, biometrics, camera, ports) as option values. */
 function suiteDeviceOpts(suite: Suite["config"]): Partial<E2eOpts> {
 	return {
 		retry: String(suite.retry),
 		passes: String(suite.passes),
 		...(suite.count !== undefined ? { count: String(suite.count) } : {}),
 		...(suite.profile !== undefined ? { profile: suite.profile } : {}),
+		...(suite.runtime !== undefined ? { runtime: suite.runtime } : {}),
 		...(suite.biometrics === true ? { biometrics: true as const } : {}),
 		...(suite.camera !== undefined ? { camera: true as const } : {}),
 		...(suite.ports ? { port: suite.ports } : {}),
@@ -541,6 +543,9 @@ async function e2e(
 	}
 	const run = await preparedRun(ctx, deps, suite, selection.platform, specs, { ...opts, headless }, passed, kind.data);
 	if (!run.success) return fail(run.error);
+	// before any lease or build: a pinned runtime must be installed, never swapped for another
+	const missing = await missingRuntime(ctx, selection.platform, run.data);
+	if (missing !== undefined) return fail(missing);
 	// before any lease or build: several usable phones are asked about, or refused (ambiguous_device, exit 2)
 	const picked = await pickPhysicalArgs(ctx, resolveOwner(ctx), run.data.args, {
 		prompt: canPrompt(ctx, { json: jsonOut(opts) }),
@@ -715,7 +720,8 @@ async function runPlan(
 	const metro = await metroPlan(suite, spec.env.bundleId);
 	if (!metro.success) return metro;
 	// --json is the e2e report here, not batch.json
-	const { json: _json, jsonLines: _jsonLines, ...merged } = suiteOpts(suite, opts, passed, kind);
+	const { json: _json, jsonLines: _jsonLines, ...fromFlags } = suiteOpts(suite, opts, passed, kind);
+	const merged = withPlatformRuntime(ctx, platform, fromFlags, passed);
 	const needsApp = appFlagsWithoutApp(suite, merged);
 	if (needsApp !== undefined) return err(needsApp);
 	const batchOpts = { ...merged, ...(config.metro?.enabled ? { port: [config.metro.port, ...merged.port] } : {}) };
@@ -764,6 +770,36 @@ async function runPlan(
 		argvOf,
 		physical: claims.every((flags) => flags.request.physical !== undefined),
 	});
+}
+
+/** A suite's `runtime` pins an iOS simulator runtime: skipped with a note on Android. A `--runtime` flag is left for the claim to judge. */
+function withPlatformRuntime(
+	ctx: CommandContext,
+	platform: Platform,
+	opts: Omit<E2eOpts, "json" | "jsonLines">,
+	passed: ReadonlySet<string>
+): Omit<E2eOpts, "json" | "jsonLines"> {
+	if (platform === "ios" || opts.runtime === undefined || passed.has("runtime")) return opts;
+	note(ctx, `warden e2e: runtime is iOS-only; skipped on ${platform}`);
+	const { runtime: _runtime, ...rest } = opts;
+	return rest;
+}
+
+/** The first pinned iOS runtime that is not installed, as the error to refuse the run with (before any lease or build). */
+async function missingRuntime(ctx: CommandContext, platform: Platform, run: RunPlan): Promise<string | undefined> {
+	if (platform !== "ios" || run.physical) return undefined;
+	for (const runtime of pinnedRuntimes(run.args)) {
+		const found = await checkIosRuntime(ctx.exec, runtime);
+		if (!found.success) return found.error;
+	}
+	return undefined;
+}
+
+/** The runtimes the run's claims pin (the plain claim's and every leg's), distinct, `latest` left out. */
+function pinnedRuntimes(args: BatchArgs): string[] {
+	const requests = [args.flags.request, ...(args.legs ?? []).map((leg) => leg.flags.request)];
+	const wanted = requests.flatMap((r) => (r.runtime === undefined || r.runtime === "latest" ? [] : [r.runtime]));
+	return [...new Set(wanted)];
 }
 
 /** The claim of each leg, else the plain claim. */
