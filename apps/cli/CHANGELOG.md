@@ -1,5 +1,45 @@
 # @delacour/warden
 
+## 0.15.0
+
+### Minor Changes
+
+- [#235](https://github.com/delacournz/warden/pull/235) [`dc91440`](https://github.com/delacournz/warden/commit/dc91440b996c887346321ca6eadd332b750a7024) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - `e2e.<suite>.golden` in `warden.config.ts`: `true` clones the suite's new iOS simulators from a golden image. It is off by default, so `warden e2e` now creates fresh simulators (`simctl create` + first boot) unless a suite opts in. `WARDEN_GOLDEN=0` still turns the golden off everywhere.
+  - `warden ci cache --suite <name>`: the golden group is `null` when the suite (or the only suite) does not set `golden: true`, and the e2e action then skips restoring, building, saving and collecting a golden.
+
+- [#227](https://github.com/delacournz/warden/pull/227) [`bca6e96`](https://github.com/delacournz/warden/commit/bca6e96b2e92a7cd28450247cea4238c359af3fe) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - iOS: an accessibility bridge guest replaced after a stall now starts like a fresh one: its first read gets the cold deadline, its first stall no longer starts the 20 s cooldown, and the helper warms it in the background, going back to the bridge as soon as it answers.
+  - New `WARDEN_SIMD_BRIDGE_MAX_RECYCLES` sets how many stalled guests one `warden-simd` helper may replace (default 3; `0` never replaces one; an invalid value keeps the default and logs a warning).
+
+- [#220](https://github.com/delacournz/warden/pull/220) [`af78bcd`](https://github.com/delacournz/warden/commit/af78bcd71a1160176562b464a3f9e008f31a4f4c) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - `warden ui snapshot --settle` and every action's `--settle` wait for 500 ms of unchanged screen (was 250 ms), so a navigation push is never reported settled mid-transition.
+  - `warden ui wait stable` defaults to 500 ms of quiet (was 250 ms); an explicit `wait stable <ms>` is unchanged.
+
+### Patch Changes
+
+- [#238](https://github.com/delacournz/warden/pull/238) [`7a66603`](https://github.com/delacournz/warden/commit/7a6660371b10309527d3d7f976ef181226cca316) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - Fix `warden e2e` on Android failing with "a differently-signed copy ... is installed" on fresh emulators: an Android repack is now signed only with a keystore whose certificate equals the simulator base's signer.
+  - When no available keystore matches the base's signer, the repack falls back to a full simulator build and names the signers it compared, instead of producing an APK the device rejects.
+  - Build the Android base once and repacks keep its signer: warden saves the keystore Gradle signed the base with beside the cached APK (owner-only, never logged), so repacks no longer depend on a prebuilt `android/` dir.
+  - The default Android build (`dev`, `release`, kind-less) runs `expo prebuild` when `android/` is missing and then Gradle alone, instead of `expo run:android`, which installed the APK on whichever emulator was booted and failed with `INSUFFICIENT_STORAGE` on a full one.
+
+- [#224](https://github.com/delacournz/warden/pull/224) [`5e8d48a`](https://github.com/delacournz/warden/commit/5e8d48ae378e21368965042131e140f394081bff) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - iOS: a session's first read, while it retries a cold accessibility bridge (up to 60 s), now stops at the deadline of the `waitFor`, `expect` or `tap({ until })` it is part of instead of holding that wait for the whole 60 s
+  - iOS: a bound `rebind` after `app.launch` no longer counts as proof that the bridge is up, so a first read that stalls right after a launch still waits for the bridge instead of failing at once
+  - iOS: the e2e warm-up opens its driver with no cold budget of its own, so every `snapshot try N` in `logs/warm-<n>.log` is one read, 2 s then 5 s apart, instead of a nested 60 s loop
+
+- [#223](https://github.com/delacournz/warden/pull/223) [`020eb67`](https://github.com/delacournz/warden/commit/020eb672f7efce6632253df3e034f98049ef2d6b) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - `isVisible()`, `isHidden()` and `count()` on a degraded iOS read (the bridge fell back to host `ax`, or the read came back empty) now look again for at most 2 s before failing `READ_DEGRADED`, instead of the whole action timeout. A spec branching on them is no longer held for 30 s; a healthy read still answers at once, and none of them ever returns "absent" from a degraded read. `text()`, `read()`, `waitFor`, actions and matchers keep the action timeout.
+
+- [#218](https://github.com/delacournz/warden/pull/218) [`f3afe71`](https://github.com/delacournz/warden/commit/f3afe7164942472892e91c58ad840aa7ac867572) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - The e2e action always collects and uploads the `logs` artifact (native build logs), after a failed run too and whatever the `artifacts` input lists, even `none`. A failed run with `artifacts: all` now uploads `report,batches,logs,golden`.
+
+- [#229](https://github.com/delacournz/warden/pull/229) [`d85afd9`](https://github.com/delacournz/warden/commit/d85afd9e45981dbe9cf77c1e20a258ce6fae01b8) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - The e2e action no longer uploads the `golden` artifact after a green run whose golden was restored from the cache: the cache already holds it, and the GB upload was the slowest step of a warm run (~30 s). A failed run still uploads it, and `artifacts: golden` (or any list naming it) still collects it.
+
+- [#225](https://github.com/delacournz/warden/pull/225) [`76244c0`](https://github.com/delacournz/warden/commit/76244c0ba17422557cbdc3cd96b5c2c6c8c0bdf3) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - iOS: a password field (`secureTextEntry`) reads as `securefield` when a read falls back to host `ax`, empty or filled, so `fill` on it no longer fails with "fill did not take" while the accessibility bridge is degraded.
+  - `fill` on a field that only reads back as bullets confirms the bullet count against the typed length, and its failure message gives the length instead of the typed text.
+  - On a degraded read, `getByTestId` on a component that wraps its text (a badge around a `Text`) answers `toHaveText` / `text()` from the text its children render instead of failing with "only in the React tree".
+
+- [#230](https://github.com/delacournz/warden/pull/230) [`71f5de8`](https://github.com/delacournz/warden/commit/71f5de88490a3aa6b8a74113f39809f6eb1a0ebc) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - `tap({ until })` no longer takes elements leaving the screen for a landed tap. Right after a navigation, the screen it left and a keyboard going down stay in the accessibility tree until the transition ends, and a tap sent then is dropped; their leaving made `tap` stop re-sending, return after the full window without `until` ever showing, and the next assertion fail with "element not found". A tap now counts as landed only when something new shows or the tapped element is gone; otherwise it is re-sent from 750 ms on.
+
+- [#228](https://github.com/delacournz/warden/pull/228) [`fac34f7`](https://github.com/delacournz/warden/commit/fac34f7b5f0d60ee3fbfef9f2eadb174e982dbc2) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - iOS: a text input in a web view (Safari, a `WKWebView`) reads as `textbox` instead of `other`, and a `type=password` input as a secure `textbox`, empty, focused or filled, so `getByRole("textbox")`, `fill` and `warden ui fill role=textbox …` reach web form fields.
+- Updated dependencies []:
+  - @delacour/warden-e2e@0.15.0
+
 ## 0.14.0
 
 ### Minor Changes
