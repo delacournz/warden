@@ -15,7 +15,10 @@ const V1_SIGNATURE = /^META-INF\/[^/]+\.(SF|RSA|DSA|EC|MF)$/;
 export type AndroidKeystore = { path: string; alias: string; storePass: string; keyPass: string };
 
 export type AndroidRepackerOptions = {
-	/** signs the repack; default `~/.android/debug.keystore` (`androiddebugkey` / `android`) */
+	/**
+	 * tried first when signing the repack; the default `~/.android/debug.keystore` (`androiddebugkey` / `android`) is
+	 * tried after it. The first whose certificate equals the base's signer signs the repack.
+	 */
 	keystore?: AndroidKeystore | undefined;
 	/** Android SDK root; default `ANDROID_HOME`, `ANDROID_SDK_ROOT`, then `~/Library/Android/sdk` */
 	sdkRoot?: string | undefined;
@@ -69,13 +72,42 @@ function findTools(options: AndroidRepackerOptions): { tools: Tools } | { error:
 	};
 }
 
-function resolveKeystore(options: AndroidRepackerOptions): { keystore: AndroidKeystore } | { error: string } {
-	if (options.keystore) return { keystore: options.keystore };
+function resolveKeystores(options: AndroidRepackerOptions): { keystores: AndroidKeystore[] } | { error: string } {
 	const path = join(options.home ?? homedir(), ".android", "debug.keystore");
-	if (!existsSync(path)) {
+	const keystores: AndroidKeystore[] = options.keystore ? [options.keystore] : [];
+	if (existsSync(path)) keystores.push({ path, alias: "androiddebugkey", storePass: "android", keyPass: "android" });
+	if (keystores.length === 0) {
 		return { error: `no signing keystore: ${path} is missing (run any Android debug build once, or pass a keystore)` };
 	}
-	return { keystore: { path, alias: "androiddebugkey", storePass: "android", keyPass: "android" } };
+	return { keystores };
+}
+
+const SIGNER_SHA = /certificate SHA-256 digest: ([0-9a-f]+)/i;
+
+/** The first signer's SHA-256 certificate fingerprint of `apk`; undefined when `apksigner` cannot print one. */
+async function signerFingerprint(exec: Exec, apksigner: string, apk: string): Promise<string | undefined> {
+	const res = await exec([apksigner, "verify", "--print-certs", apk]);
+	if (res.exitCode !== 0) return undefined;
+	return SIGNER_SHA.exec(res.stdout)?.[1]?.toLowerCase();
+}
+
+/**
+ * Does `repack` carry the same certificate as `base`? A cached repack signed with another key cannot update the base's
+ * install. True when either cannot be read (nothing to compare), so a missing SDK never blocks a reuse.
+ */
+export async function androidKeepsSigner(
+	exec: Exec,
+	base: string,
+	repack: string,
+	options: AndroidRepackerOptions = {}
+): Promise<boolean> {
+	const found = findTools(options);
+	if ("error" in found) return true;
+	const [a, b] = await Promise.all([
+		signerFingerprint(exec, found.tools.apksigner, base),
+		signerFingerprint(exec, found.tools.apksigner, repack),
+	]);
+	return a === undefined || b === undefined || a === b;
 }
 
 /** Run a tool; a non-zero exit is an error naming the tool and its stderr (or stdout). */
@@ -192,7 +224,10 @@ function stageFile(from: string, stageDir: string, entry: string): void {
 
 type Swap = {
 	tools: Tools;
-	keystore: AndroidKeystore;
+	/** candidates in order; the first matching `baseSigner` signs */
+	keystores: AndroidKeystore[];
+	/** the base's signer certificate fingerprint; undefined when unreadable (the first keystore then signs unchecked) */
+	baseSigner: string | undefined;
 	baseEntries: string[];
 	plan: { res: Map<string, string>; assets: string[] };
 };
@@ -220,30 +255,63 @@ async function swapEntries(input: ApplyRepackInput, swap: Swap, work: string, ap
 	return added.success ? ok(undefined) : added;
 }
 
-/** zipalign `apk`, sign it (v2/v3) to `signed`, and verify. */
-async function alignAndSign(exec: Exec, swap: Swap, work: string, apk: string, signed: string): AsyncResult<void> {
-	const { tools, keystore } = swap;
-	const aligned = join(work, "aligned.apk");
-	const align = await run(exec, [tools.zipalign, "-p", "-f", "4", apk, aligned]);
-	if (!align.success) return align;
-	const sign = await run(exec, [
-		tools.apksigner,
+/** Why no keystore could keep the base's signer: a differently-signed copy cannot be updated in place on a device. */
+function signerMismatch(swap: Swap, tried: string[]): RepackFallback {
+	const names = tried.map((sha, i) => `${swap.keystores[i]?.path} (${sha.slice(0, 8)})`).join(", ");
+	return {
+		fallback: true,
+		reason: `no available keystore matches the base's signer ${swap.baseSigner?.slice(0, 8)} (tried ${names}): a repack signed with another key could not replace the base on a device, so a full build is needed`,
+	};
+}
+
+/** Sign the aligned apk with one keystore (v2/v3) to `signed`. */
+function signWith(exec: Exec, apksigner: string, ks: AndroidKeystore, aligned: string, signed: string) {
+	return run(exec, [
+		apksigner,
 		"sign",
 		"--ks",
-		keystore.path,
+		ks.path,
 		"--ks-key-alias",
-		keystore.alias,
+		ks.alias,
 		"--ks-pass",
-		`pass:${keystore.storePass}`,
+		`pass:${ks.storePass}`,
 		"--key-pass",
-		`pass:${keystore.keyPass}`,
+		`pass:${ks.keyPass}`,
 		"--out",
 		signed,
 		aligned,
 	]);
-	if (!sign.success) return sign;
-	const verify = await run(exec, [tools.apksigner, "verify", signed]);
-	return verify.success ? ok(undefined) : verify;
+}
+
+/**
+ * zipalign `apk`, sign it to `signed` with the first keystore whose certificate is the base's signer, and verify.
+ * A repack signed with any other key cannot update the base's install, so no match is a fallback, never a guess.
+ */
+async function alignAndSign(
+	exec: Exec,
+	swap: Swap,
+	work: string,
+	apk: string,
+	signed: string
+): AsyncResult<RepackFallback | undefined> {
+	const { tools, keystores, baseSigner } = swap;
+	const aligned = join(work, "aligned.apk");
+	const align = await run(exec, [tools.zipalign, "-p", "-f", "4", apk, aligned]);
+	if (!align.success) return align;
+	const tried: string[] = [];
+	for (const ks of keystores) {
+		const sign = await signWith(exec, tools.apksigner, ks, aligned, signed);
+		if (!sign.success) return sign;
+		const sha = baseSigner === undefined ? undefined : await signerFingerprint(exec, tools.apksigner, signed);
+		if (baseSigner !== undefined && sha !== baseSigner) {
+			tried.push(sha ?? "unknown");
+			rmSync(signed, { force: true });
+			continue;
+		}
+		const verify = await run(exec, [tools.apksigner, "verify", signed]);
+		return verify.success ? ok(undefined) : verify;
+	}
+	return ok(signerMismatch(swap, tried));
 }
 
 /** The signed APK holds the bundle and still has the base's package name (checked when `aapt2` is available). */
@@ -266,8 +334,9 @@ type Prepared = { swap: Swap } | { fallback: RepackFallback } | { error: string 
 async function prepare(options: AndroidRepackerOptions, input: ApplyRepackInput): Promise<Prepared> {
 	const found = findTools(options);
 	if ("error" in found) return found;
-	const signing = resolveKeystore(options);
+	const signing = resolveKeystores(options);
 	if ("error" in signing) return signing;
+	const baseSigner = await signerFingerprint(input.exec, found.tools.apksigner, input.baseArtifact);
 	const baseEntries = await listEntries(input.exec, input.baseArtifact);
 	if (!baseEntries.success) return { error: baseEntries.error };
 	const assetFiles = walk(input.bundle.assetsDir);
@@ -281,7 +350,9 @@ async function prepare(options: AndroidRepackerOptions, input: ApplyRepackInput)
 	}
 	const plan = planAssets(assetFiles, resources);
 	if ("fallback" in plan) return { fallback: { fallback: true, reason: fallbackReason(plan.fallback) } };
-	return { swap: { tools: found.tools, keystore: signing.keystore, baseEntries: baseEntries.data, plan } };
+	return {
+		swap: { tools: found.tools, keystores: signing.keystores, baseSigner, baseEntries: baseEntries.data, plan },
+	};
 }
 
 /**
@@ -302,15 +373,13 @@ export function androidRepacker(options: AndroidRepackerOptions = {}): ApplyRepa
 		try {
 			const apk = join(work, "unsigned.apk");
 			const signed = join(work, basename(baseArtifact));
-			const steps = [
-				() => swapEntries(input, swap, work, apk),
-				() => alignAndSign(exec, swap, work, apk, signed),
-				() => validate(exec, swap.tools, baseArtifact, signed),
-			];
-			for (const step of steps) {
-				const done = await step();
-				if (!done.success) return done;
-			}
+			const swapped = await swapEntries(input, swap, work, apk);
+			if (!swapped.success) return swapped;
+			const sign = await alignAndSign(exec, swap, work, apk, signed);
+			if (!sign.success) return sign;
+			if (sign.data !== undefined) return ok(sign.data);
+			const valid = await validate(exec, swap.tools, baseArtifact, signed);
+			if (!valid.success) return valid;
 			const artifact = join(outDir, basename(baseArtifact));
 			renameSync(signed, artifact);
 			return ok({ artifact });
