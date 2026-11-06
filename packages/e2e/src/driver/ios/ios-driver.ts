@@ -12,6 +12,7 @@ import type { E2eEnv } from "../../env";
 import type { ReadsA11yEvents } from "../a11y-events";
 import type { ReadsA11y } from "../a11y-read";
 import type { AlertBackend, ProbesFrontmost, ReadsAlertOn } from "../alerts";
+import type { AxWedgeState, RecoversAxWedge } from "../ax-wedge";
 import { bridgeStallSchema, formatBridgeStall, noteBridgeStall, toBridgeStall } from "../bridge-stall";
 import type { ClockRecorder } from "../clock-recorder";
 import type {
@@ -46,7 +47,15 @@ import { resolveHelper } from "./locate-helper";
 import { normalizeElement, normalizeElements, toSnapshot } from "./normalize";
 import { createSimctl, type Simctl } from "./simctl";
 import { connectSimd, type RequestOptions, type SimdClient, spawnSimd } from "./simd-client";
-import type { AlertButtonsData, HealthData, OpData, RebindData, SettleData, SnapshotData } from "./simd-protocol";
+import type {
+	AlertButtonsData,
+	AxWedgeData,
+	HealthData,
+	OpData,
+	RebindData,
+	SettleData,
+	SnapshotData,
+} from "./simd-protocol";
 import type { SimdSpawn } from "./simd-transport";
 import { typeTextBudgetMs } from "./type-budget";
 
@@ -66,6 +75,7 @@ export type IosDriver = Driver &
 	PastesText &
 	ReadsAlertOn &
 	ProbesFrontmost &
+	RecoversAxWedge &
 	ReadsA11y &
 	ReadsA11yEvents &
 	AuditsNatively;
@@ -343,7 +353,27 @@ function healthDetail(d: HealthData): Record<string, unknown> {
 		...(d.socket ? { socket: d.socket } : {}),
 		...(d.xcode ? { xcode: d.xcode } : {}),
 		...(d.state ? { state: d.state } : {}),
+		...(d.axWedge ? { axWedge: toAxWedgeState(d.axWedge) } : {}),
 	};
+}
+
+/** The wedge check's log read (≤ 20 s), restart (≤ 20 s) and SpringBoard wait (≤ 15 s), with room. */
+const AX_WEDGE_RECOVER_MS = 75_000;
+
+/** Only the fields the driver knows. */
+function toAxWedgeState(d: AxWedgeData): AxWedgeState {
+	const state: AxWedgeState = {
+		restarts: d.restarts,
+		maxRestarts: d.maxRestarts,
+		recovering: d.recovering,
+		...(d.checked !== undefined ? { checked: d.checked } : {}),
+	};
+	const last = d.last;
+	if (last?.outcome === "restarted")
+		state.last = { outcome: "restarted", agoMs: last.agoMs, ...(last.ms !== undefined ? { ms: last.ms } : {}) };
+	else if (last?.outcome === "not-wedged") state.last = { outcome: "not-wedged", agoMs: last.agoMs };
+	else if (last?.outcome === "failed") state.last = { outcome: "failed", agoMs: last.agoMs, error: last.error };
+	return state;
 }
 
 /** Carries a `DriverError` out of a `settleByHash` poll callback. */
@@ -847,6 +877,19 @@ export function createIosDriver(
 		return result.success ? { success: true, data: result.data.frontmost } : result;
 	}
 
+	/** The helper's wedged-accessibility-service check; `recover` runs it now (log read + restart: up to ~60 s). */
+	async function axWedge(o?: { recover?: boolean }): DriverResult<AxWedgeState> {
+		const recover = o?.recover === true;
+		const result = await request("axWedge", { recover }, { timeoutMs: recover ? AX_WEDGE_RECOVER_MS : 5_000 });
+		if (result.success) return { success: true, data: toAxWedgeState(result.data) };
+		if (predatesOp(result.error)) {
+			return driverErr("E_UNSUPPORTED", "this warden-simd predates the axWedge op", {
+				detail: { reason: "helper_outdated" },
+			});
+		}
+		return result;
+	}
+
 	async function health(): DriverResult<HealthInfo> {
 		const result = await request("health");
 		if (!result.success) return result;
@@ -940,6 +983,7 @@ export function createIosDriver(
 		alert,
 		alertOn,
 		isFrontmost,
+		axWedge,
 		readA11y: async (snapshot) =>
 			a11y
 				? a11y.read(snapshot)
