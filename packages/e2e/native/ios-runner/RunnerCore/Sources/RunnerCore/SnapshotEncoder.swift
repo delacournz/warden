@@ -66,7 +66,7 @@ enum SnapshotEncoder {
   // MARK: - Node
 
   static func convert(_ node: RawNode, path: String, depth: Int, space: FrameSpace) -> Element {
-    let frame = space.toPortrait(node.frame)
+    let frame = space.toPortrait(node.frame.finiteOrZero)
     let screenFrame = Rect(x: 0, y: 0, width: space.width, height: space.height)
     let traits = traits(for: node)
     let rawType = node.type.isEmpty ? "Other" : node.type

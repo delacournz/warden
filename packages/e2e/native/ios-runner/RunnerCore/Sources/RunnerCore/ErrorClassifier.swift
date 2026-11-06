@@ -15,6 +15,9 @@ enum ErrorClassifier {
     {
       return WireError(.noElement, "\(op): \(text)", detail: detail)
     }
+    if messages.contains(where: SnapshotIssue.isTransient) {
+      return WireError(.axUnavailable, "\(op): \(text)", detail: detail)
+    }
     if lower.contains("timed out") || lower.contains("unable to monitor event loop") || lower.contains("not idle") {
       return WireError(.appNotResponding, "\(op): \(text)", detail: detail)
     }
