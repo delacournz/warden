@@ -176,6 +176,11 @@ export type Snapshot = {
 	flat: Element[];
 	truncated: boolean;
 	modal?: ModalInfo;
+	/**
+	 * Set when `backend` answered because this reader failed or was skipped first (iOS: `axbridge` stalled, `ax` read in
+	 * its place). The fallback reader can lack what the first one has, so a missing node on such a snapshot is not final.
+	 */
+	fellBackFrom?: SnapshotBackend;
 };
 
 export type Orientation = "portrait" | "portraitUpsideDown" | "landscapeLeft" | "landscapeRight";
