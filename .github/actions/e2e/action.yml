@@ -277,6 +277,7 @@ runs:
         SUITE_TIMEOUT: ${{ inputs.suite-timeout-minutes }}
         WORKSPACE: ${{ github.workspace }}
       run: |
+        set +e
         set -uo pipefail
         case "$REPORT" in /*) report="$REPORT" ;; *) report="$WORKSPACE/$REPORT" ;; esac
         args=(e2e)
@@ -300,8 +301,9 @@ runs:
         watchdog_pid=$!
         wait "$suite_pid"
         code=$?
-        kill "$watchdog_pid" 2>/dev/null
         pkill -P "$watchdog_pid" 2>/dev/null
+        kill "$watchdog_pid" 2>/dev/null
+        wait "$watchdog_pid" 2>/dev/null
         {
           echo "report-path=$report"
           echo "exit-code=$code"
