@@ -119,12 +119,12 @@ describe("action.yml job timing", () => {
 		expect(timing?.if).toBe("always()");
 		expect(timing?.run).toContain("job-timing.sh");
 		expect(timing?.env).toEqual({
-			JOB_TIMING_TOKEN: "${{ inputs.github-token }}",
-			ACTION_STARTED: "${{ steps.prepare.outputs.started }}",
-			SUITE_STARTED: "${{ steps.run.outputs.started }}",
-			SUITE_ENDED: "${{ steps.run.outputs.ended }}",
+			JOB_TIMING_TOKEN: `\${{ inputs.github-token }}`,
+			ACTION_STARTED: `\${{ steps.prepare.outputs.started }}`,
+			SUITE_STARTED: `\${{ steps.run.outputs.started }}`,
+			SUITE_ENDED: `\${{ steps.run.outputs.ended }}`,
 		});
-		expect(action.inputs["github-token"]?.default).toBe("${{ github.token }}");
+		expect(action.inputs["github-token"]?.default).toBe(`\${{ github.token }}`);
 	});
 
 	test("the token never reaches the suite's own step", () => {

@@ -49,7 +49,7 @@ inputs:
     description: Exported as NPM_TOKEN for `install-command` (private registries read it from bunfig.toml / .npmrc).
     default: ${{ github.token }}
   github-token:
-    description: Reads this job's start from the jobs API for the `job timing` line (needs `actions: read`). Without it the line times the action alone. Never passed to warden.
+    description: "Reads this job's start from the jobs API for the `job timing` line (needs `actions: read`). Without it the line times the action alone. Never passed to warden."
     default: ${{ github.token }}
   headroom-gb:
     description: GB of RAM warden keeps free of simulators (`WARDEN_CAPACITY_HEADROOM_GB`). Empty means 1 on a host with 16 GB or less, warden's own default above.
