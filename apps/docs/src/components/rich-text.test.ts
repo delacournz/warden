@@ -3,7 +3,7 @@ import { plainText } from "./rich-text";
 
 describe("plainText", () => {
 	test("strips the two marks and nothing else", () => {
-		expect(plainText("Run `warden claim ios`, or read [the docs](https://warden.delacour.co.nz/docs).")).toBe(
+		expect(plainText("Run `warden claim ios`, or read [the docs](https://warden.co.nz/docs).")).toBe(
 			"Run warden claim ios, or read the docs."
 		);
 	});

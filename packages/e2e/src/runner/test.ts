@@ -1,5 +1,6 @@
 import { afterAll as bunAfterAll, beforeAll as bunBeforeAll, describe as bunDescribe, test as bunTest } from "bun:test";
 import type { Platform } from "../driver/driver.types";
+import { missingRequirements, type Requirement } from "../driver/requirements";
 import { E2eError } from "../errors";
 import { getSession } from "../session";
 import { buildBaseFixtures, type FixtureEntry, type FixtureSetup, runAttempt, runnerTiming } from "./attempt";
@@ -25,6 +26,11 @@ export type TestOptions = {
 	only?: boolean;
 	/** run only on these platforms (decided at collection time from `WARDEN_PLATFORM`) */
 	platforms?: readonly Platform[];
+	/**
+	 * driver capabilities the test needs (`pinch`, `multiTouch`). The test is skipped, when collected, on a device whose
+	 * driver is known to lack one: a physical iPhone has neither. Elsewhere the driver decides at run time.
+	 */
+	requires?: readonly Requirement[];
 	/** extra attempts after a failure; only the last attempt writes to `results.jsonl` */
 	retry?: number;
 };
@@ -95,6 +101,8 @@ function registerTest<F extends object>(
 		options.platforms !== undefined &&
 		defaults.platform !== undefined &&
 		!options.platforms.includes(defaults.platform);
+	const lacking =
+		missingRequirements({ platform: defaults.platform, deviceKind: defaults.deviceKind }, options.requires).length > 0;
 	const only = mode === "only" || options.only === true;
 	if (only) markOnly();
 
@@ -117,7 +125,7 @@ function registerTest<F extends object>(
 	};
 	const bunOptions = { timeout: bunTimeoutMs, retry };
 
-	if (mode === "skip" || options.skip === true || wrongPlatform) bunTest.skip(title, run, bunOptions);
+	if (mode === "skip" || options.skip === true || wrongPlatform || lacking) bunTest.skip(title, run, bunOptions);
 	else if (only) bunTest.only(title, run, bunOptions);
 	else bunTest(title, run, bunOptions);
 }

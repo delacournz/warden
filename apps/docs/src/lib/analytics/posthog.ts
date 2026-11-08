@@ -18,6 +18,13 @@ import type { EventData } from "./events";
  * has accepted: external script loading is off, so it has to be bundled.
  */
 
+/**
+ * Registered on every browser event. The token is shared with every Delacour
+ * site, so one PostHog project holds them all and `site` is what tells
+ * warden's events apart; `surface` separates them from the server's.
+ */
+export const SUPER_PROPERTIES = { site: "warden", surface: "web" } as const;
+
 /** The PostHog app the proxy fronts. Only the toolbar's links use it. */
 const UI_HOST = "https://us.posthog.com";
 
@@ -95,6 +102,7 @@ export function startPosthog(posthog: PosthogConfig = ANALYTICS.posthog): void {
 	void Promise.all([import("posthog-js"), recorder]).then(([{ default: instance }]) => {
 		if (client) return;
 		instance.init(posthog.token, posthogOptions(posthog));
+		instance.register(SUPER_PROPERTIES);
 		client = instance;
 
 		const replay = consentReplay(stored, instance.get_explicit_consent_status());

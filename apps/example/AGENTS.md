@@ -59,6 +59,13 @@ A demo app for dogfooding warden end to end: Expo SDK 57 + Expo Router + Uniwind
 | `/todo/[id]` | detail `Card`, toggle and delete. Deep link `warden-example://todo/<id>` | `todo-detail-*` |
 | `/(tabs)/settings` | `Avatar`, `Switch`es (dark mode via `Uniwind.setTheme`), gesture playground row, sign out | `settings-*` |
 | `/gestures` | pinch / two-finger rotate + pan canvas, one-finger trace pad, readouts committed on gesture end, Reset. Deep link `warden-example://gestures`. Rotation is degrees, clockwise positive | `gestures-*` |
+| `/conditions` | NetInfo state + offline banner, `Fetch` (HTTPS GET, 8 s timeout, one retry after 3 s with the same `Idempotency-Key`), live `expo-location` coordinates with a 150 m geofence (`Inside` / `Outside`, last `Entered` / `Exited`) and permission state, wall clock + 14-day trial (`Active` / `Expired`) with a Refresh button. Deep link `warden-example://conditions`. No sign-in gate | `conditions-*` |
+| `/biometrics` | vault on the `Showcase` shell: face glyph, `status` / `error` readout, attempt log, Face ID unlock. Deep link `warden-example://biometrics` | `bio-*` |
+| `/network` | probes a 1 KB HTTPS download every ~1.5 s: signal glyph, latency strip (24 requests), `Online` / `Slow link` (median > 300 ms) / `Requests failing` / `Offline`, Pause probes. Deep link `warden-example://network` | `net-*` |
+| `/location` | live `expo-location` track, 150 m geofence around the first fix, speed / distance / fixes readout, fix log. Deep link `warden-example://location` | `loc-*` |
+| `/clock` | 14-day trial dial driven by `Date.now()`, clock-jump log. Deep link `warden-example://clock` | `clk-*` |
+| `/a11y` | accessibility showcase: heading, labelled switch, adjustable slider, labelled + decorative image, polite live-region counter, `Announce` ("Saved"), row with custom actions (Archive / Delete), hinted button, live screen reader / reduce motion / bold text readouts. `?bad=1` (deep link `warden-example://a11y?bad=1`) adds known failures: unnamed icon button, 20x20 target, "Submit button" (role in name), visible text not in the name. No sign-in gate | `a11y-*` |
+| `/camera` | expo-camera preview with QR scan, photo through the preview, back/front flip, the image picker's camera; readouts `ready` / `facing` / `qr` / `photo` / `picked` / `error` (`none` when empty). Deep link `warden-example://camera`. No sign-in gate. Run by the `camera` suite (`warden e2e camera`: suite feed `qr-hello.png`, Android claimed with `--camera`; iOS asks for camera access for real, the spec uses `systemAlerts: "accept"`) | `camera-*` |
 
 ### e2e
 
@@ -71,15 +78,17 @@ Specs are `bun test` specs driven by `@delacour/warden-e2e`; `warden e2e` leases
 - Deep links: `device.openLink(url)` answers iOS's "Open in warden-example?" sheet itself; `openDeepLink` opens it again (3 links, 6 s each) when the target screen did not show.
 - `Badge` / `Chip` text: assert on the container (`expect(locator).toHaveText("2 left")`); `locator.text()` falls back to the descendant text when iOS leaves the container's own label empty.
 - `warden.config.ts` defines:
-  - project `example`: a Release build keyed on native + JS;
-  - variant `dev`: the Debug dev client, keyed on native only;
-  - suite `example`: 2 sims, install (skipped when the sim already has this build; no uninstall, state is in-memory), slim, and the spec → screen `entries` that `warden affected` uses;
-  - suite `example-dev`: the same specs on the dev client. warden starts and verifies its own Metro (`metro`, which also sets `--initialUrl` and turns the Expo dev menu off), and one spec process per device runs its share of the specs (the default `isolate: "device"`);
-  - both suites set `spec.bundleId`, the app the specs drive (`app.open()` launches it with `WARDEN_LAUNCH_ARGS`).
+  - project `example`: build kinds. `simulator` (the default of `warden e2e`) is a Release build with no JS embedded, built once per native fingerprint, and this worktree's JS (`EXPO_PUBLIC_E2E=1` baked in) is repacked into it in seconds (`warden repack ios`); `dev` is the Debug dev client; variant `bench` is the benchmark's Release build with the JS embedded;
+  - suite `example`: 2 sims, install (skipped when the sim already has this build; no uninstall, state is in-memory), slim, and the spec → screen `entries` that `warden affected` uses. `--dev` runs the same suite on the dev client: warden starts and verifies its own Metro (the suite's `metro`, which also sets `--initialUrl` and turns the Expo dev menu off), and one spec process per device runs its share of the specs (the default `isolate: "device"`). `metro` applies only with `--dev`;
+  - `spec.bundleId` is the app the specs drive (`app.open()` launches it with `WARDEN_LAUNCH_ARGS`).
+
+The accessibility spec (`a11y.e2e.ts`) runs in the `a11y` suite (`warden e2e a11y`), not `example`: its `a11y` key launches iOS with the injected library. Android drives real TalkBack for the `next` / `activate` test.
+
+The network / location / clock specs (`network-*`, `location-*`, `clock-*`) run in the `conditions` suite (`warden e2e conditions`), not `example`: it declares `conditions.network: "online"`, so on iOS every launch carries the network dylib and a spec can change network or clock mid-test. `warden e2e conditions` needs the dylib built (`packages/e2e/native/dist/libwarden-inject.dylib`).
 
 ```bash
 bun run e2e --all                    # warden e2e example (this checkout's warden); drop --all for the specs this branch needs
-bun run e2e:dev -- --all             # warden e2e example-dev: dev client + warden's Metro
+bun run e2e:dev -- --all             # warden e2e example --dev: dev client + warden's Metro
 bun run e2e:affected -- --explain    # which specs this branch needs
 bun run e2e:spec todos               # one spec
 WARDEN_UDID=<udid> WARDEN_BUNDLE_ID=nz.co.delacour.warden.example bun test --preload @delacour/warden-e2e/preload e2e/todos.e2e.ts   # by hand, on an installed build
@@ -96,4 +105,5 @@ Specs read the accessibility (AX) tree, not the React tree: a `testID` is only e
 ### Simulator-only crash and sheets
 
 - `react-native-pulsar` (haptics) is patched (`patches/react-native-pulsar@1.7.0.patch`, a root `patchedDependencies` entry): on `TARGET_OS_SIMULATOR` its native module no longer creates the `Pulsar` object. That object starts an AVAudioEngine whose AURemoteIO RPC times out at random on a simulator, aborting the app (SIGABRT on thread `com.pulsar.audio`, crash reports `wardenexample-*.ips`) and sending a running spec back to the welcome screen. JS needs no gate: every call is a no-op on a simulator, which has no haptics anyway. A real device is unaffected. Gating the JS `import` alone does not help, the native module starts at launch. Drop the patch when upstream (software-mansion/pulsar) stops starting the engine on a simulator. Changing it changes the native fingerprint, so the next `warden e2e` rebuilds.
-- The sign-in fields opt out of iOS credential AutoFill in e2e builds (`NO_AUTOFILL` in `src/app/sign-in.tsx`: `autoComplete="off"`, `textContentType="oneTimeCode"`; `EXPO_PUBLIC_E2E=1`). Without it iOS raised a "Save Password?" sheet (hosted by SafariViewService, cold-launched) anywhere from 1 to 6 s after sign-in. A spec that typed meanwhile (`fill(todo-input)`) sent its keys to no focused field and the dev client reloaded its JS, back to the welcome screen: the `example-dev` `todos` flake (about 40% of runs, never on Release). Do not remove it, and do not wait for the sheet: it is gone.
+- The sign-in fields opt out of iOS credential AutoFill in e2e builds (`NO_AUTOFILL` in `src/app/sign-in.tsx`: `autoComplete="off"`, `textContentType="oneTimeCode"`; `EXPO_PUBLIC_E2E=1`). Without it iOS raised a "Save Password?" sheet (hosted by SafariViewService, cold-launched) anywhere from 1 to 6 s after sign-in. A spec that typed meanwhile (`fill(todo-input)`) sent its keys to no focused field and the dev client reloaded its JS, back to the welcome screen: the dev-client (`--dev`) `todos` flake (about 40% of runs, never on Release). Do not remove it, and do not wait for the sheet: it is gone.
+- Android: `NO_AUTOFILL` also sets `importantForAutofill: "no"` (RN `TextInput`, documented values `auto|no|noExcludeDescendants|yes|yesExcludeDescendants`). Without it Google Password Manager raised a "Save password to Google Password Manager?" sheet (`autofill_save`) over the app after a valid sign-in on a real Android 14 phone, and `todos-screen` never became visible. The specs' `systemAlerts: "dismiss"` is the backstop: warden closes that sheet with Back and never taps Never / Continue (both write to the user's Google account).

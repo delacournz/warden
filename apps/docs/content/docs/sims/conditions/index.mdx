@@ -1,0 +1,153 @@
+---
+title: Device conditions
+description: Change the network, GPS location, clock, biometrics, permissions, camera feed, locale, accessibility settings and battery of a simulator or emulator from a spec, a suite or warden ui, and have it undone on release.
+icon: Signal
+---
+
+import { Accessibility, BatteryMedium, BellRing, Camera, Clock, FingerprintPattern, Languages, MapPin, ShieldCheck, Wifi } from "lucide-react";
+
+<DemoTabs ids={["network", "fault", "location", "clock", "biometrics", "camera", "a11y", "events"]} />
+
+A spec can put the device into a condition (offline, 3G, one host failing, a moving GPS fix, a clock two weeks ahead, a failed Face ID, a denied permission, a QR code in front of the camera) and check what the app does. Everything a test changes belongs to its lease: when the test ends, or the lease is released or reclaimed, warden puts it back, so the next agent never inherits a shaped device.
+
+```ts title="e2e/network-offline.e2e.ts"
+import { expect, test } from "@delacour/warden-e2e";
+
+test("cold start offline shows the banner, going online recovers the fetch", async ({ app, device, screen }) => {
+  await device.network.set("offline"); // before the app opens: a cold start offline
+  await app.open();
+  await expect(screen.getByTestId("conditions-offline-banner")).toBeVisible({ timeout: 15_000 });
+
+  await device.network.set("online");
+  await expect(screen.getByTestId("conditions-offline-banner")).toBeHidden({ timeout: 15_000 });
+});
+```
+
+The example app has a Conditions screen (`warden-example://conditions`) and a spec for each area in `apps/example/e2e`.
+
+## Conditions
+
+<Cards className="lg:grid-cols-3">
+<Card icon={<Wifi />} title="Network" href="/docs/sims/conditions/network">Offline, presets from `edge` to `wifi`, a flapping link, one failing host.</Card>
+<Card icon={<MapPin />} title="Location" href="/docs/sims/conditions/location">A GPS point, a route or GPX file played at a speed, bundled scenarios.</Card>
+<Card icon={<Clock />} title="Clock" href="/docs/sims/conditions/clock">Advance the wall clock, jump to an instant, freeze it on iOS.</Card>
+<Card icon={<FingerprintPattern />} title="Biometrics" href="/docs/sims/conditions/biometrics">Enroll, match and fail Face ID, Touch ID and fingerprint on the real prompt.</Card>
+<Card icon={<ShieldCheck />} title="Permissions" href="/docs/sims/conditions/permissions">Grant, deny or unset location, camera, photos and more before launch.</Card>
+<Card icon={<Camera />} title="Camera" href="/docs/sims/conditions/camera">An image or video in the app's real camera: preview, capture, QR scanning.</Card>
+<Card icon={<Languages />} title="Locale and timezone" href="/docs/sims/conditions/locale">Another language, region or timezone for the app.</Card>
+<Card icon={<Accessibility />} title="Accessibility settings" href="/docs/sims/conditions/accessibility">Text size, bold text, contrast, reduce motion, screen reader on.</Card>
+<Card icon={<BatteryMedium />} title="Battery" href="/docs/sims/conditions/battery">Level and charging state.</Card>
+<Card icon={<BellRing />} title="Push and memory warnings" href="/docs/sims/conditions/events">One-off events: a push payload on iOS, a memory trim on Android.</Card>
+</Cards>
+
+## Platform support
+
+Simulators and emulators only: every condition fails `E_UNSUPPORTED` on a physical device.
+
+| Condition | iOS simulator | Android emulator |
+|---|---|---|
+| [Network](/docs/sims/conditions/network) | the app's `NSURLSession` traffic, through a per-app proxy | native speed and offline; loss and faults through the system proxy |
+| [Location](/docs/sims/conditions/location) | points and routes; a route plays once | points and routes, looped or not; the last fix stays |
+| [Clock](/docs/sims/conditions/clock) | the app's clock; can be frozen | the emulator's clock; cannot be frozen |
+| [Biometrics](/docs/sims/conditions/biometrics) | Face ID and Touch ID | fingerprint |
+| [Permissions](/docs/sims/conditions/permissions) | every name but `camera` and `notifications` | the names the manifest declares |
+| [Camera](/docs/sims/conditions/camera) | image or video, swapped live; QR decoded | a `--camera` emulator; a video feed reboots it |
+| [Locale and timezone](/docs/sims/conditions/locale) | the next launch | live; locale needs Android 13+ |
+| [Accessibility settings](/docs/sims/conditions/accessibility) | text size, bold, contrast, reduce motion; a simulated screen reader | text size, bold, reduce motion; real TalkBack |
+| [Battery](/docs/sims/conditions/battery) | status bar only | what the app reads |
+| [Push and memory warnings](/docs/sims/conditions/events) | push | memory warning |
+
+On iOS, network and clock reach only an app launched with warden's network dylib: declare them in the suite's `conditions`, or pass `{ relaunch: true }` ([how it reaches the app](/docs/sims/conditions/network#how-it-reaches-the-app)).
+
+## Three places to set one
+
+The same conditions are available from a spec, as a suite's starting state, and by hand while you drive a device.
+
+<Tabs items={["Spec", "Suite", "By hand"]}>
+<Tab value="Spec">
+
+```ts
+await device.network.set("3g");
+await device.location.scenario("city-run");
+await device.clock.advance("15d");
+await device.permissions.set({ location: "denied" });
+```
+
+</Tab>
+<Tab value="Suite">
+
+```ts title="warden.config.ts"
+conditions: {
+  network: "3g",
+  location: "city-run",
+  clock: { offset: "15d" },
+  permissions: { location: "denied" },
+},
+```
+
+</Tab>
+<Tab value="By hand">
+
+```bash
+warden ui network set 3g
+warden ui location scenario city-run
+warden ui clock advance 15d
+warden ui permission set location=denied
+```
+
+</Tab>
+</Tabs>
+
+## Suite baseline: the `conditions` key
+
+`conditions` at the top level of `warden.config.ts`, or inside a suite, is the device state every spec starts from. It is applied before the app launches and put back after each spec.
+
+```ts title="warden.config.ts"
+e2e: {
+  conditions: {
+    ...exampleSuite,
+    include: ["{network-*,location-*,clock-*}"],
+    conditions: { network: "online" },
+  },
+},
+```
+
+| Area | Value |
+|---|---|
+| `network` | `"online"`, `"offline"`, a preset or `{ latencyMs, jitterMs, downKbps, upKbps, lossPct }` |
+| `location` | `{ lat, lon, altM? }` or a scenario name |
+| `clock` | an ISO instant (it keeps running), `{ at, frozen? }` or `{ offset: "2d" }` |
+| `permissions` | `{ location: "denied", camera: "granted", … }` |
+| `locale` | a BCP 47 tag |
+| `timezone` | an IANA name |
+| `a11y` | `{ textSize?, boldText?, contrast?, reduceMotion? }` |
+
+A suite's key replaces the top-level one for that area. A bad value fails config load. On iOS, declaring `network` or `clock` launches the app with the dylib, which is why the example runs its condition specs in a separate `conditions` suite: the other specs keep a plain launch.
+
+```bash
+warden e2e conditions --specs network-offline,network-slow,location-route,clock-trial
+```
+
+The camera feed is the suite's own `camera` key, not a `conditions` key ([Camera](/docs/sims/conditions/camera#in-a-suite)). Biometrics is not one either: enrolled devices come from `biometrics: true` ([Biometrics](/docs/sims/conditions/biometrics#enrolled-devices-biometrics-true)).
+
+## Timeline
+
+```ts
+const run = await device.timeline([
+  { at: "0s", network: "offline" },
+  { at: "5s", network: "online", location: { lat: 37.33, lon: -122.0 } },
+]);
+```
+
+A timeline changes the network and the location on a schedule. `at` is an offset from now. A step sets a condition, not a flap. The returned run has the same `stop()`, `done` and `status()` as a [flap](/docs/sims/conditions/network#flapping).
+
+## What is undone on release
+
+Release, gc and the end of a spec put the device back:
+
+- network online, faults cleared, the shaping proxy, the flap scheduler and the route ticker stopped
+- the location cleared on iOS (Android keeps the last GPS fix: the emulator cannot unset one)
+- the clock real again; a still-running injected iOS app is reset to online and the real clock
+- permissions reset, text size and contrast or font scale and bold back to defaults, the app locale cleared, the timezone back, the battery real, the camera feed off
+
+Each change a spec makes is a `condition` line in `results.jsonl`.

@@ -1,4 +1,5 @@
 import type { Point } from "../driver/driver.types";
+import { canActOnElements } from "../driver/element-actions";
 import { E2eError } from "../errors";
 import {
 	assertDegrees,
@@ -73,6 +74,26 @@ function isFinitePoint(point: Point): boolean {
 	return Number.isFinite(point.x) && Number.isFinite(point.y);
 }
 
+/** A direction swipe: the driver's own element scroll when it has one, else a swipe across the screen. */
+async function swipeDirection(rt: Runtime, options: Extract<ScreenSwipeOptions, { direction: SwipeDirection }>) {
+	const observed = await rt.observe();
+	if (canActOnElements(observed.driver)) {
+		if (rt.drive("swipe", await observed.driver.scrollElement(options.direction))) return;
+	}
+	const vector = swipeVector(options.direction, screenRect(observed.snapshot.screen), options.momentum);
+	rt.drive("swipe", await observed.driver.swipe(vector.from, vector.to, vector.options));
+}
+
+/** A swipe between two points, used as given (no observation). */
+async function swipeBetween(rt: Runtime, host: ScreenHost, options: Extract<ScreenSwipeOptions, { from: Point }>) {
+	if (!isFinitePoint(options.from) || !isFinitePoint(options.to)) {
+		throw new E2eError("INVALID_ARGUMENT", "swipe needs finite coordinates for from and to");
+	}
+	const driver = await host.driver();
+	const opts = options.durationMs === undefined ? undefined : { durationMs: options.durationMs };
+	rt.drive("swipe", await driver.swipe(options.from, options.to, opts));
+}
+
 export function createScreen(host: ScreenHost): Screen {
 	const rt = new Runtime(host);
 	const lazy = (query: Query): Locator => new Locator({ kind: "query", query }, rt);
@@ -88,18 +109,8 @@ export function createScreen(host: ScreenHost): Screen {
 			);
 		}
 		return rt.step("swipe", async () => {
-			if ("direction" in options) {
-				const observed = await rt.observe();
-				const vector = swipeVector(options.direction, screenRect(observed.snapshot.screen), options.momentum);
-				rt.drive("swipe", await observed.driver.swipe(vector.from, vector.to, vector.options));
-				return;
-			}
-			if (!isFinitePoint(options.from) || !isFinitePoint(options.to)) {
-				throw new E2eError("INVALID_ARGUMENT", "swipe needs finite coordinates for from and to");
-			}
-			const driver = await host.driver();
-			const opts = options.durationMs === undefined ? undefined : { durationMs: options.durationMs };
-			rt.drive("swipe", await driver.swipe(options.from, options.to, opts));
+			if ("direction" in options) return swipeDirection(rt, options);
+			return swipeBetween(rt, host, options);
 		});
 	};
 

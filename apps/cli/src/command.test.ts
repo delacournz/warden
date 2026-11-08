@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { Chalk } from "chalk";
 import { type Command, type CommandEntry, defineCommand, runLazyProgram, runProgram } from "./command";
+import { reportError } from "./output";
+import { withSpinner } from "./spinner-context";
+import { commandPathOf } from "./telemetry/properties";
+import type { Finished, Tracker } from "./telemetry/tracker";
 import { scriptedUi, type TestContext, testContext } from "./testing";
 
 let ctx: TestContext | undefined;
@@ -142,5 +146,187 @@ describe("runLazyProgram", () => {
 		const { code } = await lazy(["alpha", "--nope"], scriptedUi({ rich: true }));
 		expect(code).toBe(1);
 		expect(ctx?.stderr.join("\n")).toContain("✗ warden alpha: unknown option '--nope'");
+	});
+});
+
+describe("runProgram --json failures", () => {
+	const failing = defineCommand({
+		name: "delta",
+		summary: "fails",
+		register: (cmd, ctx, done) => {
+			cmd
+				.option("--json", "machine-readable output")
+				.option("--wrote", "print a document before failing")
+				.option("--silent", "fail without reporting why")
+				.option("--spin", "report the error from under a spinner")
+				.argument("[rest...]")
+				.action(async (_rest, opts) => {
+					if (opts.wrote) ctx.out(JSON.stringify({ unknown: ["x"] }));
+					else if (opts.spin) await withSpinner(ctx, "working", async (sctx) => reportError(sctx, "delta", "boom"));
+					else if (!opts.silent) {
+						reportError(ctx, "delta", "boom");
+						reportError(ctx, "delta", "and then this");
+					}
+					done(opts.silent ? 4 : 1);
+				});
+		},
+	});
+	const nested = defineCommand({
+		name: "eps",
+		summary: "has a subcommand",
+		register: (cmd, ctx, done) => {
+			cmd
+				.command("sub")
+				.option("--json", "machine-readable output")
+				.action(() => {
+					reportError(ctx, "eps sub", "nope");
+					done(2);
+				});
+		},
+	});
+
+	function runJson(argv: string[]): Promise<number> {
+		ctx = testContext(argv);
+		return runProgram([alpha, failing, nested], argv, ctx);
+	}
+	const doc = () => JSON.parse(ctx?.stdout.join("\n") ?? "");
+
+	test("a reported failure → one envelope on stdout with the first error, exit code kept, stderr still says it", async () => {
+		expect(await runJson(["delta", "--json"])).toBe(1);
+		expect(ctx?.stdout).toHaveLength(1);
+		expect(doc()).toEqual({ ok: false, command: "delta", error: { code: "failed", message: "boom" } });
+		expect(ctx?.stderr.join("\n")).toContain("warden delta: boom");
+	});
+
+	test("the command path names the subcommand", async () => {
+		expect(await runJson(["eps", "sub", "--json"])).toBe(2);
+		expect(doc()).toEqual({ ok: false, command: "eps sub", error: { code: "failed", message: "nope" } });
+	});
+
+	test("an error reported from under a spinner is still the envelope's", async () => {
+		expect(await runJson(["delta", "--json", "--spin"])).toBe(1);
+		expect(doc().error.message).toBe("boom");
+	});
+
+	test("a command that already printed its document gets no second one", async () => {
+		expect(await runJson(["delta", "--json", "--wrote"])).toBe(1);
+		expect(ctx?.stdout).toEqual([JSON.stringify({ unknown: ["x"] })]);
+	});
+
+	test("a failure nobody reported still gets an envelope, naming the exit code", async () => {
+		expect(await runJson(["delta", "--json", "--silent"])).toBe(4);
+		expect(doc()).toEqual({ ok: false, command: "delta", error: { code: "failed", message: "warden delta exited 4" } });
+	});
+
+	test("a usage error under --json → code usage", async () => {
+		expect(await runJson(["delta", "--json", "--nope"])).toBe(1);
+		expect(doc()).toEqual({
+			ok: false,
+			command: "delta",
+			error: { code: "usage", message: "unknown option '--nope'" },
+		});
+	});
+
+	test("without --json (or with it only after --) stdout stays empty", async () => {
+		expect(await runJson(["delta"])).toBe(1);
+		expect(await runJson(["delta", "--nope"])).toBe(1);
+		expect(ctx?.stdout).toEqual([]);
+		expect(await runJson(["delta", "--", "--json"])).toBe(1);
+		expect(ctx?.stdout).toEqual([]);
+	});
+
+	test("success prints no envelope", async () => {
+		expect(await runJson(["alpha", "--json"])).toBe(3);
+		expect(doc().command).toBe("alpha");
+		ctx?.cleanup();
+		const ok = defineCommand({
+			name: "zeta",
+			summary: "ok",
+			register: (cmd, _ctx, done) => {
+				cmd.option("--json", "machine-readable output").action(() => done(0));
+			},
+		});
+		ctx = testContext([]);
+		expect(await runProgram([ok], ["zeta", "--json"], ctx)).toBe(0);
+		expect(ctx.stdout).toEqual([]);
+	});
+});
+
+describe("runProgram telemetry", () => {
+	type Seen = { began: string[]; finished: Finished[] };
+
+	function withTracker(argv: string[], commands: Command[] = [alpha]): Promise<{ code: number; seen: Seen }> {
+		const seen: Seen = { began: [], finished: [] };
+		const tracker: Tracker = {
+			begin: async (command) => void seen.began.push(commandPathOf(command)),
+			finish: async (result) => void seen.finished.push(result),
+		};
+		ctx = testContext(argv, { tracker });
+		return runProgram(commands, argv, ctx).then((code) => ({ code, seen }));
+	}
+
+	test("begins before the action and finishes once with the exit code", async () => {
+		const { code, seen } = await withTracker(["alpha"]);
+		expect(code).toBe(3);
+		expect(seen.began).toEqual(["alpha"]);
+		expect(seen.finished).toEqual([{ outcome: "error", exitCode: 3 }]);
+	});
+
+	test("a zero exit is a success without an exit code, 130 is cancelled", async () => {
+		const ok = defineCommand({ name: "ok", summary: "s", register: (cmd, _c, done) => void cmd.action(() => done(0)) });
+		const stop = defineCommand({
+			name: "stop",
+			summary: "s",
+			register: (cmd, _c, done) => void cmd.action(() => done(130)),
+		});
+		expect((await withTracker(["ok"], [ok])).seen.finished).toEqual([{ outcome: "success" }]);
+		expect((await withTracker(["stop"], [stop])).seen.finished).toEqual([{ outcome: "cancelled", exitCode: 130 }]);
+	});
+
+	test("a throwing action finishes with the error, then still throws", async () => {
+		const boom = defineCommand({
+			name: "boom",
+			summary: "s",
+			register: (cmd) =>
+				void cmd.action(() => {
+					throw new Error("kaboom");
+				}),
+		});
+		const seen: Seen = { began: [], finished: [] };
+		ctx = testContext(["boom"], {
+			tracker: { begin: async () => {}, finish: async (r) => void seen.finished.push(r) },
+		});
+		await expect(runProgram([boom], ["boom"], ctx)).rejects.toThrow("kaboom");
+		expect(seen.finished[0]).toMatchObject({ outcome: "error" });
+	});
+
+	test("help and usage errors run no action, so nothing is tracked", async () => {
+		expect((await withTracker(["--help"])).seen).toEqual({ began: [], finished: [] });
+		expect((await withTracker(["alpha", "--nope"])).seen).toEqual({ began: [], finished: [] });
+	});
+
+	test("the --json failure envelope is printed before the flush, and stays the only stdout", async () => {
+		const order: string[] = [];
+		const fail = defineCommand({
+			name: "fail",
+			summary: "s",
+			register: (cmd, c, done) =>
+				void cmd.option("--json").action(() => {
+					reportError(c, "fail", "no device");
+					done(1);
+				}),
+		});
+		ctx = testContext(["fail", "--json"], {
+			tracker: { begin: async () => {}, finish: async () => void order.push("finish") },
+		});
+		const out = ctx.out;
+		ctx.out = (line) => {
+			order.push("out");
+			out(line);
+		};
+		await runProgram([fail], ["fail", "--json"], ctx);
+		expect(order).toEqual(["out", "finish"]);
+		expect(ctx.stdout).toHaveLength(1);
+		expect(JSON.parse(ctx.stdout[0] as string)).toMatchObject({ ok: false });
 	});
 });

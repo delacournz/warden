@@ -55,6 +55,8 @@ export function fieldFixture(
 	options: {
 		value?: string;
 		secure?: boolean;
+		/** a secure field the tree names a plain `textfield` with no secure trait: empty reads as empty, text as one `•` per character */
+		maskedTextfield?: boolean;
 		dropTypes?: number;
 		dropCall?: number;
 		dropTail?: number;
@@ -70,6 +72,10 @@ export function fieldFixture(
 		selectAllRefused?: boolean;
 		/** offer `setText` (Android `warden-uiad`): it replaces the whole value; `refused` offers it and fails every call */
 		setText?: boolean | "refused";
+		/** offer `pasteText` (iOS): it replaces a selection like typing; `refused` offers it and fails every call (pasteboard unconfirmed) */
+		pasteText?: boolean | "refused";
+		/** a paste lands mangled: only this many leading characters survive (a maxLength field) */
+		pasteKeeps?: number;
 	} = {}
 ) {
 	const state = {
@@ -99,6 +105,15 @@ export function fieldFixture(
 			state.tailDrops -= 1;
 			state.value += text.slice(0, Math.max(0, text.length - (options.dropTail ?? 0)));
 		} else if (state.typeCalls !== options.dropCall) state.value += text;
+		state.lag = lagReads;
+	};
+
+	/** A `pasteText` call: replaces a selection, else appends; keeps only `pasteKeeps` characters when set. */
+	const pasteText = (text: string): void => {
+		const kept = options.pasteKeeps === undefined ? text : text.slice(0, options.pasteKeeps);
+		if (state.selected) state.value = "";
+		state.selected = false;
+		state.value += kept;
 		state.lag = lagReads;
 	};
 
@@ -135,7 +150,8 @@ export function fieldFixture(
 			if (state.lag > 0) state.lag -= 1;
 			else state.shown = state.value;
 			const empty = state.shown === "";
-			const masked = options.secure ? "•".repeat(state.shown.length) : state.shown;
+			const masks = options.secure === true || options.maskedTextfield === true;
+			const masked = masks ? "•".repeat(state.shown.length) : state.shown;
 			return snapshotOf([
 				el(options.secure ? "securefield" : "textfield", {
 					id: "field",
@@ -150,22 +166,34 @@ export function fieldFixture(
 			]);
 		},
 		onCall(call) {
-			if (call.method === "tap") {
-				tap();
-			} else if (call.method === "setText") {
-				if (options.setText === "refused") return failWith("E_UNSUPPORTED", "setText needs the warden-uiad server");
-				setText(call.text);
-			} else if (call.method === "selectAll") {
-				state.selected = options.selectAllRefused !== true;
-			} else if (call.method === "typeText") {
-				typeText(call.text);
-			} else if (call.method === "key" && call.key === "Backspace") {
-				backspace();
+			switch (call.method) {
+				case "tap":
+					tap();
+					return undefined;
+				case "setText":
+					if (options.setText === "refused") return failWith("E_UNSUPPORTED", "setText needs the warden-uiad server");
+					setText(call.text);
+					return undefined;
+				case "pasteText":
+					if (options.pasteText === "refused") return failWith("E_IO", "pasteboard write not confirmed");
+					pasteText(call.text);
+					return undefined;
+				case "selectAll":
+					state.selected = options.selectAllRefused !== true;
+					return undefined;
+				case "typeText":
+					typeText(call.text);
+					return undefined;
+				case "key":
+					if (call.key === "Backspace") backspace();
+					return undefined;
+				default:
+					return undefined;
 			}
-			return undefined;
 		},
 		selectAll: options.selectAll === true || options.selectAllRefused === true,
 		setText: options.setText !== undefined && options.setText !== false,
+		pasteText: options.pasteText !== undefined && options.pasteText !== false,
 	});
 	return { driver, state };
 }

@@ -1,14 +1,35 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { Exec, ExecResult } from "../exec";
 import { createGitFactsCache } from "../git-facts";
 import { openStore, type Store } from "../store";
+import { EXPO_CONFIG_ARGV } from "./app-config";
 import { fakeApp, testProject } from "./builds.testing";
-import { cachedBuild, getBuild, getInstall, recordInstall, storeArtifact } from "./cache";
+import {
+	cachedBuild,
+	devDir,
+	getBuild,
+	getInstall,
+	kindHash,
+	recordInstall,
+	simulatorBaseDir,
+	storeArtifact,
+} from "./cache";
 import { JSON_CONFIG_FILE } from "./config";
-import { type EnsureInput, ensureApp, projectContext } from "./ensure";
+import {
+	type EnsureInput,
+	type EnsureKindInput,
+	ensureApp,
+	ensureKindBuild,
+	prebuildStamp,
+	projectContext,
+} from "./ensure";
+import { computeCacheKey } from "./fingerprint";
+import { projectForKind } from "./kinds";
+import type { AppPhase } from "./resolve";
+import { readCachedSigning } from "./signing-key";
 
 let dir: string;
 let store: Store;
@@ -78,6 +99,98 @@ async function seedCache(hash = "H"): Promise<string> {
 	return res.data.path;
 }
 
+describe("ensureApp on a physical iPhone", () => {
+	const PHONE = "00008140-000A0B0C0D0E0F10";
+	/** a phone that gets "7" as CFBundleVersion after the install; devicectl answers through memory */
+	function phoneHost(calls: string[]) {
+		let apps: Array<Record<string, unknown>> = [];
+		const files = new Map<string, string>();
+		const deviceIo = {
+			tempDir: async () => "/tmp/dc",
+			read: async (path: string) => files.get(path) ?? "",
+			remove: async () => {},
+		};
+		/** applies one devicectl verb to the phone and writes its json output file */
+		const devicectl = (verb: string | undefined, out: string) => {
+			if (verb === "uninstall") apps = [];
+			if (verb === "install") apps = [{ bundleIdentifier: "com.x.app", bundleVersion: "7" }];
+			files.set(out, JSON.stringify({ result: verb === "info" ? { apps } : {} }));
+		};
+		const exec: Exec = async (cmd) => {
+			calls.push(cmd.join(" "));
+			if (cmd[0] === "plutil") return { exitCode: 0, stdout: "7\n", stderr: "" };
+			const out = cmd[cmd.indexOf("--json-output") + 1];
+			if (cmd[1] === "devicectl" && out !== undefined) {
+				devicectl(cmd[3], out);
+				return { exitCode: 0, stdout: "", stderr: "" };
+			}
+			return { exitCode: 127, stdout: "", stderr: cmd.join(" ") };
+		};
+		return { exec, deviceIo };
+	}
+
+	test("installs with devicectl and records the key; the second run keeps it, with no simctl at all", async () => {
+		const path = await seedCache();
+		const calls: string[] = [];
+		const { exec, deviceIo } = phoneHost(calls);
+		const first = await ensureApp(input(exec, { deviceId: PHONE, physical: true, deviceIo }));
+		expect(first).toEqual({ success: true, data: { appPath: path, hash: "H", source: "cache", installed: true } });
+		expect(getInstall(store, "ios", PHONE, "com.x.app")?.hash).toBe("H");
+		expect(calls.some((c) => c.startsWith(`xcrun devicectl device install app --device ${PHONE} ${path}`))).toBe(true);
+
+		calls.length = 0;
+		const second = await ensureApp(input(exec, { deviceId: PHONE, physical: true, deviceIo }));
+		expect(second.success && second.data.source).toBe("installed");
+		expect(calls.some((c) => c.includes(" install app "))).toBe(false);
+		expect(calls.some((c) => c.includes("simctl"))).toBe(false);
+	});
+
+	test("a build key that differs reinstalls over the phone's old app", async () => {
+		await seedCache("NEW");
+		recordInstall(store, { platform: "ios", deviceId: PHONE, bundleId: "com.x.app", hash: "OLD", installedAt: 1 });
+		const calls: string[] = [];
+		const { exec, deviceIo } = phoneHost(calls);
+		const res = await ensureApp(input(exec, { hash: "NEW", deviceId: PHONE, physical: true, deviceIo }));
+		expect(res.success && res.data.source).toBe("cache");
+		expect(getInstall(store, "ios", PHONE, "com.x.app")?.hash).toBe("NEW");
+	});
+
+	test("--install-mode clean on a phone falls back to uninstall + install (data cannot be wiped in place)", async () => {
+		await seedCache();
+		recordInstall(store, { platform: "ios", deviceId: PHONE, bundleId: "com.x.app", hash: "H", installedAt: 1 });
+		const calls: string[] = [];
+		const { exec, deviceIo } = phoneHost(calls);
+		await ensureApp(input(exec, { deviceId: PHONE, physical: true, deviceIo })); // puts the app on the phone
+		calls.length = 0;
+		const res = await ensureApp(input(exec, { deviceId: PHONE, physical: true, deviceIo, installMode: "clean" }));
+		expect(res.success).toBe(true);
+		expect(calls.some((c) => c.includes("uninstall app"))).toBe(true);
+		expect(calls.some((c) => c.includes(" install app "))).toBe(true);
+	});
+});
+
+describe("ensureKindBuild for a device target", () => {
+	test("the build is cached under device/<salt> with the device hash, and EAS never supplies it", async () => {
+		const device = { team: "ABCDE12345", salt: "ABCDE12345" };
+		const calls: string[] = [];
+		const app = join(dir, "app");
+		const exec: Exec = async (cmd) => {
+			calls.push(cmd.join(" "));
+			return { exitCode: 127, stdout: "", stderr: "no" };
+		};
+		const key = { kind: "release" as const, nativeFp: "fp", jsKey: "js", device };
+		const res = await ensureKindBuild({
+			...input(exec, { project: testProject({ root: app }), deviceId: undefined, eas: true, build: false }),
+			key,
+			buildKey: "bk",
+		});
+		expect(res.success).toBe(false);
+		expect(!res.success && res.error).toContain("EAS skipped");
+		expect(calls.some((c) => c.includes("eas"))).toBe(false);
+		expect(kindHash(key)).toBe("fp:device-ABCDE12345:release:js");
+	});
+});
+
 describe("ensureApp", () => {
 	test("cache → install + record; second call → installed (no reinstall)", async () => {
 		const path = await seedCache();
@@ -100,6 +213,57 @@ describe("ensureApp", () => {
 		expect(second).toEqual({ success: true, data: { appPath: path, hash: "H", source: "installed", installed: true } });
 		expect(calls[0]).toBe("xcrun simctl get_app_container U1 com.x.app");
 		expect(calls.some((c) => c.startsWith("xcrun simctl install"))).toBe(false);
+	});
+
+	test("Android: same key, but the emulator holds another build of the app → installed over it", async () => {
+		const apk = join(dir, "src", "app.apk");
+		mkdirSync(join(dir, "src"), { recursive: true });
+		writeFileSync(apk, "new build");
+		const stored = await storeArtifact({
+			store,
+			env,
+			projectKey: KEY,
+			platform: "android",
+			profile: "local",
+			hash: "H",
+			artifact: apk,
+			source: "import",
+			now: 1,
+		});
+		if (!stored.success) throw new Error(stored.error);
+		recordInstall(store, {
+			platform: "android",
+			deviceId: "emulator-5554",
+			bundleId: "com.x.app",
+			hash: "H",
+			installedAt: 1,
+		});
+		const run = async (deviceSha: string) => {
+			const calls: string[] = [];
+			const exec = fake(
+				[
+					["adb -s emulator-5554 shell pm path com.x.app", { stdout: "package:/data/app/x/base.apk\n" }],
+					["adb -s emulator-5554 shell sha256sum", { stdout: `${deviceSha}  /data/app/x/base.apk\n` }],
+					["adb -s emulator-5554 install -r", { stdout: "Success\n" }],
+				],
+				calls
+			);
+			const res = await ensureApp(
+				input(exec, {
+					platform: "android",
+					deviceId: "emulator-5554",
+					project: testProject({ root: join(dir, "app"), bundleId: { android: "com.x.app" } }),
+					fileDigest: async () => "new",
+				})
+			);
+			return { res, calls };
+		};
+		const stale = await run("old");
+		expect(stale.res.success && stale.res.data.source).toBe("cache");
+		expect(stale.calls.some((c) => c.includes("install -r"))).toBe(true);
+		const same = await run("new");
+		expect(same.res.success && same.res.data.source).toBe("installed");
+		expect(same.calls.some((c) => c.includes("install -r"))).toBe(false);
 	});
 
 	test("the already-installed check is three spawns: one get_app_container, two plutil, no stat", async () => {
@@ -358,6 +522,55 @@ describe("ensureApp", () => {
 		expect(calls.some((c) => c.includes("eas"))).toBe(false);
 	});
 
+	test("a local build reports building (platform + hash), then ready; no installing without a device", async () => {
+		const root = join(dir, "app");
+		const products = join(root, "ios", "build", "Build", "Products", "Debug-iphonesimulator");
+		const exec: Exec = async (cmd) => {
+			const joined = cmd.join(" ");
+			if (joined === "sh -c make-ios") {
+				fakeApp(products, "Built.app");
+				return { exitCode: 0, stdout: "", stderr: "" };
+			}
+			if (joined === "sh -c fp") return { exitCode: 0, stdout: '{"hash":"H"}', stderr: "" };
+			if (joined.startsWith("plutil -extract CFBundleIdentifier")) return BUNDLE_ID;
+			return { exitCode: 127, stdout: "", stderr: joined };
+		};
+		const project = testProject({ root, fingerprintCommand: "fp", build: { ios: "make-ios", android: "x" } });
+		const phases: AppPhase[] = [];
+		const res = await ensureApp(
+			input(exec, {
+				project,
+				deviceId: undefined,
+				build: true,
+				eas: false,
+				now: () => Date.now(),
+				onPhase: (p) => phases.push(p),
+			})
+		);
+		expect(res.success).toBe(true);
+		expect(phases).toEqual([{ phase: "building", platform: "ios", hash: "H" }, { phase: "ready" }]);
+	});
+
+	test("a local build stamps the native fingerprint its native dir was prebuilt for", async () => {
+		const root = join(dir, "app");
+		const products = join(root, "ios", "build", "Build", "Products", "Debug-iphonesimulator");
+		const exec: Exec = async (cmd) => {
+			const joined = cmd.join(" ");
+			if (joined === "sh -c make-ios") {
+				fakeApp(products, "Built.app");
+				return { exitCode: 0, stdout: "", stderr: "" };
+			}
+			if (joined === "sh -c fp") return { exitCode: 0, stdout: '{"hash":"H"}', stderr: "" };
+			if (joined.startsWith("plutil -extract CFBundleIdentifier")) return BUNDLE_ID;
+			return { exitCode: 127, stdout: "", stderr: joined };
+		};
+		const project = testProject({ root, fingerprintCommand: "fp", build: { ios: "make-ios", android: "x" } });
+		const res = await ensureApp(input(exec, { project, deviceId: undefined, build: true, now: () => Date.now() }));
+		if (!res.success) throw new Error(res.error);
+		expect(prebuildStamp(store, root, "ios").read()).toBe("H");
+		expect(prebuildStamp(store, root, "android").read()).toBeUndefined();
+	});
+
 	test("the local build reads the git toplevel through the git cache projectContext used", async () => {
 		const root = join(dir, "app");
 		const products = join(root, "ios", "build", "Build", "Products", "Debug-iphonesimulator");
@@ -567,24 +780,35 @@ describe("ensureApp: one build per session", () => {
 	const root = () => join(dir, "app");
 	const products = () => join(root(), "ios", "build", "Build", "Products", "Debug-iphonesimulator");
 
-	/** iOS host: `make-ios` builds (or fails), `fp` prints `fingerprint`; installs and probes succeed on any sim. */
-	function host(opts: { fingerprint: string; fail?: boolean }) {
+	/**
+	 * iOS host: `make-ios` builds (or fails), `fp` prints `before` until the first build ran, `fingerprint` after it
+	 * (a prebuild re-key); `during` runs inside the build with its line sink. Installs and probes succeed on any sim.
+	 */
+	function host(opts: {
+		fingerprint: string;
+		before?: string;
+		fail?: boolean;
+		during?: (onLine: (line: string) => void) => Promise<void>;
+	}) {
 		const calls: string[] = [];
+		let built = false;
 		const ok = (stdout = ""): ExecResult => ({ exitCode: 0, stdout, stderr: "" });
 		const handlers: Array<[string, () => ExecResult]> = [
-			["sh -c fp", () => ok(`{"hash":"${opts.fingerprint}"}`)],
+			["sh -c fp", () => ok(`{"hash":"${built ? opts.fingerprint : (opts.before ?? opts.fingerprint)}"}`)],
 			["git status --porcelain", () => ok()],
 			["plutil -extract CFBundleIdentifier", () => BUNDLE_ID],
 			["plutil -convert json", () => ok(JSON.stringify({ CFBundleVersion: "1", CFBundleExecutable: "App" }))],
 			["xcrun simctl install", () => ok()],
 			["xcrun simctl get_app_container", () => ok("/data/App.app\n")],
 		];
-		const exec: Exec = async (cmd) => {
+		const exec: Exec = async (cmd, execOpts) => {
 			const joined = cmd.join(" ");
 			calls.push(joined);
 			if (joined === "sh -c make-ios") {
+				await opts.during?.((line) => execOpts?.onLine?.(line));
 				if (opts.fail) return { exitCode: 65, stdout: "", stderr: "BUILD FAILED" };
 				fakeApp(products(), "Built.app");
+				built = true;
 				return ok();
 			}
 			const hit = handlers.find(([prefix]) => joined.startsWith(prefix));
@@ -596,7 +820,7 @@ describe("ensureApp: one build per session", () => {
 	const builds = (calls: string[]) => calls.filter((c) => c === "sh -c make-ios").length;
 
 	test("a fresh checkout's prebuild re-key: cached under the requested key, aliased under the post-build key (17-1)", async () => {
-		const s = host({ fingerprint: "H2" });
+		const s = host({ before: "H", fingerprint: "H2" });
 		const over = { project: s.project, build: true, now: () => Date.now(), fileSize };
 		const first = await ensureApp(input(s.exec, { ...over, deviceId: "U1" }));
 		if (!first.success) throw new Error(first.error);
@@ -623,7 +847,7 @@ describe("ensureApp: one build per session", () => {
 
 	test("the alias never replaces a real build of the post-build key", async () => {
 		const real = await seedCache("H2");
-		const s = host({ fingerprint: "H2" });
+		const s = host({ before: "H", fingerprint: "H2" });
 		const res = await ensureApp(
 			input(s.exec, { project: s.project, build: true, deviceId: undefined, now: () => Date.now() })
 		);
@@ -663,5 +887,434 @@ describe("ensureApp: one build per session", () => {
 		expect(builds(s.calls)).toBe(1);
 		expect(sleeps).toBe(0);
 		expect(s.calls.filter((c) => c.startsWith("xcrun simctl install"))).toHaveLength(2);
+	});
+});
+
+describe("ensureApp: one build per checkout (two processes)", () => {
+	const root = () => join(dir, "app");
+	const products = () => join(root(), "ios", "build", "Build", "Products", "Debug-iphonesimulator");
+	const ok = (stdout = ""): ExecResult => ({ exitCode: 0, stdout, stderr: "" });
+
+	/** A shared fake checkout: `fp` reads `tree.fp`, `make-ios` runs `during` then prebuilds (fp → `after`) and builds. */
+	function checkout(tree: { fp: string; after: string }, during: (onLine: (line: string) => void) => Promise<void>) {
+		const calls: string[] = [];
+		const answers: Array<[string, () => ExecResult]> = [
+			["sh -c fp", () => ok(`{"hash":"${tree.fp}"}`)],
+			["git status --porcelain", () => ok()],
+			["plutil -extract CFBundleIdentifier", () => BUNDLE_ID],
+			["plutil -convert json", () => ok(JSON.stringify({ CFBundleVersion: "1", CFBundleExecutable: "App" }))],
+			["xcrun simctl", () => ok("/data/App.app\n")],
+		];
+		const exec: Exec = async (cmd, execOpts) => {
+			const joined = cmd.join(" ");
+			calls.push(joined);
+			if (joined !== "sh -c make-ios") {
+				const hit = answers.find(([prefix]) => joined.startsWith(prefix));
+				return hit ? hit[1]() : { exitCode: 127, stdout: "", stderr: joined };
+			}
+			await during((line) => execOpts?.onLine?.(line));
+			fakeApp(products(), "Built.app");
+			tree.fp = tree.after;
+			return ok();
+		};
+		const project = testProject({ root: root(), fingerprintCommand: "fp", build: { ios: "make-ios", android: "x" } });
+		return { calls, exec, project };
+	}
+
+	test("B fingerprinted mid-prebuild: waits on the checkout, mirrors A's build log, installs A's build (one build)", async () => {
+		let release = () => {};
+		const gate = new Promise<void>((r) => {
+			release = r;
+		});
+		let started = () => {};
+		const building = new Promise<void>((r) => {
+			started = r;
+		});
+		const tree = { fp: "H", after: "H2" };
+		const s = checkout(tree, async (onLine) => {
+			onLine("compiling A");
+			started();
+			await gate;
+			onLine("linking A");
+		});
+		const aLines: string[] = [];
+		const bLines: string[] = [];
+		const bPhases: AppPhase[] = [];
+		const base = { project: s.project, build: true, now: () => Date.now(), fileSize };
+		const a = ensureApp(
+			input(s.exec, {
+				...base,
+				owner: { kind: "agent", sessionId: "a", cwd: dir },
+				pid: 11,
+				buildOutput: (l) => aLines.push(l),
+			})
+		);
+		await building;
+		// B's fingerprint read the half-written ios/: neither A's key nor the post-prebuild key
+		const b = ensureApp(
+			input(s.exec, {
+				...base,
+				hash: "Hmid",
+				deviceId: "U2",
+				owner: { kind: "agent", sessionId: "b", cwd: dir },
+				pid: 22,
+				buildOutput: (l) => bLines.push(l),
+				onPhase: (p) => bPhases.push(p),
+				sleep: async () => {
+					await Bun.sleep(2);
+					if (bLines.includes("compiling A")) release();
+				},
+			})
+		);
+		const [ra, rb] = await Promise.all([a, b]);
+		if (!ra.success) throw new Error(ra.error);
+		if (!rb.success) throw new Error(rb.error);
+		expect(s.calls.filter((c) => c === "sh -c make-ios")).toHaveLength(1);
+		expect(ra.data.source).toBe("build");
+		expect(rb.data).toMatchObject({ source: "cache", installed: true, appPath: ra.data.appPath });
+		expect(getInstall(store, "ios", "U2", "com.x.app")?.hash).toBe("H2");
+		expect(aLines).toEqual(["compiling A", "linking A"]);
+		expect(bLines).toEqual(["compiling A", "linking A"]);
+		expect(bPhases[0]).toEqual({ phase: "waiting" });
+		expect(bPhases.some((p) => p.phase === "building")).toBe(false);
+		expect(store.listLeases()).toEqual([]);
+	});
+
+	test("the checkout moved under the lock and nothing is cached for it → a clear error, no second build", async () => {
+		const tree = { fp: "H", after: "H" };
+		const s = checkout(tree, async () => {});
+		tree.fp = "Hedit";
+		const res = await ensureApp(input(s.exec, { project: s.project, build: true, now: () => Date.now(), fileSize }));
+		expect(res.success).toBe(false);
+		if (!res.success) expect(res.error).toContain("changed since it was fingerprinted (H → Hedit)");
+		expect(s.calls).not.toContain("sh -c make-ios");
+	});
+});
+
+describe("projectContext with a dynamic app.config.*", () => {
+	const gitAnswers = (repo: string, cmd: readonly string[]): ExecResult | undefined => {
+		const joined = cmd.join(" ");
+		if (joined === "git rev-parse --show-toplevel --git-common-dir --symbolic-full-name HEAD")
+			return { exitCode: 0, stdout: `${repo}\n${repo}/.git\nrefs/heads/main\n`, stderr: "" };
+		if (joined === "git config --get remote.origin.url")
+			return { exitCode: 0, stdout: "git@github.com:o/r.git", stderr: "" };
+		return undefined;
+	};
+	const expoConfig = {
+		slug: "ctna-wallet",
+		name: "CTNA Wallet",
+		scheme: "ctnawallet",
+		ios: { bundleIdentifier: "com.x.dev" },
+	};
+
+	test("reads the bundle id, slug and scheme through `expo config` when nothing else supplies them", async () => {
+		const repo = join(dir, "repo");
+		mkdirSync(join(repo, "apps", "mobile"), { recursive: true });
+		writeFileSync(join(repo, "apps", "mobile", "app.config.ts"), "export default { ios: { bundleIdentifier: 'x' } }");
+		const calls: Array<{ cmd: string; cwd: string | undefined }> = [];
+		const exec: Exec = async (cmd, opts) => {
+			calls.push({ cmd: cmd.join(" "), cwd: opts?.cwd });
+			if (cmd.join(" ") === EXPO_CONFIG_ARGV.join(" "))
+				return { exitCode: 0, stdout: JSON.stringify(expoConfig), stderr: "" };
+			return gitAnswers(repo, cmd) ?? { exitCode: 1, stdout: "", stderr: "" };
+		};
+		const res = await projectContext({ exec, env, start: join(repo, "apps", "mobile") });
+		if (!res.success) throw new Error(res.error);
+		expect(res.data.project.bundleId).toEqual({ ios: "com.x.dev" });
+		expect(res.data.project.name).toBe("ctna-wallet");
+		expect(res.data.project.origin).toBe("app.config");
+		expect(res.data.appConfig).toEqual({ slug: "ctna-wallet", scheme: "ctnawallet" });
+		expect(calls.find((c) => c.cmd.startsWith("bunx expo config"))?.cwd).toBe(join(repo, "apps", "mobile"));
+	});
+
+	test("from a monorepo root, the one app below it is resolved through `expo config` in its own dir", async () => {
+		const repo = join(dir, "repo");
+		mkdirSync(join(repo, "apps", "mobile"), { recursive: true });
+		mkdirSync(join(repo, "apps", "api"), { recursive: true });
+		writeFileSync(join(repo, "package.json"), JSON.stringify({ workspaces: ["apps/api", "apps/mobile"] }));
+		writeFileSync(join(repo, "apps", "api", "package.json"), JSON.stringify({ name: "api" }));
+		writeFileSync(join(repo, "apps", "mobile", "app.config.ts"), "export default {}");
+		const calls: Array<{ cmd: string; cwd: string | undefined }> = [];
+		const exec: Exec = async (cmd, opts) => {
+			calls.push({ cmd: cmd.join(" "), cwd: opts?.cwd });
+			if (cmd.join(" ") === EXPO_CONFIG_ARGV.join(" "))
+				return { exitCode: 0, stdout: JSON.stringify(expoConfig), stderr: "" };
+			return gitAnswers(repo, cmd) ?? { exitCode: 1, stdout: "", stderr: "" };
+		};
+		const res = await projectContext({ exec, env, start: repo });
+		if (!res.success) throw new Error(res.error);
+		expect(res.data.project.root).toBe(join(repo, "apps", "mobile"));
+		expect(res.data.project.bundleId).toEqual({ ios: "com.x.dev" });
+		expect(calls.find((c) => c.cmd.startsWith("bunx expo config"))?.cwd).toBe(join(repo, "apps", "mobile"));
+	});
+
+	test("a failing `expo config` keeps the original error and adds expo's", async () => {
+		const repo = join(dir, "repo");
+		mkdirSync(join(repo, "apps", "mobile"), { recursive: true });
+		writeFileSync(join(repo, "apps", "mobile", "app.config.ts"), "export default {}");
+		const exec: Exec = async (cmd) => {
+			if (cmd.join(" ") === EXPO_CONFIG_ARGV.join(" "))
+				return { exitCode: 1, stdout: "", stderr: "Cannot find module 'expo/config'" };
+			return gitAnswers(repo, cmd) ?? { exitCode: 1, stdout: "", stderr: "" };
+		};
+		const res = await projectContext({ exec, env, start: join(repo, "apps", "mobile") });
+		expect(res.success).toBe(false);
+		if (!res.success) {
+			expect(res.error).toContain("--bundle-id");
+			expect(res.error).toContain("Cannot find module 'expo/config'");
+		}
+	});
+
+	test("never runs `expo config` when --bundle-id or a warden config supplies the id", async () => {
+		const repo = join(dir, "repo");
+		mkdirSync(join(repo, "apps", "mobile"), { recursive: true });
+		writeFileSync(join(repo, "apps", "mobile", "app.config.ts"), "export default {}");
+		const spawned: string[] = [];
+		const exec: Exec = async (cmd) => {
+			spawned.push(cmd.join(" "));
+			return gitAnswers(repo, cmd) ?? { exitCode: 1, stdout: "", stderr: "" };
+		};
+		const flagged = await projectContext({
+			exec,
+			env,
+			start: join(repo, "apps", "mobile"),
+			bundleId: { ios: "com.f" },
+		});
+		expect(flagged.success).toBe(true);
+		writeFileSync(
+			join(repo, JSON_CONFIG_FILE),
+			JSON.stringify({ projects: [{ name: "m", root: "apps/mobile", bundleId: { ios: "com.c" } }] })
+		);
+		const configured = await projectContext({ exec, env, start: join(repo, "apps", "mobile") });
+		expect(configured.success).toBe(true);
+		expect(spawned.some((c) => c.startsWith("bunx expo config"))).toBe(false);
+	});
+});
+
+describe("ensureKindBuild", () => {
+	const FP = "fp-native";
+	const plist = JSON.stringify({ CFBundleVersion: "1", CFBundleExecutable: "App" });
+
+	function kindInput(exec: Exec, over: Partial<EnsureKindInput> = {}): EnsureKindInput {
+		const { hash: _hash, project: _project, ...rest } = input(exec, { fileSize });
+		return {
+			...rest,
+			project: testProject({ root: join(dir, "app"), fingerprintCommand: "fp" }),
+			key: { kind: "dev", nativeFp: FP },
+			buildKey: FP,
+			...over,
+		};
+	}
+
+	/** the fake host's answers by command prefix; any other `sh -c <build>` runs `build` */
+	const answers: Array<[string, ExecResult]> = [
+		["sh -c fp", { exitCode: 0, stdout: `{"hash":"${FP}"}`, stderr: "" }],
+		["plutil -extract CFBundleIdentifier", BUNDLE_ID],
+		["plutil -convert json", { exitCode: 0, stdout: plist, stderr: "" }],
+		["xcrun simctl get_app_container", { exitCode: 0, stdout: "/data/App.app", stderr: "" }],
+		["xcrun simctl install", { exitCode: 0, stdout: "", stderr: "" }],
+	];
+
+	const fpExec =
+		(calls: string[], build?: () => void): Exec =>
+		async (cmd) => {
+			const joined = cmd.join(" ");
+			calls.push(joined);
+			const known = answers.find(([prefix]) => joined.startsWith(prefix));
+			if (known) return known[1];
+			if (!joined.startsWith("sh -c ")) return { exitCode: 127, stdout: "", stderr: joined };
+			build?.();
+			return { exitCode: 0, stdout: "", stderr: "" };
+		};
+
+	async function seedKind(key: { kind: "dev" | "simulator-base"; nativeFp: string }, layoutDir: string) {
+		const res = await storeArtifact({
+			store,
+			env,
+			projectKey: KEY,
+			platform: "ios",
+			profile: "local",
+			hash: kindHash(key),
+			artifact: fakeApp(join(dir, "seed")),
+			source: "import",
+			layout: { dir: layoutDir, kind: key.kind },
+			now: 1,
+		});
+		if (!res.success) throw new Error(res.error);
+		return res.data.path;
+	}
+
+	test("a cached dev build is found by its kind hash and installed; the install record keys by it", async () => {
+		const path = await seedKind({ kind: "dev", nativeFp: FP }, devDir(env, KEY, "ios", FP));
+		const res = await ensureKindBuild(kindInput(fpExec([])));
+		expect(res).toEqual({
+			success: true,
+			data: { appPath: path, hash: `${FP}:dev`, source: "cache", installed: true },
+		});
+		expect(getInstall(store, "ios", "U1", "com.x.app")?.hash).toBe(`${FP}:dev`);
+	});
+
+	test("a simulator base restored on disk without its row (a CI cache) is registered and used: no build", async () => {
+		const key = { kind: "simulator-base", nativeFp: FP } as const;
+		const app = fakeApp(simulatorBaseDir(env, KEY, "ios", FP));
+		const calls: string[] = [];
+		const logs: string[] = [];
+		const res = await ensureKindBuild(
+			kindInput(fpExec(calls), { key, deviceId: undefined, build: true, log: (line) => logs.push(line) })
+		);
+		expect(res).toEqual({
+			success: true,
+			data: { appPath: app, hash: `${FP}:base`, source: "cache", installed: false },
+		});
+		expect(calls.some((c) => c.startsWith("sh -c") && c !== "sh -c fp")).toBe(false);
+		expect(getBuild(store, KEY, "ios", `${FP}:base`)).toMatchObject({ kind: "simulator-base", source: "restored" });
+		expect(logs.join("\n")).toContain("restored");
+	});
+
+	test("a kind-less build of the same fingerprint is the dev build: aliased under the kind hash, no build", async () => {
+		const path = await seedCache(FP);
+		const calls: string[] = [];
+		const res = await ensureKindBuild(kindInput(fpExec(calls), { deviceId: undefined, build: true }));
+		expect(res).toEqual({
+			success: true,
+			data: { appPath: path, hash: `${FP}:dev`, source: "cache", installed: false },
+		});
+		expect(calls.some((c) => c.startsWith("sh -c") && c !== "sh -c fp")).toBe(false);
+		expect(getBuild(store, KEY, "ios", `${FP}:dev`)?.path).toBe(path);
+		expect(getBuild(store, KEY, "ios", FP)?.path).toBe(path);
+	});
+
+	test("an install recorded at the old kind-less hash is that build: no reinstall", async () => {
+		await seedCache(FP);
+		recordInstall(store, { platform: "ios", deviceId: "U1", bundleId: "com.x.app", hash: FP, installedAt: 1 });
+		const calls: string[] = [];
+		const res = await ensureKindBuild(kindInput(fpExec(calls)));
+		if (!res.success) throw new Error(res.error);
+		expect(res.data).toMatchObject({ hash: `${FP}:dev`, source: "installed", installed: true });
+		expect(calls.some((c) => c.startsWith("xcrun simctl install"))).toBe(false);
+	});
+
+	test("a legacy cache dir of the fingerprint is the dev build", async () => {
+		const legacy = join(dir, "legacy");
+		fakeApp(join(legacy, FP));
+		const project = testProject({ root: join(dir, "app"), fingerprintCommand: "fp", cacheDirs: [legacy] });
+		const res = await ensureKindBuild(kindInput(fpExec([]), { project, deviceId: undefined }));
+		if (!res.success) throw new Error(res.error);
+		expect(res.data).toMatchObject({ hash: `${FP}:dev`, source: "cache" });
+		expect(getBuild(store, KEY, "ios", `${FP}:dev`)).toMatchObject({ kind: "dev", source: "legacy" });
+	});
+
+	test("a kind-less build made with another command is not the dev build", async () => {
+		await seedCache(FP);
+		const calls: string[] = [];
+		const own = testProject({ root: join(dir, "app"), fingerprintCommand: "fp" });
+		const project = { ...own, build: { ...own.build, ios: "my-build" } };
+		const res = await ensureKindBuild(kindInput(fpExec(calls), { project, deviceId: undefined }));
+		expect(res.success).toBe(false);
+		expect(getBuild(store, KEY, "ios", `${FP}:dev`)).toBeUndefined();
+	});
+
+	test("a miss builds with the kind's command, verifies the build key and caches into the kind dir", async () => {
+		const root = join(dir, "app");
+		const calls: string[] = [];
+		const exec = fpExec(calls, () => {
+			fakeApp(join(root, "ios", "build", "Build", "Products", "Debug-iphonesimulator"), "Built.app");
+		});
+		const res = await ensureKindBuild(kindInput(exec, { deviceId: undefined, build: true, now: () => Date.now() }));
+		if (!res.success) throw new Error(res.error);
+		expect(res.data.source).toBe("build");
+		const record = getBuild(store, KEY, "ios", `${FP}:dev`);
+		expect(record).toMatchObject({
+			kind: "dev",
+			path: join(devDir(env, KEY, "ios", FP), "Built.app"),
+			profile: "local:dev",
+		});
+		expect(calls.some((c) => c.includes("expo run:ios") && !c.includes("--configuration Release"))).toBe(true);
+	});
+
+	test("an Android build caches the keystore it was signed with beside the APK", async () => {
+		const root = join(dir, "app");
+		const app = join(root, "android", "app");
+		const exec = fpExec([], () => {
+			mkdirSync(join(app, "build", "outputs", "apk", "debug"), { recursive: true });
+			writeFileSync(join(app, "build", "outputs", "apk", "debug", "app-debug.apk"), "apk");
+			writeFileSync(join(app, "debug.keystore"), "the-keystore");
+			writeFileSync(
+				join(app, "build.gradle"),
+				"signingConfigs { debug { storeFile file('debug.keystore') storePassword 'android' keyAlias 'androiddebugkey' keyPassword 'android' } }\nbuildTypes { debug { signingConfig signingConfigs.debug } }"
+			);
+		});
+		const res = await ensureKindBuild(
+			kindInput(exec, { platform: "android", deviceId: undefined, build: true, now: () => Date.now() })
+		);
+		if (!res.success) throw new Error(res.error);
+		const cached = readCachedSigning(dirname(res.data.appPath));
+		expect(cached).toMatchObject({ alias: "androiddebugkey", storePass: "android", keyPass: "android" });
+		expect(cached && readFileSync(cached.path, "utf8")).toBe("the-keystore");
+	});
+
+	test("the simulator base builds the Release configuration with SKIP_BUNDLING into simulator/base", async () => {
+		const root = join(dir, "app");
+		const project = testProject({ root, fingerprintCommand: "fp" });
+		const buildKeyOf = await computeCacheKey(
+			fpExec([]),
+			projectForKind(project, "simulator"),
+			"ios",
+			undefined,
+			undefined,
+			{}
+		);
+		if (!buildKeyOf.success) throw new Error(buildKeyOf.error);
+		const nativeFp = buildKeyOf.data.key;
+		const calls: string[] = [];
+		const exec = fpExec(calls, () => {
+			fakeApp(join(root, "ios", "build", "Build", "Products", "Release-iphonesimulator"), "Built.app");
+		});
+		const res = await ensureKindBuild(
+			kindInput(exec, {
+				project,
+				key: { kind: "simulator-base", nativeFp },
+				buildKey: nativeFp,
+				deviceId: undefined,
+				build: true,
+				now: () => Date.now(),
+			})
+		);
+		if (!res.success) throw new Error(res.error);
+		expect(calls.some((c) => c.includes("SKIP_BUNDLING=1") && c.includes("--configuration Release"))).toBe(true);
+		expect(getBuild(store, KEY, "ios", `${nativeFp}:base`)).toMatchObject({
+			kind: "simulator-base",
+			path: join(simulatorBaseDir(env, KEY, "ios", nativeFp), "Built.app"),
+		});
+	});
+
+	test("EAS never supplies the simulator base", async () => {
+		const calls: string[] = [];
+		const project = testProject({
+			root: join(dir, "app"),
+			fingerprintCommand: "fp",
+			eas: { profile: "p", trigger: false },
+		});
+		await ensureKindBuild(
+			kindInput(fpExec(calls), {
+				project,
+				key: { kind: "simulator-base", nativeFp: FP },
+				deviceId: undefined,
+				eas: true,
+				build: false,
+			})
+		);
+		expect(calls.some((c) => c.includes("eas-cli"))).toBe(false);
+	});
+
+	test("EAS still serves a dev build", async () => {
+		const calls: string[] = [];
+		const project = testProject({
+			root: join(dir, "app"),
+			fingerprintCommand: "fp",
+			eas: { profile: "p", trigger: false },
+		});
+		await ensureKindBuild(kindInput(fpExec(calls), { project, deviceId: undefined, eas: true, build: false }));
+		expect(calls.some((c) => c.includes("eas-cli build:list"))).toBe(true);
 	});
 });

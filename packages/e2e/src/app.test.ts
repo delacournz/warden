@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createApp } from "./app";
+import { devtoolsErr } from "./devtools/devtools.types";
 import { type ElementSpec, el, type FakeDriver, failWith, fakeDriver, snapshotOf } from "./driver/driver.testing";
 import type { Platform, Snapshot } from "./driver/driver.types";
 import { cacheObservations } from "./driver/observation-cache";
@@ -53,6 +54,36 @@ function launchingDriver(
 }
 
 describe("app.open", () => {
+	test("with Metro, attaches devtools after the launch so LogBox is turned off", async () => {
+		const driver = fakeDriver({ screens: [CONTENT] });
+		let attaches = 0;
+		const session = {
+			out: "/tmp/out",
+			devtools: () => {
+				attaches++;
+				expect(driver.callsOf("app.launch")).toHaveLength(1);
+				return Promise.resolve(devtoolsErr("devtools_unavailable", "not under test"));
+			},
+		};
+		const app = createApp({ session, driver, env: { ...baseEnv, metroUrl: "http://localhost:8081" } });
+		await app.open();
+		expect(attaches).toBe(1);
+	});
+
+	test("without Metro (a release build) devtools are not attached", async () => {
+		const driver = fakeDriver({ screens: [CONTENT] });
+		let attaches = 0;
+		const session = {
+			out: "/tmp/out",
+			devtools: () => {
+				attaches++;
+				return Promise.resolve(devtoolsErr("devtools_unavailable", "not under test"));
+			},
+		};
+		await createApp({ session, driver, env: baseEnv }).open();
+		expect(attaches).toBe(0);
+	});
+
 	test("passes WARDEN_LAUNCH_ARGS then call args and env, relaunching", async () => {
 		const { driver, app } = setup();
 		await app.open({ args: ["--flag"], env: { A: "1" } });
@@ -64,6 +95,25 @@ describe("app.open", () => {
 			},
 		]);
 		expect(driver.callsOf("app.openUrl")).toHaveLength(0);
+	});
+
+	test("iOS launches with the network dylib when conditions want it; Android and a plain run do not", async () => {
+		const wanted = fakeDriver({ screens: [CONTENT] });
+		await createApp({ session: { out: "/tmp/out" }, driver: wanted, env: baseEnv, injectWanted: () => true }).open();
+		expect(wanted.callsOf("app.launch")[0]?.opts?.inject).toBe(true);
+
+		const plain = fakeDriver({ screens: [CONTENT] });
+		await createApp({ session: { out: "/tmp/out" }, driver: plain, env: baseEnv, injectWanted: () => false }).open();
+		expect(plain.callsOf("app.launch")[0]?.opts).not.toHaveProperty("inject");
+
+		const android = fakeDriver({ screens: [CONTENT], platform: "android" });
+		await createApp({
+			session: { out: "/tmp/out" },
+			driver: android,
+			env: { ...baseEnv, platform: "android", launchArgs: [] },
+			injectWanted: () => true,
+		}).open();
+		expect(android.callsOf("app.launch")[0]?.opts).not.toHaveProperty("inject");
 	});
 
 	test("with no options launches with only the env launch args", async () => {
@@ -333,6 +383,27 @@ describe("app.open on Android", () => {
 		]);
 		expect(lines).toHaveLength(1);
 		expect(lines[0]).toContain("--initialUrl");
+	});
+
+	test("with a dev client scheme, --initialUrl becomes a dev-client deep link opened after the launch", async () => {
+		const driver = androidDriver();
+		const app = createApp({
+			session: { out: "/tmp/out" },
+			driver,
+			env: {
+				...baseEnv,
+				platform: "android",
+				launchArgs: ["--initialUrl", "http://127.0.0.1:8095", "--other"],
+				devClientScheme: "exp+warden",
+			},
+			log: () => {},
+		});
+		await app.open();
+		expect(driver.calls.map((c) => c.method)).toEqual(["app.launch", "app.openUrl"]);
+		expect(driver.callsOf("app.launch")[0]?.opts).toEqual({ args: [], relaunch: true });
+		expect(driver.callsOf("app.openUrl")[0]).toMatchObject({
+			url: "exp+warden://expo-development-client/?url=http%3A%2F%2F127.0.0.1%3A8095&disableOnboarding=1&disableAutoLaunch=1&disableFab=1",
+		});
 	});
 
 	test("explicit args still fail loudly", async () => {

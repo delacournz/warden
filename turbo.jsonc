@@ -2,6 +2,12 @@
 	"$schema": "https://turbo.build/schema.json",
 	"concurrency": "30",
 	"tasks": {
+		// Transit node: no package has a `transit` script, so it does no work. It exists so that
+		// `typecheck` / `test` depend on every internal dependency's *files* (hash only) without
+		// waiting for that dependency's own typecheck / test to finish. `^typecheck` would serialize
+		// the graph; no edge at all would replay a green after a dependency changed.
+		"transit": { "dependsOn": ["^transit"] },
+
 		"build": {
 			"dependsOn": ["^build"],
 			// Turbo 2 runs tasks in strict env mode: a variable not listed here is
@@ -13,10 +19,131 @@
 			"outputs": ["dist/**"]
 		},
 		"dev": { "persistent": true },
-		"typecheck": { "cache": false, "outputs": [] },
 		"lint": { "cache": false, "outputs": [] },
 		"fmt": { "cache": false, "outputs": [] },
-		"check": { "cache": false, "outputs": [] },
-		"test": { "cache": false, "outputs": [] }
+
+		// typecheck / check / test are cached (logs only, `outputs: []`) so a signoff re-run, or a diff
+		// that touches one workspace, replays the untouched workspaces' greens. A cached green is only
+		// honest if the hash covers everything the task reads. A package's own files and its declared
+		// workspace dependencies (via `transit`) are covered by default. Anything else a task reads MUST
+		// be declared below as a `$TURBO_ROOT$/…` input or a `<pkg>#transit` dependency. A test that reads
+		// outside its workspace without one replays stale greens: AGENTS.md § Signoff.
+		"typecheck": { "dependsOn": ["transit"], "cache": true, "outputs": [] },
+		// Biome only reads its own package plus the shared config; no dependency can change its verdict,
+		// so no `transit` edge. `.gitignore` because the shared config sets `vcs.useIgnoreFile`. The
+		// config glob is `*.jsonc`, never `**`: `**` ignores .gitignore and would hash
+		// `packages/biome-config/.turbo/turbo-check.log`, which every run rewrites (a permanent miss).
+		"check": {
+			"cache": true,
+			"outputs": [],
+			"inputs": [
+				"$TURBO_DEFAULT$",
+				"$TURBO_ROOT$/biome.jsonc",
+				"$TURBO_ROOT$/packages/biome-config/*.jsonc",
+				"$TURBO_ROOT$/.gitignore"
+			]
+		},
+		"test": { "dependsOn": ["transit"], "cache": true, "outputs": [] },
+
+		// ---- reads outside the workspace and its declared dependencies ----
+
+		// `skill.ts` embeds skills/warden/**; skill.test + skill-coverage.test read it. Sibling
+		// workspaces (core, e2e, perf, types) are dependencies, so `transit` covers fixtures read there.
+		"@delacour/warden#test": {
+			"dependsOn": ["transit"],
+			"cache": true,
+			"outputs": [],
+			"inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/skills/**"]
+		},
+
+		// ios-runner/stage.test packs the Swift sources `collectRunnerSources` walks (pack.ts) from
+		// packages/e2e/native; core does not depend on e2e (the dependency runs the other way). Listed
+		// narrowly, not `native/**`: `**` ignores .gitignore, so it would hash `.build/`, `dist/` and
+		// `xcuserdata/` and miss the cache after every Swift build.
+		"@delacour/warden-core#test": {
+			"dependsOn": ["transit"],
+			"cache": true,
+			"outputs": [],
+			"inputs": [
+				"$TURBO_DEFAULT$",
+				"$TURBO_ROOT$/packages/e2e/native/ios-runner/Host/**",
+				"$TURBO_ROOT$/packages/e2e/native/ios-runner/RunnerTests/**",
+				"$TURBO_ROOT$/packages/e2e/native/ios-runner/WardenRunner.xcodeproj/project.pbxproj",
+				"$TURBO_ROOT$/packages/e2e/native/ios-runner/RunnerCore/Sources/RunnerCore/**",
+				"$TURBO_ROOT$/packages/e2e/native/ios/Sources/warden-simd/Protocol/*.swift",
+				"$TURBO_ROOT$/packages/e2e/native/ios/Sources/warden-simd/Model/*.swift"
+			]
+		},
+
+		// landing.test checks each claim's proof file (apps/cli/src, packages/core/src, skills/warden)
+		// and privacy.test reads the CLI's update hosts + package.json; bench-data.test reads docs/bench;
+		// analytics/config.test reads turbo.jsonc.
+		"@delacour/warden-docs#test": {
+			"dependsOn": ["transit", "@delacour/warden#transit"],
+			"cache": true,
+			"outputs": [],
+			"inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/skills/**", "$TURBO_ROOT$/docs/bench/**", "$TURBO_ROOT$/turbo.jsonc"]
+		},
+
+		// apps/example/demos/*.demo.ts import scripts/demo/demo.types, and tsc includes **/*.ts.
+		"@delacour/warden-example#typecheck": {
+			"dependsOn": ["transit", "@delacour/warden-demo#transit"],
+			"cache": true,
+			"outputs": []
+		},
+
+		// ui-bench.ts imports apps/cli/src/agent-ui/bench; its test imports ui-bench.ts.
+		"@delacour/warden-smoke#typecheck": {
+			"dependsOn": ["transit", "@delacour/warden#transit"],
+			"cache": true,
+			"outputs": []
+		},
+		"@delacour/warden-smoke#test": {
+			"dependsOn": ["transit", "@delacour/warden#transit"],
+			"cache": true,
+			"outputs": []
+		},
+
+		// changeset-config.test imports apps/cli/scripts/release and reads every workspace
+		// package.json, the changeset config and the workflows; workflows.test reads .github/workflows;
+		// e2e-action.test runs .github/actions/e2e/artifacts.sh and reads its action.yml.
+		"@delacour/warden-release#typecheck": {
+			"dependsOn": ["transit", "@delacour/warden#transit"],
+			"cache": true,
+			"outputs": []
+		},
+		"@delacour/warden-release#test": {
+			"dependsOn": ["transit", "@delacour/warden#transit"],
+			"cache": true,
+			"outputs": [],
+			"inputs": [
+				"$TURBO_DEFAULT$",
+				"$TURBO_ROOT$/package.json",
+				"$TURBO_ROOT$/apps/*/package.json",
+				"$TURBO_ROOT$/packages/*/package.json",
+				"$TURBO_ROOT$/scripts/*/package.json",
+				"$TURBO_ROOT$/.changeset/config.json",
+				"$TURBO_ROOT$/.github/workflows/**",
+				"$TURBO_ROOT$/.github/actions/**"
+			]
+		},
+
+		// The drift guard reads .github/workflows/ci.yml; the cpu-guard tests spawn `bun run bench`
+		// from the repo root (root package.json -> packages/e2e-bench and its baselines);
+		// turbo-cache.test.ts reads turbo.jsonc and every workspace package.json.
+		"@delacour/warden-signoff#test": {
+			"dependsOn": ["transit", "@delacour/warden-e2e-bench#transit"],
+			"cache": true,
+			"outputs": [],
+			"inputs": [
+				"$TURBO_DEFAULT$",
+				"$TURBO_ROOT$/package.json",
+				"$TURBO_ROOT$/turbo.jsonc",
+				"$TURBO_ROOT$/apps/*/package.json",
+				"$TURBO_ROOT$/packages/*/package.json",
+				"$TURBO_ROOT$/scripts/*/package.json",
+				"$TURBO_ROOT$/.github/workflows/ci.yml"
+			]
+		}
 	}
 }

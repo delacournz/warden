@@ -3,12 +3,17 @@ import type { Affected, Suite } from "@delacour/warden-core/affected/affected";
 import {
 	type E2eDeviceLeg,
 	type E2eIsolation,
+	type E2ePhysical,
 	type E2eSuiteConfig,
+	e2eMetroSchema,
 	suiteIsolation,
 } from "@delacour/warden-core/affected/affected.schema";
+import { compiledBinary } from "@delacour/warden-core/affected/graph-process";
 import type { SelectedSpec, Selection } from "@delacour/warden-core/affected/select";
 import { readySpec } from "@delacour/warden-core/batch/preset";
 import { appSwitches } from "@delacour/warden-core/builds/app-option.schema";
+import { type BuildKind, DEFAULT_E2E_KIND } from "@delacour/warden-core/builds/kinds";
+import { resolveCameraConfig } from "@delacour/warden-core/conditions/conditions.config";
 import {
 	DEFAULT_SPEC_ACTION_TIMEOUT,
 	DEFAULT_SPEC_ASSERTION_TIMEOUT,
@@ -16,29 +21,51 @@ import {
 } from "@delacour/warden-core/config.defaults";
 import { parseDuration } from "@delacour/warden-core/duration";
 import { resolveHeadless } from "@delacour/warden-core/headless";
+import { checkIosRuntime } from "@delacour/warden-core/providers/ios";
 import { DEFAULT_SLIM_PROFILE, type SlimProfile, validateProfile } from "@delacour/warden-core/sims/slim.profile";
 import type { Platform } from "@delacour/warden-core/types";
+import type { TestResult } from "@delacour/warden-e2e/runner/results";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { selfCommand } from "../autogc";
 import type { DeviceSetup, DeviceSetupSpec } from "../batch/setup";
 import { realPath, type TrackedSpec } from "../batch/spec-progress";
 import type { WarmConnect } from "../batch/warm-drivers";
-import { type ClaimFlagValues, parseClaimFlags, withClaimOptions } from "../claim-flags";
+import {
+	type ClaimFlags,
+	type ClaimFlagValues,
+	isPhysicalClaim,
+	type PhysicalOptionValues,
+	parseClaimFlags,
+	resolveOwner,
+	withClaimOptions,
+	withNamedPhysical,
+	withPhysicalOptions,
+} from "../claim-flags";
 import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
-import { findBun, parsePerfFlag, runnerArgv, type SpecEnvOptions, specEnv } from "../e2e/bun-runner";
+import {
+	findBun,
+	NETPROXY_SUBCOMMAND,
+	parsePerfFlag,
+	runnerArgv,
+	type SpecEnvOptions,
+	specEnv,
+} from "../e2e/bun-runner";
 import { selectPreload } from "../e2e/e2e-runtime";
 import { attemptOut, type JobPlan, jobPlan, type ShardRuns, shardRuns } from "../e2e/jobs";
-import { type LaunchPlan, specBundleId, specLaunchArgs } from "../e2e/launch";
+import { type LaunchPlan, specBundleId, specDevClientScheme, specLaunchArgs } from "../e2e/launch";
+import { annotations, commonFailure, githubTarget, stepSummary, testEvent, testTotals } from "../e2e/report-output";
 import { exitGate, type RunShape, type SpecVerdict, type Verdicts, verdicts } from "../e2e/verdicts";
 import { type AppFlagValues, withLeaseOptions } from "../lease-session";
 import { emit, note, reportError, success, warn } from "../output";
+import { canPrompt, pickPhysicalArgs, reportPick } from "../physical-pick";
 import { currentBuild } from "../update/build-info";
 import { type AffectedOpts, explain, runAffected, selectedSpecs } from "./affected";
 import {
 	type BatchArgs,
 	type BatchDeps,
 	type BatchLeg,
+	type DeviceWarmReport,
 	defaultBatchDeps,
 	type MetroPlan,
 	parseBatchArgs,
@@ -51,8 +78,11 @@ import {
 /** Commander option values of `warden e2e`. */
 export type E2eOpts = ClaimFlagValues &
 	AppFlagValues &
+	PhysicalOptionValues &
 	Omit<AffectedOpts, "json" | "strict"> & {
 		json?: true;
+		/** `--json-lines`: stdout is one JSON event per line (each test as it finishes, then the report) */
+		jsonLines?: true;
 		port: string[];
 		retry: string;
 		passes: string;
@@ -73,6 +103,10 @@ export type E2eOpts = ClaimFlagValues &
 		warm?: boolean;
 		/** `--perf[=captures]`: record a perf session around every attempt */
 		perf?: string | true;
+		/** `--dev`: the dev client (kind `dev`) on warden's Metro */
+		dev?: true;
+		/** `--a11y`: iOS apps launch with the injected library even when the suite sets no `a11y` */
+		a11y?: true;
 	};
 
 export type E2eReport = {
@@ -90,27 +124,160 @@ export type E2eReport = {
 	only?: string[];
 	/** per-device setup outcomes, when the suite has a `setup` */
 	setup?: DeviceSetup[];
+	/** iOS: per-device driver warm-up outcomes (`axRecovery`: a wedged accessibility service it found and what became of it) */
+	warm?: DeviceWarmReport[];
+	/** the run stopped before any spec: a phone's runner would not start (`device_locked`, ...) */
+	error?: { code: string; message: string; udid: string };
 };
 
-/** The suite's run settings as option values (CLI flags passed explicitly win). */
-function suiteOpts({ config: suite, cwd, projectRoot }: Suite, opts: E2eOpts, passed: ReadonlySet<string>): E2eOpts {
-	const app = appSwitches(suite.app);
-	const fromSuite: Partial<E2eOpts> = {
+/** The suite's retry / passes and device request (count, profile, runtime, biometrics, camera, ports) as option values. */
+function suiteDeviceOpts(suite: Suite["config"]): Partial<E2eOpts> {
+	return {
 		retry: String(suite.retry),
 		passes: String(suite.passes),
 		...(suite.count !== undefined ? { count: String(suite.count) } : {}),
 		...(suite.profile !== undefined ? { profile: suite.profile } : {}),
+		...(suite.runtime !== undefined ? { runtime: suite.runtime } : {}),
+		...(suite.biometrics === true ? { biometrics: true as const } : {}),
+		...(suite.camera !== undefined ? { camera: true as const } : {}),
 		...(suite.ports ? { port: suite.ports } : {}),
+	};
+}
+
+/** The suite's `serve` command and its readiness settings as option values. */
+function suiteServeOpts(suite: Suite["config"], cwd: string): Partial<E2eOpts> {
+	return {
 		...(suite.serve !== undefined ? { serve: suite.serve } : {}),
 		...(suite.serveReady !== undefined ? { serveReady: readySpec(suite.serveReady, cwd) } : {}),
 		...(suite.serveTimeout !== undefined ? { serveTimeout: suite.serveTimeout } : {}),
+	};
+}
+
+/** The suite's `app` block as option values. */
+function suiteAppOpts(suite: Suite["config"], projectRoot: string | undefined): Partial<E2eOpts> {
+	const app = appSwitches(suite.app);
+	return {
 		...(app.app ? { app: true as const, ...(projectRoot ? { project: projectRoot } : {}) } : {}),
 		...(app.installMode !== undefined ? { installMode: app.installMode } : {}),
 		...(app.resetKeychain ? { resetKeychain: true as const } : {}),
-		...(app.variant !== undefined ? { variant: app.variant } : {}),
+	};
+}
+
+/** The suite's run settings as option values (CLI flags passed explicitly win). */
+function suiteOpts(
+	{ config: suite, cwd, projectRoot }: Suite,
+	opts: E2eOpts,
+	passed: ReadonlySet<string>,
+	run: RunKind
+): E2eOpts {
+	const fromSuite: Partial<E2eOpts> = {
+		...suiteDeviceOpts(suite),
+		...suiteServeOpts(suite, cwd),
+		...suiteAppOpts(suite, projectRoot),
 	};
 	const cli = Object.fromEntries(Object.entries(opts).filter(([key]) => passed.has(key)));
-	return { ...opts, ...fromSuite, ...cli };
+	const { kind: _kind, variant: _variant, ...merged } = { ...opts, ...fromSuite, ...cli };
+	return {
+		...merged,
+		...(run.kind !== undefined ? { kind: run.kind } : {}),
+		...(run.variant !== undefined ? { variant: run.variant } : {}),
+		...(run.bundleEnv !== undefined ? { bundleEnv: run.bundleEnv } : {}),
+	};
+}
+
+/**
+ * What a run installs and how its Metro is decided:
+ * - `kind` / `variant`: the build the devices get (`--dev` / `--kind` > the suite's `app.variant` > its `app.kind` >
+ *   `simulator`, the repacked sim build). A suite that installs no app (no `app`, no `--app`) keeps `suite`.
+ * - `metro`: `off` (the suite's `metro` block applies only with the dev client), `dev` (the block, else the defaults),
+ *   `suite` (as the suite wrote it: a pinned `app.variant`, or a suite with no app to install).
+ * - `bundleEnv`: with `metro: "off"` on a kind that embeds the JS, the dropped block's `env`. `EXPO_PUBLIC_*` values are
+ *   inlined at bundle time, so without it the build would get `.env*` / the shell's values instead of the suite's.
+ */
+export type RunKind = {
+	kind?: BuildKind;
+	variant?: string;
+	metro: "off" | "dev" | "suite";
+	bundleEnv?: Record<string, string>;
+};
+
+/** `kind` with its Metro decision, carrying the suite's `metro.env` into the bundle when Metro is off. */
+function kindRun(suite: Suite, kind: BuildKind): RunKind {
+	if (kind === "dev") return { kind, metro: "dev" };
+	const env = suite.config.metro?.env;
+	return env !== undefined && Object.keys(env).length > 0
+		? { kind, metro: "off", bundleEnv: env }
+		: { kind, metro: "off" };
+}
+
+/** The kind a run on physical devices installs when the suite and the command line name none. */
+const PHYSICAL_E2E_KIND: BuildKind = "release";
+
+/** `--physical` / `--serial` / `--udid` were given on the command line: they win over the suite's `physical`. */
+const cliPhysical = (passed: ReadonlySet<string>): boolean =>
+	passed.has("physical") || passed.has("serial") || passed.has("udid");
+
+/** The suite's / a leg's `physical` as the `--physical` / `--serial` / `--udid` values it stands for. */
+function physicalOpts(platform: Platform, physical: E2ePhysical | undefined): PhysicalOptionValues {
+	if (physical === undefined) return {};
+	if (physical === true) return { physical: true };
+	return platform === "android" ? { serial: physical.ids } : { udid: physical.ids };
+}
+
+/**
+ * The physical part of a claim's option values: the command line's `--physical` / `--serial` / `--udid` win, else the
+ * leg's `physical`, else the suite's. A phone is never hidden or slimmed, so the resolved headless (config, env) is
+ * dropped for it: only an explicit `--headless` reaches the claim, which refuses it.
+ */
+function legPhysicalOpts(
+	run: { platform: Platform; config: E2eSuiteConfig; opts: E2eOpts; passed: ReadonlySet<string>; base: E2eOpts },
+	leg?: E2eDeviceLeg
+): Partial<E2eOpts> {
+	const physical = cliPhysical(run.passed) ? {} : physicalOpts(run.platform, leg?.physical ?? run.config.physical);
+	if (!isPhysicalClaim(withNamedPhysical({ ...run.base, ...physical }))) return physical;
+	// the suite's count and headless size a simulator run: only flags given here can conflict with a phone
+	return {
+		...physical,
+		headless: run.passed.has("headless") ? run.opts.headless : undefined,
+		count: run.passed.has("count") ? run.opts.count : undefined,
+	};
+}
+
+/** Does the run use physical devices: asked for on the command line, by the suite, or by one of the legs it runs? */
+function wantsPhysical(config: E2eSuiteConfig, opts: E2eOpts, passed: ReadonlySet<string>): boolean {
+	if (cliPhysical(passed) || config.physical !== undefined) return true;
+	const legs = selectLegs(config, opts, passed);
+	return legs.success && (legs.data ?? []).some((leg) => leg.physical !== undefined);
+}
+
+/** The run's kind from `--dev` / `--kind` / `--variant` and the suite's `app` (see {@link RunKind}). */
+export function resolveRunKind(
+	suite: Suite,
+	opts: E2eOpts,
+	passed: ReadonlySet<string>,
+	physical = false
+): Result<RunKind> {
+	const passedKind = passed.has("kind") ? opts.kind : undefined;
+	if (opts.dev && passedKind !== undefined) return err("--dev and --kind can't be combined");
+	const cliKind = opts.dev ? "dev" : passedKind;
+	const app = appSwitches(suite.config.app);
+	if (cliKind !== undefined) {
+		if (passed.has("variant")) return err("--kind / --dev and --variant can't be combined");
+		return ok(kindRun(suite, cliKind));
+	}
+	if (!app.app && !opts.app) return ok({ metro: "suite" });
+	const variant = passed.has("variant") ? opts.variant : app.variant;
+	if (variant !== undefined) return ok({ variant, metro: "suite" });
+	// a repacked simulator build cannot run on a phone: a physical run installs the release build (a device build on an iPhone)
+	return ok(kindRun(suite, app.kind ?? (physical ? PHYSICAL_E2E_KIND : DEFAULT_E2E_KIND)));
+}
+
+/** `suite` with its Metro as the run decides: dropped, defaulted or as written. */
+function withRunMetro(suite: Suite, run: RunKind): Suite {
+	if (run.metro === "suite") return suite;
+	const { metro, ...config } = suite.config;
+	if (run.metro === "off") return { ...suite, config };
+	return { ...suite, config: { ...config, metro: metro ?? e2eMetroSchema.parse({}) } };
 }
 
 function onePlatform(affected: Affected): Result<Selection> {
@@ -134,8 +301,9 @@ function slimProfile(slim: NonNullable<E2eSuiteConfig["slim"]>): SlimProfile {
 }
 
 /** The per-device prep a suite asks for (`slim` on iOS, then `setup`); undefined when there is none on this platform. */
-function deviceSetup(suite: E2eSuiteConfig, platform: Platform): DeviceSetupSpec | undefined {
-	const slim = slimsDevices(suite, platform);
+function deviceSetup(suite: E2eSuiteConfig, platform: Platform, physical = false): DeviceSetupSpec | undefined {
+	// a phone has no simulator daemons to slim; the suite's `setup` command still runs
+	const slim = slimsDevices(suite, platform) && !physical;
 	if (suite.setup === undefined && !slim) return undefined;
 	return {
 		...(suite.setup !== undefined ? { command: suite.setup } : {}),
@@ -181,12 +349,32 @@ async function metroPlan(suite: Suite, bundleId: string): Promise<Result<MetroPl
 	});
 }
 
-/** Write the report (batch dir + `--report`), print it for `--json`. */
+/** Write the report (batch dir + `--report`), print it for `--json` / as the last `--json-lines` event. */
 async function publish(ctx: CommandContext, deps: BatchDeps, opts: E2eOpts, report: E2eReport): Promise<void> {
 	const text = `${JSON.stringify(report, null, 2)}\n`;
 	if (report.batchDir) await deps.writeFile(join(report.batchDir, "e2e-report.json"), text);
 	if (opts.report) await deps.writeFile(opts.report, text);
-	if (opts.json) emit(ctx, true, report, "");
+	if (opts.jsonLines) ctx.out(`${JSON.stringify({ event: "report", report })}\n`);
+	else if (opts.json) emit(ctx, true, report, "");
+}
+
+/**
+ * Under GitHub Actions: an annotation per failed test on its spec file and line (stdout, or stderr
+ * when stdout is JSON; the runner reads both), and the run's table appended to the step summary.
+ */
+async function publishGithub(ctx: CommandContext, deps: BatchDeps, opts: E2eOpts, report: E2eReport): Promise<void> {
+	const github = githubTarget(ctx.env);
+	if (!github) return;
+	const write = jsonOut(opts) ? ctx.err : (line: string) => ctx.out(`${line}\n`);
+	for (const line of annotations(report, github.root)) write(line);
+	if (!github.summary) return;
+	const before = await deps.readFile(github.summary).catch(() => "");
+	await deps.writeFile(github.summary, `${before}${stepSummary(report)}`).catch((error: unknown) => {
+		warn(
+			ctx,
+			`warden e2e: could not write the step summary: ${error instanceof Error ? error.message : String(error)}`
+		);
+	});
 }
 
 /** ` on <device> — log <path> — screenshot <path>` for a spec that ran and failed (empty otherwise). */
@@ -221,6 +409,29 @@ function failedTests(spec: SpecVerdict): string[] {
 		});
 }
 
+/** Test counts, the error most failures share (usually the root cause) and, on failure, where the evidence is. */
+function printTotals(ctx: CommandContext, report: E2eReport): void {
+	const { color } = ctx.ui;
+	const totals = testTotals(report);
+	if (totals.passed + totals.failed + totals.skipped > 0) {
+		const failed = totals.failed > 0 ? color.red(`${totals.failed} failed`) : "0 failed";
+		ctx.err(`warden e2e: tests ${color.green(`${totals.passed} passed`)} · ${failed} · ${totals.skipped} skipped`);
+	}
+	const common = commonFailure(report);
+	if (common)
+		ctx.err(color.red(`warden e2e: ${common.count}/${common.of} failed tests share one error: ${common.message}`));
+	if (!report.ok && report.batchDir) ctx.err(`warden e2e: evidence in ${report.batchDir}`);
+}
+
+/** stdout is JSON (`--json` or `--json-lines`): no prompts, annotations go to stderr. */
+const jsonOut = (opts: E2eOpts): true | undefined => opts.json ?? opts.jsonLines;
+
+/** `--json-lines`: each finished test as one event on stdout. */
+function jsonLinesHook(ctx: CommandContext, opts: E2eOpts): { onTest?: (spec: string, result: TestResult) => void } {
+	if (!opts.jsonLines) return {};
+	return { onTest: (id, result) => ctx.out(`${JSON.stringify(testEvent(id, result))}\n`) };
+}
+
 /** Failed / not-run specs with their failing tests, any `test.only`, then the one-line gate verdict. */
 function printVerdict(ctx: CommandContext, report: E2eReport): void {
 	const { color } = ctx.ui;
@@ -231,6 +442,7 @@ function printVerdict(ctx: CommandContext, report: E2eReport): void {
 		for (const line of failedTests(spec)) ctx.err(color.red(line));
 	}
 	for (const file of report.only ?? []) ctx.err(color.red(`warden e2e: test.only left in ${file}`));
+	printTotals(ctx, report);
 	const passed = report.specs.filter((f) => f.verdict === "passed").length;
 	const line = `warden e2e: ${passed}/${report.specs.length} spec(s) passed — ${report.ok ? "gate passed" : "gate failed"}`;
 	if (report.ok) success(ctx, line);
@@ -241,14 +453,14 @@ function printVerdict(ctx: CommandContext, report: E2eReport): void {
 const inCi = (env: Record<string, string | undefined>): boolean => !["", "0", "false", undefined].includes(env.CI);
 
 /**
- * Whether a passed gate shuts the devices warden booted down before their leases are released:
- * the suite's `shutdown`, else yes under CI (the runner is thrown away, free the RAM at once) and
- * no locally (the next run reuses the booted sims instead of paying a 10-30 s boot; `warden gc`
- * shuts them down once they have sat idle). `--no-shutdown` always wins.
+ * Whether a passed gate shuts the devices warden booted down (closing their windows) before their
+ * leases are released: the suite's `shutdown`, else yes, locally and under CI. `shutdown: "idle"`
+ * keeps them booted for the next run (`warden gc` reaps them once idle). `--no-shutdown` always wins.
  */
-function shutsDownOnPass(ctx: CommandContext, suite: Suite, opts: E2eOpts): boolean {
-	if (!opts.shutdown) return false;
-	return (suite.config.shutdown ?? (inCi(ctx.env) ? "always" : "idle")) === "always";
+function shutsDownOnPass(suite: Suite, opts: E2eOpts, physical: boolean): boolean {
+	// a phone is never shut down: with only phones in the run there is nothing to do
+	if (!opts.shutdown || physical) return false;
+	return (suite.config.shutdown ?? "always") === "always";
 }
 
 /** `--headless` / `--no-headless` > the suite's (else top-level) `headless` > `WARDEN_HEADLESS`. */
@@ -276,11 +488,33 @@ async function plan(ctx: CommandContext, suiteName: string | undefined, opts: E2
 	return ok({ affected: affected.data, selection: selection.data, specs });
 }
 
+/** Nothing to run (no affected specs, or `--dry-run`): every selected spec is reported `not-run`. */
+async function publishNotRun(
+	ctx: CommandContext,
+	deps: BatchDeps,
+	suite: Suite,
+	specs: readonly SelectedSpec[],
+	opts: E2eOpts,
+	passed: ReadonlySet<string>,
+	base: Pick<E2eReport, "suite" | "platform" | "base">,
+	headless: boolean
+): Promise<void> {
+	if (specs.length === 0) success(ctx, "warden e2e: no affected specs — nothing to run");
+	const notRun = specs.map((f): SpecVerdict => ({ ...f, verdict: "not-run", attempts: 0 }));
+	await publish(ctx, deps, opts, {
+		...base,
+		isolate: runIsolation(suite.config, opts, passed),
+		ok: true,
+		headless,
+		specs: notRun,
+	});
+}
+
 /**
  * `warden e2e [suite]`: the specs the change needs (see `warden affected`), run on leased devices
- * like `warden batch`, each `passes` times. Once the gate passes under CI (or `shutdown: "always"`),
- * the devices warden created (or booted) are shut down before their leases are released; locally
- * they stay booted for the next run, and a failed run always leaves them up. Exit 0 when every
+ * like `warden batch`, each `passes` times. Once the gate passes, the devices warden created (or
+ * booted) are shut down before their leases are released (`shutdown: "idle"` keeps them booted for
+ * the next run), and a failed run always leaves them up. Exit 0 when every
  * required spec passed (optional failures are reported, not fatal), 1 otherwise, 130 when interrupted.
  */
 async function e2e(
@@ -297,7 +531,9 @@ async function e2e(
 	const planned = await plan(ctx, suiteName, opts);
 	if (!planned.success) return fail(planned.error);
 	const { affected, selection, specs } = planned.data;
-	const { suite } = affected;
+	const kind = resolveRunKind(affected.suite, opts, passed, wantsPhysical(affected.suite.config, opts, passed));
+	if (!kind.success) return fail(kind.error);
+	const suite = withRunMetro(affected.suite, kind.data);
 	const headless = suiteHeadless(ctx, suite, opts, passed);
 	const base = {
 		suite: suite.name,
@@ -305,20 +541,21 @@ async function e2e(
 		...(affected.base !== undefined ? { base: affected.base } : {}),
 	};
 	if (specs.length === 0 || opts.dryRun) {
-		if (specs.length === 0) success(ctx, "warden e2e: no affected specs — nothing to run");
-		const notRun = specs.map((f): SpecVerdict => ({ ...f, verdict: "not-run", attempts: 0 }));
-		await publish(ctx, deps, opts, {
-			...base,
-			isolate: runIsolation(suite.config, opts, passed),
-			ok: true,
-			headless,
-			specs: notRun,
-		});
+		await publishNotRun(ctx, deps, suite, specs, opts, passed, base, headless);
 		return 0;
 	}
-	const run = await preparedRun(ctx, deps, suite, selection.platform, specs, { ...opts, headless }, passed);
+	const run = await preparedRun(ctx, deps, suite, selection.platform, specs, { ...opts, headless }, passed, kind.data);
 	if (!run.success) return fail(run.error);
-	const { args, shape, plan: jobs, argvOf, spec } = run.data;
+	// before any lease or build: a pinned runtime must be installed, never swapped for another
+	const missing = await missingRuntime(ctx, selection.platform, run.data);
+	if (missing !== undefined) return fail(missing);
+	// before any lease or build: several usable phones are asked about, or refused (ambiguous_device, exit 2)
+	const picked = await pickPhysicalArgs(ctx, resolveOwner(ctx), run.data.args, {
+		prompt: canPrompt(ctx, { json: jsonOut(opts) }),
+	});
+	if (picked.kind !== "ok") return reportPick(ctx, "e2e", picked);
+	const { shape, plan: jobs, argvOf, spec, physical } = run.data;
+	const { args } = picked;
 	const runs = shardRuns(jobs, { argvOf, readFile: deps.readFile });
 	const session = await runSession(
 		ctx,
@@ -328,8 +565,10 @@ async function e2e(
 		jobs.argvs.get(jobs.jobs[0] ?? "") ?? [],
 		sessionHooks(suite, specs, shape, spec, runs, {
 			platform: selection.platform,
-			shutdown: shutsDownOnPass(ctx, suite, opts),
-			...warmHooks(ctx, deps, suite, opts),
+			shutdown: shutsDownOnPass(suite, opts, physical),
+			physical,
+			...warmHooks(ctx, deps, suite, opts, physical && selection.platform === "ios"),
+			...jsonLinesHook(ctx, opts),
 		})
 	);
 	const result = await verdicts(specs, session, shape, {
@@ -340,9 +579,22 @@ async function e2e(
 	for (const warning of result.warnings) ctx.err(ctx.ui.color.yellow(`warden e2e: ${warning}`));
 	const report = buildReport(base, headless, shape.shardOf === undefined ? "spec" : "device", session, result);
 	await publish(ctx, deps, opts, report);
-	if (session.code === 130) return 130;
+	await publishGithub(ctx, deps, opts, report);
+	const early = earlyExit(session);
+	if (early !== undefined) return early;
 	printVerdict(ctx, report);
 	return result.ok ? 0 : 1;
+}
+
+/**
+ * The exit code of a session that ended before there were verdicts to print, else undefined: interrupted (130), stopped
+ * before any spec (a phone's runner would not start: the session already said why, with its own exit code), or no
+ * device claimed (a phone that stayed locked, `device_locked`, already reported: exit 2).
+ */
+function earlyExit(session: SessionResult): number | undefined {
+	if (session.code === 130) return 130;
+	if (session.error) return session.code;
+	return session.code === 2 ? 2 : undefined;
 }
 
 /** `e2e-report.json` from the session and its verdicts. */
@@ -362,6 +614,8 @@ function buildReport(
 		specs: result.specs,
 		...(result.only.length > 0 ? { only: result.only } : {}),
 		...(session.setups ? { setup: session.setups } : {}),
+		...(session.warm && session.warm.length > 0 ? { warm: session.warm } : {}),
+		...(session.error ? { error: session.error } : {}),
 	};
 }
 
@@ -373,16 +627,17 @@ async function preparedRun(
 	platform: Platform,
 	specs: readonly SelectedSpec[],
 	opts: E2eOpts,
-	passed: ReadonlySet<string>
+	passed: ReadonlySet<string>,
+	kind: RunKind
 ): AsyncResult<RunPlan & { spec: SpecPlan }> {
 	if (suite.config.slim && platform !== "ios") note(ctx, `warden e2e: slim is iOS-only; skipped on ${platform}`);
 	if (slimsDevices(suite.config, platform) && suite.config.slim !== undefined) {
 		const slim = validateProfile(slimProfile(suite.config.slim));
 		if (!slim.success) return err(`suite "${suite.name}": slim: ${slim.error}`);
 	}
-	const spec = await specPlan(ctx, deps, suite, platform, opts);
+	const spec = await specPlan(ctx, deps, suite, platform, opts, wantsPhysical(suite.config, opts, passed));
 	if (!spec.success) return spec;
-	const run = await runPlan(ctx, suite, platform, specs, spec.data, opts, passed);
+	const run = await runPlan(ctx, suite, platform, specs, spec.data, opts, passed, kind);
 	return run.success ? ok({ ...run.data, spec: spec.data }) : run;
 }
 
@@ -394,9 +649,11 @@ function warmHooks(
 	ctx: CommandContext,
 	deps: BatchDeps,
 	suite: Suite,
-	opts: E2eOpts
+	opts: E2eOpts,
+	phones: boolean
 ): { warm: WarmConnect | undefined; resident: ((udid: string) => Promise<string | undefined>) | undefined } {
-	if (suite.config.warmDrivers === false || opts.warm === false) {
+	// an iPhone's jobs reach the runner host only through the warm step's socket: it is never skipped
+	if (!phones && (suite.config.warmDrivers === false || opts.warm === false)) {
 		return { warm: undefined, resident: deps.residentSocket?.(ctx) };
 	}
 	return { warm: deps.warmConnect(ctx), resident: undefined };
@@ -412,17 +669,21 @@ function sessionHooks(
 	o: {
 		platform: Platform;
 		shutdown: boolean;
+		/** every device of the run is a phone/tablet: no simulator setup (slim), and nothing to shut down */
+		physical: boolean;
 		warm: WarmConnect | undefined;
 		resident: ((udid: string) => Promise<string | undefined>) | undefined;
+		onTest?: (spec: string, result: TestResult) => void;
 	}
 ): SessionHooks {
 	return {
 		name: "e2e",
-		setup: deviceSetup(suite.config, o.platform),
+		setup: deviceSetup(suite.config, o.platform, o.physical),
 		// batch skips both off iOS
 		warmDrivers: o.warm,
 		residentSocket: o.resident,
 		specs: trackedSpecs(specs, shape),
+		...(o.onTest ? { onTest: o.onTest } : {}),
 		// a passed gate frees the sims when asked to; a failed one always leaves them up to inspect
 		...(o.shutdown ? { shutdownIf: (summary) => exitGate(specs, summary, shape) } : {}),
 		argvFor: (_job, run) => runs.argv(run),
@@ -454,7 +715,8 @@ async function runPlan(
 	specs: readonly SelectedSpec[],
 	spec: SpecPlan,
 	opts: E2eOpts,
-	passed: ReadonlySet<string>
+	passed: ReadonlySet<string>,
+	kind: RunKind
 ): AsyncResult<RunPlan> {
 	const { config } = suite;
 	const picked = selectLegs(config, opts, passed);
@@ -462,27 +724,40 @@ async function runPlan(
 	const metro = await metroPlan(suite, spec.env.bundleId);
 	if (!metro.success) return metro;
 	// --json is the e2e report here, not batch.json
-	const { json: _json, ...merged } = suiteOpts(suite, opts, passed);
+	const { json: _json, jsonLines: _jsonLines, ...fromFlags } = suiteOpts(suite, opts, passed, kind);
+	const merged = withPlatformRuntime(ctx, platform, fromFlags, passed);
 	const needsApp = appFlagsWithoutApp(suite, merged);
 	if (needsApp !== undefined) return err(needsApp);
 	const batchOpts = { ...merged, ...(config.metro?.enabled ? { port: [config.metro.port, ...merged.port] } : {}) };
 	const slimFlag = passed.has("slim") ? opts.slim : undefined;
+	const phoneOpts = (leg?: E2eDeviceLeg) => legPhysicalOpts({ platform, config, opts, passed, base: batchOpts }, leg);
 	const legOpts = (leg: E2eDeviceLeg) => ({
 		...batchOpts,
 		profile: leg.profile,
 		count: String(leg.count),
 		slim: slimFlag,
 		...(suite.slim !== undefined ? { slimConfig: suite.slim } : {}),
+		...phoneOpts(leg),
+		...(suite.biometrics === true ? { biometrics: true } : {}),
+		...(config.camera !== undefined ? { camera: true } : {}),
+		...(suite.reclaim !== undefined ? { reclaimConfig: suite.reclaim } : {}),
+		golden: suite.golden,
 	});
 	const [first] = picked.data ?? [];
-	const args = parseBatchArgs(platform, first ? legOpts(first) : batchOpts, ctx.cwd, {
-		jobs: { kind: "list", jobs: specs.map((f) => f.id) },
-		cwd: suite.cwd,
-		env: { ...config.env },
-	});
+	const args = parseBatchArgs(
+		platform,
+		first ? legOpts(first) : { ...batchOpts, ...phoneOpts(), golden: suite.golden },
+		ctx.cwd,
+		{
+			jobs: { kind: "list", jobs: specs.map((f) => f.id) },
+			cwd: suite.cwd,
+			env: { ...config.env },
+		}
+	);
 	if (!args.success) return args;
 	const legs = batchLegs(platform, picked.data ?? [], legOpts);
 	if (!legs.success) return legs;
+	const claims = claimedFlags(args.data, legs.data);
 	const argvOf = (files: readonly string[]) =>
 		runnerArgv({ bun: spec.bun, preload: spec.preload, specPaths: files, timeoutMs: spec.env.timeouts.timeoutMs });
 	const isolation = runIsolation(config, opts, passed);
@@ -503,7 +778,43 @@ async function runPlan(
 		shape: { ...planned.shape, ...(plan.shardOf ? { shardOf: plan.shardOf } : {}) },
 		plan,
 		argvOf,
+		physical: claims.every((flags) => flags.request.physical !== undefined),
 	});
+}
+
+/** A suite's `runtime` pins an iOS simulator runtime: skipped with a note on Android. A `--runtime` flag is left for the claim to judge. */
+function withPlatformRuntime(
+	ctx: CommandContext,
+	platform: Platform,
+	opts: Omit<E2eOpts, "json" | "jsonLines">,
+	passed: ReadonlySet<string>
+): Omit<E2eOpts, "json" | "jsonLines"> {
+	if (platform === "ios" || opts.runtime === undefined || passed.has("runtime")) return opts;
+	note(ctx, `warden e2e: runtime is iOS-only; skipped on ${platform}`);
+	const { runtime: _runtime, ...rest } = opts;
+	return rest;
+}
+
+/** The first pinned iOS runtime that is not installed, as the error to refuse the run with (before any lease or build). */
+async function missingRuntime(ctx: CommandContext, platform: Platform, run: RunPlan): Promise<string | undefined> {
+	if (platform !== "ios" || run.physical) return undefined;
+	for (const runtime of pinnedRuntimes(run.args)) {
+		const found = await checkIosRuntime(ctx.exec, runtime);
+		if (!found.success) return found.error;
+	}
+	return undefined;
+}
+
+/** The runtimes the run's claims pin (the plain claim's and every leg's), distinct, `latest` left out. */
+function pinnedRuntimes(args: BatchArgs): string[] {
+	const requests = [args.flags.request, ...(args.legs ?? []).map((leg) => leg.flags.request)];
+	const wanted = requests.flatMap((r) => (r.runtime === undefined || r.runtime === "latest" ? [] : [r.runtime]));
+	return [...new Set(wanted)];
+}
+
+/** The claim of each leg, else the plain claim. */
+function claimedFlags(args: BatchArgs, legs: readonly BatchLeg[]): ClaimFlags[] {
+	return legs.length > 0 ? legs.map((leg) => leg.flags) : [args.flags];
 }
 
 /**
@@ -544,6 +855,8 @@ type RunPlan = {
 	plan: JobPlan;
 	/** the `bun test` argv over some spec files */
 	argvOf: (files: readonly string[]) => string[];
+	/** every device of the run is a physical phone/tablet */
+	physical: boolean;
 };
 
 /** The spec runner, resolved before any device is leased: `bun`, the preload, the app and the spec env. */
@@ -559,8 +872,17 @@ const specDuration = (field: string, value: string | undefined, fallback: string
 	return ms.success ? ms : err(`e2e.spec.${field}: ${ms.error}`);
 };
 
+/** A compiled `warden` has no `netproxy.main.ts` on disk: specs start the shaping proxy as `<self> __netproxy`. */
+function netproxyEnv(): { netproxyCommand?: string[] } {
+	const self = compiledBinary();
+	return self === undefined ? {} : { netproxyCommand: [self, NETPROXY_SUBCOMMAND] };
+}
+
 /** What `specPlan` needs of `BatchDeps` (`warden ui record stop` resolves the same plan to verify a spec). */
-export type SpecPlanDeps = Pick<BatchDeps, "which" | "resolveModule" | "e2eVersion" | "bundledE2e" | "helperDir">;
+/** `{ helperDir }` when there is a directory to name, else nothing (see `helperDir`). */
+const helperDirOf = (dir: string | undefined): { helperDir?: string } => (dir === undefined ? {} : { helperDir: dir });
+
+export type SpecPlanDeps = Pick<BatchDeps, "execPath" | "resolveModule" | "e2eVersion" | "bundledE2e" | "helperDir">;
 
 /** `bun` + preload + bundle id + timeouts of the suite's specs; every failure names what to set or install. */
 export async function specPlan(
@@ -568,10 +890,11 @@ export async function specPlan(
 	deps: SpecPlanDeps,
 	suite: Suite,
 	platform: Platform,
-	opts: Pick<E2eOpts, "perf"> = {}
+	opts: Pick<E2eOpts, "perf" | "biometrics" | "a11y"> = {},
+	/** the run is on phones: an iPhone's app has the device bundle id (`projects[].ios.device.bundleIdentifier`) */
+	physical = false
 ): AsyncResult<SpecPlan> {
-	const bun = findBun(ctx.env, deps.which);
-	if (!bun.success) return bun;
+	const bun = findBun(ctx.env, deps.execPath());
 	const version = currentBuild().version;
 	const preload = await selectPreload({
 		cwd: suite.cwd,
@@ -581,19 +904,16 @@ export async function specPlan(
 		stage: () => deps.bundledE2e(ctx),
 	});
 	if (!preload.success) return preload;
-	const bundleId = await specBundleId(ctx, suite, platform);
+	const bundleId = await specBundleId(ctx, suite, platform, physical);
 	if (!bundleId.success) return bundleId;
 	const perf = parsePerfFlag(opts.perf);
 	if (!perf.success) return perf;
+	const devClientScheme = await specDevClientScheme(ctx, suite, platform);
 	const { spec } = suite.config;
-	const timeoutMs = specDuration("timeout", spec?.timeout, DEFAULT_SPEC_TIMEOUT);
-	if (!timeoutMs.success) return timeoutMs;
-	const actionTimeoutMs = specDuration("actionTimeout", spec?.actionTimeout, DEFAULT_SPEC_ACTION_TIMEOUT);
-	if (!actionTimeoutMs.success) return actionTimeoutMs;
-	const assertionTimeoutMs = specDuration("assertionTimeout", spec?.assertionTimeout, DEFAULT_SPEC_ASSERTION_TIMEOUT);
-	if (!assertionTimeoutMs.success) return assertionTimeoutMs;
+	const timeouts = specTimeouts(spec);
+	if (!timeouts.success) return timeouts;
 	return ok({
-		bun: bun.data,
+		bun,
 		preload: preload.data.path,
 		launch: {
 			metroLaunchArgs: suite.config.metro?.enabled ? suite.config.metro.launchArgs : [],
@@ -602,30 +922,65 @@ export async function specPlan(
 		env: {
 			platform,
 			bundleId: bundleId.data,
-			timeouts: {
-				timeoutMs: timeoutMs.data,
-				actionTimeoutMs: actionTimeoutMs.data,
-				assertionTimeoutMs: assertionTimeoutMs.data,
-			},
+			...(devClientScheme === undefined ? {} : { devClientScheme }),
+			timeouts: timeouts.data,
 			specsDir: resolve(suite.configDir, suite.config.specsDir),
-			helperDir: ctx.env.WARDEN_HELPER_DIR ?? deps.helperDir(),
+			...helperDirOf(ctx.env.WARDEN_HELPER_DIR ?? deps.helperDir()),
 			version,
 			bin: selfCommand(),
+			...(platform === "ios"
+				? { iosRunnerRestart: [...selfCommand(), "__ios-runner-restart", "--udid", "{udid}"] }
+				: {}),
+			...netproxyEnv(),
 			...(perf.data === undefined ? {} : { perf: perf.data }),
-			...(suite.perfBudgets === undefined ? {} : { perfBudgets: suite.perfBudgets }),
+			...suiteSpecEnv(suite, platform, opts),
 		},
 	});
+}
+
+/** The suite's spec timeouts (`e2e.spec.timeout` / `actionTimeout` / `assertionTimeout`), each defaulted and parsed. */
+function specTimeouts(spec: Suite["config"]["spec"]): Result<SpecPlan["env"]["timeouts"]> {
+	const timeoutMs = specDuration("timeout", spec?.timeout, DEFAULT_SPEC_TIMEOUT);
+	if (!timeoutMs.success) return timeoutMs;
+	const actionTimeoutMs = specDuration("actionTimeout", spec?.actionTimeout, DEFAULT_SPEC_ACTION_TIMEOUT);
+	if (!actionTimeoutMs.success) return actionTimeoutMs;
+	const assertionTimeoutMs = specDuration("assertionTimeout", spec?.assertionTimeout, DEFAULT_SPEC_ASSERTION_TIMEOUT);
+	if (!assertionTimeoutMs.success) return assertionTimeoutMs;
+	return ok({
+		timeoutMs: timeoutMs.data,
+		actionTimeoutMs: actionTimeoutMs.data,
+		assertionTimeoutMs: assertionTimeoutMs.data,
+	});
+}
+
+/** The spec env fields the suite (and `--biometrics` / `--a11y`) switch on: budgets, conditions, biometrics, a11y, camera feeds. */
+function suiteSpecEnv(
+	suite: Suite,
+	platform: Platform,
+	opts: Pick<E2eOpts, "biometrics" | "a11y">
+): Partial<SpecPlan["env"]> {
+	return {
+		...(suite.perfBudgets === undefined ? {} : { perfBudgets: suite.perfBudgets }),
+		...(suite.conditions === undefined ? {} : { conditions: suite.conditions }),
+		...(suite.biometrics === true || opts.biometrics === true ? { biometrics: true } : {}),
+		...(suite.a11y === undefined ? {} : { a11yAudit: suite.a11y }),
+		// the injected library reads hint / actions / order / announcements on iOS: loaded only for a suite that asks (`a11y` key or `--a11y`)
+		...(platform === "ios" && (suite.a11y !== undefined || opts.a11y === true) ? { a11y: true } : {}),
+		...(suite.config.camera === undefined
+			? {}
+			: { cameraFeeds: resolveCameraConfig(suite.config.camera, suite.configDir) }),
+	};
 }
 
 /** One claim per picked device leg. */
 function batchLegs(
 	platform: Platform,
 	picked: readonly E2eDeviceLeg[],
-	legOpts: (leg: E2eDeviceLeg) => ClaimFlagValues
+	legOpts: (leg: E2eDeviceLeg) => ClaimFlagValues & PhysicalOptionValues
 ): Result<BatchLeg[]> {
 	const legs: BatchLeg[] = [];
 	for (const leg of picked) {
-		const flags = parseClaimFlags(platform, legOpts(leg));
+		const flags = parseClaimFlags(platform, withNamedPhysical(legOpts(leg)));
 		if (!flags.success) return flags;
 		legs.push({ name: leg.profile, flags: flags.data, env: leg.env ?? {} });
 	}
@@ -662,7 +1017,9 @@ export function createE2eCommand(deps: BatchDeps): Command {
 		register: (cmd, ctx, done) => {
 			withBatchOptions(
 				withLeaseOptions(
-					withClaimOptions(cmd.argument("[suite]", "e2e.<suite> in warden.config.ts (optional with one suite)"))
+					withPhysicalOptions(
+						withClaimOptions(cmd.argument("[suite]", "e2e.<suite> in warden.config.ts (optional with one suite)"))
+					)
 				)
 			)
 				.option("--base <ref>", "compare against merge-base with this ref (default: the suite's base)")
@@ -674,19 +1031,31 @@ export function createE2eCommand(deps: BatchDeps): Command {
 				.option("--explain", "print why each spec was selected before running")
 				.option("--dry-run", "select and explain, run nothing")
 				.option("--report <file>", "also write e2e-report.json here")
+				.option(
+					"--json-lines",
+					"stdout: one JSON event per line, each test as it finishes, then the report (progress stays on stderr)"
+				)
 				.option("--devices <legs>", "which e2e.<suite>.devices legs run: default | all | <profile,…>")
 				.option(
 					"--no-shutdown",
-					"keep the devices running after the gate passes (default: shut down the ones warden created under CI, leave them booted locally; suite shutdown)"
+					"keep the devices running after the gate passes (default: shut down the ones warden created; suite shutdown)"
 				)
 				.option(
 					"--perf [captures]",
 					"profile every attempt (bare: metrics, frames, logs; or --perf=react,js | all); reports land in the attempt's perf/ dir"
 				)
+				.option(
+					"--dev",
+					"run on the dev client (kind dev) against a Metro warden starts, not the repacked simulator build"
+				)
+				.option(
+					"--a11y",
+					"iOS: launch apps with the injected library so specs can read hints, actions, reading order and announcements (a suite with an `a11y` key does this already)"
+				)
 				.option("--no-warm", "skip pre-warming the iOS socket helper per device (default: on; suite warmDrivers)")
 				.addHelpText(
 					"after",
-					"\nExamples:\n  warden e2e mobile --base origin/main --count 2\n  warden e2e --dry-run --files src/modules/chat/api.ts"
+					"\nExamples:\n  warden e2e mobile --base origin/main --count 2\n  warden e2e mobile --physical --platform android\n  warden e2e mobile --dev --all\n  warden e2e --dry-run --files src/modules/chat/api.ts"
 				)
 				.action(async (suite, opts, command) => {
 					const passed = new Set(Object.keys(opts).filter((key) => command.getOptionValueSource(key) === "cli"));

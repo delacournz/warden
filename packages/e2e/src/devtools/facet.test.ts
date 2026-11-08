@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { fakePage, page, startFakeMetro } from "./devtools.testing";
 import type { DevtoolsFacet } from "./devtools.types";
 import { type OpenDevtoolsFacetOptions, openDevtoolsFacet } from "./facet";
+import { LOGBOX_EXPRESSION } from "./logbox.script";
 
 const cleanup: (() => void)[] = [];
 const dirs: string[] = [];
@@ -156,5 +157,26 @@ describe("openDevtoolsFacet", () => {
 		expect(fake.connections).toHaveLength(0);
 		const result = await facet.evaluate("1");
 		expect(result.success).toBe(false);
+	});
+
+	test("muteLogBox turns LogBox off on attach and again after a reconnect", async () => {
+		const logbox = (r: { method: string; params: Record<string, unknown> }) =>
+			r.method === "Runtime.evaluate" && r.params.expression === LOGBOX_EXPRESSION;
+		const { facet, fake } = await open({ muteLogBox: true }, false, (request) =>
+			logbox(request) ? { result: { result: str("off") } } : undefined
+		);
+		await Bun.sleep(30);
+		expect(fake.requests.filter(logbox)).toHaveLength(1);
+		const reconnected = new Promise<void>((resolve) => facet.on("reconnected", () => resolve()));
+		fake.dropAll();
+		await reconnected;
+		await Bun.sleep(30);
+		expect(fake.requests.filter(logbox)).toHaveLength(2);
+	});
+
+	test("without muteLogBox LogBox is left alone", async () => {
+		const { fake } = await open();
+		await Bun.sleep(30);
+		expect(fake.requests.some((r) => r.params.expression === LOGBOX_EXPRESSION)).toBe(false);
 	});
 });

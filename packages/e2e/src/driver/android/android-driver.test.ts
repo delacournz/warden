@@ -15,6 +15,7 @@ import {
 	type ShellRule,
 } from "./android-host.testing";
 import { type AndroidStateStore, memoryAndroidState } from "./android-state";
+import { DUMPSYS_ONLINE } from "./network.fixture";
 import { parseUiautomatorXml } from "./uiautomator";
 import { SYNTHETIC_FORM_DUMP, SYNTHETIC_FORM_SCREEN } from "./uiautomator.fixture";
 
@@ -52,6 +53,8 @@ async function setup(
 		screen?: boolean;
 		state?: AndroidStateStore;
 		appPackage?: string;
+		serial?: string;
+		ownedPackages?: readonly string[];
 		dumpRoute?: "stdout" | "tty" | "file";
 		onDumpRoute?: (route: "stdout" | "tty" | "file") => void;
 	} = {}
@@ -63,12 +66,13 @@ async function setup(
 	const lines: string[] = [];
 	const clock = fakeClock();
 	const res = await openAndroidDriver({
-		serial: "emulator-5554",
+		serial: opts.serial ?? "emulator-5554",
 		adb: "adb",
 		exec: host.exec,
 		spawn: host.spawn,
 		execBinary: host.execBinary,
 		log: (l) => lines.push(l),
+		...(opts.ownedPackages ? { ownedPackages: opts.ownedPackages } : {}),
 		clock,
 		...(opts.screen ? { screen: SCREEN } : {}),
 		...(opts.state ? { state: opts.state } : {}),
@@ -602,6 +606,58 @@ describe("device state", () => {
 		expect(host.shell).toContain("cmd uimode night no");
 	});
 
+	test("network goes through the emulator console and dumpsys", async () => {
+		const { driver, host } = await setup({
+			shell: [{ match: "dumpsys connectivity", reply: DUMPSYS_ONLINE }],
+			host: [{ match: /emu network/, reply: "OK\n" }],
+		});
+		const state = await value(driver.network({ kind: "preset", preset: "edge" }));
+		expect(state).toEqual({ online: true, condition: { kind: "preset", preset: "edge" }, needsProxy: [] });
+		expect(host.host).toEqual([
+			["adb", "-s", "emulator-5554", "emu", "network", "speed", "200:240"],
+			["adb", "-s", "emulator-5554", "emu", "network", "delay", "175:225"],
+		]);
+		expect(host.shell).toContain("cmd connectivity airplane-mode disable");
+	});
+
+	test("biometrics: match and fail touch the emulator sensor over the console; status parses dumpsys", async () => {
+		const { driver, host } = await setup({
+			shell: [{ match: "dumpsys fingerprint", reply: '{"prints":[{"id":0,"count":1}]}' }],
+		});
+		expect(await value(driver.biometrics("match"))).toEqual({ enrolled: true, modality: "fingerprint" });
+		expect(await value(driver.biometrics("fail"))).toEqual({ enrolled: true, modality: "fingerprint" });
+		expect(host.host).toContainEqual(["adb", "-s", "emulator-5554", "emu", "finger", "touch", "1"]);
+		expect(host.host).toContainEqual(["adb", "-s", "emulator-5554", "emu", "finger", "touch", "99"]);
+		const status = await value(driver.biometrics("status"));
+		expect(status.enrolled).toBe(true);
+	});
+
+	test("biometrics: unenrolled status; a failing console is E_IO", async () => {
+		const { driver } = await setup({
+			shell: [{ match: "dumpsys fingerprint", reply: '{"prints":[{"id":0,"count":0}]}' }],
+			host: [{ match: "adb -s emulator-5554 emu finger", reply: { exitCode: 1, stdout: "KO: no fingerprint hw" } }],
+		});
+		expect((await value(driver.biometrics("status"))).enrolled).toBe(false);
+		const res = await driver.biometrics("match");
+		expect(!res.success && res.error.code).toBe("E_IO");
+	});
+
+	test("biometrics: a physical device is E_UNSUPPORTED and nothing is sent", async () => {
+		const { driver, host } = await setup({ serial: "R58M123ABC" });
+		const res = await driver.biometrics("match");
+		expect(!res.success && res.error.code).toBe("E_UNSUPPORTED");
+		expect(host.host.some((argv) => argv.includes("emu"))).toBe(false);
+	});
+
+	test("biometrics: enroll and unenroll point at the golden snapshot", async () => {
+		const { driver } = await setup();
+		for (const op of ["enroll", "unenroll"] as const) {
+			const res = await driver.biometrics(op);
+			expect(!res.success && res.error.code).toBe("E_UNSUPPORTED");
+			expect(!res.success && res.error.message).toContain("golden");
+		}
+	});
+
 	test("health", async () => {
 		const { driver } = await setup({
 			shell: [
@@ -883,7 +939,11 @@ describe("animation scales", () => {
 		const values = scalesAt("1.0");
 		const state = memoryAndroidState();
 		const { driver, host } = await setup({ shell: [settingsRule(values)], state });
-		expect([...values.values()]).toEqual(["0", "0", "0"]);
+		expect([...values.entries()]).toEqual([
+			["window_animation_scale", "0"],
+			["transition_animation_scale", "1.0"],
+			["animator_duration_scale", "0"],
+		]);
 		expect((await state.read("emulator-5554")).animations).toEqual(ONES);
 
 		await driver.close();
@@ -894,10 +954,35 @@ describe("animation scales", () => {
 		expect((await state.read("emulator-5554")).animations).toBeUndefined();
 	});
 
+	test("reduce motion is off by default: the transition scale RN reads is the device's own, window and animator stay 0", async () => {
+		const values = scalesAt("1.0");
+		values.set("transition_animation_scale", "0.5");
+		const { driver } = await setup({ shell: [settingsRule(values)], state: memoryAndroidState() });
+		expect(values.get("transition_animation_scale")).toBe("0.5");
+		expect(values.get("window_animation_scale")).toBe("0");
+		expect(values.get("animator_duration_scale")).toBe("0");
+		await driver.close();
+		expect(values.get("transition_animation_scale")).toBe("0.5");
+	});
+
+	test("reduceMotion: true zeroes the transition scale, false and close bring the original back", async () => {
+		const values = scalesAt("1.0");
+		const { driver } = await setup({ shell: [settingsRule(values)], state: memoryAndroidState() });
+		const on = await driver.a11y({ reduceMotion: true });
+		expect(on.success && on.data.applied).toEqual(["reduceMotion"]);
+		expect(values.get("transition_animation_scale")).toBe("0");
+		await driver.a11y({ reduceMotion: false });
+		expect(values.get("transition_animation_scale")).toBe("1.0");
+		await driver.a11y({ reduceMotion: true });
+		await driver.close();
+		expect(values.get("transition_animation_scale")).toBe("1.0");
+	});
+
 	test("a scale that was never set is deleted again, not set to a guess", async () => {
 		const values = new Map<string, string>([["window_animation_scale", "0.5"]]);
 		const { driver } = await setup({ shell: [settingsRule(values)], state: memoryAndroidState() });
-		expect(values.get("transition_animation_scale")).toBe("0");
+		expect(values.has("transition_animation_scale")).toBe(false);
+		expect(values.get("animator_duration_scale")).toBe("0");
 		await driver.close();
 		expect([...values.entries()]).toEqual([["window_animation_scale", "0.5"]]);
 	});
@@ -914,7 +999,7 @@ describe("animation scales", () => {
 	test("without a store they are still restored when the driver closes", async () => {
 		const values = scalesAt("1.0");
 		const { driver } = await setup({ shell: [settingsRule(values)] });
-		expect([...values.values()]).toEqual(["0", "0", "0"]);
+		expect([...values.values()]).toEqual(["0", "1.0", "0"]);
 		await driver.close();
 		expect([...values.values()]).toEqual(["1.0", "1.0", "1.0"]);
 	});
@@ -932,10 +1017,10 @@ describe("animation scales", () => {
 			state,
 		});
 		expect(opened.success).toBe(true);
-		expect([...values.values()]).toEqual(["0", "0", "0"]);
+		expect([...values.values()]).toEqual(["0", "1.0", "0"]);
 
 		const next = await setup({ shell: [settingsRule(values)], state });
-		expect([...values.values()]).toEqual(["0", "0", "0"]);
+		expect([...values.values()]).toEqual(["0", "1.0", "0"]);
 		expect((await state.read("emulator-5554")).animations).toEqual(ONES);
 		await next.driver.close();
 		expect([...values.values()]).toEqual(["1.0", "1.0", "1.0"]);
@@ -971,5 +1056,109 @@ describe("animation scales", () => {
 		await driver.close();
 		await driver.close();
 		expect(host.shell.filter((c) => c.startsWith("settings put global window_animation_scale 1.0")).length).toBe(1);
+	});
+});
+
+describe("physical phone safety (PHY-2.4)", () => {
+	const PHONE = "R5CT1234ABC";
+	const phoneProbe = (tail: string): string => `${probe(34)}${tail}`;
+	const AWAKE = "wdn_qemu:\nmWakefulness=Awake\n  showing=false\n  secure=true\n";
+	const phoneRules = (tail: string = AWAKE): ShellRule[] => [
+		{ match: "getprop sys.boot_completed", reply: phoneProbe(tail) },
+	];
+	const settingsReads: ShellRule[] = [
+		{ match: "settings get system accelerometer_rotation", reply: "1\n" },
+		{ match: "settings get system user_rotation", reply: "0\n" },
+		{ match: "cmd uimode night", reply: "Night mode: no\n" },
+	];
+
+	test("an emulator serial is probed exactly as before, with no phone steps", async () => {
+		const { host } = await setup();
+		expect(host.shell[0]).toBe("getprop sys.boot_completed; getprop ro.build.version.sdk; wm size; wm density");
+		expect(host.shell.some((c) => c.includes("keyevent") || c.includes("dismiss-keyguard"))).toBe(false);
+	});
+
+	test("an awake, unlocked phone opens with the extended probe and no wake or settings writes besides animations", async () => {
+		const { host } = await setup({ serial: PHONE, shell: phoneRules() });
+		expect(host.shell[0]).toContain("ro.boot.qemu");
+		expect(host.shell.some((c) => c.includes("keyevent 224") || c.includes("settings put system"))).toBe(false);
+	});
+
+	test("a sleeping phone is woken before anything else is written", async () => {
+		const asleep = "wdn_qemu:\nmWakefulness=Asleep\n  showing=false\n  secure=true\n";
+		const { host } = await setup({
+			serial: PHONE,
+			shell: [{ match: "dumpsys window policy", reply: "  showing=false\n  secure=true\n" }, ...phoneRules(asleep)],
+		});
+		expect(host.shell[1]).toBe("input keyevent 224");
+		expect(host.shell.findIndex((c) => c.includes("settings put global"))).toBeGreaterThan(1);
+	});
+
+	test("a phone behind a secure keyguard fails the open with E_DEVICE_LOCKED and changes nothing", async () => {
+		const host = fakeAndroidHost({
+			shell: phoneRules("wdn_qemu:\nmWakefulness=Awake\n  showing=true\n  secure=true\n"),
+		});
+		const opened = await openAndroidDriver({
+			serial: PHONE,
+			adb: "adb",
+			exec: host.exec,
+			spawn: host.spawn,
+			clock: fakeClock(),
+		});
+		expect(!opened.success && opened.error.code).toBe("E_DEVICE_LOCKED");
+		expect(host.shell.some((c) => c.includes("settings put"))).toBe(false);
+	});
+
+	test("rotation and dark mode are saved before the first write and restored on close", async () => {
+		const state = memoryAndroidState();
+		const { driver, host } = await setup({ serial: PHONE, state, shell: [...settingsReads, ...phoneRules()] });
+		await value(driver.orientation("landscapeLeft"));
+		expect(await state.read(PHONE)).toMatchObject({ rotation: { accelerometer_rotation: "1", user_rotation: "0" } });
+		await value(driver.appearance("dark"));
+		const rotateAt = host.shell.indexOf("settings put system accelerometer_rotation 0");
+		expect(host.shell.indexOf("settings get system accelerometer_rotation")).toBeLessThan(rotateAt);
+		await driver.close();
+		expect(host.shell.slice(-3)).toEqual([
+			"settings put system accelerometer_rotation 1",
+			"settings put system user_rotation 0",
+			"cmd uimode night no",
+		]);
+		expect((await state.read(PHONE)).rotation).toBeUndefined();
+	});
+
+	test("an emulator rotates without saving anything", async () => {
+		const { driver, host } = await setup();
+		await value(driver.orientation("landscapeLeft"));
+		expect(host.shell.some((c) => c.startsWith("settings get system"))).toBe(false);
+	});
+
+	test("uninstall and clearData of a package warden did not install are E_REFUSED on a phone", async () => {
+		const { driver, host } = await setup({ serial: PHONE, appPackage: "com.example.app", shell: phoneRules() });
+		for (const act of [() => driver.app.uninstall("com.bank.app"), () => driver.app.clearData("com.bank.app")]) {
+			const res = await act();
+			expect(!res.success && res.error.code).toBe("E_REFUSED");
+			expect(!res.success && res.error.message).toContain("physical_protected");
+		}
+		expect(host.host.some((a) => a.includes("uninstall"))).toBe(false);
+		expect(host.shell.some((c) => c.startsWith("pm clear"))).toBe(false);
+	});
+
+	test("the app under test and installs warden recorded may be uninstalled or cleared on a phone", async () => {
+		const { driver } = await setup({
+			serial: PHONE,
+			appPackage: "com.example.app",
+			ownedPackages: ["com.example.other"],
+			shell: [{ match: "pm clear", reply: "Success\n" }, ...phoneRules()],
+		});
+		expect((await driver.app.clearData("com.example.app")).success).toBe(true);
+		expect((await driver.app.clearData("com.example.other")).success).toBe(true);
+	});
+
+	test("an emulator may uninstall anything, as before", async () => {
+		const { driver } = await setup({
+			appPackage: "com.example.app",
+			shell: [{ match: "pm clear", reply: "Success\n" }],
+		});
+		expect((await driver.app.clearData("com.other")).success).toBe(true);
 	});
 });

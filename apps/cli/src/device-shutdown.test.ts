@@ -1,4 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { activeConditions, recordCondition } from "@delacour/warden-core/conditions/conditions";
 import type { Exec } from "@delacour/warden-core/exec";
 import type { Lease, Owner } from "@delacour/warden-core/types";
 import { shutdownReleasedDevices } from "./device-shutdown";
@@ -17,7 +21,58 @@ function lease(c: TestContext, id: string, bootedByOwner = false): Lease {
 	);
 }
 
+function physicalLease(c: TestContext, id: string): Lease {
+	return c.db.insertLease(
+		{
+			resource: { kind: "device", platform: "android", id, name: "Pixel", physical: { transport: "usb" } },
+			owner,
+			ttlMs: 60_000,
+			bootedByOwner: true,
+		},
+		c.now()
+	);
+}
+
 describe("shutdownReleasedDevices", () => {
+	test("a physical device is never shut down, even booted by the owner and recorded; no provider call is made", async () => {
+		const calls: string[][] = [];
+		ctx = testContext([], { exec: fakeSimctl([], calls) });
+		ctx.db.recordDevice({ platform: "android", id: "P1", name: "Pixel" }, 0);
+		const guarded: string[] = [];
+		const result = await shutdownReleasedDevices(ctx, [physicalLease(ctx, "P1")], owner, async (l) => {
+			guarded.push(l.id);
+			return undefined;
+		});
+		expect(result.shutdown).toEqual([]);
+		expect(result.kept).toEqual([]);
+		expect(result.notes.join("\n")).toContain("physical device: never shut down");
+		expect(calls).toEqual([]);
+		expect(guarded).toEqual([]);
+	});
+
+	test("undoes the lease's conditions before shutting its device down", async () => {
+		const calls: string[][] = [];
+		ctx = testContext([], { exec: fakeSimctl([], calls, [["xcrun simctl location", {}]]) });
+		ctx.db.recordDevice({ platform: "ios", id: "W", name: "warden-iphone-17-1" }, 0);
+		const w = lease(ctx, "W");
+		recordCondition(ctx.db, w.id, "location", { kind: "point", lat: 1, lon: 2 }, 1);
+		const result = await shutdownReleasedDevices(ctx, [w], owner);
+		const verbs = calls.map((c) => c[2]);
+		expect(verbs.indexOf("location")).toBeGreaterThanOrEqual(0);
+		expect(verbs.indexOf("location")).toBeLessThan(verbs.indexOf("shutdown"));
+		expect(result.shutdown).toEqual(["W"]);
+		expect(activeConditions(ctx.db, w.id)).toEqual([]);
+	});
+
+	test("a foreign device keeps its conditions untouched (never reset what warden doesn't shut down)", async () => {
+		const calls: string[][] = [];
+		ctx = testContext([], { exec: fakeSimctl([], calls) });
+		const f = lease(ctx, "USERS");
+		recordCondition(ctx.db, f.id, "location", { kind: "clear" }, 1);
+		await shutdownReleasedDevices(ctx, [f], owner);
+		expect(calls.filter((c) => c[2] === "location")).toEqual([]);
+	});
+
 	test("shuts down warden-created + owner-booted devices; leaves already-running foreign ones", async () => {
 		const calls: string[][] = [];
 		ctx = testContext([], { exec: fakeSimctl([], calls) });
@@ -28,6 +83,65 @@ describe("shutdownReleasedDevices", () => {
 		expect(result.shutdown).toEqual(["W", "BOOTED-BY-ME"]);
 		expect(result.notes.join("\n")).toContain("USERS");
 		expect(calls.filter((c) => c[2] === "shutdown").map((c) => c[3])).toEqual(["W", "BOOTED-BY-ME"]);
+	});
+
+	test("a sim whose ownership marker names another warden instance is left running, and the note says why", async () => {
+		const calls: string[][] = [];
+		ctx = testContext([], { exec: fakeSimctl([], calls) });
+		const home = mkdtempSync(join(tmpdir(), "warden-marker-home-"));
+		const dir = join(home, "Library/Developer/CoreSimulator/Devices/W");
+		mkdirSync(dir, { recursive: true });
+		writeFileSync(
+			join(dir, ".warden-owned.json"),
+			JSON.stringify({ instanceId: "other-host", name: "warden-iphone-17-1", createdAt: 0 })
+		);
+		ctx.env = { ...ctx.env, HOME: home, WARDEN_GOLDEN: "0" };
+		ctx.db.recordDevice({ platform: "ios", id: "W", name: "warden-iphone-17-1" }, 0);
+		const result = await shutdownReleasedDevices(ctx, [lease(ctx, "W", true)], owner);
+		rmSync(home, { recursive: true, force: true });
+		expect(result.shutdown).toEqual([]);
+		expect(result.notes.join("\n")).toContain("another warden instance (other-host)");
+		expect(result.notes.join("\n")).not.toContain("already running when leased");
+		expect(calls.filter((c) => c[2] === "shutdown")).toEqual([]);
+	});
+
+	test("closes the viewer windows of the iOS sims it shut down, once, by name (Device Hub keeps a page open)", async () => {
+		const calls: string[][] = [];
+		ctx = testContext([], {
+			exec: fakeSimctl([], calls, [
+				["pgrep -xq Simulator", { exitCode: 1 }],
+				["pgrep -xq DeviceHub", { exitCode: 0 }],
+				["osascript", {}],
+			]),
+		});
+		ctx.db.recordDevice({ platform: "ios", id: "W", name: "W" }, 0);
+		const result = await shutdownReleasedDevices(
+			ctx,
+			[lease(ctx, "W"), lease(ctx, "B", true), lease(ctx, "USERS")],
+			owner
+		);
+		expect(result.shutdown).toEqual(["W", "B"]);
+		const closes = calls.filter((c) => c[0] === "osascript" && (c[4] ?? "").includes("AXCloseButton"));
+		expect(closes).toHaveLength(1);
+		expect(JSON.parse(closes[0]?.[5] ?? "")).toEqual(["W", "B"]);
+		expect(calls.indexOf(closes[0] as string[])).toBeGreaterThan(calls.map((c) => c[2]).lastIndexOf("shutdown"));
+	});
+
+	test("a window that won't close is a note; the shutdown still counts", async () => {
+		ctx = testContext([], {
+			exec: fakeSimctl(
+				[],
+				[],
+				[
+					["pgrep -xq Simulator", { exitCode: 1 }],
+					["pgrep -xq DeviceHub", { exitCode: 0 }],
+					["osascript", { exitCode: 1, stderr: "kaput" }],
+				]
+			),
+		});
+		const result = await shutdownReleasedDevices(ctx, [lease(ctx, "A", true)], owner);
+		expect(result.shutdown).toEqual(["A"]);
+		expect(result.notes.join("\n")).toContain("couldn't close");
 	});
 
 	test("shuts devices down concurrently, reporting in lease order", async () => {
@@ -70,5 +184,74 @@ describe("shutdownReleasedDevices", () => {
 		const result = await shutdownReleasedDevices(ctx, [lease(ctx, "X", true)], owner);
 		expect(result.shutdown).toEqual([]);
 		expect(result.notes.join("\n")).toContain("boom");
+	});
+});
+
+describe("shutdownReleasedDevices: ephemeral sims", () => {
+	const sim = (c: TestContext, id: string, o: { quarantined?: boolean } = {}) => {
+		c.db.recordDevice({ platform: "ios", id, name: `warden-iphone-17-${id}` }, 0);
+		if (o.quarantined) c.db.quarantineDevice({ platform: "ios", id, name: `warden-iphone-17-${id}` }, "bad", 1);
+	};
+	const verbs = (calls: string[][]) => calls.filter((c) => c[0] === "xcrun").map((c) => `${c[2]} ${c[3] ?? ""}`.trim());
+
+	test("a warden-created sim is deleted after its shutdown and forgotten", async () => {
+		const calls: string[][] = [];
+		ctx = testContext([], { exec: fakeSimctl([], calls) });
+		sim(ctx, "W");
+		const result = await shutdownReleasedDevices(ctx, [lease(ctx, "W")], owner);
+		expect(result.shutdown).toEqual(["W"]);
+		expect(result.deleted).toEqual(["W"]);
+		const v = verbs(calls);
+		expect(v.indexOf("delete W")).toBeGreaterThan(v.indexOf("shutdown W"));
+		expect(ctx.db.listDevices("ios")).toEqual([]);
+	});
+
+	test("WARDEN_EPHEMERAL=0 keeps the sim for the pool", async () => {
+		const calls: string[][] = [];
+		ctx = testContext([], { exec: fakeSimctl([], calls) });
+		ctx.env = { ...ctx.env, WARDEN_EPHEMERAL: "0" };
+		sim(ctx, "W");
+		const result = await shutdownReleasedDevices(ctx, [lease(ctx, "W")], owner);
+		expect(result.deleted).toEqual([]);
+		expect(verbs(calls)).not.toContain("delete W");
+		expect(ctx.db.listDevices("ios").map((d) => d.id)).toEqual(["W"]);
+	});
+
+	test("a sim the owner booted but warden didn't create is shut down, never deleted", async () => {
+		const calls: string[][] = [];
+		ctx = testContext([], { exec: fakeSimctl([], calls) });
+		const result = await shutdownReleasedDevices(ctx, [lease(ctx, "MINE", true)], owner);
+		expect(result.shutdown).toEqual(["MINE"]);
+		expect(result.deleted).toEqual([]);
+		expect(verbs(calls)).not.toContain("delete MINE");
+	});
+
+	test("a quarantined sim is kept for `warden sim unquarantine`", async () => {
+		const calls: string[][] = [];
+		ctx = testContext([], { exec: fakeSimctl([], calls) });
+		sim(ctx, "Q", { quarantined: true });
+		const result = await shutdownReleasedDevices(ctx, [lease(ctx, "Q")], owner);
+		expect(result.shutdown).toEqual(["Q"]);
+		expect(result.deleted).toEqual([]);
+		expect(ctx.db.listDevices("ios").map((d) => d.id)).toEqual(["Q"]);
+	});
+
+	test("a vetoed shutdown deletes nothing", async () => {
+		const calls: string[][] = [];
+		ctx = testContext([], { exec: fakeSimctl([], calls) });
+		sim(ctx, "W");
+		const result = await shutdownReleasedDevices(ctx, [lease(ctx, "W")], owner, async () => "busy");
+		expect(result.deleted).toEqual([]);
+		expect(verbs(calls)).not.toContain("delete W");
+	});
+
+	test("a failed delete is a note; the record stays so `warden sims prune` can retry", async () => {
+		ctx = testContext([], { exec: fakeSimctl([], [], [["xcrun simctl delete", { exitCode: 1, stderr: "nope" }]]) });
+		sim(ctx, "W");
+		const result = await shutdownReleasedDevices(ctx, [lease(ctx, "W")], owner);
+		expect(result.shutdown).toEqual(["W"]);
+		expect(result.deleted).toEqual([]);
+		expect(result.notes.join("\n")).toContain("nope");
+		expect(ctx.db.listDevices("ios").map((d) => d.id)).toEqual(["W"]);
 	});
 });

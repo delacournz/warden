@@ -145,7 +145,13 @@ type SocketLike = {
 	end(): void;
 };
 
-export function socketTransport(opts: { socketPath: string }): TransportFactory {
+/** Where a socket transport connects: the daemon's unix socket, or a TCP port on this Mac (the Simulator runner). */
+export type SocketTarget =
+	| { socketPath: string; tcp?: undefined }
+	| { tcp: { hostname: string; port: number }; socketPath?: undefined };
+
+export function socketTransport(opts: SocketTarget): TransportFactory {
+	const label = opts.tcp ? `${opts.tcp.hostname}:${opts.tcp.port}` : (opts.socketPath ?? "");
 	return async (handlers) => {
 		const splitter = createLineSplitter();
 		const encoder = new TextEncoder();
@@ -163,36 +169,36 @@ export function socketTransport(opts: { socketPath: string }): TransportFactory 
 			queued = written >= queued.length ? new Uint8Array(0) : queued.slice(Math.max(written, 0));
 		};
 		try {
-			const connected = await Bun.connect({
-				unix: opts.socketPath,
-				socket: {
-					open(s) {
-						socket = s;
-					},
-					data(_s, chunk) {
-						for (const line of splitter.push(chunk)) handlers.onLine(line);
-					},
-					drain() {
-						flush();
-					},
-					close() {
-						notifyClosed();
-					},
-					error() {
-						notifyClosed();
-					},
-					end() {
-						notifyClosed();
-					},
+			const socketHandlers = {
+				open(s: SocketLike) {
+					socket = s;
 				},
-			});
+				data(_s: SocketLike, chunk: Uint8Array) {
+					for (const line of splitter.push(chunk)) handlers.onLine(line);
+				},
+				drain() {
+					flush();
+				},
+				close() {
+					notifyClosed();
+				},
+				error() {
+					notifyClosed();
+				},
+				end() {
+					notifyClosed();
+				},
+			};
+			const connected = opts.tcp
+				? await Bun.connect({ hostname: opts.tcp.hostname, port: opts.tcp.port, socket: socketHandlers })
+				: await Bun.connect({ unix: opts.socketPath, socket: socketHandlers });
 			socket = connected;
 		} catch (error) {
 			const reason = error instanceof Error ? error.message : String(error);
 			return {
 				success: false,
-				error: driverError("E_HELPER_CRASHED", `cannot connect to warden-simd socket ${opts.socketPath}: ${reason}`, {
-					detail: { socketPath: opts.socketPath },
+				error: driverError("E_HELPER_CRASHED", `cannot connect to warden-simd socket ${label}: ${reason}`, {
+					detail: { socketPath: label },
 				}),
 			};
 		}

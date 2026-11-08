@@ -63,11 +63,11 @@ describe("bench compare --max-cpu-regression", () => {
 
 	test("a baseline file as A guards the run and needs the flag", async () => {
 		const root = mkdtempSync(join(tmpdir(), "cli-"));
-		const b = runDir(root, "b", 9.12);
+		const b = runDir(root, "b", 2.97);
 		expect(await main(["compare", BASELINE, b])).toBe(2);
 		const slow = runDir(root, "slow", 20);
 		expect(await main(["compare", BASELINE, slow, "--max-cpu-regression", "10%"])).toBe(1);
-		expect(errs.join("\n")).toContain("regression: warden cpu-s/rep 3.79 → 20.00");
+		expect(errs.join("\n")).toContain("regression: warden cpu-s/rep 2.97 → 20.00");
 	});
 });
 

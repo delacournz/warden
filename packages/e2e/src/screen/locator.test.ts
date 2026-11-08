@@ -218,6 +218,78 @@ describe("fill", () => {
 		expect(host.steps).toEqual(['fill getByTestId("field")']);
 	});
 
+	describe("via paste (iOS)", () => {
+		const pasted = (driver: FakeDriver) =>
+			driver
+				.callsOf("pasteText")
+				.map((call) => call.text)
+				.join("");
+
+		test("via paste pastes over a select-all and verifies the value", async () => {
+			const { driver, state } = fieldFixture({ value: "old", selectAll: true, pasteText: true });
+			const { screen } = setup(driver);
+			await screen.getByTestId("field").fill("ada@example.test", { via: "paste" });
+			expect(pasted(driver)).toBe("ada@example.test");
+			expect(driver.callsOf("typeText")).toEqual([]);
+			expect(driver.callsOf("key")).toEqual([]);
+			expect(state.value).toBe("ada@example.test");
+			expect(driver.calls.at(-1)?.method).toBe("elementAtPoint");
+		});
+
+		test("types by default even when the driver can paste", async () => {
+			const { driver, state } = fieldFixture({ pasteText: true });
+			const { screen } = setup(driver);
+			await screen.getByTestId("field").fill("hello");
+			expect(driver.callsOf("pasteText")).toEqual([]);
+			expect(typed(driver)).toBe("hello");
+			expect(state.value).toBe("hello");
+		});
+
+		test("a failed paste is typed in the same attempt, no retry needed", async () => {
+			const { driver, state } = fieldFixture({ pasteText: "refused" });
+			const { screen } = setup(driver);
+			await screen.getByTestId("field").fill("hello", { via: "paste" });
+			expect(driver.callsOf("tap")).toHaveLength(1);
+			expect(typed(driver)).toBe("hello");
+			expect(state.value).toBe("hello");
+		});
+
+		test("a paste the field mangles is retried by typing after counted Backspaces", async () => {
+			const { driver, state } = fieldFixture({ pasteText: true, pasteKeeps: 3 });
+			const { screen } = setup(driver);
+			await screen.getByTestId("field").fill("hello", { via: "paste" });
+			expect(pasted(driver)).toBe("hello");
+			expect(typed(driver)).toBe("hello");
+			expect(driver.callsOf("tap")).toHaveLength(2);
+			expect(driver.callsOf("key").every((call) => call.key === "Backspace")).toBe(true);
+			expect(state.value).toBe("hello");
+		});
+
+		test("a secure field is pasted into and not read back", async () => {
+			const { driver } = fieldFixture({ secure: true, pasteText: true });
+			const { screen } = setup(driver);
+			await screen.getByTestId("field").fill("password1", { via: "paste" });
+			expect(pasted(driver)).toBe("password1");
+			expect(driver.calls.at(-1)?.method).toBe("pasteText");
+		});
+
+		test("a driver without pasteText (Android) types even with via paste", async () => {
+			const { driver } = fieldFixture();
+			const { screen } = setup(driver);
+			await screen.getByTestId("field").fill("hello", { via: "paste" });
+			expect(driver.callsOf("pasteText")).toEqual([]);
+			expect(typed(driver)).toBe("hello");
+		});
+
+		test("an unknown via is INVALID_ARGUMENT", async () => {
+			const { driver } = fieldFixture({ pasteText: true });
+			const { screen } = setup(driver);
+			// @ts-expect-error deliberately outside FillVia
+			const error = await failure(screen.getByTestId("field").fill("x", { via: "clipboard" }));
+			expect(error.code).toBe("INVALID_ARGUMENT");
+		});
+	});
+
 	test("empties existing content first: one backspace per character plus a spare", async () => {
 		const { driver, state } = fieldFixture({ value: "abc" });
 		const { screen } = setup(driver);
@@ -471,6 +543,24 @@ describe("fill", () => {
 		await screen.getByTestId("field").fill("hunter2");
 		expect(typed(driver)).toBe("hunter2");
 		expect(driver.calls.at(-1)?.method).toBe("typeText");
+	});
+
+	test("a field that reads back as mask bullets is confirmed by their count (a secure field not known as one)", async () => {
+		const { driver, state } = fieldFixture({ maskedTextfield: true });
+		const { screen } = setup(driver);
+		await screen.getByTestId("field").fill("password1");
+		expect(state.value).toBe("password1");
+		expect(typed(driver)).toBe("password1");
+		expect(driver.callsOf("key")).toEqual([]);
+	});
+
+	test("a masked read-back with the wrong number of bullets is retried, then fails naming the dots", async () => {
+		const { driver } = fieldFixture({ maskedTextfield: true, dropTail: 2, dropTailCalls: 2 });
+		const { screen } = setup(driver);
+		const error = await failure(screen.getByTestId("field").fill("password1"));
+		expect(error.message).toContain("fill did not take: expected 9 characters (secure)");
+		expect(error.message).toContain('the field holds "•••••••"');
+		expect(error.message).not.toContain("passwo");
 	});
 
 	test("an empty string only clears", async () => {

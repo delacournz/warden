@@ -1,0 +1,474 @@
+name: warden e2e
+description: Run a warden e2e suite on a macOS runner with the build, repack and golden-simulator caches, retries, and failure evidence wired up.
+
+# Composite on purpose: it only uses GitHub-owned actions (cache, upload-artifact), so an organisation
+# that allowlists actions needs nothing beyond `actions/*`. bun comes from npm, not oven-sh/setup-bun, for
+# the same reason. Call it from a job on a macOS runner after `actions/checkout`:
+#
+#   - uses: delacournz/warden/.github/actions/e2e@<sha>
+#     with: { suite: example, working-directory: apps/example }
+
+inputs:
+  working-directory:
+    description: Directory of the project's warden.config.ts, relative to the workspace.
+    default: .
+  suite:
+    description: "`e2e.<suite>` in warden.config.ts. Empty when the config has one suite."
+    default: ""
+  profile:
+    description: Simulator profile (`warden golden key --profile`, `--profile` of the run). Empty means the suite's own, else warden's default.
+    default: ""
+  count:
+    description: Simulators to run in parallel (`--count`). Empty means the suite's own. A 3-core runner gains nothing from 2, so 1 is the safe CI default.
+    default: ""
+  retry:
+    description: Reruns of a failed spec on the same worker (`--retry`). Empty means the suite's own.
+    default: ""
+  args:
+    description: Extra arguments for `warden e2e`, as one line (`--all`, `--base origin/main`, `--specs a,b`).
+    default: ""
+  app-path:
+    description: A simulator `.app` built earlier in this workflow, imported as the base (`warden builds import --kind simulator-base`) instead of building one. Build it with `CODE_SIGN_IDENTITY=-`, not `CODE_SIGNING_ALLOWED=NO`.
+    default: ""
+  warden-version:
+    description: Release tag to install (`v0.12.2`), `latest`, or `none` when warden is already on PATH.
+    default: latest
+  warden-repo:
+    description: Repo that publishes the warden releases.
+    default: delacournz/warden
+  bun-version:
+    description: bun to install from npm when none is on PATH (`1.4.3`). Empty reads `packageManager` from the root package.json. `none` never installs.
+    default: ""
+  install-command:
+    description: Run in `install-working-directory` before warden. Empty skips it.
+    default: bun install --frozen-lockfile
+  install-working-directory:
+    description: Where `install-command` runs, relative to the workspace.
+    default: .
+  npm-token:
+    description: Exported as NPM_TOKEN for `install-command` (private registries read it from bunfig.toml / .npmrc).
+    default: ${{ github.token }}
+  headroom-gb:
+    description: GB of RAM warden keeps free of simulators (`WARDEN_CAPACITY_HEADROOM_GB`). Empty means 1 on a host with 16 GB or less, warden's own default above.
+    default: ""
+  xcode-path:
+    description: Xcode to use (`/Applications/Xcode_27.2.app`); sets DEVELOPER_DIR for every later step. Empty keeps the runner's default.
+    default: ""
+  report-path:
+    description: Where the e2e-report.json goes, relative to the workspace.
+    default: warden-e2e-report.json
+  cache-prefix:
+    description: Prefix of every cache key. Change it to throw all caches away.
+    default: warden-e2e-v1
+  js-inputs:
+    description: Newline-separated git pathspecs (relative to `working-directory`) whose content is the JS bundle's input. Keys the repack cache; mirror `kinds.simulator.jsInputs`.
+    default: |
+      src
+      assets
+      app.config.ts
+      index.ts
+      metro.config.js
+      package.json
+  cache:
+    description: "`github` restores and saves the build, repack and golden caches with actions/cache. `none` leaves storing them to you: the golden is still imported from `~/warden-goldens` but never exported for the cache (run the golden's `beforeSave` from `cache-groups` when your cache missed it; collecting the `golden` artifact already archives a missing one there), and the `cache-groups` output lists every key and path to restore before this step and save after it."
+    default: github
+  save-cache:
+    description: Save the build, repack and golden caches after a green run (true on the default branch, false on pull requests).
+    default: "true"
+  suite-timeout-minutes:
+    description: Minutes the suite may run before the action stops it (SIGINT, then SIGKILL after 60 s), so a hung run still prints its evidence and uploads the artifact. Keep it under the job timeout.
+    default: "35"
+  artifacts:
+    description: "What the run leaves behind to collect: `all`, `none`, or a comma list of `report` (e2e-report.json), `batches` (~/.warden/batches: spec logs, results.jsonl, screen-at-failure.txt, metro.log), `logs` (~/.warden/logs: native build logs, plus the device helpers' ~/.warden/simd/*.log), `app` (app.tar of the .app / .apk builds the run used), `golden` (golden.tar of the golden simulator, exported to ~/warden-goldens first when it was built but not archived; GBs). Tarballs keep the executable bit and symlinks upload-artifact would lose. `all` is every group after a green run (less `golden` when it was restored from the cache: the cache holds it) and `report,batches,logs,golden` after a failed one. `logs` is always collected, whatever this says (even `none`). The `artifact-paths` output lists what was collected."
+    default: all
+  upload-artifacts:
+    description: "Upload each collected group as its own artifact, `<artifact-name>-<group>`. `false` only collects them: upload what you want from the `artifact-paths` output."
+    default: "true"
+  retention-days:
+    description: Days the uploaded artifacts are kept.
+    default: "3"
+  artifact-name:
+    description: Prefix of the uploaded artifacts (`<artifact-name>-report`, `-batches`, `-logs`, `-app`, `-golden`). Give each call in a job its own.
+    default: warden-e2e
+
+outputs:
+  report-path:
+    description: Absolute path of e2e-report.json.
+    value: ${{ steps.run.outputs.report-path }}
+  passed:
+    description: "`true` when the gate passed, `false` when a required spec failed or the run broke."
+    value: ${{ steps.run.outputs.passed }}
+  cache-groups:
+    description: "`warden ci cache --json`: `{builds, repack, golden}`, each `{kind, key, paths}` (the golden adds `afterRestore` / `beforeSave`; `null` when the suite does not set `golden: true`). For caching with something other than actions/cache (`cache: none`)."
+    value: ${{ steps.keys.outputs.cache-groups }}
+  artifact-groups:
+    description: Comma list of the groups collected (`report,batches,logs,app,golden`), whether or not they were uploaded.
+    value: ${{ steps.artifacts.outputs.groups }}
+  artifact-paths:
+    description: "`{report, batches, logs, app, golden}`, each a list of absolute paths collected (empty when the group was not selected or not produced). With `upload-artifacts: false`, feed them to your own actions/upload-artifact."
+    value: ${{ steps.artifacts.outputs.paths }}
+
+runs:
+  using: composite
+  steps:
+    - name: Prepare the runner
+      shell: bash
+      env:
+        XCODE_PATH: ${{ inputs.xcode-path }}
+        HEADROOM_GB: ${{ inputs.headroom-gb }}
+        CACHE: ${{ inputs.cache }}
+        ARTIFACTS: ${{ inputs.artifacts }}
+        UPLOAD: ${{ inputs.upload-artifacts }}
+      run: |
+        set -euo pipefail
+        case "$CACHE" in github|none) ;; *) echo "cache must be github or none, not \"$CACHE\"" >&2; exit 1 ;; esac
+        case "$UPLOAD" in true|false) ;; *) echo "upload-artifacts must be true or false, not \"$UPLOAD\"" >&2; exit 1 ;; esac
+        case "$ARTIFACTS" in
+          all|none) ;;
+          *) for group in $(echo "$ARTIFACTS" | tr ',' ' '); do
+               case "$group" in report|batches|logs|app|golden) ;;
+                 *) echo "artifacts must be all, none or a list of report,batches,logs,app,golden; \"$group\" is none of them" >&2; exit 1 ;;
+               esac
+             done ;;
+        esac
+        {
+          echo "WARDEN_TELEMETRY_DISABLED=1"
+          echo "DO_NOT_TRACK=1"
+          echo "CI=true"
+        } >> "$GITHUB_ENV"
+        if [ -n "$XCODE_PATH" ]; then
+          [ -d "$XCODE_PATH" ] || { echo "xcode-path $XCODE_PATH does not exist; installed: $(ls -d /Applications/Xcode*.app | tr '\n' ' ')" >&2; exit 1; }
+          echo "DEVELOPER_DIR=$XCODE_PATH/Contents/Developer" >> "$GITHUB_ENV"
+          export DEVELOPER_DIR="$XCODE_PATH/Contents/Developer"
+        fi
+        xcodebuild -version
+        xcrun simctl list runtimes | sed -n '1,12p'
+        gb=$(( $(sysctl -n hw.memsize) / 1073741824 ))
+        echo "cores: $(sysctl -n hw.ncpu), memory: $gb GB"
+        # warden keeps max(8 GB, 25%) of RAM free of simulators: on a 7 GB hosted runner that budget is
+        # zero and every claim queues. A runner this small has nothing else to protect but the build.
+        if [ -n "$HEADROOM_GB" ]; then
+          echo "WARDEN_CAPACITY_HEADROOM_GB=$HEADROOM_GB" >> "$GITHUB_ENV"
+        elif [ "$gb" -le 16 ]; then
+          echo "WARDEN_CAPACITY_HEADROOM_GB=1" >> "$GITHUB_ENV"
+        fi
+        # The first CoreSimulator call after boot builds its device sets (10 s to minutes on a cold image).
+        # Make it here, not inside a 30 s timeout of warden's claim while a native build loads the CPUs.
+        start=$(date +%s)
+        xcrun simctl list devices available -j > /dev/null
+        echo "CoreSimulator answered after $(( $(date +%s) - start )) s"
+
+    - name: Install bun
+      shell: bash
+      env:
+        BUN_VERSION: ${{ inputs.bun-version }}
+      run: |
+        set -euo pipefail
+        if [ "$BUN_VERSION" = none ]; then exit 0; fi
+        if [ -z "$BUN_VERSION" ] && command -v bun > /dev/null; then bun --version; exit 0; fi
+        if [ -z "$BUN_VERSION" ] && [ -f package.json ]; then
+          BUN_VERSION=$(node -e 'const p=require("./package.json").packageManager||"";process.stdout.write(p.startsWith("bun@")?p.slice(4):"")')
+        fi
+        if [ -z "$BUN_VERSION" ]; then echo "no bun on PATH and no packageManager bun@<version>: set the bun-version input" >&2; exit 1; fi
+        npm install --global --no-audit --no-fund "bun@$BUN_VERSION"
+        bun --version
+
+    - name: Install dependencies
+      if: inputs.install-command != ''
+      shell: bash
+      working-directory: ${{ inputs.install-working-directory }}
+      env:
+        NPM_TOKEN: ${{ inputs.npm-token }}
+        INSTALL: ${{ inputs.install-command }}
+      run: bash -c "$INSTALL"
+
+    - name: Install warden
+      if: inputs.warden-version != 'none'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        WARDEN_VERSION: ${{ inputs.warden-version }}
+        WARDEN_REPO: ${{ inputs.warden-repo }}
+      run: |
+        set -euo pipefail
+        case "$(uname -s)-$(uname -m)" in
+          Darwin-arm64) target=darwin-arm64 ;;
+          Darwin-x86_64) target=darwin-x64 ;;
+          *) echo "warden e2e needs macOS, got $(uname -s)-$(uname -m)" >&2; exit 1 ;;
+        esac
+        dir="$RUNNER_TEMP/warden-dl"
+        mkdir -p "$dir" "$HOME/.local/bin"
+        tag_args=()
+        if [ "$WARDEN_VERSION" != latest ]; then tag_args=("$WARDEN_VERSION"); fi
+        gh release download ${tag_args[@]+"${tag_args[@]}"} --repo "$WARDEN_REPO" --dir "$dir" \
+          --pattern "warden-$target" --pattern checksums.txt --clobber
+        (cd "$dir" && grep " warden-$target\$" checksums.txt | shasum -a 256 -c -)
+        install -m 0755 "$dir/warden-$target" "$HOME/.local/bin/warden"
+        echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+    - name: Check the host (warden doctor)
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        warden --version
+        warden doctor --fetch-helper
+
+    - name: Key the caches
+      id: keys
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        PREFIX: ${{ inputs.cache-prefix }}
+        PROFILE: ${{ inputs.profile }}
+        SUITE: ${{ inputs.suite }}
+        JS_INPUTS: ${{ inputs.js-inputs }}
+      run: |
+        set -euo pipefail
+        args=(--json --prefix "$PREFIX")
+        if [ -n "$PROFILE" ]; then args+=(--profile "$PROFILE"); fi
+        # A suite without `golden: true` gets `golden: null`: an empty golden-key skips every golden step below.
+        if [ -n "$SUITE" ]; then args+=(--suite "$SUITE"); fi
+        while IFS= read -r line; do [ -n "$line" ] && args+=(--js-input "$line"); done <<< "$JS_INPUTS"
+        groups=$(warden ci cache "${args[@]}")
+        key() { node -e 'const g=JSON.parse(process.argv[1])[process.argv[2]];process.stdout.write(g?.key ?? "")' "$groups" "$1"; }
+        {
+          echo "builds=$(key builds)"
+          echo "repack=$(key repack)"
+          echo "golden-key=$(key golden)"
+          echo "cache-groups<<WARDEN_CACHE_GROUPS"
+          echo "$groups"
+          echo "WARDEN_CACHE_GROUPS"
+        } >> "$GITHUB_OUTPUT"
+        echo "$groups"
+
+    # Restore and save are separate steps so a failed run never saves: a half-built base would be restored by every
+    # later run. The repack directories are cached on their own key (the native fingerprint plus the JS inputs); the
+    # builds cache excludes them. Only the files come back, not warden.db: warden registers a kind's dir it finds
+    # complete on disk with no row, so a restored base or repack is used instead of rebuilt.
+    - name: Restore the native build cache
+      if: inputs.cache == 'github'
+      id: builds-cache
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          ~/.warden/builds
+          !~/.warden/builds/*/ios/*/simulator/repacks
+        key: ${{ steps.keys.outputs.builds }}
+
+    - name: Restore the JS repack cache
+      if: inputs.cache == 'github'
+      id: repack-cache
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.warden/builds/*/ios/*/simulator/repacks
+        key: ${{ steps.keys.outputs.repack }}
+
+    - name: Restore the golden simulator
+      if: inputs.cache == 'github' && steps.keys.outputs.golden-key != ''
+      id: golden-cache
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/warden-goldens
+        key: ${{ steps.keys.outputs.golden-key }}
+
+    - name: Import the golden and the prebuilt app
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        APP_PATH: ${{ inputs.app-path }}
+        WORKSPACE: ${{ github.workspace }}
+        GOLDEN_KEY: ${{ steps.keys.outputs.golden-key }}
+      run: |
+        set -euo pipefail
+        if [ -n "$GOLDEN_KEY" ]; then warden golden import ~/warden-goldens; fi
+        if [ -n "$APP_PATH" ]; then
+          case "$APP_PATH" in /*) app="$APP_PATH" ;; *) app="$WORKSPACE/$APP_PATH" ;; esac
+          warden builds import "$app" --kind simulator-base
+        fi
+
+    - name: Build the golden simulator
+      if: steps.keys.outputs.golden-key != '' && steps.golden-cache.outputs.cache-hit != 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        PROFILE: ${{ inputs.profile }}
+      run: |
+        set -euo pipefail
+        profile_args=()
+        if [ -n "$PROFILE" ]; then profile_args=(--profile "$PROFILE"); fi
+        warden golden ensure ${profile_args[@]+"${profile_args[@]}"}
+
+    - name: Run the suite
+      id: run
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        SUITE: ${{ inputs.suite }}
+        PROFILE: ${{ inputs.profile }}
+        COUNT: ${{ inputs.count }}
+        RETRY: ${{ inputs.retry }}
+        EXTRA: ${{ inputs.args }}
+        REPORT: ${{ inputs.report-path }}
+        SUITE_TIMEOUT: ${{ inputs.suite-timeout-minutes }}
+        WORKSPACE: ${{ github.workspace }}
+      run: |
+        set +e
+        set -uo pipefail
+        case "$REPORT" in /*) report="$REPORT" ;; *) report="$WORKSPACE/$REPORT" ;; esac
+        args=(e2e)
+        if [ -n "$SUITE" ]; then args+=("$SUITE"); fi
+        if [ -n "$PROFILE" ]; then args+=(--profile "$PROFILE"); fi
+        if [ -n "$COUNT" ]; then args+=(--count "$COUNT"); fi
+        if [ -n "$RETRY" ]; then args+=(--retry "$RETRY"); fi
+        args+=(--report "$report")
+        # shellcheck disable=SC2206
+        extra=($EXTRA)
+        started=$(date +%s)
+        warden "${args[@]}" ${extra[@]+"${extra[@]}"} &
+        suite_pid=$!
+        # `|| exit 0`: the cleanup below kills this sleep first; without it the
+        # subshell carries on and reports a timeout on every passing run.
+        (
+          sleep $(( SUITE_TIMEOUT * 60 )) || exit 0
+          echo "::error title=suite timed out::warden e2e ran longer than ${SUITE_TIMEOUT} min; stopping it"
+          kill -INT "$suite_pid" 2>/dev/null
+          sleep 60 || exit 0
+          kill -KILL "$suite_pid" 2>/dev/null
+        ) &
+        watchdog_pid=$!
+        wait "$suite_pid"
+        code=$?
+        pkill -P "$watchdog_pid" 2>/dev/null
+        kill "$watchdog_pid" 2>/dev/null
+        wait "$watchdog_pid" 2>/dev/null
+        {
+          echo "report-path=$report"
+          echo "exit-code=$code"
+          echo "passed=$([ "$code" -eq 0 ] && echo true || echo false)"
+          echo "seconds=$(( $(date +%s) - started ))"
+          echo "started=$started"
+        } >> "$GITHUB_OUTPUT"
+        echo "warden e2e exited $code after $(( $(date +%s) - started )) s"
+
+    - name: Print failure evidence
+      if: always() && steps.run.outputs.passed != 'true'
+      shell: bash
+      run: bash "$GITHUB_ACTION_PATH/evidence.sh"
+
+    # One artifact per group so a caller downloads only what it needs. `artifacts.sh` documents the groups; it runs
+    # whatever the outcome (a failed run's golden is what reproduces it) and never builds a golden just to upload it.
+    - name: Collect the artifacts
+      id: artifacts
+      if: always()
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        ARTIFACTS: ${{ inputs.artifacts }}
+        PASSED: ${{ steps.run.outputs.passed }}
+        STARTED: ${{ steps.run.outputs.started }}
+        GOLDEN_CACHE_HIT: ${{ steps.golden-cache.outputs.cache-hit }}
+        GOLDEN_KEY: ${{ steps.keys.outputs.golden-key }}
+        PROFILE: ${{ inputs.profile }}
+        REPORT: ${{ steps.run.outputs.report-path || format('{0}/{1}', github.workspace, inputs.report-path) }}
+      run: bash "$GITHUB_ACTION_PATH/artifacts.sh"
+
+    - name: Upload the report artifact
+      if: always() && inputs.upload-artifacts == 'true' && contains(format(',{0},', steps.artifacts.outputs.groups), ',report,')
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: ${{ inputs.artifact-name }}-report
+        path: ${{ steps.artifacts.outputs.report }}
+        if-no-files-found: ignore
+        retention-days: ${{ inputs.retention-days }}
+
+    - name: Upload the batches artifact
+      if: always() && inputs.upload-artifacts == 'true' && contains(format(',{0},', steps.artifacts.outputs.groups), ',batches,')
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: ${{ inputs.artifact-name }}-batches
+        path: ${{ steps.artifacts.outputs.batches }}
+        if-no-files-found: ignore
+        retention-days: ${{ inputs.retention-days }}
+
+    - name: Upload the logs artifact
+      if: always() && inputs.upload-artifacts == 'true' && contains(format(',{0},', steps.artifacts.outputs.groups), ',logs,')
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: ${{ inputs.artifact-name }}-logs
+        path: ${{ steps.artifacts.outputs.logs }}
+        if-no-files-found: ignore
+        retention-days: ${{ inputs.retention-days }}
+
+    - name: Upload the app artifact
+      if: always() && inputs.upload-artifacts == 'true' && contains(format(',{0},', steps.artifacts.outputs.groups), ',app,')
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: ${{ inputs.artifact-name }}-app
+        path: ${{ steps.artifacts.outputs.app }}
+        if-no-files-found: ignore
+        retention-days: ${{ inputs.retention-days }}
+
+    - name: Upload the golden artifact
+      if: always() && inputs.upload-artifacts == 'true' && contains(format(',{0},', steps.artifacts.outputs.groups), ',golden,')
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: ${{ inputs.artifact-name }}-golden
+        path: ${{ steps.artifacts.outputs.golden }}
+        if-no-files-found: ignore
+        retention-days: ${{ inputs.retention-days }}
+
+    - name: Export the golden simulator
+      id: golden-export
+      if: inputs.cache == 'github' && steps.keys.outputs.golden-key != '' && steps.run.outputs.passed == 'true' && inputs.save-cache == 'true' && steps.golden-cache.outputs.cache-hit != 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        PROFILE: ${{ inputs.profile }}
+        ARCHIVED: ${{ steps.artifacts.outputs.golden-archived }}
+      run: |
+        # Collecting the golden artifact already archived it in ~/warden-goldens: never copy GBs twice.
+        if [ "$ARCHIVED" = true ]; then echo "exported=true" >> "$GITHUB_OUTPUT"; exit 0; fi
+        profile_args=()
+        if [ -n "$PROFILE" ]; then profile_args=(--profile "$PROFILE"); fi
+        # A small runner never settles a golden (a 3-core one stays at 150-200 % CPU past the 300 s wait), and every
+        # run there would build that same unsettled golden again: caching it saves those minutes.
+        if warden golden export ~/warden-goldens --allow-unsettled ${profile_args[@]+"${profile_args[@]}"}; then
+          echo "exported=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "::warning title=golden not cached::warden golden export failed; the next cold run rebuilds the golden"
+        fi
+
+    - name: Save the golden simulator
+      if: inputs.cache == 'github' && steps.golden-export.outputs.exported == 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/warden-goldens
+        key: ${{ steps.keys.outputs.golden-key }}
+
+    - name: Save the native build cache
+      if: inputs.cache == 'github' && steps.run.outputs.passed == 'true' && inputs.save-cache == 'true' && steps.builds-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          ~/.warden/builds
+          !~/.warden/builds/*/ios/*/simulator/repacks
+        key: ${{ steps.keys.outputs.builds }}
+
+    - name: Save the JS repack cache
+      if: inputs.cache == 'github' && steps.run.outputs.passed == 'true' && inputs.save-cache == 'true' && steps.repack-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.warden/builds/*/ios/*/simulator/repacks
+        key: ${{ steps.keys.outputs.repack }}
+
+    - name: Gate on the suite
+      if: always()
+      shell: bash
+      env:
+        PASSED: ${{ steps.run.outputs.passed }}
+        CODE: ${{ steps.run.outputs.exit-code }}
+      run: |
+        if [ "$PASSED" != true ]; then
+          echo "::error title=warden e2e failed::exit code ${CODE:-unknown}; see the evidence above and the ${{ inputs.artifact-name }}-batches artifact"
+          exit "${CODE:-1}"
+        fi

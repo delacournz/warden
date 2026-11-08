@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { findBun, helperDir, parsePerfFlag, runnerArgv, shardSpecs, specEnv } from "./bun-runner";
+import { readEnv } from "@delacour/warden-e2e/env";
+import { findBun, helperDir, NETPROXY_SUBCOMMAND, parsePerfFlag, runnerArgv, shardSpecs, specEnv } from "./bun-runner";
 
 describe("runnerArgv", () => {
 	test("bun test with the preload, a timeout 30 s past the per-test one and the spec files", () => {
@@ -38,15 +39,10 @@ describe("runnerArgv", () => {
 });
 
 describe("findBun", () => {
-	test("WARDEN_BUN wins, then PATH, else an error naming both", () => {
-		const which = (name: string) => (name === "bun" ? "/usr/bin/bun" : null);
-		expect(findBun({ WARDEN_BUN: "/opt/bun" }, which)).toEqual({ success: true, data: "/opt/bun" });
-		expect(findBun({}, which)).toEqual({ success: true, data: "/usr/bin/bun" });
-		expect(findBun({ WARDEN_BUN: "" }, which)).toEqual({ success: true, data: "/usr/bin/bun" });
-		expect(findBun({}, () => null)).toEqual({
-			success: false,
-			error: "bun >= 1.3 is required on PATH (or set WARDEN_BUN)",
-		});
+	test("WARDEN_BUN wins, else warden's own executable runs as bun: no bun install needed", () => {
+		expect(findBun({ WARDEN_BUN: "/opt/bun" }, "/usr/local/bin/warden")).toBe("/opt/bun");
+		expect(findBun({}, "/usr/local/bin/warden")).toBe("/usr/local/bin/warden");
+		expect(findBun({ WARDEN_BUN: "" }, "/usr/local/bin/warden")).toBe("/usr/local/bin/warden");
 	});
 });
 
@@ -94,17 +90,46 @@ describe("specEnv", () => {
 			WARDEN_E2E_SPECS_DIR: "/repo/specs",
 			WARDEN_HELPER_DIR: "/bin",
 			WARDEN_VERSION: "0.3.0",
+			BUN_BE_BUN: "1",
 		});
 	});
 });
 
 describe("helperDir", () => {
+	const has = (dir: string) => (path: string) => path === `${dir}/warden-simd`;
+
 	test("a compiled binary: the directory of the executable", () => {
-		expect(helperDir("/$bunfs/root/warden", "/home/me/.local/bin/warden")).toBe("/home/me/.local/bin");
+		expect(helperDir("/$bunfs/root/warden", "/home/me/.local/bin/warden", has("/home/me/.local/bin"))).toBe(
+			"/home/me/.local/bin"
+		);
 	});
 
 	test("from source: the helper's build output in the checkout", () => {
-		expect(helperDir("/repo/apps/cli/src/cli.ts", "/usr/bin/bun")).toBe("/repo/packages/e2e/native/dist");
+		expect(helperDir("/repo/apps/cli/src/cli.ts", "/usr/bin/bun", has("/repo/packages/e2e/native/dist"))).toBe(
+			"/repo/packages/e2e/native/dist"
+		);
+	});
+
+	test("no helper there (a release binary whose helper `doctor --fetch-helper` staged under $WARDEN_HOME, a checkout that never built it): none, so the specs fall through to the staged copy", () => {
+		expect(helperDir("/$bunfs/root/warden", "/home/me/.local/bin/warden", () => false)).toBeUndefined();
+		expect(helperDir("/repo/apps/cli/src/cli.ts", "/usr/bin/bun", () => false)).toBeUndefined();
+	});
+});
+
+describe("specEnv helper dir", () => {
+	const base = {
+		platform: "ios",
+		bundleId: "com.x.app",
+		launchArgs: [],
+		out: "/b",
+		timeouts: { timeoutMs: 1, actionTimeoutMs: 1, assertionTimeoutMs: 1 },
+		specsDir: "/s",
+		version: "0.3.0",
+	} as const;
+
+	test("WARDEN_HELPER_DIR is only set when there is a directory to name", () => {
+		expect(specEnv({ ...base, helperDir: "/h" }).WARDEN_HELPER_DIR).toBe("/h");
+		expect("WARDEN_HELPER_DIR" in specEnv(base)).toBe(false);
 	});
 });
 
@@ -120,6 +145,11 @@ describe("specEnv perf", () => {
 		version: "1",
 	};
 
+	test("WARDEN_DEV_CLIENT_SCHEME only when given", () => {
+		expect(specEnv(base).WARDEN_DEV_CLIENT_SCHEME).toBeUndefined();
+		expect(specEnv({ ...base, devClientScheme: "exp+warden" }).WARDEN_DEV_CLIENT_SCHEME).toBe("exp+warden");
+	});
+
 	test("WARDEN_BIN, WARDEN_PERF and the budgets", () => {
 		const env = specEnv({ ...base, bin: ["/bin/warden"], perf: ["react", "js"], perfBudgets: { jankPct: 5 } });
 		expect(env.WARDEN_BIN).toBe('["/bin/warden"]');
@@ -127,9 +157,83 @@ describe("specEnv perf", () => {
 		expect(env.WARDEN_PERF_BUDGETS).toBe('{"jankPct":5}');
 	});
 
+	test("WARDEN_CAMERA_FEEDS only for a suite with a camera", () => {
+		const cameraFeeds = { back: { path: "/fx/qr.png", loop: true } };
+		expect(specEnv({ ...base, cameraFeeds }).WARDEN_CAMERA_FEEDS).toBe(JSON.stringify(cameraFeeds));
+		expect("WARDEN_CAMERA_FEEDS" in specEnv({ ...base, cameraFeeds: {} })).toBe(false);
+		expect("WARDEN_CAMERA_FEEDS" in specEnv(base)).toBe(false);
+	});
+
+	test("WARDEN_BIOMETRICS only for a biometrics suite", () => {
+		expect(specEnv({ ...base, biometrics: true }).WARDEN_BIOMETRICS).toBe("1");
+		expect("WARDEN_BIOMETRICS" in specEnv({ ...base, biometrics: false })).toBe(false);
+	});
+
+	test("WARDEN_A11Y_AUDIT carries the suite's a11y config; WARDEN_A11Y=1 only when asked", () => {
+		const env = specEnv({
+			...base,
+			a11yAudit: { minSeverity: "warning", ignore: [{ rule: "target-size" }] },
+			a11y: true,
+		});
+		expect(env.WARDEN_A11Y_AUDIT).toBe('{"minSeverity":"warning","ignore":[{"rule":"target-size"}]}');
+		expect(env.WARDEN_A11Y).toBe("1");
+		const quiet = specEnv({ ...base, a11y: false });
+		expect("WARDEN_A11Y" in quiet || "WARDEN_A11Y_AUDIT" in quiet).toBe(false);
+	});
+
 	test("absent unless asked for; empty budgets are not exported", () => {
 		const env = specEnv({ ...base, perfBudgets: {} });
 		expect(Object.keys(env).filter((k) => k.includes("PERF") || k === "WARDEN_BIN")).toEqual([]);
+	});
+});
+
+describe("specEnv conditions", () => {
+	const base = {
+		platform: "ios" as const,
+		bundleId: "com.x.app",
+		launchArgs: [],
+		out: "/o",
+		timeouts: { timeoutMs: 1, actionTimeoutMs: 1, assertionTimeoutMs: 1 },
+		specsDir: "/f",
+		helperDir: "/h",
+		version: "1",
+	};
+
+	test("WARDEN_CONDITIONS is the suite's conditions as JSON and the spec process reads it back", () => {
+		const conditions = { network: "3g", location: { lat: 1, lon: 2 } } as const;
+		const env = specEnv({ ...base, conditions });
+		expect(env.WARDEN_CONDITIONS).toBe(JSON.stringify(conditions));
+		const read = readEnv({ WARDEN_UDID: "u", WARDEN_BUNDLE_ID: "b", ...env });
+		expect(read.success && read.data?.conditions).toEqual(conditions);
+	});
+
+	test("absent when the suite sets none", () => {
+		expect("WARDEN_CONDITIONS" in specEnv(base)).toBe(false);
+		expect("WARDEN_CONDITIONS" in specEnv({ ...base, conditions: {} })).toBe(false);
+	});
+});
+
+describe("specEnv netproxy command", () => {
+	const base = {
+		platform: "android" as const,
+		bundleId: "com.x.app",
+		launchArgs: [],
+		out: "/o",
+		timeouts: { timeoutMs: 1, actionTimeoutMs: 1, assertionTimeoutMs: 1 },
+		specsDir: "/f",
+		helperDir: "/h",
+		version: "1",
+	};
+
+	test("a compiled warden hands specs its hidden subcommand as JSON argv, and the spec process reads it back", () => {
+		const env = specEnv({ ...base, netproxyCommand: ["/bin/warden", NETPROXY_SUBCOMMAND] });
+		expect(env.WARDEN_NETPROXY_COMMAND).toBe('["/bin/warden","__netproxy"]');
+		const read = readEnv({ WARDEN_UDID: "u", WARDEN_BUNDLE_ID: "b", WARDEN_LEASE_ID: "L1", ...env });
+		expect(read.success && read.data).toMatchObject({ leaseId: "L1", netproxyCommand: ["/bin/warden", "__netproxy"] });
+	});
+
+	test("absent from source", () => {
+		expect("WARDEN_NETPROXY_COMMAND" in specEnv(base)).toBe(false);
 	});
 });
 

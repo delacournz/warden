@@ -21,7 +21,7 @@ export default function Gestures() {
 					<Screen.Navbar.Title>Gestures</Screen.Navbar.Title>
 				</Screen.Navbar.BackButton>
 			</Screen.Navbar>
-			<Screen.View className="gap-3 px-5">
+			<Screen.View className="gap-3 px-5 pt-4 pb-2">
 				<GestureCanvas key={`canvas-${resetKey}`} onCommit={commitTransform} onPointers={commitPointers} />
 				<TracePad key={`trace-${resetKey}`} onCommit={commitTrace} />
 				<GestureReadouts onReset={reset} readout={readout} />

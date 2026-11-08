@@ -236,6 +236,9 @@ struct InputParams {
   /// `repeatGapMs`: extra pause before a key identical to the previous one, default `KeyboardMap.defaultRepeatGapMs`.
   func repeatGapMs() throws -> Int { try wholeMs("repeatGapMs", fallback: KeyboardMap.defaultRepeatGapMs) }
 
+  /// `leadMs` for `typeText`: extra pause between the first key and the second, default `KeyboardMap.defaultLeadMs`.
+  func leadMs() throws -> Int { try wholeMs("leadMs", fallback: KeyboardMap.defaultLeadMs) }
+
   /// Milliseconds -> seconds, within 0...60 s.
   func seconds(_ key: String, default fallback: Double) throws -> Double {
     let ms = try optional(key) ?? fallback
@@ -305,6 +308,53 @@ struct InputEnvironment: Sendable {
   var isLandscape: @Sendable () async -> Bool
   var shake: @Sendable () async throws -> Void
   var gate: HIDGate = HIDGate()
+  /// Sends a stream of events as ONE HID operation (one drain at the end), each event delivered as it is yielded.
+  /// nil (tests with a recording sink) delivers each yielded event through `send`.
+  var sendStream: (@Sendable (PacedKeyEvents) async throws -> Void)?
+  /// Sleeps `ms` milliseconds between key events. Zero timer tolerance in production: idb's `.delay` uses
+  /// `Task.sleep(nanoseconds:)` with the default tolerance, which a loaded host stretches (~260 ms/char on a VM).
+  var pause: @Sendable (Int) async throws -> Void = InputEnvironment.preciseSleep
+
+  static func preciseSleep(milliseconds: Int) async throws {
+    guard milliseconds > 0 else { return }
+    try await ContinuousClock().sleep(for: .milliseconds(milliseconds), tolerance: .zero)
+  }
+}
+
+/// The events of a key sequence, with its pauses slept inside `next()`. idb's stream send asks for the next event
+/// only after the previous one was delivered, so every pause starts when the key before it has really been sent
+/// (a producer task sleeping beside the consumer would start the clock early), and a cancelled op ends the
+/// sleep by throwing. The tail pause (pace after the last key) runs before the sequence ends, i.e. before idb's
+/// closing drain, like the old trailing `.delay`.
+struct PacedKeyEvents: AsyncSequence, Sendable {
+  typealias Element = SimulatorHIDEvent
+
+  let steps: [KeyboardMap.KeyStep]
+  let pause: @Sendable (Int) async throws -> Void
+
+  struct AsyncIterator: AsyncIteratorProtocol {
+    let steps: [KeyboardMap.KeyStep]
+    let pause: @Sendable (Int) async throws -> Void
+    var index = 0
+
+    mutating func next() async throws -> SimulatorHIDEvent? {
+      while index < steps.count {
+        let step = steps[index]
+        index += 1
+        switch step {
+        case .event(let event):
+          return event
+        case .pause(let milliseconds):
+          try await pause(milliseconds)
+        }
+      }
+      return nil
+    }
+  }
+
+  func makeAsyncIterator() -> AsyncIterator {
+    AsyncIterator(steps: steps, pause: pause)
+  }
 }
 
 struct InputEngine: Sendable {
@@ -325,6 +375,22 @@ struct InputEngine: Sendable {
     let environment = environment
     try await environment.gate.run { try await environment.send(event) }
     return .object([:])
+  }
+
+  /// Streams `steps` into the HID as one operation under the gate (see `PacedKeyEvents`).
+  private func send(steps: [KeyboardMap.KeyStep]) async throws -> JSON {
+    let environment = environment
+    try await environment.gate.run { try await Self.stream(steps, through: environment) }
+    return .object([:])
+  }
+
+  static func stream(_ steps: [KeyboardMap.KeyStep], through environment: InputEnvironment) async throws {
+    let events = PacedKeyEvents(steps: steps, pause: environment.pause)
+    if let sendStream = environment.sendStream {
+      try await sendStream(events)
+    } else {
+      for try await event in events { try await environment.send(event) }
+    }
   }
 
   func handle(op: String, params json: JSON) async throws -> JSON {
@@ -363,15 +429,15 @@ struct InputEngine: Sendable {
     case "pressButton":
       return try await pressButton(try params.string("button"))
     case "key":
-      return try await send(try Self.keyEvent(params, paceMs: try params.paceMs(), holdMs: try params.holdMs()))
+      return try await send(steps: try Self.keySteps(params, paceMs: try params.paceMs(), holdMs: try params.holdMs()))
     case "typeText":
       return try await typeText(
         try params.string("text"), paceMs: try params.paceMs(), holdMs: try params.holdMs(),
-        repeatGapMs: try params.repeatGapMs())
+        repeatGapMs: try params.repeatGapMs(), leadMs: try params.leadMs())
     case "paste":
       return try await send(KeyboardMap.paste)
     case "selectAll":
-      return try await send(KeyboardMap.selectAll(paceMs: try params.paceMs(), holdMs: try params.holdMs()))
+      return try await send(steps: KeyboardMap.selectAll(paceMs: try params.paceMs(), holdMs: try params.holdMs()))
     default:
       throw WireError(.badRequest, "unknown input op \"\(op)\"")
     }
@@ -431,7 +497,7 @@ struct InputEngine: Sendable {
   }
 
   /// `usage` (numeric) or `name` (a `KeyName`), plus `modifiers` (`shift|cmd|alt|ctrl`).
-  static func keyEvent(_ params: InputParams, paceMs: Int = 0, holdMs: Int = 0) throws -> SimulatorHIDEvent {
+  static func keySteps(_ params: InputParams, paceMs: Int = 0, holdMs: Int = 0) throws -> [KeyboardMap.KeyStep] {
     let usage: UInt32
     if let raw = try params.optional("usage") {
       guard raw.rounded() == raw, raw >= 0, raw <= 255, KeyboardMap.usageRange.contains(UInt32(raw)) else {
@@ -451,12 +517,13 @@ struct InputEngine: Sendable {
       }
       if !modifiers.contains(modifier) { modifiers.append(modifier) }
     }
-    return KeyboardMap.chord(usage: usage, modifiers: modifiers, paceMs: paceMs, holdMs: holdMs)
+    return KeyboardMap.chordSteps(usage: usage, modifiers: modifiers, paceMs: paceMs, holdMs: holdMs)
   }
 
-  private func typeText(_ text: String, paceMs: Int, holdMs: Int, repeatGapMs: Int) async throws -> JSON {
-    let plan = KeyboardMap.plan(typing: text, paceMs: paceMs, holdMs: holdMs, repeatGapMs: repeatGapMs)
-    if let event = plan.event { _ = try await send(event) }
+  private func typeText(_ text: String, paceMs: Int, holdMs: Int, repeatGapMs: Int, leadMs: Int) async throws -> JSON {
+    let plan = KeyboardMap.plan(
+      typing: text, paceMs: paceMs, holdMs: holdMs, repeatGapMs: repeatGapMs, leadMs: leadMs)
+    if !plan.steps.isEmpty { _ = try await send(steps: plan.steps) }
     if let rest = plan.rest {
       let first = rest.unicodeScalars.first.map { String($0) } ?? ""
       throw WireError(
@@ -503,7 +570,8 @@ enum InputOps {
         }
       },
       shake: { try await simulator.hardware.shake() },
-      gate: gates.gate(for: session.udid))
+      gate: gates.gate(for: session.udid),
+      sendStream: { events in try await hid.send(events: events, logger: logger) })
   }
 
   static let ops: [String: Dispatcher<Session>.OpHandler] = Dictionary(

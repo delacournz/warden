@@ -11,7 +11,10 @@ export type E2eErrorCode =
 	| "SESSION"
 	| "DRIVER"
 	| "ASSERTION"
-	| "PERF_BUDGET";
+	| "PERF_BUDGET"
+	| "RUN_FAILED"
+	/** a read that fell back from its first reader (or came back an empty root) could not confirm the locator either way */
+	| "READ_DEGRADED";
 
 /** Plain shape of a spec error: what `e2eErr()` accepts and what a `Result` carries. */
 export type E2eErrorShape = {

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
+	existsSync,
 	mkdirSync,
 	mkdtempSync,
 	readFileSync,
@@ -80,6 +81,20 @@ describe("locateArtifact", () => {
 		age(fresh, 5);
 		expect(artifactCandidates(root, "ios", dd).sort()).toEqual([fresh, local, old].sort());
 		expect(locateArtifact(root, "ios", dd, NOTHING)).toEqual({ kind: "rebuilt", path: fresh });
+	});
+
+	test("a device target looks in -iphoneos, never in -iphonesimulator", () => {
+		const root = join(dir, "app");
+		const dd = join(dir, "DerivedData");
+		const phone = fakeApp(join(root, "ios", "build", "Build", "Products", "Release-iphoneos"), "App.app");
+		fakeApp(join(root, "ios", "build", "Build", "Products", "Release-iphonesimulator"), "Sim.app");
+		expect(artifactCandidates(root, "ios", dd, "Release", "device")).toEqual([phone]);
+		expect(artifactCandidates(root, "ios", dd, "Release").map((p) => p.endsWith("Sim.app"))).toEqual([true]);
+		const before = snapshotArtifacts(root, "ios", dd, "Release", "device");
+		expect(locateArtifact(root, "ios", dd, before, "Release", new Set(), "device")).toEqual({
+			kind: "up-to-date",
+			path: phone,
+		});
 	});
 
 	test("a candidate rewritten during the build beats a newer-looking unchanged one", () => {
@@ -279,6 +294,26 @@ describe("runLocalBuild", () => {
 		const res = await runLocalBuild({ ...base, exec: s.exec, project: s.project, platform: "android", hash: "h1" });
 		expect(res).toEqual({ success: true, data: { artifact: join(s.out, "app-debug.apk") } });
 		expect(s.calls).toContain(`${s.root} sh -c gradle-build`);
+	});
+
+	test("the build command's output lines go to `output`; probes stay quiet", async () => {
+		const s = setup(["h1"]);
+		const seen: string[] = [];
+		const exec: Exec = async (cmd, opts) => {
+			if (cmd[2] === "gradle-build") opts?.onLine?.("> Task :app:assembleDebug");
+			else if (opts?.onLine) seen.push(`probe got onLine: ${cmd.join(" ")}`);
+			return s.exec(cmd, opts);
+		};
+		const res = await runLocalBuild({
+			...base,
+			exec,
+			project: s.project,
+			platform: "android",
+			hash: "h1",
+			output: (line) => seen.push(line),
+		});
+		expect(res.success).toBe(true);
+		expect(seen).toEqual(["> Task :app:assembleDebug"]);
 	});
 
 	test("fingerprint changed during build, native dir already there → error (a real native edit)", async () => {
@@ -502,6 +537,20 @@ describe("runLocalBuild compiler cache env", () => {
 			compilerCache: false,
 		});
 		expect(s.envs[0]).toEqual({ EXPO_NO_TELEMETRY: "1" });
+	});
+
+	test("a kind's env (project.buildEnv) reaches the build command", async () => {
+		const s = iosSetup();
+		await runLocalBuild({
+			...common,
+			exec: s.exec,
+			project: { ...s.project, buildEnv: { EXPO_PUBLIC_API: "x" } },
+			platform: "ios",
+			hash: "h1",
+			env: { HOME: dir },
+			compilerCache: false,
+		});
+		expect(s.envs[0]).toEqual({ EXPO_PUBLIC_API: "x", EXPO_NO_TELEMETRY: "1" });
 	});
 });
 
@@ -794,5 +843,123 @@ describe("runLocalBuild: prebuilt React Native env", () => {
 		expect(seen[1]?.RCT_USE_PREBUILT_RNCORE).toBeUndefined();
 		expect(seen[1]?.RCT_USE_RN_DEP).toBe("1");
 		expect(seen[2]?.RCT_USE_RN_DEP).toBeUndefined();
+	});
+});
+
+describe("runLocalBuild: a stale CNG native dir is regenerated before the build", () => {
+	const EXPO_RUN = "bunx expo run:android --no-install --no-bundler";
+	const apkDir = (root: string) => join(root, "android", "app", "build", "outputs", "apk", "debug");
+
+	/**
+	 * Android CNG host: `android/` exists with a `stale` marker (an old prebuild), `git check-ignore` says
+	 * whether it is git-ignored, the build command records whether the marker was still there, then makes the apk.
+	 */
+	function cng(opts: { ignored?: boolean; command?: string; buildExit?: number } = {}) {
+		const root = join(dir, "app");
+		mkdirSync(join(root, "android"), { recursive: true });
+		writeFileSync(join(root, "android", "stale"), "old prebuild");
+		const command = opts.command ?? EXPO_RUN;
+		const seen = { staleAtBuild: undefined as boolean | undefined };
+		/** the build command: records whether the stale marker survived, then fails or makes the apk */
+		const build = () => {
+			seen.staleAtBuild = existsSync(join(root, "android", "stale"));
+			const buildExit = opts.buildExit ?? 0;
+			if (buildExit !== 0) return { exitCode: buildExit, stdout: "", stderr: "BUILD FAILED" };
+			mkdirSync(apkDir(root), { recursive: true });
+			writeFileSync(join(apkDir(root), "app-debug.apk"), "apk");
+			return { exitCode: 0, stdout: "", stderr: "" };
+		};
+		const ignoredExit = opts.ignored === false ? 1 : 0;
+		const exec: Exec = async (cmd) => {
+			const joined = cmd.join(" ");
+			if (cmd[2] === command) return build();
+			if (cmd[2] === "fp") return { exitCode: 0, stdout: '{"hash":"h1"}', stderr: "" };
+			if (joined === "git check-ignore -q android") return { exitCode: ignoredExit, stdout: "", stderr: "" };
+			if (joined.startsWith("git status --porcelain")) return { exitCode: 0, stdout: "", stderr: "" };
+			return { exitCode: 127, stdout: "", stderr: joined };
+		};
+		const project = testProject({ root, fingerprintCommand: "fp", build: { ios: "x", android: command } });
+		const logs: string[] = [];
+		const run = (stamp: string | undefined) => {
+			const written: string[] = [];
+			const result = runLocalBuild({
+				exec,
+				project,
+				platform: "android",
+				hash: "h1",
+				env: { HOME: "/nope" },
+				log: (line) => logs.push(line),
+				prebuildStamp: { read: () => stamp, write: (native) => written.push(native) },
+			});
+			return { result, written };
+		};
+		return { seen, logs, run };
+	}
+
+	test("prebuilt for another fingerprint → removed before the build, stamped after", async () => {
+		const s = cng();
+		const { result, written } = s.run("h0");
+		expect((await result).success).toBe(true);
+		expect(s.seen.staleAtBuild).toBe(false);
+		expect(written).toEqual(["h1"]);
+		expect(s.logs.join("\n")).toContain("android/ was prebuilt for native fingerprint h0 (now h1)");
+	});
+
+	test("no stamp (prebuilt outside warden) → removed: its fingerprint is unknown", async () => {
+		const s = cng();
+		const { result, written } = s.run(undefined);
+		expect((await result).success).toBe(true);
+		expect(s.seen.staleAtBuild).toBe(false);
+		expect(written).toEqual(["h1"]);
+		expect(s.logs.join("\n")).toContain("unknown native fingerprint");
+	});
+
+	test("prebuilt for this fingerprint → kept", async () => {
+		const s = cng();
+		const { result, written } = s.run("h1");
+		expect((await result).success).toBe(true);
+		expect(s.seen.staleAtBuild).toBe(true);
+		expect(written).toEqual(["h1"]);
+	});
+
+	test("an Android build reports the keystore Gradle signed with, read from the prebuilt project", async () => {
+		const s = cng();
+		const app = join(dir, "app", "android", "app");
+		mkdirSync(app, { recursive: true });
+		writeFileSync(join(app, "debug.keystore"), "ks");
+		writeFileSync(
+			join(app, "build.gradle"),
+			"signingConfigs { debug { storeFile file('debug.keystore') storePassword 'android' keyAlias 'androiddebugkey' keyPassword 'android' } }\nbuildTypes { debug { signingConfig signingConfigs.debug } }"
+		);
+		const { result } = s.run("h1");
+		const built = await result;
+		if (!built.success) throw new Error(built.error);
+		expect(built.data.signing).toEqual({
+			path: join(app, "debug.keystore"),
+			alias: "androiddebugkey",
+			storePass: "android",
+			keyPass: "android",
+		});
+	});
+
+	test("a committed (not git-ignored) native dir is never removed", async () => {
+		const s = cng({ ignored: false });
+		const { result } = s.run("h0");
+		expect((await result).success).toBe(true);
+		expect(s.seen.staleAtBuild).toBe(true);
+	});
+
+	test("a build command that does not prebuild keeps the dir", async () => {
+		const s = cng({ command: "./gradlew assembleDebug" });
+		const { result } = s.run("h0");
+		expect((await result).success).toBe(true);
+		expect(s.seen.staleAtBuild).toBe(true);
+	});
+
+	test("a failed build writes no stamp", async () => {
+		const s = cng({ buildExit: 1 });
+		const { result, written } = s.run("h0");
+		expect((await result).success).toBe(false);
+		expect(written).toEqual([]);
 	});
 });

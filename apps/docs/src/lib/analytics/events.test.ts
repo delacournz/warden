@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { classifyLink, eventPayload } from "./events";
 
-const PAGE = "https://warden.delacour.co.nz/docs/quickstart";
+const PAGE = "https://warden.co.nz/docs/quickstart";
 
 describe("classifyLink", () => {
 	test("calls a link to another host outbound, with its full URL", () => {
@@ -14,7 +14,7 @@ describe("classifyLink", () => {
 	test("calls a same-origin link to a file a download, by path", () => {
 		expect(classifyLink("/llms.txt", PAGE)).toEqual({ name: "download", file: "/llms.txt" });
 		expect(classifyLink("/docs/quickstart.md", PAGE)).toEqual({ name: "download", file: "/docs/quickstart.md" });
-		expect(classifyLink("https://warden.delacour.co.nz/llms-full.txt?x=1", PAGE)).toEqual({
+		expect(classifyLink("https://warden.co.nz/llms-full.txt?x=1", PAGE)).toEqual({
 			name: "download",
 			file: "/llms-full.txt",
 		});

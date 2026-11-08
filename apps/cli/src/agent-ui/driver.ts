@@ -2,8 +2,10 @@ import type { PidAlive } from "@delacour/warden-core/liveness";
 import type { Driver, DriverError } from "@delacour/warden-e2e/driver/driver.types";
 import { ok, type Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
+import type { RunEnsureApp } from "../lease-session";
 import type { AuthoringDeps } from "./authoring-command";
 import type { BenchDeps } from "./bench";
+import type { ConditionsDeps } from "./conditions-types";
 import type { UiDevice } from "./device";
 import type { DevtoolsDeps } from "./devtools-cli";
 import { type UiError, uiError } from "./output";
@@ -25,8 +27,12 @@ export type UiDeps = {
 	devtools?: DevtoolsDeps;
 	/** clock and helper/driver plumbing of `bench` (default: wall clock, real helper) */
 	bench?: BenchDeps;
+	/** how the `net` / `location` verbs open the device, start their detached processes and read the lease's proxy (default: real) */
+	conditions?: ConditionsDeps;
 	/** pid liveness for the busy-device check (default: `kill(pid, 0)`) */
 	pidAlive?: PidAlive;
+	/** `open --kind`: install a build kind on the device (default: `ensureAppFor`) */
+	ensureApp?: RunEnsureApp;
 };
 
 const ENGINE_CODES: ReadonlySet<DriverError["code"]> = new Set<DriverError["code"]>([
@@ -37,12 +43,19 @@ const ENGINE_CODES: ReadonlySet<DriverError["code"]> = new Set<DriverError["code
 	"E_UNKNOWN_DEVICE",
 ]);
 
-/** A driver failure as a `warden ui` error: engine problems exit 3, a stale ref exits 4, the rest exit 1. */
+/** A phone behind a PIN / pattern / password: a person must unlock it, warden never does. */
+export const DEVICE_LOCKED_HINT = "unlock the phone, then retry";
+
+/**
+ * A driver failure as a `warden ui` error: a locked phone exits 2, engine problems exit 3, a stale ref exits 4, the
+ * rest exit 1.
+ */
 export function driverUiError(error: DriverError): UiError {
 	const message = `${error.code}: ${error.message}`;
 	if (error.code === "E_STALE_REF") {
 		return uiError("stale_ref", error.message, { hint: "run `warden ui snapshot` again" });
 	}
+	if (error.code === "E_DEVICE_LOCKED") return uiError("device_locked", message, { hint: DEVICE_LOCKED_HINT });
 	if (ENGINE_CODES.has(error.code)) return uiError("engine_unavailable", message);
 	return uiError("failed", message, { details: { driver: error.code } });
 }

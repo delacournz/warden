@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { describeException, exceptionDetailsSchema } from "./cdp";
-import type { CdpTap, CdpTapEvent, ConsoleLevel, ConsoleLine } from "./devtools.types";
+import type { CdpTap, CdpTapEvent, ConsoleLevel, ConsoleLine, StackFrame } from "./devtools.types";
 import { writeJsonl } from "./jsonl";
 import type { DevtoolsSession } from "./session";
 
@@ -39,9 +39,12 @@ const stackTraceSchema = z.looseObject({
 			url: z.string().optional(),
 			lineNumber: z.number().optional(),
 			columnNumber: z.number().optional(),
+			functionName: z.string().optional(),
 		})
 	),
 });
+
+type StackTrace = z.infer<typeof stackTraceSchema>;
 
 const consoleCalledSchema = z.looseObject({
 	type: z.string(),
@@ -52,7 +55,7 @@ const consoleCalledSchema = z.looseObject({
 
 const exceptionThrownSchema = z.looseObject({
 	timestamp: z.number().optional(),
-	exceptionDetails: exceptionDetailsSchema,
+	exceptionDetails: exceptionDetailsSchema.extend({ stackTrace: stackTraceSchema.optional() }),
 });
 
 const LEVELS: Record<string, ConsoleLevel> = {
@@ -154,6 +157,21 @@ function sourceOf(
 	return { url, line: (line ?? 0) + 1, col: (col ?? 0) + 1 };
 }
 
+/** CDP call frames (0-based) as `StackFrame`s (1-based); frames without a URL are dropped, none at all = undefined. */
+function framesOf(trace: StackTrace | undefined): StackFrame[] | undefined {
+	const frames: StackFrame[] = [];
+	for (const frame of trace?.callFrames ?? []) {
+		if (!frame.url) continue;
+		frames.push({
+			file: frame.url,
+			line: (frame.lineNumber ?? 0) + 1,
+			col: (frame.columnNumber ?? 0) + 1,
+			...(frame.functionName ? { fn: frame.functionName } : {}),
+		});
+	}
+	return frames.length > 0 ? frames : undefined;
+}
+
 export type ConsoleOptions = {
 	/** lines kept (default 500) */
 	ring?: number;
@@ -231,6 +249,7 @@ export function createConsoleCapture(options: ConsoleOptions = {}): ConsoleCaptu
 		const formatted = formatConsoleArgs(args);
 		const frame = stackTrace?.callFrames[0];
 		const source = sourceOf(frame?.url, frame?.lineNumber, frame?.columnNumber);
+		const stack = framesOf(stackTrace);
 		return {
 			ts: timestamp ?? now(),
 			level: LEVELS[type] ?? "log",
@@ -238,6 +257,7 @@ export function createConsoleCapture(options: ConsoleOptions = {}): ConsoleCaptu
 			text: formatted.text,
 			args: formatted.args,
 			...(source ? { source } : {}),
+			...(stack ? { stack } : {}),
 		};
 	};
 
@@ -246,12 +266,14 @@ export function createConsoleCapture(options: ConsoleOptions = {}): ConsoleCaptu
 		if (!parsed.success) return undefined;
 		const { exceptionDetails: details, timestamp } = parsed.data;
 		const source = sourceOf(details.url, details.lineNumber, details.columnNumber);
+		const stack = framesOf(details.stackTrace);
 		return {
 			ts: timestamp ?? now(),
 			level: "error",
 			kind: "exception",
 			text: describeException(details),
 			...(source ? { source } : {}),
+			...(stack ? { stack } : {}),
 		};
 	};
 

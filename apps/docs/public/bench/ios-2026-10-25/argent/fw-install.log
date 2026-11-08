@@ -7,6 +7,6 @@ installed @swmansion/argent@0.30.1 with binaries:
  - argent
  - argent-simulator-server
 
-178 packages installed [1.62s]
+178 packages installed [1458.00ms]
 
 Blocked 2 postinstalls. Run `bun pm -g untrusted` for details.

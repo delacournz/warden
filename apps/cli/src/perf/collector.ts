@@ -5,6 +5,7 @@ import type { UiError } from "../agent-ui/output";
 import type { CommandContext } from "../context";
 import { errorMessage } from "../hooks/json";
 import { untilCap } from "./auto-stop";
+import { settleBrokerResumes } from "./broker-resume";
 import { COLLECT_METRICS_INTERVAL_MS, createMetricsTicker } from "./collect-metrics";
 import type { PerfTarget } from "./device";
 import { androidFrameRate } from "./frames";
@@ -206,6 +207,7 @@ async function cdpTask(e: Env): Promise<void> {
 		if (reactHostMs !== undefined) await stopReact(e, cdp, owner, jsDir, reactHostMs);
 	} finally {
 		cdp.close();
+		await settleBrokerResumes();
 	}
 }
 

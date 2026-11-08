@@ -6,6 +6,7 @@ import {
 	type OkFrameworkResult,
 	type Series,
 } from "../results/schema";
+import { stepGroups } from "../results/stats";
 import { bytes, coldStartCost, cpuSeconds, DASH, ms, pct, ratio } from "./format";
 import {
 	cpuSecondsPerRep,
@@ -133,13 +134,35 @@ function matrixSection(matrix: PerTestMatrix): string[] {
 	return ["## Per-test medians (ms)", "", ...table(headers, rows)];
 }
 
+/** Why verbs are not comparable across tools: what one reported "step" covers differs per framework. */
+export const STEP_SCOPE_NOTE =
+	"Step scopes differ per tool: warden's one `fill` step spans the focus tap, select-all, typing and read-back confirm, " +
+	"argent reports a separate `idle` step and `into …`, agent-device reports `fill` and `type` separately, and tester.army reports locator steps. " +
+	"Compare a verb's share within a tool, not its median across tools.";
+
+function stepGroupSection(run: BenchRun): string[] {
+	const blocks = run.frameworks.filter(isOk).flatMap((f) => {
+		const groups = stepGroups(f.reps);
+		if (groups.length === 0) return [];
+		const rows = groups.map((g) => [g.verb, String(g.n), pct(g.share), ms(g.median), ms(g.p95), ms(g.max)]);
+		return ["", `**${f.framework}**`, "", ...table(["Verb", "n", "Share", "Median", "p95", "Max"], rows)];
+	});
+	if (blocks.length === 0) return [];
+	return ["", "### Where step time goes", "", STEP_SCOPE_NOTE, ...blocks];
+}
+
 function stepSection(run: BenchRun): string[] {
 	const rows = run.frameworks.filter(isOk).flatMap((f) => {
 		const d = f.stats.stepLatency;
 		return d ? [[f.framework, String(d.n), ms(d.median), ms(d.p95), ms(d.max)]] : [];
 	});
 	if (rows.length === 0) return ["## Per-step latency", "", "No framework reported steps."];
-	return ["## Per-step latency", "", ...table(["Framework", "Steps", "Median", "p95", "Max"], rows)];
+	return [
+		"## Per-step latency",
+		"",
+		...table(["Framework", "Steps", "Median", "p95", "Max"], rows),
+		...stepGroupSection(run),
+	];
 }
 
 function untracedSection(run: BenchRun): string[] {

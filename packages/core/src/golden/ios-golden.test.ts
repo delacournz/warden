@@ -55,7 +55,7 @@ describe("ensureGolden", () => {
 		expect(result.data).toMatchObject({ name: GOLDEN, built: true });
 		expect(host.sims).toEqual([{ udid: result.data.udid, name: GOLDEN, state: "Shutdown" }]);
 		const verbs = host.calls.filter((c) => c[1] === "simctl").map((c) => c[2]);
-		expect(verbs).toEqual(["list", "list", "list", "create", "boot", "bootstatus", "spawn", "shutdown", "rename"]);
+		expect(verbs).toEqual(["list", "list", "list", "create", "boot", "bootstatus", "shutdown", "rename"]);
 		expect(host.calls.find((c) => c[2] === "create")).toEqual([
 			"xcrun",
 			"simctl",
@@ -97,12 +97,17 @@ describe("ensureGolden", () => {
 		expect(store.listLeases()).toEqual([]);
 	});
 
-	test("never settles → logged, golden still promoted", async () => {
+	test("never settles → logged, golden still promoted and marked unsettled", async () => {
 		const logs: string[] = [];
 		const host = fakeHost({ migrationPolls: 0, cpu: [300] });
 		const result = await ensureGolden(deps(host, logs), "iphone-17");
-		expect(result.success).toBe(true);
+		expect(result.success && result.data).toMatchObject({ built: true, unsettled: true });
 		expect(logs.join("\n")).toContain("not settled");
+	});
+
+	test("a settled build carries no unsettled mark", async () => {
+		const result = await ensureGolden(deps(fakeHost({ migrationPolls: 0 })), "iphone-17");
+		expect(result.success && "unsettled" in result.data).toBe(false);
 	});
 
 	test("claim path (prewarmHint) says how to prewarm before the multi-minute build; ensure itself stays quiet", async () => {
@@ -170,22 +175,115 @@ describe("pruneGoldens", () => {
 		expect(pruned.success && pruned.data.map((s) => s.udid)).toEqual(["OLD"]);
 		expect(host.sims.map((s) => s.udid)).toEqual(["NEW", "NEWWIP"]);
 	});
+
+	test("cautious (gc's auto prune): a profile whose target cannot be read keeps every golden", async () => {
+		const host = fakeHost({
+			sims: [{ udid: "OLD", name: goldenName("no-such-device", "0000000000"), state: "Shutdown" }],
+			migrationPolls: 0,
+		});
+		const pruned = await pruneGoldens(deps(host), { all: false, cautious: true });
+		expect(pruned.success && pruned.data).toEqual([]);
+		expect(host.sims.map((s) => s.udid)).toEqual(["OLD"]);
+	});
+
+	test("cautious still prunes a readable profile's stale golden", async () => {
+		const host = fakeHost({
+			sims: [
+				{ udid: "G", name: GOLDEN, state: "Shutdown" },
+				{ udid: "OLD", name: goldenName("iphone-17", "0000000000"), state: "Shutdown" },
+			],
+			migrationPolls: 0,
+		});
+		const pruned = await pruneGoldens(deps(host), { all: false, cautious: true });
+		expect(pruned.success && pruned.data.map((s) => s.udid)).toEqual(["OLD"]);
+	});
 });
 
-const AUTOMATION = ["defaults", "write", "com.apple.Accessibility", "AutomationEnabled", "-bool", "true"];
-
 describe("golden recipe 2: AutomationEnabled baked in (16-7)", () => {
-	test("the build writes AutomationEnabled in the sim after the migration, before it settles and shuts down", async () => {
+	test("no in-sim defaults write: the build never runs simctl spawn", async () => {
+		const host = fakeHost({ migrationPolls: 0 });
+		const result = await ensureGolden(deps(host), "iphone-17");
+		expect(result.success).toBe(true);
+		expect(host.calls.some((c) => c[2] === "spawn")).toBe(false);
+	});
+
+	test("AutomationEnabled is written on the host into the plist after the shutdown, before the check", async () => {
 		const host = fakeHost({ migrationPolls: 0 });
 		const result = await ensureGolden(deps(host), "iphone-17");
 		expect(result.success).toBe(true);
 		if (!result.success) return;
+		const plist = `/Users/me/Library/Developer/CoreSimulator/Devices/${result.data.udid}/data/Library/Preferences/com.apple.Accessibility.plist`;
+		expect(host.plistEdits).toEqual([["-replace", "AutomationEnabled", "-bool", "true", plist]]);
 		const at = (pred: (c: string[]) => boolean) => host.calls.findIndex(pred);
-		const write = at((c) => c[2] === "spawn");
-		expect(host.calls[write]).toEqual(["xcrun", "simctl", "spawn", result.data.udid, ...AUTOMATION]);
-		expect(write).toBeGreaterThan(at((c) => c[2] === "bootstatus"));
-		expect(write).toBeLessThan(at((c) => c[0] === "launchctl"));
-		expect(write).toBeLessThan(at((c) => c[2] === "shutdown"));
+		const write = at((c) => c[0] === "plutil" && c[1] === "-replace");
+		expect(write).toBeGreaterThan(at((c) => c[2] === "shutdown"));
+		expect(write).toBeLessThan(
+			at((c) => c[0] === "plutil" && c.includes("-extract") && c.includes("AutomationEnabled"))
+		);
+	});
+
+	test("a missing plist is created (binary1) and then written; existing keys are not recreated", async () => {
+		const host = fakeHost({ migrationPolls: 0 });
+		host.plistMissing = ["NEW-1"];
+		const result = await ensureGolden(deps(host), "iphone-17");
+		expect(result.success).toBe(true);
+		const plutil = host.calls.filter((c) => c[0] === "plutil" && (c[1] === "-replace" || c[1] === "-create"));
+		expect(plutil.map((c) => c[1])).toEqual(["-replace", "-create", "-replace"]);
+		expect(plutil[1]?.slice(0, 3)).toEqual(["plutil", "-create", "binary1"]);
+	});
+
+	test("a plist that cannot be written → not promoted, wip deleted", async () => {
+		const host = fakeHost({ migrationPolls: 0 });
+		const exec: Exec = async (cmd, opts) =>
+			cmd[0] === "plutil" && (cmd[1] === "-replace" || cmd[1] === "-create")
+				? { exitCode: 1, stdout: "", stderr: "denied" }
+				: host.exec(cmd, opts);
+		const result = await ensureGolden({ ...deps(host), exec }, "iphone-17");
+		expect(result.success).toBe(false);
+		expect(host.sims).toEqual([]);
+	});
+
+	test("AutomationEnabled not on disk after the shutdown → not promoted, wip deleted", async () => {
+		const host = fakeHost({ migrationPolls: 0, automationMissing: "all" });
+		const result = await ensureGolden(deps(host), "iphone-17");
+		expect(result.success).toBe(false);
+		if (result.success) return;
+		expect(result.error).toContain("AutomationEnabled");
+		expect(host.sims).toEqual([]);
+		expect(store.listLeases()).toEqual([]);
+	});
+
+	test("the check reads the golden's Accessibility plist on the host, after the shutdown", async () => {
+		const host = fakeHost({ migrationPolls: 0 });
+		const result = await ensureGolden(deps(host), "iphone-17");
+		expect(result.success).toBe(true);
+		if (!result.success) return;
+		const read = host.calls.findIndex(
+			(c) => c[0] === "plutil" && c[1] === "-extract" && c.includes("AutomationEnabled")
+		);
+		expect(host.calls[read]).toEqual([
+			"plutil",
+			"-extract",
+			"AutomationEnabled",
+			"raw",
+			"-o",
+			"-",
+			`/Users/me/Library/Developer/CoreSimulator/Devices/${result.data.udid}/data/Library/Preferences/com.apple.Accessibility.plist`,
+		]);
+		expect(read).toBeGreaterThan(host.calls.findIndex((c) => c[2] === "shutdown"));
+	});
+
+	test("a golden on the machine without AutomationEnabled → deleted and rebuilt", async () => {
+		const logs: string[] = [];
+		const host = fakeHost({
+			sims: [{ udid: "G", name: GOLDEN, state: "Shutdown" }],
+			migrationPolls: 0,
+			automationMissing: ["G"],
+		});
+		const result = await ensureGolden(deps(host, logs), "iphone-17");
+		expect(result.success && result.data.built).toBe(true);
+		expect(host.sims.some((s) => s.udid === "G")).toBe(false);
+		expect(logs.join("\n")).toContain(`${GOLDEN} has no AutomationEnabled — rebuilding`);
 	});
 
 	test("the recipe is part of the key: a recipe-2 golden is built next to the recipe-1 one, which a claim keeps (ios-claim-path-R4)", async () => {
@@ -321,7 +419,6 @@ describe("golden simctl timeouts (16-11)", () => {
 			"simctl create": 120_000,
 			"simctl boot": 120_000,
 			"simctl bootstatus": 15 * 60_000,
-			"simctl spawn": 30_000,
 			"simctl shutdown": 60_000,
 			"simctl rename": 60_000,
 			"simctl clone": 120_000,

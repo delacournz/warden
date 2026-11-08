@@ -3,6 +3,7 @@ import { appSwitches } from "@delacour/warden-core/builds/app-option.schema";
 import { bundleIdFor } from "@delacour/warden-core/builds/config";
 import type { Platform } from "@delacour/warden-core/types";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
+import { devScheme } from "../commands/dev";
 import type { CommandContext } from "../context";
 import { devClientLaunchArgs } from "../metro";
 import { projectContextFor } from "../project-context";
@@ -17,16 +18,27 @@ export type LaunchPlan = {
 
 /**
  * The app the specs drive: `spec.bundleId`, else the suite project's bundle id for the platform
- * (the project is found from the suite's project root, as for Metro).
+ * (the project is found from the suite's project root, as for Metro). `physical`: on an iPhone the project's
+ * `ios.device.bundleIdentifier` wins over both.
  */
-export async function specBundleId(ctx: CommandContext, suite: Suite, platform: Platform): AsyncResult<string> {
+export async function specBundleId(
+	ctx: CommandContext,
+	suite: Suite,
+	platform: Platform,
+	physical = false
+): AsyncResult<string> {
 	const explicit = suite.config.spec?.bundleId;
-	if (explicit !== undefined) return ok(explicit);
+	const phone = physical && platform === "ios";
+	if (explicit !== undefined && !phone) return ok(explicit);
 	const { variant } = appSwitches(suite.config.app);
 	const project = await projectContextFor(ctx, {
 		start: suite.projectRoot ?? suite.cwd,
 		...(variant !== undefined ? { variant, variantOptional: true } : {}),
 	});
+	// on an iPhone the app is installed under the project's device bundle id (`ios.device.bundleIdentifier`), when it sets one
+	const deviceId = phone && project.success ? project.data.project.iosDeviceBundleId : undefined;
+	if (deviceId !== undefined) return ok(deviceId);
+	if (explicit !== undefined) return ok(explicit);
 	const bundleId = project.success ? bundleIdFor(project.data.project, platform) : undefined;
 	if (bundleId?.success) return bundleId;
 	return err(`e2e.${suite.name}: no bundle id — set spec.bundleId or projects[].bundleId.${platform}`);
@@ -39,4 +51,25 @@ export async function specBundleId(ctx: CommandContext, suite: Suite, platform: 
 export function specLaunchArgs(plan: LaunchPlan, metroUrl: string | undefined): string[] {
 	const extra = [...plan.metroLaunchArgs, ...plan.launchArgs];
 	return metroUrl === undefined ? extra : devClientLaunchArgs(metroUrl, extra);
+}
+
+/**
+ * The dev client's url scheme (`exp+<slug>`) for an Android suite with Metro, else undefined (also when it cannot be
+ * read: the spec then launches without pointing the dev client at Metro, as before). Android launches take no args, so
+ * `app.open()` opens Metro's url as a deep link on this scheme.
+ */
+export async function specDevClientScheme(
+	ctx: CommandContext,
+	suite: Suite,
+	platform: Platform
+): Promise<string | undefined> {
+	if (platform !== "android" || !suite.config.metro?.enabled) return undefined;
+	const { variant } = appSwitches(suite.config.app);
+	const project = await projectContextFor(ctx, {
+		start: suite.projectRoot ?? suite.cwd,
+		...(variant !== undefined ? { variant, variantOptional: true } : {}),
+	});
+	if (!project.success) return undefined;
+	const scheme = await devScheme(ctx, project.data, undefined);
+	return scheme.success ? scheme.data : undefined;
 }

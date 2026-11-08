@@ -6,6 +6,7 @@ import type { DriverError } from "@delacour/warden-e2e/driver/driver.types";
 import type { SimdClient } from "@delacour/warden-e2e/driver/ios/simd-client";
 import type { Result } from "@delacour/warden-types/result";
 import { type TestContext, testContext } from "../testing";
+import { currentBuild } from "../update/build-info";
 import {
 	type ConnectOptions,
 	ensureHelper,
@@ -122,6 +123,20 @@ describe("socketPathFor", () => {
 		const deep = socketPathFor({ env: { WARDEN_HOME: `/var/${"x".repeat(80)}/.warden` } }, UDID);
 		expect(Buffer.byteLength(deep)).toBeLessThan(104);
 		expect(deep).toContain("wsimd-");
+	});
+
+	test("phone serials sharing their first 8 characters get different short socket paths", () => {
+		const env = { WARDEN_HOME: `/var/${"x".repeat(80)}/.warden` };
+		const a = socketPathFor({ env }, "192.168.1.20:5555");
+		const b = socketPathFor({ env }, "192.168.1.21:5555");
+		const c = socketPathFor({ env }, "adb-R5CT1111-abcdef._adb-tls-connect._tcp");
+		const d = socketPathFor({ env }, "adb-R5CT2222-abcdef._adb-tls-connect._tcp");
+		expect(new Set([a, b, c, d]).size).toBe(4);
+		for (const p of [a, b, c, d]) expect(Buffer.byteLength(p)).toBeLessThan(104);
+	});
+
+	test("a wifi serial's socket name has no colon", () => {
+		expect(socketPathFor({ env: { WARDEN_HOME: "/h" } }, "192.168.1.20:5555")).not.toContain(":");
 	});
 });
 
@@ -299,6 +314,14 @@ describe("ensureHelper", () => {
 		expect(res.success).toBe(false);
 		if (!res.success) expect(res.error.code).toBe("engine_unavailable");
 		expect(s.spawns).toEqual([]);
+	});
+
+	test("the helper `warden doctor --fetch-helper` staged under $WARDEN_HOME/simd/<this version> is the one spawned", async () => {
+		const { s, socketPath, host } = setup();
+		const staged = join(host.env.WARDEN_HOME ?? "", "simd", currentBuild().version, "warden-simd");
+		const res = await ensureHelper(host, UDID, { socketPath, deps: { ...s.deps, exists: (path) => path === staged } });
+		expect(res.success).toBe(true);
+		expect(s.spawns[0]?.cmd[0]).toBe(staged);
 	});
 
 	test("the previous holder finished between our failed connect and our claim: no second spawn, its socket is kept", async () => {
@@ -640,6 +663,14 @@ describe("ensureHelper: a resident helper", () => {
 		expect(s.requests).toEqual([]);
 		expect(s.kills).toEqual([]);
 		expect(s.spawns).toHaveLength(1);
+	});
+
+	test("the recycle budget reaches a resident helper: WARDEN_SIMD_BRIDGE_MAX_RECYCLES is part of its env key", () => {
+		const base = simdEnvKey({});
+		expect(simdEnvKey({ WARDEN_SIMD_BRIDGE_MAX_RECYCLES: "0" })).not.toBe(base);
+		expect(simdEnvKey({ WARDEN_SIMD_BRIDGE_MAX_RECYCLES: "0" })).not.toBe(
+			simdEnvKey({ WARDEN_SIMD_BRIDGE_MAX_RECYCLES: "5" })
+		);
 	});
 
 	test("the WARDEN_SIMD_* env changed since the helper was spawned: replaced; other env changes: reused", async () => {

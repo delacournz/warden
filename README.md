@@ -83,8 +83,8 @@ Never edit `version` by hand. `bun run release <version>` is a break-glass for w
 warden claim ios --json                          # lease 1 sim (reuse → boot → create), booted + ready
 warden claim android --profile pixel-10 --count 2
 warden claim ios --count 2 --wait 10m --ttl 1h --label e2e
-warden claim ios --priority high --no-wait       # host full → queue by priority (default --wait 30m); --no-wait fails fast
-warden capacity [--json]                         # host budget (RAM + perf cores), usage, what binds
+warden claim ios --priority high --no-wait       # WARDEN_CAPACITY=on + host full → queue by priority (default --wait 30m); --no-wait fails fast
+warden capacity [--json]                         # host budget (RAM + perf cores), usage, what binds, whether limits are enforced (off by default)
 warden queue [--json]                            # claims waiting for a boot slot: position, priority, age
 warden release --mine [--label x] [--shutdown]   # or <leaseId…> | --udid X | --session S; --label = only --mine leases with that label; --shutdown = warden-created or self-booted sims
 warden release <leaseId> --bad [reason]          # release + quarantine the device (claims skip it); clear: warden sim unquarantine <udid>
@@ -94,6 +94,7 @@ warden ls                                        # leases: resource, state, owne
 warden clone <udid|name> [--name x]              # duplicate a shut-down sim into the pool (seconds, no first boot)
 warden golden ensure|ls|prune [--all]            # golden iOS images / Android snapshots new devices start from
 warden arrange                                   # tile warden simulator windows in name order (macOS; also runs after iOS claims)
+warden telemetry [status|enable|disable]         # anonymous usage telemetry: on by default, commands + flag names only; off with WARDEN_TELEMETRY_DISABLED=1 / DO_NOT_TRACK=1
 warden doctor [--json]                           # check home, db, device tools, helper, install method, hooks, stale leases
 warden devices [ios|android]                     # every sim/emulator (booted or not) + AVDs, warden-owned?, leased by (alias: list)
 warden sims [--max-size 40G]                     # disk audit: every sim + runtime, size, owner, lease, what can go
@@ -213,6 +214,8 @@ Specs are `*.e2e.ts` specs written with `@delacour/warden-e2e` (`bun add -d @del
 ### Benchmarks
 
 `packages/e2e-bench` runs the same 8-test suite through warden, Maestro, Detox and the retired Argent, agent-device and tester.army on one leased device and writes a Markdown + HTML report (suite and per-test timings, cold start, resources, residue).
+
+Latest iOS run on EAS (2026-10-25, warden 0.3.1): warden ran the warm suite in 86.30 s, 1.56× faster than Argent, 1.06× faster than agent-device and 1.54× faster than tester.army, with a per-step median of 85 ms against 321 to 481 ms. Full tables and every artifact: [warden.co.nz/docs/e2e/bench/comparison](https://warden.co.nz/docs/e2e/bench/comparison).
 
 ```bash
 bun run bench doctor && bun run bench run --platform ios --runs 3

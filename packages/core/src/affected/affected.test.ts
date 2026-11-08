@@ -15,7 +15,7 @@ import { bunExec, type Exec } from "../exec";
 import { createGitFactsCache } from "../git-facts";
 import { computeAffected, findSuite } from "./affected";
 import { DEV_MENU_OFF_ARGS } from "./affected.defaults";
-import { makeSuiteRepo } from "./fixture.testing";
+import { makeSuiteRepo, SUITE_REPO_HOOK_TIMEOUT_MS } from "./fixture.testing";
 
 const SNAPSHOT = /^[0-9a-f]{40}-[0-9a-f]{16}\.json$/;
 
@@ -24,7 +24,7 @@ let write: (path: string, text: string) => void;
 
 beforeEach(async () => {
 	({ dir, write } = await makeSuiteRepo());
-});
+}, SUITE_REPO_HOOK_TIMEOUT_MS);
 const cleanup: string[] = [];
 afterEach(() => {
 	for (const path of [dir, ...cleanup.splice(0)]) rmSync(path, { recursive: true, force: true });
@@ -139,7 +139,37 @@ describe("computeAffected", () => {
 		} finally {
 			for (const r of [top, own, none]) rmSync(r.dir, { recursive: true, force: true });
 		}
-	});
+		// builds two fresh fixture repos (git init + commit each): slow on a loaded CI host
+	}, 20_000);
+
+	test("suite.golden: off unless the suite turns it on (fresh simulators by default)", async () => {
+		const on = await makeSuiteRepo({ golden: true });
+		const off = await makeSuiteRepo({ golden: false });
+		const none = await makeSuiteRepo();
+		try {
+			const [a, b, c] = await Promise.all([on, off, none].map((r) => findSuite(bunExec, r.dir)));
+			expect(a?.success && a.data.golden).toBe(true);
+			expect(b?.success && b.data.golden).toBe(false);
+			expect(c?.success && c.data.golden).toBe(false);
+		} finally {
+			for (const r of [on, off, none]) rmSync(r.dir, { recursive: true, force: true });
+		}
+	}, 20_000);
+
+	test("suite.biometrics: the suite's own, else the top-level default", async () => {
+		const top = await makeSuiteRepo({}, { biometrics: true });
+		const own = await makeSuiteRepo({ biometrics: false }, { biometrics: true });
+		const none = await makeSuiteRepo();
+		try {
+			const [a, b, c] = await Promise.all([top, own, none].map((r) => findSuite(bunExec, r.dir)));
+			expect(a?.success && a.data.biometrics).toBe(true);
+			expect(b?.success && b.data.biometrics).toBe(false);
+			expect(c?.success && c.data.biometrics).toBeUndefined();
+		} finally {
+			for (const r of [top, own, none]) rmSync(r.dir, { recursive: true, force: true });
+		}
+		// builds two fresh fixture repos (git init + commit each): slow on a loaded CI host
+	}, 20_000);
 
 	test("suite.perfBudgets: the top-level budgets, each key replaced by the suite's own", async () => {
 		const merged = await makeSuiteRepo(
@@ -151,6 +181,36 @@ describe("computeAffected", () => {
 			const [a, b] = await Promise.all([merged, none].map((r) => findSuite(bunExec, r.dir)));
 			expect(a?.success && a.data.perfBudgets).toEqual({ jankPct: 2, startupColdMs: 2000 });
 			expect(b?.success && b.data.perfBudgets).toBeUndefined();
+		} finally {
+			for (const r of [merged, none]) rmSync(r.dir, { recursive: true, force: true });
+		}
+	});
+
+	test("suite.conditions: the top-level conditions, each area replaced by the suite's own", async () => {
+		const merged = await makeSuiteRepo(
+			{ conditions: { network: "offline", timezone: "UTC" } },
+			{ conditions: { network: "3g", locale: "fr" } }
+		);
+		const none = await makeSuiteRepo();
+		try {
+			const [a, b] = await Promise.all([merged, none].map((r) => findSuite(bunExec, r.dir)));
+			expect(a?.success && a.data.conditions).toEqual({ network: "offline", timezone: "UTC", locale: "fr" });
+			expect(b?.success && b.data.conditions).toBeUndefined();
+		} finally {
+			for (const r of [merged, none]) rmSync(r.dir, { recursive: true, force: true });
+		}
+	});
+
+	test("suite.a11y: the top-level a11y settings, each key replaced by the suite's own", async () => {
+		const merged = await makeSuiteRepo(
+			{ a11y: { minSeverity: "warning" } },
+			{ a11y: { minSeverity: "error", rules: ["missing-name"] } }
+		);
+		const none = await makeSuiteRepo();
+		try {
+			const [a, b] = await Promise.all([merged, none].map((r) => findSuite(bunExec, r.dir)));
+			expect(a?.success && a.data.a11y).toEqual({ minSeverity: "warning", rules: ["missing-name"] });
+			expect(b?.success && b.data.a11y).toBeUndefined();
 		} finally {
 			for (const r of [merged, none]) rmSync(r.dir, { recursive: true, force: true });
 		}

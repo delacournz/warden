@@ -9,6 +9,7 @@ const PHONE = "00008110-001A2B3C4D5E6F70";
 const ANDROID = "emulator-5554";
 const errs: string[] = [];
 const ctx = { env: { WARDEN_HOME: "/h" }, now: () => 0, err: (line: string) => errs.push(line) };
+const noHost = () => false;
 
 function loader(stop: StopOutcome = { stopped: true, how: "shutdown" }): {
 	load: HelperLoader;
@@ -24,6 +25,14 @@ function loader(stop: StopOutcome = { stopped: true, how: "shutdown" }): {
 					seen.stopped.push(udid);
 					return stop;
 				},
+				stopAndroidHost: async (_host, serial) => {
+					seen.stopped.push(serial);
+					return stop;
+				},
+				stopIosRunner: async (_host, udid) => {
+					seen.stopped.push(`runner:${udid}`);
+					return stop;
+				},
 			};
 		},
 		get loads() {
@@ -37,8 +46,15 @@ describe("stopHelperAfter", () => {
 	test("stops the helper of a released iOS device", async () => {
 		const l = loader();
 		await stopHelperAfter(ctx, l.load)(IOS);
-		await stopHelperAfter(ctx, l.load)(PHONE);
-		expect(l.stopped).toEqual([IOS, PHONE]);
+		expect(l.stopped).toEqual([IOS]);
+	});
+
+	test("a physical iPhone has its runner host stopped when one is recorded, and loads nothing otherwise", async () => {
+		const l = loader();
+		await stopHelperAfter(ctx, l.load, noHost)(PHONE);
+		expect(l.loads).toBe(0);
+		await stopHelperAfter(ctx, l.load, (_host, id) => id === PHONE)(PHONE);
+		expect(l.stopped).toEqual([`runner:${PHONE}`]);
 	});
 
 	test("a helper kept with a warning (its command line unreadable) says so on stderr, once (S4)", async () => {
@@ -52,12 +68,19 @@ describe("stopHelperAfter", () => {
 		expect(errs).toEqual([]);
 	});
 
-	test("an Android serial or a CDP target has no helper: nothing is loaded for it", async () => {
+	test("an Android serial with no recorded host, or a CDP target: nothing is loaded for it", async () => {
 		const l = loader();
-		await stopHelperAfter(ctx, l.load)(ANDROID);
-		await stopHelperAfter(ctx, l.load)("chromium-cdp-9222");
+		await stopHelperAfter(ctx, l.load, noHost)(ANDROID);
+		await stopHelperAfter(ctx, l.load, noHost)("chromium-cdp-9222");
 		expect(l.loads).toBe(0);
 		expect(l.stopped).toEqual([]);
+	});
+
+	test("an Android serial with a recorded host has it stopped", async () => {
+		const l = loader();
+		await stopHelperAfter(ctx, l.load, (_host, serial) => serial === ANDROID)(ANDROID);
+		expect(l.loads).toBe(1);
+		expect(l.stopped).toEqual([ANDROID]);
 	});
 
 	test("the helper module is loaded when a stop happens, not before", async () => {

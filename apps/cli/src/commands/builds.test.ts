@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, realpathSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fakeApp } from "@delacour/warden-core/builds/builds.testing";
-import { listBuilds, storeArtifact } from "@delacour/warden-core/builds/cache";
+import { getInstall, listBuilds, recordInstall, recordRepack, storeArtifact } from "@delacour/warden-core/builds/cache";
+import { hostSimulatorArch } from "@delacour/warden-core/builds/import-base";
 import { buildLockKey, buildResource } from "@delacour/warden-core/builds/lock";
 import { fakeExec, scriptedUi, type TestContext, testContext } from "../testing";
 import { buildsCommand, inferPlatform } from "./builds";
@@ -74,6 +75,43 @@ describe("warden builds", () => {
 		expect(text).toContain("github.com/o/r:.");
 		expect(text).toContain("H1");
 		expect(text).toContain("total 12B");
+	});
+
+	test("ls shows kind, base, jsKey, worktree, branch; --json carries them, legacy rows say legacy", async () => {
+		const c = setup(["ls"]);
+		await seed(c, "legacyhash0001", 1000);
+		recordRepack(c.db, {
+			kind: "simulator-repack",
+			projectKey: "k",
+			platform: "ios",
+			profile: "local:simulator",
+			hash: "nativefp1:jsabcdef12345",
+			path: join(c.cwd, "repack", "App.app"),
+			source: "build",
+			size: 20,
+			createdAt: 1000,
+			lastUsedAt: 1000,
+			baseHash: "nativefp1:base",
+			jsKey: "jsabcdef12345",
+			worktree: "/work/trees/feature-x",
+			branch: "feature/x",
+		});
+		expect(await buildsCommand.run(c)).toBe(0);
+		const text = c.stdout.join("\n");
+		expect(text).toMatch(/KIND\s+BASE\s+JSKEY\s+WORKTREE\s+BRANCH/);
+		expect(text).toMatch(/simulator-repack\s+nativefp\s+jsabcdef\s+feature-x\s+feature\/x/);
+		c.stdout.length = 0;
+		c.argv = ["ls", "--json"];
+		expect(await buildsCommand.run(c)).toBe(0);
+		const { builds } = JSON.parse(c.stdout.join("\n"));
+		const repack = builds.find((b: { kind: string }) => b.kind === "simulator-repack");
+		expect(repack).toMatchObject({
+			base: "nativefp1",
+			jsKey: "jsabcdef12345",
+			worktree: "/work/trees/feature-x",
+			branch: "feature/x",
+		});
+		expect(builds.find((b: { hash: string }) => b.hash === "legacyhash0001")).toMatchObject({ kind: "legacy" });
 	});
 
 	test("import without --hash → exit 1", async () => {
@@ -184,8 +222,182 @@ describe("warden builds", () => {
 		expect(c.stdout.join("\n")).toContain("imported ios H1");
 	});
 
+	test("rm <prefix> removes that build and forgets its installs; the rest stay", async () => {
+		const c = setup(["rm", "cd8e2d", "--json"]);
+		const bad = await seed(c, "cd8e2dbeae5b", 1);
+		const keep = await seed(c, "aaaa1111bbbb", 2);
+		recordInstall(c.db, { platform: "ios", deviceId: "U1", bundleId: "com.x", hash: "cd8e2dbeae5b", installedAt: 1 });
+		expect(await buildsCommand.run(c)).toBe(0);
+		const out = JSON.parse(c.stdout.join("\n"));
+		expect(out.removed.map((b: { hash: string }) => b.hash)).toEqual(["cd8e2dbeae5b"]);
+		expect(out.forgotInstalls).toBe(1);
+		expect([bad, keep].map((p) => existsSync(p))).toEqual([false, true]);
+		expect(getInstall(c.db, "ios", "U1", "com.x")).toBeUndefined();
+	});
+
+	test("rm --dry-run removes nothing; no match / short prefix → exit 1", async () => {
+		const c = setup(["rm", "cd8e2d", "--dry-run"]);
+		await seed(c, "cd8e2dbeae5b", 1);
+		expect(await buildsCommand.run(c)).toBe(0);
+		expect(c.stdout.join("\n")).toContain("would remove k ios cd8e2dbeae5b");
+		expect(listBuilds(c.db)).toHaveLength(1);
+		c.argv = ["rm", "999999"];
+		expect(await buildsCommand.run(c)).toBe(1);
+		expect(c.stderr.join("\n")).toContain("no cached build matches 999999");
+		c.argv = ["rm", "cd8"];
+		expect(await buildsCommand.run(c)).toBe(1);
+	});
+
+	test("rm in a terminal asks first; no → exit 1, nothing removed; --yes skips the prompt", async () => {
+		const c = setup(["rm", "cd8e2d"]);
+		const ui = scriptedUi({ interactive: true, confirm: [false] });
+		c.ui = ui;
+		await seed(c, "cd8e2dbeae5b", 1);
+		expect(await buildsCommand.run(c)).toBe(1);
+		expect(ui.events[0]).toBe("confirm: Remove 1 cached build(s) (12B)?");
+		expect(listBuilds(c.db)).toHaveLength(1);
+		c.argv = ["rm", "cd8e2d", "--yes"];
+		expect(await buildsCommand.run(c)).toBe(0);
+		expect(listBuilds(c.db)).toEqual([]);
+	});
+
 	test("unknown subcommand → exit 1", async () => {
 		const c = setup(["frobnicate"]);
 		expect(await buildsCommand.run(c)).toBe(1);
+	});
+});
+
+describe("warden builds import --kind simulator-base", () => {
+	const FP = "fcc32ec409b7019aa65d30d170f9b654495722b2";
+
+	/** `fakeApp` with an executable main binary, as xcodebuild leaves it. */
+	function baseApp(parent: string): string {
+		const app = fakeApp(parent);
+		chmodSync(join(app, "App"), 0o755);
+		return app;
+	}
+
+	function setupBase(
+		argv: string[],
+		plist: Record<string, string> = {},
+		archs = "x86_64 arm64",
+		codesign: { stdout?: string; stderr?: string; exitCode?: number } = {
+			stdout: "<key>application-identifier</key>",
+		}
+	): TestContext {
+		const c = testContext(argv);
+		ctx = c;
+		writeFileSync(
+			join(c.cwd, "warden.config.json"),
+			JSON.stringify({
+				projects: [
+					{ name: "demo", root: ".", bundleId: { ios: "com.demo" }, fingerprint: { command: "fp {platform}" } },
+				],
+			})
+		);
+		const values: Record<string, string> = {
+			CFBundleIdentifier: "com.demo",
+			CFBundleExecutable: "App",
+			DTPlatformName: "iphonesimulator",
+			...plist,
+		};
+		c.exec = fakeExec([
+			...Object.entries(values).map(([key, value]): [string, { stdout: string }] => [
+				`plutil -extract ${key} raw`,
+				{ stdout: `${value}\n` },
+			]),
+			["plutil", { exitCode: 1 }],
+			["lipo -archs", { stdout: `${archs}\n` }],
+			["codesign -d --entitlements", codesign],
+			["sh -c fp ios", { stdout: JSON.stringify({ hash: FP }) }],
+			["git", { exitCode: 128 }],
+		]);
+		return c;
+	}
+
+	test("files a simulator-base row under warden's own native fingerprint, without the embedded main.jsbundle", async () => {
+		const c = setupBase(["import", "src/App.app", "--kind", "simulator-base", "--json"]);
+		const app = baseApp(join(c.cwd, "src"));
+		writeFileSync(join(app, "main.jsbundle"), "embedded js");
+		expect(await buildsCommand.run(c)).toBe(0);
+		const out = JSON.parse(c.stdout.join("\n"));
+		expect(out).toMatchObject({
+			kind: "simulator-base",
+			platform: "ios",
+			source: "import",
+			strippedBundle: true,
+		});
+		expect(out.hash).toMatch(/^[0-9a-f]{40}:base$/);
+		const [row] = listBuilds(c.db);
+		expect(row?.kind).toBe("simulator-base");
+		expect(row?.hash).toBe(out.hash);
+		expect(row?.profile).toBe("local:simulator");
+		expect(row?.path).toContain("/simulator/base/App.app");
+		expect(existsSync(join(row?.path ?? "", "main.jsbundle"))).toBe(false);
+		expect(existsSync(join(app, "main.jsbundle"))).toBe(true);
+	});
+
+	test("an app with no application-identifier entitlement imports with a warning naming the signing fix", async () => {
+		const c = setupBase(["import", "src/App.app", "--kind", "simulator-base", "--json"], {}, "arm64", {
+			exitCode: 1,
+			stderr: "App.app: code object is not signed at all",
+		});
+		baseApp(join(c.cwd, "src"));
+		expect(await buildsCommand.run(c)).toBe(0);
+		expect(c.stderr.join("\n")).toContain("application-identifier");
+		expect(c.stderr.join("\n")).toContain("CODE_SIGN_IDENTITY=-");
+		expect(JSON.parse(c.stdout.join("\n"))).toMatchObject({ applicationIdentifier: false });
+	});
+
+	test("an app with the entitlement imports without that warning", async () => {
+		const c = setupBase(["import", "src/App.app", "--kind", "simulator-base", "--json"]);
+		baseApp(join(c.cwd, "src"));
+		expect(await buildsCommand.run(c)).toBe(0);
+		expect(c.stderr.join("\n")).not.toContain("application-identifier");
+	});
+
+	test("--hash <nativeFp> (or <nativeFp>:base) files it under that fingerprint", async () => {
+		for (const hash of ["deadbeef", "deadbeef:base"]) {
+			const c = setupBase(["import", "src/App.app", "--kind", "simulator-base", "--hash", hash, "--json"]);
+			baseApp(join(c.cwd, "src"));
+			expect(await buildsCommand.run(c)).toBe(0);
+			expect(JSON.parse(c.stdout.join("\n")).hash).toBe("deadbeef:base");
+			c.cleanup();
+			ctx = undefined;
+		}
+	});
+
+	test("a build of another app, a device build or a Debug build is refused, nothing cached", async () => {
+		const cases: Array<[Record<string, string>, string, string]> = [
+			[{ CFBundleIdentifier: "com.other" }, "arm64", "com.other"],
+			[{ DTPlatformName: "iphoneos" }, "arm64", "iphoneos"],
+			[{}, "i386", `no ${hostSimulatorArch()} slice`],
+		];
+		for (const [plist, archs, message] of cases) {
+			const c = setupBase(["import", "src/App.app", "--kind", "simulator-base", "--hash", "f"], plist, archs);
+			baseApp(join(c.cwd, "src"));
+			expect(await buildsCommand.run(c)).toBe(1);
+			expect(c.stderr.join("\n")).toContain(message);
+			expect(listBuilds(c.db)).toEqual([]);
+			c.cleanup();
+			ctx = undefined;
+		}
+	});
+
+	test("an unknown kind, an Android base, or a kind-less import without --hash is a usage error", async () => {
+		const cases: Array<[string[], string]> = [
+			[["import", "src/App.app", "--kind", "nope"], "--kind"],
+			[["import", "src/a.apk", "--kind", "simulator-base", "--hash", "f"], "iOS"],
+			[["import", "src/App.app"], "--hash"],
+		];
+		for (const [argv, message] of cases) {
+			const c = setupBase(argv);
+			baseApp(join(c.cwd, "src"));
+			writeFileSync(join(c.cwd, "src", "a.apk"), "apk");
+			expect(await buildsCommand.run(c)).toBe(1);
+			expect(c.stderr.join("\n")).toContain(message);
+			c.cleanup();
+			ctx = undefined;
+		}
 	});
 });

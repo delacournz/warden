@@ -32,4 +32,20 @@ describe("markWardenDevices", () => {
 		const golden = { ...dev("G", "warden-golden-iphone-17-abc123def0"), golden: true };
 		expect(markWardenDevices([golden], [])[0]?.wardenCreated).toBe(false);
 	});
+
+	test("a physical device named warden-x-1 or with a store record stays foreign", () => {
+		const phone: InventoryDevice = {
+			...dev("P1", "warden-pixel-8-1"),
+			platform: "android",
+			physical: { platform: "android", transport: "usb", adbState: "device" },
+		};
+		const [byName] = markWardenDevices([phone], []);
+		expect(byName?.wardenCreated).toBe(false);
+		const [byRecord] = markWardenDevices(
+			[phone],
+			[{ platform: "android", id: "P1", name: "x", profile: "p", createdAt: 0, lastUsedAt: 0 }]
+		);
+		expect(byRecord?.wardenCreated).toBe(false);
+		expect(byRecord?.profile).toBeUndefined();
+	});
 });

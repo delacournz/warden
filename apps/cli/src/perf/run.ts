@@ -4,6 +4,7 @@ import type { UiOptionValues } from "../agent-ui/run";
 import { DEFAULT_UI_TIMEOUT_MS } from "../agent-ui/ui-options";
 import type { CommandContext } from "../context";
 import { errorMessage } from "../hooks/json";
+import { settleBrokerResumes } from "./broker-resume";
 import {
 	defaultPerfDeviceDeps,
 	type PerfDeviceDeps,
@@ -67,6 +68,7 @@ export async function runPerf(
 		if (!target.success) return reportError(ctx, report, target.error);
 		const info = { udid: target.data.udid, platform: target.data.platform, name: target.data.name };
 		const done = await work(target.data, { timeoutMs: timeout.data, deps });
+		await settleBrokerResumes();
 		if (!done.success) return reportError(ctx, report, done.error, info);
 		return reportOk(ctx, report, done.data);
 	} catch (error) {

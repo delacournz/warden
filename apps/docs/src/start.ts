@@ -2,6 +2,7 @@ import { redirect } from "@tanstack/react-router";
 import { createCsrfMiddleware, createMiddleware, createStart } from "@tanstack/react-start";
 import { isMarkdownPreferred } from "fumadocs-core/negotiation";
 import { reportAgentFetch } from "@/lib/analytics/server";
+import { trailingSlashTarget } from "@/lib/redirects";
 import { docsRoute, encodeMarkdownUrl } from "@/lib/shared";
 
 /** An agent asking for `Accept: text/markdown` on a docs URL is redirected to that page's `.md` twin. */
@@ -18,6 +19,16 @@ const llmMiddleware = createMiddleware().server(({ next, request }) => {
 		throw redirect({ href: url.href, headers: { Vary: "Accept" } });
 	}
 
+	return next();
+});
+
+/**
+ * `/docs/e2e/` answers with a permanent 308 to `/docs/e2e`, so search engines
+ * keep one URL per page. The router's own normalization is a temporary 307.
+ */
+const trailingSlashMiddleware = createMiddleware().server(({ next, request }) => {
+	const target = trailingSlashTarget(new URL(request.url));
+	if (target) throw redirect({ href: target, statusCode: 308 });
 	return next();
 });
 
@@ -38,6 +49,6 @@ const analyticsMiddleware = createMiddleware().server(({ next, request }) => {
 
 export const startInstance = createStart(() => {
 	return {
-		requestMiddleware: [csrfMiddleware, analyticsMiddleware, llmMiddleware],
+		requestMiddleware: [trailingSlashMiddleware, csrfMiddleware, analyticsMiddleware, llmMiddleware],
 	};
 });

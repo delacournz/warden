@@ -1,4 +1,13 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	readdirSync,
+	readFileSync,
+	realpathSync,
+	rmSync,
+	statSync,
+	writeFileSync,
+} from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import { type Exec, type ExecResult, execError } from "../exec";
@@ -13,10 +22,12 @@ import type { Project } from "./config";
 import { formatBuildFailure, parseBuildDiagnostics } from "./diagnostics";
 import { type CacheKey, computeCacheKey } from "./fingerprint";
 import { combineKey, readFileOrUndefined } from "./js-inputs";
+import type { BuildTarget } from "./kinds";
 import { planPrebuiltRn } from "./prebuilt-rn";
+import { readProjectSigning, type SigningKeystore } from "./signing-key";
 
-const simProducts = (configuration: BuildConfiguration) =>
-	join("Build", "Products", `${configuration}-iphonesimulator`);
+const iosProducts = (configuration: BuildConfiguration, target: BuildTarget) =>
+	join("Build", "Products", `${configuration}-${target === "device" ? "iphoneos" : "iphonesimulator"}`);
 
 function children(dir: string): string[] {
 	try {
@@ -62,7 +73,7 @@ function isTestApk(apk: string, outputs: string): boolean {
 
 /**
  * Candidate build outputs for `configuration`: iOS `.app`s in `<root>/ios/build/…/<Config>-iphonesimulator`
- * and every DerivedData project's `…/<Config>-iphonesimulator`; Android `.apk`s under
+ * and every DerivedData project's `…/<Config>-iphonesimulator` (`-iphoneos` for a `device` target); Android `.apk`s under
  * `<root>/android/app/build/outputs/apk` whose variant directory is that configuration (never an
  * `androidTest` APK).
  */
@@ -70,13 +81,14 @@ export function artifactCandidates(
 	root: string,
 	platform: Platform,
 	derivedData: string,
-	configuration: BuildConfiguration = "Debug"
+	configuration: BuildConfiguration = "Debug",
+	target: BuildTarget = "simulator"
 ): string[] {
 	if (platform === "android") {
 		const outputs = join(root, "android", "app", "build", "outputs", "apk");
 		return findFiles(outputs, ".apk").filter((apk) => isApkOf(apk, outputs, configuration) && !isTestApk(apk, outputs));
 	}
-	const products = simProducts(configuration);
+	const products = iosProducts(configuration, target);
 	const productDirs = [join(root, "ios", "build", products), ...children(derivedData).map((d) => join(d, products))];
 	return productDirs.flatMap((d) => children(d).filter((p) => p.endsWith(".app")));
 }
@@ -88,9 +100,10 @@ export function snapshotArtifacts(
 	root: string,
 	platform: Platform,
 	derivedData: string,
-	configuration: BuildConfiguration = "Debug"
+	configuration: BuildConfiguration = "Debug",
+	target: BuildTarget = "simulator"
 ): ArtifactSnapshot {
-	return new Map(artifactCandidates(root, platform, derivedData, configuration).map((p) => [p, mtime(p)]));
+	return new Map(artifactCandidates(root, platform, derivedData, configuration, target).map((p) => [p, mtime(p)]));
 }
 
 /**
@@ -157,9 +170,10 @@ export function locateArtifact(
 	derivedData: string,
 	before: ArtifactSnapshot,
 	configuration: BuildConfiguration = "Debug",
-	exclude: ReadonlySet<string> = new Set()
+	exclude: ReadonlySet<string> = new Set(),
+	target: BuildTarget = "simulator"
 ): LocatedArtifact | undefined {
-	const candidates = artifactCandidates(root, platform, derivedData, configuration)
+	const candidates = artifactCandidates(root, platform, derivedData, configuration, target)
 		.filter((path) => !exclude.has(path))
 		.map((path) => ({ path, at: mtime(path), owned: ownedBy(path, root, derivedData) }))
 		.filter((c) => c.at > 0)
@@ -186,6 +200,8 @@ export type LocalBuildDeps = {
 	native?: string;
 	env: Record<string, string | undefined>;
 	log: (line: string) => void;
+	/** the build command's own output, line by line, while it runs (default: kept for the failure summary only) */
+	output?: (line: string) => void;
 	timeoutMs?: number;
 	/** inject ccache / Xcode / Gradle caching env (default true); integrator: pass `project.build.cache !== false` */
 	compilerCache?: boolean;
@@ -193,7 +209,12 @@ export type LocalBuildDeps = {
 	wardenHome?: string;
 	/** per-command memo of the git facts (default: a short-lived shared one) */
 	git?: GitFactsCache;
+	/** the native fingerprint the git-ignored (CNG) native dir was last prebuilt at; absent = never regenerate it */
+	prebuildStamp?: PrebuildStamp;
 };
+
+/** Where `runLocalBuild` records the native fingerprint a CNG `ios/` / `android/` was generated for. */
+export type PrebuildStamp = { read: () => string | undefined; write: (native: string) => void };
 
 async function probe(deps: LocalBuildDeps, argv: string[], cwd?: string): Promise<string | undefined> {
 	try {
@@ -244,8 +265,11 @@ async function cacheEnv(deps: LocalBuildDeps): Promise<Record<string, string>> {
 	};
 }
 
-/** What a local build produced: the artifact, and the project's key after the build when the build itself moved it (17-1). */
-export type LocalBuild = { artifact: string; postKey?: string };
+/**
+ * What a local build produced: the artifact, the project's key after the build when the build itself moved it (17-1),
+ * and (Android) the keystore the APK was signed with, so repacks can keep its signer without the prebuild output.
+ */
+export type LocalBuild = { artifact: string; postKey?: string; signing?: SigningKeystore };
 
 /** iOS: `app`'s `CFBundleIdentifier` against the project's (a UI test runner or another app is a mismatch). */
 type BundleCheck = "match" | "mismatch" | "unknown";
@@ -266,7 +290,15 @@ async function locateOwnApp(deps: LocalBuildDeps, derivedData: string, before: A
 	const { project, platform } = deps;
 	const exclude = new Set<string>();
 	for (;;) {
-		const located = locateArtifact(project.root, platform, derivedData, before, project.buildConfiguration, exclude);
+		const located = locateArtifact(
+			project.root,
+			platform,
+			derivedData,
+			before,
+			project.buildConfiguration,
+			exclude,
+			project.target
+		);
 		if (located === undefined) return located;
 		const paths = located.kind === "ambiguous" ? located.paths : [located.path];
 		const checks = await Promise.all(paths.map((p) => bundleCheck(deps, p)));
@@ -317,6 +349,37 @@ async function prebuildMovedKey(deps: LocalBuildDeps, before: BeforeBuild, after
 	return now === before.status;
 }
 
+/** a build command that generates a missing native dir: `expo prebuild`, or `expo run:*` (it prebuilds when the dir is absent) */
+const PREBUILDS = /\bexpo\s+(prebuild|run:)/;
+
+/**
+ * Remove a CNG native dir generated for another native fingerprint, so the build command prebuilds it again. A
+ * stale `ios/` keeps its old Podfile and a `Podfile.lock` that matches `Pods/Manifest.lock`, so the default command
+ * skips both prebuild and `pod install`, and the build links none of the new native modules (`Cannot find native
+ * module`) under the new key. Only an Expo app whose native dir is git-ignored (generated output, never hand-edited)
+ * and whose build command prebuilds; a dir with no stamp was generated outside warden, for an unknown fingerprint.
+ */
+async function dropStaleNativeDir(deps: LocalBuildDeps, native: string): Promise<void> {
+	const { project, platform, prebuildStamp } = deps;
+	if (prebuildStamp === undefined || project.framework !== "expo") return;
+	const nativeDir = join(project.root, platform);
+	if (!existsSync(nativeDir) || !PREBUILDS.test(project.build[platform])) return;
+	const stamp = prebuildStamp.read();
+	if (stamp === native) return;
+	try {
+		const ignored = await deps.exec(["git", "check-ignore", "-q", platform], {
+			cwd: project.root,
+			timeoutMs: PROBE_TIMEOUT_MS,
+		});
+		if (ignored.exitCode !== 0) return;
+	} catch {
+		return;
+	}
+	const was = stamp === undefined ? "an unknown native fingerprint" : `native fingerprint ${stamp}`;
+	deps.log(`${platform}/ was prebuilt for ${was} (now ${native}): removing it so the build prebuilds it again`);
+	rmSync(nativeDir, { recursive: true, force: true });
+}
+
 /** The whole output of a failed build, kept for the errors the summary cannot show; best effort. */
 function keepBuildLog(deps: LocalBuildDeps, res: ExecResult): string | undefined {
 	const path = join(
@@ -358,6 +421,13 @@ function describeBuildFailure(deps: LocalBuildDeps, argv: string[], res: ExecRes
 		: `${execError(argv, res)}${logPath ? ` — full log: ${logPath}` : ""}`;
 }
 
+/** The keystore an Android build was signed with (undefined elsewhere, or when none can be read). */
+function androidSigning(deps: LocalBuildDeps): SigningKeystore | undefined {
+	return deps.platform === "android"
+		? readProjectSigning(deps.project.root, deps.project.buildConfiguration)
+		: undefined;
+}
+
 /**
  * Run `build.<platform>` in the project root, locate the produced `.app`/`.apk`, and verify the
  * project's cache key (native fingerprint, plus the JS sources for a JS-aware project) still equals
@@ -369,15 +439,17 @@ export async function runLocalBuild(deps: LocalBuildDeps): AsyncResult<LocalBuil
 	const { project, platform } = deps;
 	const command = project.build[platform];
 	const derivedData = derivedDataDir(deps.env);
-	const snapshot = snapshotArtifacts(project.root, platform, derivedData, project.buildConfiguration);
+	const snapshot = snapshotArtifacts(project.root, platform, derivedData, project.buildConfiguration, project.target);
+	await dropStaleNativeDir(deps, deps.native ?? deps.hash);
 	const before = await beforeBuild(deps);
 	deps.log(`building ${platform} locally: ${command} (in ${project.root})`);
 	const argv = ["sh", "-c", command];
 	const caching = await cacheEnv(deps);
 	const res = await deps.exec(argv, {
 		cwd: project.root,
-		env: { ...caching, EXPO_NO_TELEMETRY: "1" },
+		env: { ...caching, ...project.buildEnv, EXPO_NO_TELEMETRY: "1" },
 		timeoutMs: deps.timeoutMs ?? LOCAL_BUILD_TIMEOUT_MS,
+		...(deps.output ? { onLine: deps.output } : {}),
 	});
 	if (res.exitCode !== 0) return err(`local build failed: ${describeBuildFailure(deps, argv, res)}`);
 	const after = await computeCacheKey(deps.exec, project, platform, undefined, undefined, deps.env);
@@ -397,8 +469,10 @@ export async function runLocalBuild(deps: LocalBuildDeps): AsyncResult<LocalBuil
 		return err(`local build succeeded but no ${kind} was found (DerivedData / android/app/build/outputs)`);
 	}
 	const artifact = located.path;
+	deps.prebuildStamp?.write(after.data.native);
 	if (located.kind === "up-to-date") deps.log(`build was up to date; reusing ${artifact}`);
 	if (moved)
 		deps.log(`the build created ${platform}/ (prebuild): caching under ${deps.hash}, aliased as ${after.data.key}`);
-	return ok(moved ? { artifact, postKey: after.data.key } : { artifact });
+	const signing = androidSigning(deps);
+	return ok({ artifact, ...(moved ? { postKey: after.data.key } : {}), ...(signing ? { signing } : {}) });
 }

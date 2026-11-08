@@ -5,6 +5,7 @@ import {
 	type ElementSpec,
 	el,
 	type FakeDriver,
+	type FakeDriverOptions,
 	type FakeOverride,
 	fakeDriver,
 } from "@delacour/warden-e2e/driver/driver.testing";
@@ -45,15 +46,27 @@ export type HarnessOptions = {
 	onCall?: (call: DriverCall, driver: FakeDriver) => FakeOverride | undefined;
 	/** the fake driver offers select-all (like the iOS driver) */
 	selectAll?: boolean;
+	/** the fake driver offers `pasteText` (like the iOS driver) */
+	pasteText?: boolean;
 	/** the fake driver offers `setText` (like the Android driver with `warden-uiad`) */
 	setText?: boolean;
+	/** a tap on an alert's button answers it (the alert then reads as gone), like a real device */
+	answerAlertOnTap?: boolean;
 	/** override the fake driver's capabilities (e.g. `pinch: false`, `maxPointers: 1`) */
 	capabilities?: Partial<DriverCapabilities>;
 	video?: UiDeps["video"];
 	/** the device lease's holder pid + label (a running `warden e2e` / `batch` / `run` sets both) */
-	lease?: { pid?: number; label?: string; shared?: boolean };
+	lease?: { pid?: number; label?: string; shared?: boolean; physical?: { transport: string } };
 	/** the pid liveness probe `warden ui` uses (default: the real one) */
 	pidAlive?: PidAlive;
+	/** what `open --kind` installs with (default: the real ensure) */
+	ensureApp?: UiDeps["ensureApp"];
+	/** the condition verbs' side effects (`net` / `location`): the port, spawners, proxy reads */
+	conditions?: UiDeps["conditions"];
+	/** the leased device's platform (default ios) */
+	platform?: "ios" | "android";
+	/** more fake-driver options (optional capabilities: `readA11y`, `a11yEvents`, `auditNatively`, `screenReader`) */
+	driverOptions?: Partial<Omit<FakeDriverOptions, "screens" | "onCall">>;
 };
 
 const live: TestContext[] = [];
@@ -68,9 +81,12 @@ export function harness(screens: Snapshot[] | (() => Snapshot), options: Harness
 	const clock = { t: 1_000_000 };
 	const steps: RecordStep[] = [];
 	const driver: FakeDriver = fakeDriver({
+		...options.driverOptions,
 		screens,
 		...(options.selectAll ? { selectAll: true } : {}),
 		...(options.setText ? { setText: true } : {}),
+		...(options.pasteText ? { pasteText: true } : {}),
+		...(options.answerAlertOnTap ? { answerAlertOnTap: true } : {}),
 		...(options.capabilities ? { capabilities: options.capabilities } : {}),
 		onCall: (call) => options.onCall?.(call, driver),
 	});
@@ -90,13 +106,21 @@ export function harness(screens: Snapshot[] | (() => Snapshot), options: Harness
 		},
 		...(options.video ? { video: options.video } : {}),
 		...(options.pidAlive ? { pidAlive: options.pidAlive } : {}),
+		...(options.ensureApp ? { ensureApp: options.ensureApp } : {}),
+		...(options.conditions ? { conditions: options.conditions } : {}),
 	};
 	const c = testContext([], { now: () => clock.t });
 	live.push(c);
 	c.env = { ...c.env, ...OWNER_ENV };
 	c.db.insertLease(
 		{
-			resource: { kind: "device", platform: "ios", id: UDID, name: "sim" },
+			resource: {
+				kind: "device",
+				platform: options.platform ?? "ios",
+				id: UDID,
+				name: "sim",
+				...(options.lease?.physical ? { physical: options.lease.physical } : {}),
+			},
 			owner: { kind: "agent", sessionId: "me", cwd: "/w" },
 			ttlMs: 10 * 60 * 60_000,
 			...(options.lease?.pid !== undefined ? { pid: options.lease.pid } : {}),

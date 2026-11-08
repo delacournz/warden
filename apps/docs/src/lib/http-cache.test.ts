@@ -41,9 +41,33 @@ describe("compressResponse", () => {
 });
 
 describe("routeRules", () => {
-	test("pages are edge-cacheable with stale-while-revalidate; the demo video is cached", () => {
+	test("pages are edge-cacheable with stale-while-revalidate; demo videos are cached", () => {
 		expect(routeRules["/docs/**"].headers["Cache-Control"]).toContain("stale-while-revalidate");
 		expect(routeRules["/docs/**"].headers["Cache-Control"]).toContain("s-maxage");
-		expect(routeRules["/demo/**"].headers["Cache-Control"]).toContain("max-age=86400");
+		expect(routeRules["/demos/**"].headers["Cache-Control"]).toContain("max-age=86400");
+	});
+
+	test("the sitemap is cached like robots.txt", () => {
+		expect(routeRules["/sitemap.xml"].headers["Cache-Control"]).toBe(
+			routeRules["/robots.txt"].headers["Cache-Control"]
+		);
+	});
+
+	test("raw bench artifacts and the llms files stay out of the search index", () => {
+		expect(routeRules["/bench/**"].headers["X-Robots-Tag"]).toBe("noindex");
+		expect(routeRules["/llms.txt"].headers["X-Robots-Tag"]).toBe("noindex");
+		expect(routeRules["/llms-full.txt"].headers["X-Robots-Tag"]).toBe("noindex");
+	});
+
+	test("every response carries the security headers, and they never override a route's own", () => {
+		const all = routeRules["/**"].headers;
+		expect(all["Strict-Transport-Security"]).toBe("max-age=63072000; includeSubDomains");
+		expect(all["X-Content-Type-Options"]).toBe("nosniff");
+		expect(all["X-Frame-Options"]).toBe("SAMEORIGIN");
+		expect(all["Content-Security-Policy"]).toBe("frame-ancestors 'self'");
+		expect(all["Referrer-Policy"]).toBe("strict-origin-when-cross-origin");
+		expect(all["Permissions-Policy"]).toContain("camera=()");
+		expect("Cache-Control" in all).toBe(false);
+		expect("X-Robots-Tag" in all).toBe(false);
 	});
 });

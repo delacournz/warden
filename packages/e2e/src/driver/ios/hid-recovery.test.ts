@@ -1,7 +1,15 @@
 import { describe, expect, test } from "bun:test";
 import type { Exec, ExecResult } from "@delacour/warden-core/exec";
 import { E2eError } from "../../errors";
-import { isHidLost, rebootSim, runAfterReboot, stopResidentHelper } from "./hid-recovery";
+import {
+	isHidLost,
+	isRecoverableLoss,
+	isRunnerLost,
+	rebootSim,
+	restartRunnerHost,
+	runAfterReboot,
+	stopResidentHelper,
+} from "./hid-recovery";
 import type { SimdClient } from "./simd-client";
 
 const ok: ExecResult = { exitCode: 0, stdout: "", stderr: "" };
@@ -27,6 +35,36 @@ describe("isHidLost", () => {
 		expect(isHidLost(new E2eError("ACTION_FAILED", "tap failed: E_HID: no hid"))).toBe(false);
 		expect(isHidLost(new E2eError("ASSERTION", "expected visible"))).toBe(false);
 		expect(isHidLost("E_HID dtuhidd invalidated")).toBe(false);
+	});
+});
+
+describe("physical iPhone recovery", () => {
+	test("a lost runner host is E_HELPER_CRASHED, however wrapped; HID loss is not it", () => {
+		expect(isRunnerLost(new E2eError("ACTION_FAILED", "tap failed: E_HELPER_CRASHED: socket closed"))).toBe(true);
+		expect(isRunnerLost(new E2eError("DRIVER", "E_HELPER_CRASHED: x"))).toBe(true);
+		expect(isRunnerLost(new E2eError("ACTION_FAILED", "tap failed: E_HID: dtuhidd connection invalidated"))).toBe(
+			false
+		);
+		expect(isRunnerLost("E_HELPER_CRASHED")).toBe(false);
+	});
+	test("a phone recovers from a runner loss only, a sim from a HID loss only", () => {
+		const runner = new E2eError("ACTION_FAILED", "tap failed: E_HELPER_CRASHED: x");
+		const hid = new E2eError("ACTION_FAILED", "tap failed: E_NOT_BOOTED: x");
+		expect(isRecoverableLoss(runner, "physical")).toBe(true);
+		expect(isRecoverableLoss(hid, "physical")).toBe(false);
+		expect(isRecoverableLoss(hid, undefined)).toBe(true);
+		expect(isRecoverableLoss(runner, undefined)).toBe(false);
+	});
+	test("restartRunnerHost runs the argv with {udid} filled in, and no simctl", async () => {
+		const { exec, calls } = script({});
+		const result = await restartRunnerHost({ exec }, ["warden", "__ios-runner-restart", "--udid", "{udid}"], "U-1");
+		expect(result.success).toBe(true);
+		expect(calls).toEqual(["warden __ios-runner-restart --udid U-1"]);
+	});
+	test("a failing restart and a missing argv are errors", async () => {
+		const failing = script({ "warden r U-1": { exitCode: 3, stdout: "", stderr: "device locked" } });
+		expect((await restartRunnerHost({ exec: failing.exec }, ["warden", "r", "{udid}"], "U-1")).success).toBe(false);
+		expect((await restartRunnerHost({ exec: failing.exec }, undefined, "U-1")).success).toBe(false);
 	});
 });
 

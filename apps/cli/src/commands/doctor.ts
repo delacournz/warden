@@ -3,6 +3,8 @@ import { delimiter, join } from "node:path";
 import { isLeaseAlive, processAlive } from "@delacour/warden-core/liveness";
 import { androidTools } from "@delacour/warden-core/providers/android";
 import { MIGRATIONS, wardenHome } from "@delacour/warden-core/store";
+import { type HelperLocation, locateHelper } from "@delacour/warden-e2e/driver/ios/locate-helper";
+import { ok, type Result } from "@delacour/warden-types/result";
 import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { codexDetected } from "../hooks/agents";
@@ -14,11 +16,13 @@ import { emit, plural } from "../output";
 import { RULE_MD, staleSkillFiles } from "../skill";
 import { SYMBOLS } from "../ui";
 import { type BuildInfo, currentBuild } from "../update/build-info";
-import { fetchHelper, tarExtractHelper } from "../update/fetch-helper";
+import { type FetchedHelper, fetchHelper, tarExtractHelper } from "../update/fetch-helper";
 import { type InstallOrigin, installOrigin } from "../update/install-origin";
 import type { Fetch } from "../update/npm-registry";
 import { describePackageInstall, detectPackageInstall, upgradeCommand } from "../update/package-install";
 import { type HelperDeps, helperChecks, realHelperDeps } from "./doctor-helper";
+import type { LeaseDoctorDeps } from "./doctor-leases";
+import { physicalChecks } from "./doctor-physical";
 import { xcodeChecks } from "./doctor-xcode";
 
 export type CheckStatus = "ok" | "warn" | "fail";
@@ -204,7 +208,7 @@ export function ccacheProject(cwd: string): Probe {
 export async function runChecks(ctx: CommandContext, helper: HelperDeps = realHelperDeps()): Promise<DoctorCheck[]> {
 	const home = ctx.env.HOME ?? "";
 	const { adb, emulator } = androidTools(ctx.env);
-	const [simctl, adbProbe, emulatorProbe, ccache, simHelper, xcode] = await Promise.all([
+	const [simctl, adbProbe, emulatorProbe, ccache, simHelper, xcode, physical] = await Promise.all([
 		tool(ctx, ["xcrun", "simctl", "help"], "xcrun simctl not available (install Xcode) — iOS disabled"),
 		tool(ctx, [adb, "version"], `${adb} not found (set ANDROID_HOME) — Android disabled`),
 		tool(ctx, [emulator, "-version"], `${emulator} not found (set ANDROID_HOME) — Android disabled`),
@@ -215,6 +219,7 @@ export async function runChecks(ctx: CommandContext, helper: HelperDeps = realHe
 		),
 		helperChecks(ctx, helper),
 		xcodeChecks(ctx.exec, ctx.env),
+		physicalChecks(ctx),
 	]);
 	return [
 		check("home", "core", homeWritable(wardenHome(ctx.env))),
@@ -237,6 +242,7 @@ export async function runChecks(ctx: CommandContext, helper: HelperDeps = realHe
 		check("skill", "optional", skillProbe(home)),
 		check("rule", "optional", ruleProbe(home)),
 		check("stale-leases", "optional", staleLeases(ctx)),
+		...physical,
 	];
 }
 
@@ -259,9 +265,64 @@ export type DoctorDeps = {
 	helper: HelperDeps;
 	/** `--fetch-helper` downloads from GitHub releases (or `WARDEN_HELPER_URL`) */
 	fetch: Fetch;
+	/** `--leases` inventory / pid / filesystem (default: the real ones) */
+	leases?: LeaseDoctorDeps;
+	/** `--fetch-helper` may take the latest release's helper when this version has no release (builds from a checkout) */
+	fallbackToLatest?: boolean;
 };
 
-type FetchedHelperReport = { dir: string; url: string; sha256: string };
+/** `fetched`: downloaded into `$WARDEN_HOME/simd/<version>`; `present`: a helper that wins over that one was already there. */
+type HelperFetchReport =
+	| ({ status: "fetched" } & FetchedHelper)
+	| { status: "present"; path: string; source: HelperLocation["source"] };
+
+/**
+ * The helper the driver would pick ahead of `$WARDEN_HOME/simd/<version>` (an env override, one next to the binary,
+ * a source build): a fetched copy would never be used, so there is nothing to fetch.
+ */
+function helperAheadOfHome(ctx: CommandContext, helper: HelperDeps): HelperLocation | undefined {
+	const located = locateHelper({
+		env: ctx.env,
+		execPath: helper.execPath,
+		importDir: helper.importDir,
+		wardenHome: wardenHome(ctx.env),
+		exists: helper.exists,
+		realpath: helper.realpath,
+	});
+	return located.success ? located.data : undefined;
+}
+
+async function fetchHelperFor(
+	ctx: CommandContext,
+	deps: DoctorDeps,
+	json: boolean
+): Promise<Result<HelperFetchReport>> {
+	const present = helperAheadOfHome(ctx, deps.helper);
+	if (present) {
+		if (!json) ctx.out(`warden-simd already at ${present.path} (${present.source}): nothing to fetch`);
+		return ok({ status: "present", path: present.path, source: present.source });
+	}
+	const result = await fetchHelper({
+		fetch: deps.fetch,
+		extract: tarExtractHelper(ctx.exec),
+		env: ctx.env,
+		platform: deps.helper.platform,
+		arch: deps.helper.arch,
+		version: deps.helper.version,
+		wardenHome: wardenHome(ctx.env),
+		fallbackToLatest: deps.fallbackToLatest === true,
+	});
+	if (!result.success) return result;
+	if (result.data.release === "latest") {
+		ctx.err(
+			ctx.ui.color.yellow(
+				`warden doctor: --fetch-helper: no release v${deps.helper.version} yet, took the latest release's warden-simd`
+			)
+		);
+	}
+	if (!json) ctx.out(`fetched warden-simd → ${result.data.dir} (${result.data.url})`);
+	return ok({ status: "fetched", ...result.data });
+}
 
 async function doctor(
 	ctx: CommandContext,
@@ -269,23 +330,14 @@ async function doctor(
 	opts: { json: boolean; fetchHelper: boolean }
 ): Promise<number> {
 	const { color } = ctx.ui;
-	let fetched: FetchedHelperReport | undefined;
+	let fetched: HelperFetchReport | undefined;
 	if (opts.fetchHelper) {
-		const result = await fetchHelper({
-			fetch: deps.fetch,
-			extract: tarExtractHelper(ctx.exec),
-			env: ctx.env,
-			platform: deps.helper.platform,
-			arch: deps.helper.arch,
-			version: deps.helper.version,
-			wardenHome: wardenHome(ctx.env),
-		});
+		const result = await fetchHelperFor(ctx, deps, opts.json);
 		if (!result.success) {
 			ctx.err(color.red(`warden doctor: --fetch-helper: ${result.error}`));
 			return 1;
 		}
 		fetched = result.data;
-		if (!opts.json) ctx.out(`fetched warden-simd → ${fetched.dir} (${fetched.url})`);
 	}
 	const checks = await runChecks(ctx, deps.helper);
 	const ok = checks.every((c) => c.status !== "fail");
@@ -311,16 +363,38 @@ export function createDoctorCommand(deps: DoctorDeps): Command {
 		name: "doctor",
 		group: "Setup",
 		summary:
-			"check warden's setup: home, db, device tools, simulator helper, install method, PATH, Claude/Codex hooks + skill, stale leases",
+			"check warden's setup: home, db, device tools, simulator helper, install method, PATH, Claude/Codex hooks + skill, stale leases (--leases: registry drift)",
 		register: (cmd, ctx, done) => {
 			cmd
 				.option("--fetch-helper", "download warden-simd for this version into $WARDEN_HOME/simd/<version>/ first")
+				.option(
+					"--leases",
+					"check the lease registry against the machine for drift instead (exit 1 when drift remains)"
+				)
+				.option("--fix", "with --leases: delete the registry rows that are safe to (never touches a device)")
 				.option("--json", "machine-readable output")
-				.action(async (opts) =>
-					done(await doctor(ctx, deps, { json: opts.json === true, fetchHelper: opts.fetchHelper === true }))
-				);
+				.action(async (opts) => {
+					if (opts.fix === true && opts.leases !== true) {
+						ctx.err(ctx.ui.color.red("warden doctor: --fix needs --leases"));
+						return done(2);
+					}
+					if (opts.leases === true) {
+						const leases = await import("./doctor-leases");
+						return done(
+							await leases.doctorLeases(ctx, deps.leases ?? leases.realLeaseDoctorDeps(), {
+								json: opts.json === true,
+								fix: opts.fix === true,
+							})
+						);
+					}
+					return done(await doctor(ctx, deps, { json: opts.json === true, fetchHelper: opts.fetchHelper === true }));
+				});
 		},
 	});
 }
 
-export const doctorCommand: Command = createDoctorCommand({ helper: realHelperDeps(), fetch: (url) => fetch(url) });
+export const doctorCommand: Command = createDoctorCommand({
+	helper: realHelperDeps(),
+	fetch: (url) => fetch(url),
+	fallbackToLatest: currentBuild().channel !== "release",
+});

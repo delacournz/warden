@@ -296,3 +296,48 @@ export function VersionTable({ summary }: { summary: BenchSummary }): ReactEleme
 		</Scroll>
 	);
 }
+
+const GROUP_HEADERS = ["Verb", "n", "Share", "Median", "p95", "Max"] as const;
+
+/**
+ * Where each framework's step time goes, one block per framework with steps: verbs by share of total step ms.
+ * Older summaries carry no step groups, so nothing is drawn for them.
+ */
+export function StepGroupTable({ summary }: { summary: BenchSummary }): ReactElement | null {
+	const fws = summary.frameworks.filter(isOk).filter((f) => f.stepGroups !== undefined && f.stepGroups.length > 0);
+	if (fws.length === 0) return null;
+	return (
+		<Scroll caption="Share of step time by verb, per framework">
+			<thead>
+				<tr>
+					{GROUP_HEADERS.map((h, i) => (
+						<th className={cn(TH, i === 0 ? FIRST : NUM)} key={h} scope="col">
+							{h}
+						</th>
+					))}
+				</tr>
+			</thead>
+			{fws.map((f) => (
+				<tbody key={f.framework}>
+					<tr>
+						<th className={cn(TD, "bg-fill font-medium text-ink")} colSpan={GROUP_HEADERS.length} scope="colgroup">
+							{label(f.framework)}
+						</th>
+					</tr>
+					{(f.stepGroups ?? []).map((g) => (
+						<tr key={g.verb}>
+							<th className={cn(TD, FIRST, "font-normal")} scope="row">
+								{g.verb}
+							</th>
+							<td className={cn(TD, NUM)}>{g.n}</td>
+							<td className={cn(TD, NUM)}>{pct(g.share)}</td>
+							<td className={cn(TD, NUM)}>{cellMs(g.median)}</td>
+							<td className={cn(TD, NUM)}>{cellMs(g.p95)}</td>
+							<td className={cn(TD, NUM)}>{cellMs(g.max)}</td>
+						</tr>
+					))}
+				</tbody>
+			))}
+		</Scroll>
+	);
+}

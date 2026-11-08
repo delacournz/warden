@@ -1,8 +1,27 @@
+import type {
+	CameraCondition,
+	ClockCondition,
+	HostFault,
+	LocationCondition,
+	NetworkCondition,
+	PermissionName,
+	PermissionState,
+} from "@delacour/warden-core/conditions/conditions.types";
 import type { Result } from "@delacour/warden-types/result";
+import type { ScreenReaderState } from "../a11y/a11y.types";
+import type { A11yEventsRead, ReadsA11yEvents } from "./a11y-events";
+import type { ReadsA11y } from "./a11y-read";
 import type { AlertBackend, ProbesFrontmost, ReadsAlertOn } from "./alerts";
 import type {
+	A11yOp,
+	A11yState,
 	AlertInfo,
 	AppCommands,
+	BatteryOp,
+	BatteryState,
+	BiometricOp,
+	CameraState,
+	ClockState,
 	Driver,
 	DriverCapabilities,
 	DriverError,
@@ -13,21 +32,32 @@ import type {
 	HealthInfo,
 	KeyName,
 	LaunchOptions,
+	LocaleState,
 	Modifier,
+	NetworkState,
 	Orientation,
+	PermissionGrants,
+	PermissionsState,
 	Platform,
 	Point,
+	PushPayload,
 	Rect,
 	Role,
 	ScreenInfo,
+	SettingOptions,
 	Snapshot,
 	SnapshotBackend,
+	TimezoneState,
 	TouchPath,
 	TwoFingerOptions,
 } from "./driver.types";
+import type { ActsOnElements, ScrollDirection } from "./element-actions";
 import { driverError } from "./errors";
 import { planGesture } from "./gesture-geometry";
-import type { SelectsAll, SetsText } from "./typing";
+import type { AuditsNatively, NativeAuditOptions, NativeAuditResult } from "./native-audit";
+import { faultNotes } from "./network-proxy";
+import type { DrivesScreenReader, SpokenRead } from "./screen-reader";
+import type { PastesText, SelectsAll, SetsText } from "./typing";
 
 /**
  * Test doubles for `Driver`: `fakeDriver` (scripted screens, records every call) and the element-tree
@@ -174,6 +204,9 @@ export type DriverCall =
 	| { method: "key"; key: KeyName; modifiers?: readonly Modifier[] }
 	| { method: "selectAll" }
 	| { method: "setText"; text: string }
+	| { method: "pasteText"; text: string }
+	| { method: "pressElement"; element: Element }
+	| { method: "scrollElement"; direction: ScrollDirection; within?: Element }
 	| { method: "pressButton"; button: HardwareButton }
 	| { method: "screenshot"; opts?: { path?: string; scale?: number } }
 	| { method: "orientation"; set?: Orientation }
@@ -181,8 +214,30 @@ export type DriverCall =
 	| { method: "alert" }
 	| { method: "alertOn"; backend: AlertBackend }
 	| { method: "isFrontmost"; bundleId: string }
+	| { method: "readA11y" }
+	| { method: "a11yEvents"; since?: number }
+	| { method: "auditNatively"; options?: NativeAuditOptions }
+	| { method: "screenReaderState" }
+	| { method: "screenReaderNext" }
+	| { method: "screenReaderPrev" }
+	| { method: "screenReaderActivate" }
+	| { method: "screenReaderFocused" }
+	| { method: "screenReaderSpoken"; since?: number }
 	| { method: "appearance"; set?: "light" | "dark" }
 	| { method: "clipboard"; set?: string }
+	| { method: "network"; op: NetworkCondition }
+	| { method: "networkFaults"; faults: readonly HostFault[] }
+	| { method: "location"; op: LocationCondition }
+	| { method: "clock"; op: ClockCondition }
+	| { method: "permissions"; grants: PermissionGrants; opts?: SettingOptions }
+	| { method: "timezone"; tz: string | null; opts?: { previous?: string } }
+	| { method: "locale"; tag: string | null; opts?: SettingOptions }
+	| { method: "a11y"; op: A11yOp | null }
+	| { method: "battery"; op: BatteryOp | null }
+	| { method: "memoryWarning"; opts?: SettingOptions }
+	| { method: "push"; payload: PushPayload; opts?: SettingOptions }
+	| { method: "biometrics"; op: BiometricOp }
+	| { method: "camera"; op: CameraCondition | null; opts?: SettingOptions }
 	| { method: "app.launch"; bundleId: string; opts?: LaunchOptions }
 	| { method: "app.terminate"; bundleId: string }
 	| { method: "app.openUrl"; url: string }
@@ -203,11 +258,20 @@ export type FakeDriverOptions = {
 	screens: readonly Snapshot[] | (() => Snapshot);
 	platform?: Platform;
 	id?: string;
+	/** host wall time the fake `clock` op measures from (default `Date.now`) */
+	wallNow?: () => number;
 	capabilities?: Partial<DriverCapabilities>;
 	/** offer the optional `SelectsAll` capability (calls are recorded as `selectAll`); a plain driver has none */
 	selectAll?: boolean;
 	/** offer the optional `SetsText` capability (calls are recorded as `setText`); a plain driver has none */
 	setText?: boolean;
+	/** offer the optional `PastesText` capability (calls are recorded as `pasteText`); a plain driver has none */
+	pasteText?: boolean;
+	/**
+	 * Offer the optional `ActsOnElements` capability (calls are recorded as `pressElement` / `scrollElement`) and
+	 * answer whether the driver handled the action (default false: the caller sends the touch). A plain driver has none.
+	 */
+	elementActions?: { handled: boolean };
 	/** inspect every call (after it is recorded); return an override to fail it or fake its result */
 	onCall?: (call: DriverCall) => FakeOverride | undefined;
 	/**
@@ -215,14 +279,40 @@ export type FakeDriverOptions = {
 	 * others report none. Absent = a driver with only `alert()`.
 	 */
 	alertBackends?: readonly AlertBackend[];
+	/**
+	 * A tap on an alert's button answers it (the alert reads as none until the screen changes), except the first
+	 * `swallowAlertTaps` taps, which do nothing (a sheet still animating in). Default: taps never change the screen.
+	 */
+	answerAlertOnTap?: boolean;
+	swallowAlertTaps?: number;
 	/** Offer the optional `isFrontmost` capability: the bundle id of the app in front (evaluated per call). */
 	frontmost?: () => string | undefined;
+	/** Offer the optional `ReadsA11y` capability: the snapshot the driver would hand back with `Element.a11y` filled in. */
+	readA11y?: (snapshot: Snapshot) => Snapshot;
+	/** Offer the optional `ReadsA11yEvents` capability (cursor semantics are the function's own). */
+	a11yEvents?: (since?: number) => A11yEventsRead;
+	/** Offer the optional `AuditsNatively` capability. */
+	auditNatively?: (options?: NativeAuditOptions) => NativeAuditResult;
+	/**
+	 * Offer the optional `DrivesScreenReader` capability (all six calls, recorded as `screenReader*`). Unset members
+	 * answer a quiet default: state `real`/`talkback`, no focus, nothing spoken.
+	 */
+	screenReader?: Partial<{
+		state: () => ScreenReaderState;
+		next: () => Element | undefined;
+		prev: () => Element | undefined;
+		activate: () => void;
+		focused: () => Element | undefined;
+		spoken: (since?: number) => SpokenRead;
+	}>;
 };
 
 export type FakeDriver = Driver &
 	Partial<SelectsAll> &
 	Partial<SetsText> &
-	Partial<ReadsAlertOn & ProbesFrontmost> & {
+	Partial<PastesText> &
+	Partial<ActsOnElements> &
+	Partial<ReadsAlertOn & ProbesFrontmost & ReadsA11y & ReadsA11yEvents & AuditsNatively & DrivesScreenReader> & {
 		/** every call so far, in order */
 		readonly calls: DriverCall[];
 		/** the screen `snapshot()` currently returns */
@@ -277,10 +367,74 @@ function findAlert(snapshot: Snapshot): AlertInfo | null {
 	return info;
 }
 
+/** The `run` recorder `fakeDriver` hands to its optional-capability wiring. */
+type RunCall = <T>(call: DriverCall, fallback: () => T) => Awaited<DriverResult<T>>;
+
+/** Wire the optional `Driver` capabilities that `options` switch on onto `driver`. */
+function attachOptionalOps(
+	driver: FakeDriver,
+	options: FakeDriverOptions,
+	calls: DriverCall[],
+	run: RunCall,
+	visibleAlert: () => AlertInfo | null
+): void {
+	if (options.selectAll) driver.selectAll = async () => run({ method: "selectAll" }, () => undefined);
+	if (options.pasteText) driver.pasteText = async (text) => run({ method: "pasteText", text }, () => undefined);
+	if (options.setText) driver.setText = async (text) => run({ method: "setText", text }, () => undefined);
+	const actions = options.elementActions;
+	if (actions !== undefined) {
+		driver.pressElement = async (element) => run({ method: "pressElement", element }, () => actions.handled);
+		driver.scrollElement = async (direction, within) =>
+			run({ method: "scrollElement", direction, ...(within ? { within } : {}) }, () => actions.handled);
+	}
+	const { alertBackends, frontmost } = options;
+	if (alertBackends !== undefined) {
+		driver.alertOn = async (backend) =>
+			run<AlertInfo | null>({ method: "alertOn", backend }, () =>
+				alertBackends.includes(backend) ? visibleAlert() : null
+			);
+	}
+	if (frontmost !== undefined) {
+		driver.isFrontmost = async (bundleId) => run({ method: "isFrontmost", bundleId }, () => frontmost() === bundleId);
+	}
+	if (options.readA11y !== undefined) {
+		const read = options.readA11y;
+		driver.readA11y = async (snapshot) => run({ method: "readA11y" }, () => read(snapshot));
+	}
+	if (options.a11yEvents !== undefined) {
+		const events = options.a11yEvents;
+		driver.a11yEvents = async (since) =>
+			run({ method: "a11yEvents", ...(since === undefined ? {} : { since }) }, () => events(since));
+	}
+	if (options.auditNatively !== undefined) {
+		const audit = options.auditNatively;
+		driver.auditNatively = async (opts) => {
+			calls.push({ method: "auditNatively", ...(opts === undefined ? {} : { options: opts }) });
+			return audit(opts);
+		};
+	}
+	if (options.screenReader !== undefined) {
+		const reader = options.screenReader;
+		driver.screenReaderState = async () =>
+			run({ method: "screenReaderState" }, () => reader.state?.() ?? { mode: "real", engine: "talkback" });
+		driver.screenReaderNext = async () => run({ method: "screenReaderNext" }, () => reader.next?.());
+		driver.screenReaderPrev = async () => run({ method: "screenReaderPrev" }, () => reader.prev?.());
+		driver.screenReaderActivate = async () => run({ method: "screenReaderActivate" }, () => reader.activate?.());
+		driver.screenReaderFocused = async () => run({ method: "screenReaderFocused" }, () => reader.focused?.());
+		driver.screenReaderSpoken = async (since) =>
+			run(
+				{ method: "screenReaderSpoken", ...(since === undefined ? {} : { since }) },
+				() => reader.spoken?.(since) ?? { lines: [], cursor: since ?? 0 }
+			);
+	}
+}
+
 export function fakeDriver(options: FakeDriverOptions): FakeDriver {
 	const platform = options.platform ?? "ios";
 	const calls: DriverCall[] = [];
 	let cursor = 0;
+	let alertAnswered = false;
+	let swallowed = options.swallowAlertTaps ?? 0;
 	const { screens } = options;
 	const provider = typeof screens === "function" ? screens : undefined;
 	const scripted: Snapshot[] | undefined = typeof screens === "function" ? undefined : [...screens];
@@ -288,8 +442,13 @@ export function fakeDriver(options: FakeDriverOptions): FakeDriver {
 	let current: Orientation = "portrait";
 	let theme: "light" | "dark" = "light";
 	let clip = "";
+	const wallNow = options.wallNow ?? Date.now;
+	let net: NetworkState = { online: true, condition: { kind: "online" }, needsProxy: [] };
+	let enrolled = false;
 	const running = new Set<string>();
 	const installed = new Set<string>();
+
+	const visibleAlert = (): AlertInfo | null => (alertAnswered ? null : findAlert(currentScreen()));
 
 	const currentScreen = (): Snapshot => {
 		if (fixed) return fixed;
@@ -356,8 +515,10 @@ export function fakeDriver(options: FakeDriverOptions): FakeDriver {
 		},
 		advance() {
 			cursor += 1;
+			alertAnswered = false;
 		},
 		set(screen) {
+			alertAnswered = false;
 			if (scripted) scripted[Math.min(cursor, Math.max(scripted.length - 1, 0))] = screen;
 			else fixed = screen;
 		},
@@ -380,7 +541,16 @@ export function fakeDriver(options: FakeDriverOptions): FakeDriver {
 			return run({ method: "elementAtPoint", point, ...(opts && { opts }) }, () => hitTest(currentScreen(), point));
 		},
 		async tap(point, opts) {
-			return run({ method: "tap", point, ...(opts && { opts }) }, () => undefined);
+			return run({ method: "tap", point, ...(opts && { opts }) }, () => {
+				if (!options.answerAlertOnTap) return undefined;
+				const screen = currentScreen();
+				const hit = hitTest(screen, point);
+				const onButton = hit !== null && (findAlert(screen)?.buttons ?? []).some((b) => b === hit);
+				if (!onButton || alertAnswered) return undefined;
+				if (swallowed > 0) swallowed -= 1;
+				else alertAnswered = true;
+				return undefined;
+			});
 		},
 		async longPress(point, opts) {
 			return run({ method: "longPress", point, ...(opts && { opts }) }, () => undefined);
@@ -430,7 +600,7 @@ export function fakeDriver(options: FakeDriverOptions): FakeDriver {
 			return run({ method: "settle", ...(opts && { opts }) }, () => ({ quiet: true, waitedMs: 0 }));
 		},
 		async alert() {
-			return run({ method: "alert" }, () => findAlert(currentScreen()));
+			return run({ method: "alert" }, () => visibleAlert());
 		},
 		async appearance(set) {
 			return run({ method: "appearance", ...(set && { set }) }, () => {
@@ -444,24 +614,110 @@ export function fakeDriver(options: FakeDriverOptions): FakeDriver {
 				return clip;
 			});
 		},
+		async network(op) {
+			return run({ method: "network", op }, () => {
+				net = { online: op.kind !== "offline", condition: op, needsProxy: [] };
+				return net;
+			});
+		},
+		async networkFaults(faults) {
+			return run({ method: "networkFaults", faults }, () => ({ notes: faultNotes(faults) }));
+		},
+		async location(op) {
+			return run({ method: "location", op }, () => undefined);
+		},
+		async clock(op) {
+			const at = op.kind === "fixed" || op.kind === "frozen" ? Date.parse(op.at) : 0;
+			if (Number.isNaN(at)) {
+				calls.push({ method: "clock", op });
+				return {
+					success: false,
+					error: driverError("E_BAD_REQUEST", `clock ${op.kind}: not an ISO 8601 date-time`),
+				};
+			}
+			return run({ method: "clock", op }, (): ClockState => {
+				const now = wallNow();
+				const offsetMs = op.kind === "offset" ? op.ms : op.kind === "fixed" ? at - now : 0;
+				return {
+					condition: op,
+					offsetMs,
+					frozen: op.kind === "frozen",
+					nowMs: op.kind === "frozen" ? at : now + offsetMs,
+				};
+			});
+		},
+		async permissions(grants, opts) {
+			return run(
+				{ method: "permissions", grants, ...(opts ? { opts } : {}) },
+				(): PermissionsState => ({
+					bundleId: opts?.bundleId ?? "fake.app",
+					applied: Object.entries(grants).map(([permission, state]) => ({
+						permission: permission as PermissionName,
+						state: state as PermissionState,
+					})),
+					skipped: [],
+				})
+			);
+		},
+		async timezone(tz, opts) {
+			return run(
+				{ method: "timezone", tz, ...(opts ? { opts } : {}) },
+				(): TimezoneState => ({
+					...(tz === null ? {} : { timezone: tz }),
+				})
+			);
+		},
+		async locale(tag, opts) {
+			return run(
+				{ method: "locale", tag, ...(opts ? { opts } : {}) },
+				(): LocaleState => ({
+					...(tag === null ? {} : { locale: tag }),
+				})
+			);
+		},
+		async a11y(op) {
+			return run(
+				{ method: "a11y", op },
+				(): A11yState => ({
+					applied: op === null ? ["textSize"] : Object.keys(op),
+					skipped: [],
+					notes: [],
+				})
+			);
+		},
+		async battery(op) {
+			return run(
+				{ method: "battery", op },
+				(): BatteryState => ({
+					...(op?.level === undefined ? {} : { level: op.level }),
+					...(op?.charging === undefined ? {} : { charging: op.charging }),
+					cosmetic: false,
+				})
+			);
+		},
+		async camera(op, opts) {
+			return run({ method: "camera", op, ...(opts ? { opts } : {}) }, (): CameraState => ({ feeds: op ?? {} }));
+		},
+		async memoryWarning(opts) {
+			return run({ method: "memoryWarning", ...(opts ? { opts } : {}) }, () => undefined);
+		},
+		async push(payload, opts) {
+			return run({ method: "push", payload, ...(opts ? { opts } : {}) }, () => undefined);
+		},
+		async biometrics(op) {
+			return run({ method: "biometrics", op }, () => {
+				if (op === "enroll") enrolled = true;
+				if (op === "unenroll") enrolled = false;
+				return { enrolled, modality: "face" as const };
+			});
+		},
 		app,
 		async close() {
 			calls.push({ method: "close" });
 			driver.closed = true;
 		},
 	};
-	if (options.selectAll) driver.selectAll = async () => run({ method: "selectAll" }, () => undefined);
-	if (options.setText) driver.setText = async (text) => run({ method: "setText", text }, () => undefined);
-	const { alertBackends, frontmost } = options;
-	if (alertBackends !== undefined) {
-		driver.alertOn = async (backend) =>
-			run<AlertInfo | null>({ method: "alertOn", backend }, () =>
-				alertBackends.includes(backend) ? findAlert(currentScreen()) : null
-			);
-	}
-	if (frontmost !== undefined) {
-		driver.isFrontmost = async (bundleId) => run({ method: "isFrontmost", bundleId }, () => frontmost() === bundleId);
-	}
+	attachOptionalOps(driver, options, calls, run, visibleAlert);
 	return driver;
 }
 

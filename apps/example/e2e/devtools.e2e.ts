@@ -8,7 +8,7 @@ test.use(SPEC_OPTIONS);
 
 /**
  * `device.devtools` talks to the app's JS runtime through Metro, so it only exists on the dev client
- * (`example-dev`). The Release suite has no `WARDEN_METRO_URL`: the spec is skipped there.
+ * (`warden e2e example --dev`). The Release suite has no `WARDEN_METRO_URL`: the spec is skipped there.
  */
 const devtoolsTest = test.skipIf(process.env[ENV_NAMES.metroUrl] === undefined);
 

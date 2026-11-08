@@ -1,6 +1,7 @@
 import type { Driver, Element, KeyName, Modifier, Point, Rect, Snapshot } from "../driver/driver.types";
+import { canActOnElements } from "../driver/element-actions";
 import { canDetectAlerts, canObserve, OBSERVATION_MAX_AGE_MS } from "../driver/observation-cache";
-import { snapshotHash } from "../driver/settle";
+import { elementKey } from "../driver/settle";
 import { typeText } from "../driver/typing";
 import { E2eError } from "../errors";
 import {
@@ -9,8 +10,10 @@ import {
 	centreOf,
 	fieldValue,
 	focusPoint,
+	graphemes,
 	isOnScreen,
 	type Momentum,
+	maskedReading,
 	PINCH_MS,
 	pinchRadius,
 	ROTATE_MS,
@@ -23,10 +26,12 @@ import {
 	visibleRect,
 } from "./actions";
 import type { Earlier, Observed, Runtime } from "./context";
+import { type DegradedRead, degradedFailure, degradedRead, type ReactNote } from "./degraded-read";
 import {
 	type ClearMethod,
 	confirmFieldValue,
 	confirmReadsFor,
+	type FillVia,
 	focusAndClear,
 	focusClearType,
 	hitTestField,
@@ -46,6 +51,7 @@ import {
 } from "./queries";
 import { describeExpression, exactlyOne, type LocatorExpression, type Query, resolve } from "./query";
 import { type ReactMatch, reactTapPoint } from "./react-locator";
+import { mergeReactMatches } from "./react-merge";
 import type { QueryRole } from "./roles";
 import { normalizeText, type TextMatch } from "./text";
 
@@ -83,6 +89,8 @@ export type TapOptions = ActionOptions & {
 	/** gap between checks of `until`. Default 250 ms. Needs `until`. */
 	pollMs?: number;
 };
+/** `fill` puts the text in by paste where the driver can (iOS) or types it: see `FillVia`. A retry always types. */
+export type FillOptions = ActionOptions & { via?: FillVia };
 export type LongPressOptions = ActionOptions & { durationMs?: number };
 export type PressOptions = ActionOptions & { modifiers?: readonly Modifier[] };
 export type LocatorSwipeOptions = ActionOptions & { direction: SwipeDirection; momentum?: Momentum };
@@ -101,6 +109,12 @@ const VERIFY_MS = 1000;
 const CONFIRM_FLOOR_MS = 500;
 /** Quiet time asked of the driver after each scroll step. */
 const SCROLL_SETTLE = { quietMs: 150, timeoutMs: 1000 };
+/**
+ * How long `isVisible()` / `isHidden()` / `count()` look again at a degraded read before `READ_DEGRADED` (capped by the
+ * action timeout): long enough for a stalled bridge's background probe or the React tree to settle it, short enough
+ * that a spec branching on the answer is not held for the whole action timeout.
+ */
+const QUICK_CHECK_WINDOW_MS = 2000;
 
 function assertOptions(verb: string, options: object, allowed: readonly string[]): void {
 	const unknown = Object.keys(options).filter((key) => !allowed.includes(key));
@@ -117,7 +131,26 @@ type Seen =
 	| { kind: "none"; snapshot: Observed["snapshot"] }
 	| { kind: "blocked"; reason: string; snapshot: Observed["snapshot"] }
 	| { kind: "react"; snapshot: Observed["snapshot"]; matches: number }
+	| { kind: "degraded"; read: DegradedRead; snapshot: Observed["snapshot"] }
 	| { kind: "driver"; message: string };
+
+/**
+ * What one look says about a locator. `nodes`: the accessibility tree's answer (none included, when the read was whole
+ * or the React tree confirmed the absence). `react`: the read was degraded and the React tree has the component(s).
+ * `unknown`: the read was degraded (`screen/degraded-read.ts`) and nothing could confirm the locator either way.
+ */
+export type Resolved =
+	| { kind: "nodes"; entries: NodeEntry[] }
+	| { kind: "react"; matches: ReactMatch[] }
+	| { kind: "unknown"; read: DegradedRead };
+
+/** A look that settled the locator one way or the other. */
+type Conclusive = { entries: NodeEntry[]; react: ReactMatch[] | undefined; observed: Observed };
+
+/** Whether a component found only in the React tree shows on screen. */
+function reactVisible(match: ReactMatch, observed: Observed): boolean {
+	return match.frame.width > 0 && match.frame.height > 0 && isOnScreen(match.tapPoint, observed.snapshot.screen);
+}
 
 type Actionable = { entry: NodeEntry; observed: Observed };
 
@@ -250,8 +283,92 @@ export class Locator {
 		return { entries: resolve(this.expr, observed.index), observed };
 	}
 
-	private matches(): Promise<{ entries: NodeEntry[]; observed: Observed }> {
-		return this.look();
+	/**
+	 * What `observed` says about this locator. A whole read, or one with matches, is the accessibility tree's answer. A
+	 * degraded read with no match is asked of the React tree (plain `getByTestId` with devtools): it answers presence or
+	 * absence; otherwise the look is `unknown`, and no caller may take it as "absent". A component whose rect is an
+	 * accessibility node's (the fallback reader kept the node, dropped the testID) resolves to that node, so text,
+	 * visibility and actions read it like any match; one with no such node stays a React-only match.
+	 */
+	async resolveIn(observed: Observed): Promise<Resolved> {
+		const entries = resolve(this.expr, observed.index);
+		if (entries.length > 0) return { kind: "nodes", entries };
+		const read = degradedRead(observed.snapshot);
+		if (read === undefined) return { kind: "nodes", entries };
+		const testId = plainTestId(this.expr);
+		const lookup = testId === undefined ? undefined : await this.rt.reactLookup(testId, observed);
+		if (lookup === undefined || !lookup.answered) return { kind: "unknown", read };
+		if (lookup.matches.length === 0) return { kind: "nodes", entries };
+		const merged = mergeReactMatches(lookup.matches, observed.index);
+		return merged === undefined ? { kind: "react", matches: lookup.matches } : { kind: "nodes", entries: merged };
+	}
+
+	/** Why the React tree did not settle a degraded look, for the `READ_DEGRADED` message. */
+	reactNote(): ReactNote {
+		if (plainTestId(this.expr) === undefined) return "not-testid";
+		return this.rt.hasReactTree() ? "unanswered" : "no-devtools";
+	}
+
+	/** `READ_DEGRADED` for this locator after `waitedMs`, with the screen of the last degraded look. */
+	degradedFailure(read: DegradedRead, waitedMs: number, snapshot: Observed["snapshot"] | undefined): E2eError {
+		const screen = snapshot === undefined ? undefined : this.rt.excerpt(snapshot);
+		return degradedFailure(this.toString(), read, waitedMs, this.reactNote(), screen);
+	}
+
+	/**
+	 * One look that settles this locator. A whole read answers at once (never waits); a degraded one that cannot say
+	 * whether the locator is there is looked at again until one can, within the action timeout (`quick`: within
+	 * `QUICK_CHECK_WINDOW_MS`, for checks a spec branches on), then `READ_DEGRADED`.
+	 */
+	private async conclusive(options: { reuse?: boolean; quick?: boolean } = {}): Promise<Conclusive> {
+		const first = await this.look(options.reuse === undefined ? {} : { reuse: options.reuse });
+		const settled = await this.settled(first.observed);
+		if (settled !== undefined) return settled;
+		const actionMs = this.rt.actionTimeout();
+		const timeoutMs = options.quick === true ? Math.min(actionMs, QUICK_CHECK_WINDOW_MS) : actionMs;
+		let last: { read: DegradedRead; snapshot: Observed["snapshot"] } | undefined;
+		const result = await this.rt.poll<Conclusive, undefined>(async () => {
+			const observation = await this.rt.tryObserve({ reuse: false });
+			if (!observation.ok) {
+				if (!observation.error.retryable) throw new E2eError("DRIVER", `snapshot failed: ${observation.error.message}`);
+				return { done: false, state: undefined };
+			}
+			const answer = await this.settled(observation.observed);
+			if (answer !== undefined) return { done: true, value: answer };
+			const read = degradedRead(observation.observed.snapshot);
+			if (read !== undefined) last = { read, snapshot: observation.observed.snapshot };
+			return { done: false, state: undefined };
+		}, timeoutMs);
+		if (result.status === "done") return result.value;
+		const fallback = degradedRead(first.observed.snapshot);
+		const read = last?.read ?? fallback;
+		if (read === undefined) throw new E2eError("TIMEOUT", `${this} could not be read within ${timeoutMs} ms`);
+		throw this.degradedFailure(read, timeoutMs, last?.snapshot ?? first.observed.snapshot);
+	}
+
+	/** The conclusive answer of `observed`, or undefined while it is `unknown`. */
+	private async settled(observed: Observed): Promise<Conclusive | undefined> {
+		const resolved = await this.resolveIn(observed);
+		if (resolved.kind === "unknown") return undefined;
+		if (resolved.kind === "react") return { entries: [], react: resolved.matches, observed };
+		return { entries: resolved.entries, react: undefined, observed };
+	}
+
+	private async matches(): Promise<{ entries: NodeEntry[]; observed: Observed }> {
+		const { entries, observed } = await this.conclusive();
+		return { entries, observed };
+	}
+
+	/** The one React match a read of a component the accessibility tree lacks stands for; several are ambiguous. */
+	private reactOnly(matches: readonly ReactMatch[], observed: Observed): ReactMatch {
+		const [only, ...others] = matches;
+		if (only !== undefined && others.length === 0) return only;
+		throw new E2eError(
+			"LOCATOR_AMBIGUOUS",
+			`${this} matched ${matches.length} components in the React tree`,
+			this.rt.excerpt(observed.snapshot),
+			matches.length
+		);
 	}
 
 	private async single(): Promise<{ entry: NodeEntry; observed: Observed }> {
@@ -278,7 +395,10 @@ export class Locator {
 	}
 
 	count(): Promise<number> {
-		return this.traced("count", async () => (await this.matches()).entries.length);
+		return this.traced("count", async () => {
+			const { entries, react } = await this.conclusive({ quick: true });
+			return react?.length ?? entries.length;
+		});
 	}
 
 	async all(): Promise<Locator[]> {
@@ -287,11 +407,28 @@ export class Locator {
 	}
 
 	text(): Promise<string> {
-		return this.traced("text", async () => textOf((await this.single()).entry));
+		return this.traced("text", async () => {
+			const { entries, react, observed } = await this.conclusive();
+			if (react !== undefined) return this.reactText(this.reactOnly(react, observed), observed);
+			if (entries.length === 0 && (await this.reactCandidates(observed)).length > 0) {
+				throw new E2eError("NOT_ACTIONABLE", `${this} ${REACT_ONLY}`, this.rt.excerpt(observed.snapshot));
+			}
+			return textOf(this.exactlyOne(entries, observed));
+		});
 	}
 
 	allTexts(): Promise<string[]> {
-		return this.traced("allTexts", async () => (await this.matches()).entries.map(textOf));
+		return this.traced("allTexts", async () => {
+			const { entries, react, observed } = await this.conclusive();
+			if (react !== undefined) return react.map((match) => this.reactText(match, observed));
+			return entries.map(textOf);
+		});
+	}
+
+	/** The text the React tree reported for a component of a degraded read that no accessibility node stands for. */
+	private reactText(match: ReactMatch, observed: Observed): string {
+		if (match.text !== undefined) return normalizeText(match.text);
+		throw new E2eError("NOT_ACTIONABLE", `${this} ${REACT_ONLY}`, this.rt.excerpt(observed.snapshot));
 	}
 
 	value(): Promise<string> {
@@ -299,7 +436,11 @@ export class Locator {
 	}
 
 	isVisible(): Promise<boolean> {
-		return this.traced("isVisible", async () => this.visibleIn((await this.matches()).observed));
+		return this.traced("isVisible", async () => {
+			const { entries, react, observed } = await this.conclusive({ quick: true });
+			if (react !== undefined) return reactVisible(this.reactOnly(react, observed), observed);
+			return entries.length > 0 && this.exactlyOne(entries, observed).visible;
+		});
 	}
 
 	/**
@@ -311,7 +452,12 @@ export class Locator {
 	 */
 	read(): Promise<LocatorReading> {
 		return this.traced("read", async () => {
-			const { entries, observed } = await this.matches();
+			const { entries, react, observed } = await this.conclusive();
+			if (react !== undefined) {
+				const match = this.reactOnly(react, observed);
+				const visible = reactVisible(match, observed);
+				return match.text === undefined ? { visible } : { visible, text: normalizeText(match.text) };
+			}
 			if (entries.length === 0) return { visible: false };
 			const entry = this.exactlyOne(entries, observed);
 			return {
@@ -324,10 +470,15 @@ export class Locator {
 	}
 
 	/** Whether this locator's one match is visible in `observed`; no match is not visible, several matches throw. */
-	visibleIn(observed: Observed): boolean {
-		const entries = resolve(this.expr, observed.index);
-		if (entries.length === 0) return false;
-		return this.exactlyOne(entries, observed).visible;
+	/**
+	 * Whether `observed` shows this locator, without waiting: a degraded read is resolved like `resolveIn` (the React
+	 * tree's node or rect), and one nothing could settle counts as not shown yet.
+	 */
+	async shownIn(observed: Observed): Promise<boolean> {
+		const resolved = await this.resolveIn(observed);
+		if (resolved.kind === "unknown") return false;
+		if (resolved.kind === "react") return reactVisible(this.reactOnly(resolved.matches, observed), observed);
+		return resolved.entries.length > 0 && this.exactlyOne(resolved.entries, observed).visible;
 	}
 
 	async isHidden(): Promise<boolean> {
@@ -345,7 +496,7 @@ export class Locator {
 	/** Always a new snapshot: a frame is for aiming at, and one from a screen that was still moving is wrong. */
 	boundingBox(): Promise<Rect> {
 		return this.traced("boundingBox", async () => {
-			const { entries, observed } = await this.look({ reuse: false });
+			const { entries, observed } = await this.conclusive({ reuse: false });
 			if (entries.length === 0) {
 				const [only, ...others] = await this.reactCandidates(observed);
 				if (only !== undefined && others.length === 0) return { ...only.frame };
@@ -369,20 +520,28 @@ export class Locator {
 			);
 		}
 		const timeoutMs = options.timeout ?? this.rt.actionTimeout();
-		const result = await this.rt.poll<true, Observed["snapshot"] | undefined>(async (attempt) => {
+		type Last = { snapshot: Observed["snapshot"]; degraded?: DegradedRead };
+		const result = await this.rt.poll<true, Last | undefined>(async (attempt) => {
 			const observation = await this.rt.tryObserve({ reuse: attempt === 1 });
 			if (!observation.ok) {
 				if (!observation.error.retryable) throw new E2eError("DRIVER", `snapshot failed: ${observation.error.message}`);
 				return { done: false, state: undefined };
 			}
 			const { observed } = observation;
-			const entries = resolve(this.expr, observed.index);
-			const entry = entries.length === 0 ? undefined : this.exactlyOne(entries, observed);
-			return reached(state, entry) ? { done: true, value: true } : { done: false, state: observed.snapshot };
+			const resolved = await this.resolveIn(observed);
+			if (resolved.kind === "unknown")
+				return { done: false, state: { snapshot: observed.snapshot, degraded: resolved.read } };
+			const done =
+				resolved.kind === "react"
+					? reachedByReact(state, reactVisible(this.reactOnly(resolved.matches, observed), observed))
+					: reached(state, resolved.entries.length === 0 ? undefined : this.exactlyOne(resolved.entries, observed));
+			return done ? { done: true, value: true } : { done: false, state: { snapshot: observed.snapshot } };
 		}, timeoutMs);
 		if (result.status === "done") return;
+		const last = result.last;
+		if (last?.degraded !== undefined) throw this.degradedFailure(last.degraded, timeoutMs, last.snapshot);
 		const message = `${this} did not become ${state} within ${timeoutMs} ms`;
-		throw new E2eError("TIMEOUT", message, result.last === undefined ? undefined : this.rt.excerpt(result.last));
+		throw new E2eError("TIMEOUT", message, last === undefined ? undefined : this.rt.excerpt(last.snapshot));
 	}
 
 	// ---- actions: wait for actionability, then act once ----
@@ -436,6 +595,7 @@ export class Locator {
 			);
 		}
 		if (seen?.kind === "driver") throw new E2eError("DRIVER", `snapshot kept failing: ${seen.message}`);
+		if (seen?.kind === "degraded") throw this.degradedFailure(seen.read, timeoutMs, seen.snapshot);
 		throw new E2eError(
 			"LOCATOR_NOT_FOUND",
 			`${this} matched no elements within ${timeoutMs} ms`,
@@ -543,7 +703,7 @@ export class Locator {
 				let before = await this.tapOnce(options);
 				if (retry === undefined) return;
 				for (let resent = 0; resent < retry.retries; resent += 1) {
-					const outcome = await this.arrivedWithin(retry, snapshotHash(before));
+					const outcome = await this.arrivedWithin(retry, before);
 					// a screen that reacted got the press: pressing again would be a second submit or toggle
 					if (outcome !== "press-again") return;
 					before = await this.tapOnce(options);
@@ -554,11 +714,12 @@ export class Locator {
 	}
 
 	/**
-	 * One press; resolves to the snapshot it aimed from (the screen just before the press). A plain tap may aim from the
-	 * kept snapshot (`aimFromKept`); a tap with `until` takes a fresh look, since the screen it aimed from is what the
-	 * checks compare against to tell the press landed, and an older one could differ only because it was older.
+	 * One press; resolves to the snapshot it aimed from (the screen just before the press) and the element pressed (none
+	 * for a match only the React tree knows). A plain tap may aim from the kept snapshot (`aimFromKept`); a tap with
+	 * `until` takes a fresh look, since the screen it aimed from is what the checks compare against to tell the press
+	 * landed, and an older one could differ only because it was older.
 	 */
-	private async tapOnce(options: TapOptions): Promise<Snapshot> {
+	private async tapOnce(options: TapOptions): Promise<AimedFrom> {
 		const withPosition = options.position !== undefined;
 		const spec = { enabled: !withPosition, tapPointOnScreen: !withPosition };
 		const found =
@@ -566,8 +727,17 @@ export class Locator {
 			(await this.actionable(spec, options.timeout ?? this.rt.actionTimeout(), true));
 		const point =
 			"react" in found ? reactTapPoint(found.react, options.position) : tapPointOf(found.entry, options.position);
-		this.rt.drive("tap", await found.observed.driver.tap(point));
-		return found.observed.snapshot;
+		const { driver } = found.observed;
+		// a screen reader changes what a touch means, so a resolved element is pressed through its accessibility action
+		const aimed: AimedFrom = {
+			snapshot: found.observed.snapshot,
+			target: "entry" in found ? found.entry.element : undefined,
+		};
+		if (!withPosition && "entry" in found && canActOnElements(driver)) {
+			if (this.rt.drive("tap", await driver.pressElement(found.entry.element))) return aimed;
+		}
+		this.rt.drive("tap", await driver.tap(point));
+		return aimed;
 	}
 
 	/**
@@ -575,15 +745,21 @@ export class Locator {
 	 * (`driver.tap` returns once the HID press is over, ~85 ms, and an AX read queues behind the app's main thread, so
 	 * that look usually already shows the screen the press made; measured: holding it back to `pollMs` saved no read
 	 * and cost 250 ms a press). A locator is checked on the snapshot of
-	 * the poll itself, which is also compared with `pressedOn` (the hash of the screen the press aimed from): once the
-	 * screen changed the press landed, so it is never sent again (`landed`, even when `until` is late); a screen still
-	 * unchanged on `UNCHANGED_CHECKS` checks in a row from `UNCHANGED_AFTER_MS` on is pressed again at once. A function
+	 * the poll itself, which is also compared with the screen the press aimed from (`reacted`): once the screen reacted
+	 * the press landed, so it is never sent again (`landed`, even when `until` is late); a screen that has not reacted
+	 * on `UNCHANGED_CHECKS` checks in a row from `UNCHANGED_AFTER_MS` on is pressed again at once. A function
 	 * is called with the kept snapshot forgotten (after the first check), so its own reads take one new snapshot
 	 * between them rather than the previous check's; it gets the whole window.
 	 */
-	private async arrivedWithin(plan: RetryPlan, pressedOn: string): Promise<TapOutcome> {
+	private async arrivedWithin(plan: RetryPlan, aimed: AimedFrom): Promise<TapOutcome> {
 		const { until } = plan;
-		const watch: PressWatch = { pressedOn, started: this.rt.clock.now(), changed: false, unchanged: 0 };
+		const watch: PressWatch = {
+			before: new Set(aimed.snapshot.flat.map(elementKey)),
+			target: aimed.target === undefined ? undefined : elementKey(aimed.target),
+			started: this.rt.clock.now(),
+			changed: false,
+			unchanged: 0,
+		};
 		const result = await this.rt.poll<TapOutcome, undefined>(
 			async (attempt) => {
 				if (typeof until !== "function") return this.checkLocatorUntil(until, watch, attempt);
@@ -611,8 +787,8 @@ export class Locator {
 			watch.unchanged = 0;
 			return { done: false, state: undefined };
 		}
-		if (until.visibleIn(observation.observed)) return { done: true, value: "arrived" };
-		if (snapshotHash(observation.observed.snapshot) === watch.pressedOn) watch.unchanged += 1;
+		if (await until.shownIn(observation.observed)) return { done: true, value: "arrived" };
+		if (!reacted(observation.observed.snapshot, watch)) watch.unchanged += 1;
 		else {
 			watch.changed = true;
 			watch.unchanged = 0;
@@ -640,29 +816,43 @@ export class Locator {
 	 * Replaces the content of a text field: focus with the caret at the end, empty it (select all and type over the selection when
 	 * the driver can, nothing for a field that is empty or shows a placeholder), type, then poll until the field holds
 	 * the text on consecutive reads (the accessibility value lags the keys). A mismatch is retried once with one Backspace
-	 * per character and a retype (a field that refuses select-all). Secure fields cannot be read back, so they are not
+	 * per character and a retype (a field that refuses select-all). `via` (default `"type"`) is how the text goes in on
+	 * the first attempt: `"paste"` pastes on iOS (through the simulator pasteboard, which Xcode syncs with the Mac
+	 * clipboard and so with every other sim) and types where the driver cannot paste or the pasteboard write fails; the
+	 * retry always types, so a field that mangles a paste (a mask, a maxLength) still ends up right. Secure fields cannot be read back, so they are not
 	 * verified.
 	 */
-	async fill(text: string, options: ActionOptions = {}): Promise<void> {
-		assertOptions("fill", options, ["timeout"]);
+	async fill(text: string, options: FillOptions = {}): Promise<void> {
+		assertOptions("fill", options, ["via", "timeout"]);
+		const via = fillViaOf(this, options.via);
 		return this.act("fill", async () => {
 			const budget = this.rt.budget(options.timeout);
 			let target = await this.actionable({ enabled: true, tapPointOnScreen: false }, budget.remaining());
+			// decided once: a field that only shows as secure after the first attempt (masked read-back) stays verified
+			const verify = !target.entry.secure;
 			let firstHeld: string | undefined;
 			for (let attempt = 1; ; attempt += 1) {
 				const point = focusPoint(target.entry.element.frame);
 				this.rt.drive(
 					"fill",
-					await focusClearType(target.observed.driver, this.pause, point, target.entry, text, clearMethodFor(attempt))
+					await focusClearType(
+						target.observed.driver,
+						this.pause,
+						point,
+						target.entry,
+						text,
+						clearMethodFor(attempt),
+						process.env,
+						viaFor(attempt, via)
+					)
 				);
-				if (target.entry.secure) return;
+				if (!verify) return;
 				const outcome = await this.confirm(target, text, budget);
 				if (outcome.ok) return;
 				if (attempt === 2) {
-					const earlier = firstHeld === undefined ? "" : ` (first attempt held ${JSON.stringify(firstHeld)})`;
 					throw new E2eError(
 						"ACTION_FAILED",
-						`${this}: fill did not take: expected ${JSON.stringify(text)} but the field holds ${JSON.stringify(outcome.held)}${earlier}`,
+						`${this}: ${fillMismatch(text, target.entry.secure, outcome.held, firstHeld)}`,
 						outcome.screen
 					);
 				}
@@ -731,6 +921,9 @@ export class Locator {
 				{ enabled: false, tapPointOnScreen: false },
 				options.timeout ?? this.rt.actionTimeout()
 			);
+			if (canActOnElements(observed.driver)) {
+				if (this.rt.drive("swipe", await observed.driver.scrollElement(options.direction, entry.element))) return;
+			}
 			const vector = swipeVector(
 				options.direction,
 				visibleRect(entry.element.frame, observed.snapshot.screen),
@@ -806,9 +999,18 @@ export class Locator {
 		observed: Observed,
 		allowReact: boolean
 	): Promise<PollStep<ReactActionable, Seen>> {
-		const found = await this.reactCandidates(observed);
+		const read = degradedRead(observed.snapshot);
+		const testId = plainTestId(this.expr);
+		const lookup = testId === undefined ? undefined : await this.rt.reactLookup(testId, observed);
+		const found = lookup?.answered === true ? lookup.matches : [];
 		const [match, ...others] = found;
-		if (match === undefined) return { done: false, state: { kind: "none", snapshot: observed.snapshot } };
+		if (match === undefined) {
+			// a degraded read the React tree could not settle is not "none": the node may be there
+			if (read !== undefined && lookup?.answered !== true) {
+				return { done: false, state: { kind: "degraded", read, snapshot: observed.snapshot } };
+			}
+			return { done: false, state: { kind: "none", snapshot: observed.snapshot } };
+		}
 		if (!allowReact)
 			return { done: false, state: { kind: "react", snapshot: observed.snapshot, matches: found.length } };
 		if (others.length > 0) {
@@ -853,7 +1055,12 @@ export class Locator {
 	): Promise<{ ok: true } | { ok: false; held: string; screen: string | undefined }> {
 		const span = Math.max(budget.remaining(), CONFIRM_FLOOR_MS);
 		let lastSeen: Observed["snapshot"] | undefined;
-		const readValue = (found: NodeEntry): string => (text === "" ? fieldValue(found) : rawValue(found));
+		// a field not known as secure when the fill started (an empty one on a read without its secure trait) can read
+		// back masked: its bullets are counted against the typed text
+		const readValue = (found: NodeEntry): string => {
+			if (text === "") return fieldValue(found);
+			return found.secure ? maskedReading(found, text) : rawValue(found);
+		};
 		const outcome = await confirmFieldValue<never>({
 			text,
 			now: this.rt.clock.now,
@@ -947,16 +1154,37 @@ type RetryPlan = { until: TapUntil; retries: number; windowMs: number; pollMs: n
 /** How one press's window ended: `until` showed; the screen reacted without it (no second press); or press again. */
 type TapOutcome = "arrived" | "landed" | "press-again";
 
+/** What a press aimed from: the screen just before it and the element pressed (none for a React-only match). */
+type AimedFrom = { snapshot: Snapshot; target: Element | undefined };
+
 /** What the checks after one press have seen of the screen. */
 type PressWatch = {
-	/** hash of the snapshot the press aimed from */
-	pressedOn: string;
+	/** `elementKey` of every node of the snapshot the press aimed from */
+	before: ReadonlySet<string>;
+	/** `elementKey` of the element pressed */
+	target: string | undefined;
 	started: number;
-	/** some check saw a screen other than `pressedOn`: the press landed */
+	/** some check saw the screen react: the press landed */
 	changed: boolean;
-	/** checks in a row that saw `pressedOn` */
+	/** checks in a row that saw no reaction */
 	unchanged: number;
 };
+
+/**
+ * Whether `snapshot` shows a reaction to the press `watch` follows: a node the aimed-from screen did not have (a new
+ * element, or one whose label, value or frame changed), or the pressed element gone. Nodes that only left are not one:
+ * right after a navigation the screen it left and a keyboard going down stay in the tree until the transition ends,
+ * a transition that also drops presses, and their leaving looked like a landed press that was never sent again.
+ */
+function reacted(snapshot: Snapshot, watch: PressWatch): boolean {
+	const now = new Set<string>();
+	for (const element of snapshot.flat) {
+		const key = elementKey(element);
+		if (!watch.before.has(key)) return true;
+		now.add(key);
+	}
+	return watch.target !== undefined && !now.has(watch.target);
+}
 
 function wholeNumber(name: string, value: number, atLeast: number): void {
 	if (!Number.isInteger(value) || value < atLeast) {
@@ -1002,12 +1230,30 @@ function describeUntil(until: TapUntil): string {
 	return typeof until === "function" ? "check" : String(until);
 }
 
+/** The `via` a `fill` asked for (default type); anything but `paste` / `type` is `INVALID_ARGUMENT`. */
+function fillViaOf(locator: Locator, via: FillVia | undefined): FillVia {
+	if (via === undefined || via === "paste" || via === "type") return via ?? "type";
+	throw new E2eError("INVALID_ARGUMENT", `${locator}: fill via must be "paste" or "type", got ${JSON.stringify(via)}`);
+}
+
+/** The first attempt puts the text in as asked; a retry means that did not work, so it types. */
+function viaFor(attempt: number, via: FillVia): FillVia {
+	return attempt === 1 ? via : "type";
+}
+
 /** The first attempt empties a field the quick way; a retry means that did not work, so it presses one Backspace per character. */
 function clearMethodFor(attempt: number): ClearMethod {
 	return attempt === 1 ? "auto" : "counted";
 }
 
 /** What the field shows, placeholder and all (used to compare against what was typed). */
+/** Why a fill failed. A field that reads masked is never quoted the typed text: only its length. */
+function fillMismatch(text: string, secure: boolean, held: string, firstHeld: string | undefined): string {
+	const expected = secure ? `${graphemes(text)} characters (secure)` : JSON.stringify(text);
+	const earlier = firstHeld === undefined ? "" : ` (first attempt held ${JSON.stringify(firstHeld)})`;
+	return `fill did not take: expected ${expected} but the field holds ${JSON.stringify(held)}${earlier}`;
+}
+
 function rawValue(entry: NodeEntry): string {
 	return entry.value ?? (entry.role === "textbox" || entry.role === "searchbox" ? (entry.element.text ?? "") : "");
 }
@@ -1025,6 +1271,20 @@ function reached(state: WaitState, entry: NodeEntry | undefined): boolean {
 	}
 }
 
+/** `reached` for a component only the React tree has: it is attached, and visible when its rect is on screen. */
+function reachedByReact(state: WaitState, visible: boolean): boolean {
+	switch (state) {
+		case "attached":
+			return true;
+		case "detached":
+			return false;
+		case "visible":
+			return visible;
+		case "hidden":
+			return !visible;
+	}
+}
+
 function blockedReason(entry: NodeEntry, spec: ActionSpec, observed: Observed): string | undefined {
 	if (!entry.visible) return "is not visible";
 	if (spec.enabled && entry.states.disabled) return "is disabled";
@@ -1038,9 +1298,32 @@ function isOnScreenEntry(entry: NodeEntry | undefined, observed: Observed): bool
 	return entry?.visible === true && isOnScreen(tapPointOf(entry), observed.snapshot.screen);
 }
 
-function scrollGaveUp(target: Locator, absent: boolean, effort: string, screen: string): E2eError {
+/** Why `scrollUntilVisible` gave up; a target missing from a degraded read is `READ_DEGRADED`, not "not found". */
+function scrollGaveUp(
+	target: Locator,
+	absent: boolean,
+	effort: string,
+	observed: Observed,
+	waitedMs: number
+): E2eError {
+	const read = absent ? degradedRead(observed.snapshot) : undefined;
+	if (read !== undefined) return target.degradedFailure(read, waitedMs, observed.snapshot);
+	const screen = target.runtime.excerpt(observed.snapshot);
 	if (absent) return new E2eError("LOCATOR_NOT_FOUND", `${target} was not found after ${effort}`, screen);
 	return new E2eError("NOT_ACTIONABLE", `${target} is still not on screen after ${effort}`, screen);
+}
+
+/** One scroll step toward `scrollUntilVisible`'s target: the driver's own element scroll when it has one, else a swipe. */
+async function scrollOnce(
+	rt: Runtime,
+	observed: Awaited<ReturnType<Runtime["observe"]>>,
+	direction: NonNullable<ScrollOptions["direction"]>,
+	momentum: ScrollOptions["momentum"]
+): Promise<void> {
+	const vector = swipeVector(direction, screenRect(observed.snapshot.screen), momentum);
+	const scrolled =
+		canActOnElements(observed.driver) && rt.drive("scrollUntilVisible", await observed.driver.scrollElement(direction));
+	if (!scrolled) rt.drive("scrollUntilVisible", await observed.driver.swipe(vector.from, vector.to, vector.options));
 }
 
 /**
@@ -1063,10 +1346,10 @@ export async function scrollUntilVisible(rt: Runtime, target: Locator, options: 
 			const [entry] = entries;
 			if (isOnScreenEntry(entry, observed)) return;
 			if (swipes >= maxSwipes || budget.remaining() <= 0) {
-				throw scrollGaveUp(target, entry === undefined, `${swipes} swipes ${direction}`, rt.excerpt(observed.snapshot));
+				const effort = `${swipes} swipes ${direction}`;
+				throw scrollGaveUp(target, entry === undefined, effort, observed, budget.total);
 			}
-			const vector = swipeVector(direction, screenRect(observed.snapshot.screen), options.momentum);
-			rt.drive("scrollUntilVisible", await observed.driver.swipe(vector.from, vector.to, vector.options));
+			await scrollOnce(rt, observed, direction, options.momentum);
 			await observed.driver.settle(SCROLL_SETTLE);
 		}
 	});

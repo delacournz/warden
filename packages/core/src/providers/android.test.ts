@@ -3,24 +3,36 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { err, ok } from "@delacour/warden-types/result";
+import { STAY_AWAKE_COMMAND, SYSTEMUI_RESTART_COMMAND, unlockCommand } from "../android-keyguard";
 import { claimDevices } from "../claim";
 import { DEFAULT_TTL_MS } from "../config.defaults";
 import type { Exec, ExecOptions, ExecResult } from "../exec";
 import { openStore, type Store } from "../store";
-import type { Owner } from "../types";
+import type { InventoryDevice, Owner } from "../types";
 import {
 	androidTools,
 	BOOT_WAIT_SCRIPT,
 	bootSettingsCommand,
+	classifyOther,
 	createAndroidProvider,
 	listAvds,
+	PHONE_PROBE_SCRIPT,
+	parseAdbDeviceList,
 	parseAdbDevices,
 	parseAvdList,
 	pickConsolePort,
 	type SpawnDetached,
 	snapshotLoadFailed,
 } from "./android";
-import { ADB_DEVICES_EMPTY, ADB_DEVICES_MIXED, EMU_AVD_NAME_PIXEL_10, EMULATOR_LIST_AVDS } from "./android.fixtures";
+import {
+	ADB_DEVICES_EMPTY,
+	ADB_DEVICES_MIXED,
+	ADB_DEVICES_STATES,
+	EMU_AVD_NAME_PIXEL_10,
+	EMULATOR_LIST_AVDS,
+	EMULATOR_PROPS,
+	PHONE_PROPS,
+} from "./android.fixtures";
 import type { ProviderDeps } from "./provider.types";
 
 const SDK = "/sdk";
@@ -133,9 +145,10 @@ describe("pickConsolePort", () => {
 });
 
 describe("inventory", () => {
-	test("emulators with AVD name, profile, runtime; physical devices ignored", async () => {
+	test("emulators with AVD name, profile, runtime; the phone is listed with physical info and no emu call", async () => {
 		const { exec, calls } = fakeExec({
 			[`${ADB} devices -l`]: out(ADB_DEVICES_MIXED),
+			[`${ADB} -s R5CT1234ABC shell ${PHONE_PROBE_SCRIPT}`]: out(PHONE_PROPS),
 			[`${ADB} -s emulator-5554 emu avd name`]: out(EMU_AVD_NAME_PIXEL_10),
 			[`${ADB} -s emulator-5554 shell getprop ro.build.version.sdk`]: out("35\n"),
 			[`${ADB} -s emulator-5556 emu avd name`]: out("Pixel_9_Pro_Store\nOK\n"),
@@ -160,22 +173,39 @@ describe("inventory", () => {
 					wardenCreated: false,
 					profile: "pixel-9-pro-store",
 				},
+				{
+					platform: "android",
+					id: "R5CT1234ABC",
+					name: "SM-A546E",
+					state: "booted",
+					wardenCreated: false,
+					profile: "sm-a546e",
+					runtime: "android-34",
+					physical: {
+						platform: "android",
+						transport: "usb",
+						adbState: "device",
+						hwSerial: "R5CT1234ABC",
+						model: "SM-A546E",
+					},
+				},
 			])
 		);
-		expect(calls.some((c) => c.includes("R5CT1234ABC"))).toBe(false);
+		expect(calls.some((c) => c.includes("R5CT1234ABC") && c.includes(" emu "))).toBe(false);
 	});
 
 	test("warden-launched emulators use the recorded warden name", async () => {
 		store.recordDevice({ platform: "android", id: "emulator-5554", name: "warden-pixel-10-1", profile: "pixel-10" }, 1);
 		const { exec } = fakeExec({
 			[`${ADB} devices -l`]: out(ADB_DEVICES_MIXED),
+			[`${ADB} -s R5CT1234ABC shell ${PHONE_PROBE_SCRIPT}`]: out(PHONE_PROPS),
 			[`${ADB} -s emulator-5554 emu avd name`]: out(EMU_AVD_NAME_PIXEL_10),
 			[`${ADB} -s emulator-5554 shell getprop ro.build.version.sdk`]: out("35\n"),
 			[`${ADB} -s emulator-5556 emu avd name`]: fail("error: device offline"),
 		});
 		const result = await createAndroidProvider(deps(exec)).inventory();
 		if (!result.success) throw new Error(result.error);
-		expect(result.data.map((d) => d.name)).toEqual(["warden-pixel-10-1", "emulator-5556"]);
+		expect(result.data.map((d) => d.name)).toEqual(["warden-pixel-10-1", "emulator-5556", "SM-A546E"]);
 		expect(result.data[0]?.wardenCreated).toBe(false);
 	});
 
@@ -212,13 +242,14 @@ describe("inventory", () => {
 		);
 		const { exec } = fakeExec({
 			[`${ADB} devices -l`]: out(ADB_DEVICES_MIXED),
+			[`${ADB} -s R5CT1234ABC shell ${PHONE_PROBE_SCRIPT}`]: out(PHONE_PROPS),
 			[`${ADB} -s emulator-5554 emu avd name`]: out(EMU_AVD_NAME_PIXEL_10),
 			[`${ADB} -s emulator-5554 shell getprop ro.build.version.sdk`]: out("35\n"),
 			[`${ADB} -s emulator-5556 emu avd name`]: out("Pixel_9_Pro_Store\nOK\n"),
 		});
 		const result = await createAndroidProvider(deps(exec)).inventory();
 		if (!result.success) throw new Error(result.error);
-		expect(result.data.map((d) => d.golden === true)).toEqual([true, false]);
+		expect(result.data.map((d) => d.golden === true)).toEqual([true, false, false]);
 	});
 
 	test("adb failure → err", async () => {
@@ -639,7 +670,121 @@ describe("waitReady", () => {
 		const { exec, calls } = fakeExec({ [WAIT]: out(""), [settings]: out("") });
 		const provider = createAndroidProvider(deps(exec), { sleep: async () => {} });
 		expect(await provider.waitReady("emulator-5554", 60_000)).toEqual(ok(undefined));
-		expect(calls).toEqual([WAIT, settings]);
+		expect(calls).toEqual([WAIT, settings, `${ADB} -s emulator-5554 shell dumpsys window`]);
+	});
+
+	const BIO_STATE = `${ADB} -s emulator-5554 get-state`;
+	const BIO_PM = `${ADB} -s emulator-5554 shell pm path android`;
+	const BIO_DUMP = `${ADB} -s emulator-5554 shell dumpsys window`;
+	const BIO_UNLOCK = `${ADB} -s emulator-5554 shell ${unlockCommand()}`;
+	const BIO_AWAKE = `${ADB} -s emulator-5554 shell ${STAY_AWAKE_COMMAND}`;
+	const BIO_KILL = `${ADB} -s emulator-5554 emu kill`;
+
+	/** a +bio emulator created by this provider, its adb answers from `handlers` */
+	async function bioProvider(handlers: Record<string, Handler>) {
+		const settings = `${ADB} -s emulator-5554 shell ${bootSettingsCommand()}`;
+		const fake = fakeExec({
+			[`${EMULATOR} -list-avds`]: out(EMULATOR_LIST_AVDS),
+			[`${ADB} devices -l`]: out(ADB_DEVICES_EMPTY),
+			[WAIT]: out(""),
+			[settings]: out(""),
+			[BIO_STATE]: out("device\n"),
+			[BIO_PM]: out("package:/system/framework/framework-res.apk\n"),
+			...handlers,
+		});
+		const spawn: SpawnDetached = async () => ok({ pid: 4242 });
+		const snapshot = async () => ok("warden-0123456789");
+		const provider = createAndroidProvider(deps(fake.exec), {
+			sleep: async () => {},
+			pidAlive: () => true,
+			spawnDetached: spawn,
+			snapshot,
+		});
+		expect((await provider.create("w", "pixel-10+bio")).success).toBe(true);
+		return { provider, ...fake };
+	}
+
+	test("a biometrics emulator waits for adb + the package manager, gets past the keyguard, then re-checks", async () => {
+		let dumps = 0;
+		const { provider, calls } = await bioProvider({
+			[BIO_DUMP]: () => out(++dumps === 1 ? "isKeyguardShowing=true" : "isKeyguardShowing=false"),
+			[BIO_UNLOCK]: out(""),
+			[BIO_AWAKE]: out(""),
+		});
+		expect(await provider.waitReady("emulator-5554", 60_000)).toEqual(ok(undefined));
+		const order = [BIO_STATE, BIO_PM, BIO_DUMP, BIO_UNLOCK, BIO_DUMP, BIO_AWAKE, BIO_STATE, BIO_PM];
+		expect(calls.filter((c) => order.includes(c))).toEqual(order);
+		expect(calls).not.toContain(BIO_KILL);
+	});
+
+	test("a plain emulator is not unlocked", async () => {
+		const wait = `${ADB} -s emulator-5560 wait-for-device shell ${BOOT_WAIT_SCRIPT}`;
+		const plainSettings = `${ADB} -s emulator-5560 shell ${bootSettingsCommand()}`;
+		const plain = fakeExec({ [wait]: out(""), [plainSettings]: out("") });
+		const other = createAndroidProvider(deps(plain.exec), { sleep: async () => {} });
+		expect(await other.waitReady("emulator-5560", 60_000)).toEqual(ok(undefined));
+		expect(plain.calls).toEqual([wait, plainSettings, `${ADB} -s emulator-5560 shell dumpsys window`]);
+		expect(plain.calls.some((c) => c.includes("input"))).toBe(false);
+	});
+
+	test("a plain emulator restored behind the lock screen is unlocked (the app cannot resolve its launcher otherwise)", async () => {
+		let dumps = 0;
+		const wait = `${ADB} -s emulator-5560 wait-for-device shell ${BOOT_WAIT_SCRIPT}`;
+		const plainSettings = `${ADB} -s emulator-5560 shell ${bootSettingsCommand()}`;
+		const dump = `${ADB} -s emulator-5560 shell dumpsys window`;
+		const unlock = `${ADB} -s emulator-5560 shell ${unlockCommand()}`;
+		const awake = `${ADB} -s emulator-5560 shell ${STAY_AWAKE_COMMAND}`;
+		const plain = fakeExec({
+			[wait]: out(""),
+			[plainSettings]: out(""),
+			[dump]: () => out(++dumps <= 2 ? "isKeyguardShowing=true" : "isKeyguardShowing=false"),
+			[unlock]: out(""),
+			[awake]: out(""),
+		});
+		const other = createAndroidProvider(deps(plain.exec), { sleep: async () => {} });
+		expect(await other.waitReady("emulator-5560", 60_000)).toEqual(ok(undefined));
+		expect(plain.calls).toContain(unlock);
+		expect(plain.calls).toContain(awake);
+	});
+
+	test("a plain emulator that stays locked is still ready, never discarded", async () => {
+		const wait = `${ADB} -s emulator-5560 wait-for-device shell ${BOOT_WAIT_SCRIPT}`;
+		const plain = fakeExec({
+			[wait]: out(""),
+			[`${ADB} -s emulator-5560 shell ${bootSettingsCommand()}`]: out(""),
+			[`${ADB} -s emulator-5560 shell dumpsys window`]: out("isKeyguardShowing=true"),
+		});
+		const other = createAndroidProvider(deps(plain.exec), { sleep: async () => {} });
+		expect(await other.waitReady("emulator-5560", 60_000)).toEqual(ok(undefined));
+		expect(plain.calls.some((c) => c.includes("emu kill"))).toBe(false);
+	});
+
+	test("a biometrics emulator stuck on its keyguard fails readiness and is shut down, not left locked", async () => {
+		const { provider, calls } = await bioProvider({
+			[BIO_DUMP]: out("isKeyguardShowing=true"),
+			[BIO_UNLOCK]: out(""),
+			[`${ADB} -s emulator-5554 shell ${SYSTEMUI_RESTART_COMMAND}`]: out(""),
+			[BIO_KILL]: out(""),
+			[`${ADB} devices -l`]: out(ADB_DEVICES_EMPTY),
+		});
+		const result = await provider.waitReady("emulator-5554", 60_000);
+		expect(result.success).toBe(false);
+		if (!result.success) expect(result.error).toContain("keyguard");
+		expect(calls).toContain(BIO_KILL);
+		expect(store.listDevices("android")).toEqual([]);
+	});
+
+	test("a foreign emulator that fails readiness is never shut down", async () => {
+		const wait = `${ADB} -s emulator-5562 wait-for-device shell ${BOOT_WAIT_SCRIPT}`;
+		const { exec, calls } = fakeExec({
+			[wait]: fail("error: closed"),
+			[`${ADB} -s emulator-5562 wait-for-device`]: out(""),
+			[`${ADB} -s emulator-5562 shell getprop sys.boot_completed`]: out("0\n"),
+		});
+		const clock = fakeClock();
+		const provider = createAndroidProvider(deps(exec, clock.now), { sleep: clock.sleep, pollIntervalMs: 1_000 });
+		expect((await provider.waitReady("emulator-5562", 3_000)).success).toBe(false);
+		expect(calls.some((c) => c.includes("emu kill"))).toBe(false);
 	});
 
 	test("a failing settings put does not fail readiness", async () => {
@@ -730,10 +875,16 @@ describe("bootSettingsCommand", () => {
 
 describe("shutdown", () => {
 	test("refuses to kill a foreign emulator", async () => {
-		const { exec, calls } = fakeExec({});
+		const { exec, calls } = fakeExec({ [`${ADB} devices -l`]: out(ADB_DEVICES_MIXED) });
 		const result = await createAndroidProvider(deps(exec)).shutdown("emulator-5554");
 		expect(result).toEqual(err("refusing to shut down foreign emulator emulator-5554"));
-		expect(calls).toHaveLength(0);
+		expect(calls).toEqual([`${ADB} devices -l`]);
+	});
+
+	test("an emulator that is neither recorded nor running is already shut down", async () => {
+		const { exec, calls } = fakeExec({ [`${ADB} devices -l`]: out(ADB_DEVICES_EMPTY) });
+		expect(await createAndroidProvider(deps(exec)).shutdown("emulator-5554")).toEqual(ok(undefined));
+		expect(calls).toEqual([`${ADB} devices -l`]);
 	});
 
 	test("kills a warden emulator, releases its port lease, forgets the device", async () => {
@@ -776,5 +927,313 @@ describe("shutdown", () => {
 		expect(await createAndroidProvider(deps(exec)).shutdown("emulator-5570")).toEqual(ok(undefined));
 		expect(store.listLeases()).toHaveLength(0);
 		expect(store.listDevices("android")).toHaveLength(0);
+	});
+});
+
+describe("parseAdbDeviceList", () => {
+	test("classifies emulators and everything else, with multi-word states and transports", () => {
+		const entries = parseAdbDeviceList(ADB_DEVICES_STATES);
+		expect(entries).toEqual([
+			{
+				kind: "other",
+				serial: "R5CT1234ABC",
+				state: "device",
+				transport: "usb",
+				model: "SM_A546E",
+				product: "a54xnaeea",
+			},
+			{ kind: "other", serial: "0123456789ABCDEF", state: "unauthorized", transport: "usb" },
+			{ kind: "other", serial: "FA7AB1234567", state: "no permissions", transport: "usb" },
+			{
+				kind: "other",
+				serial: "192.168.1.20:5555",
+				state: "device",
+				transport: "wifi",
+				model: "Pixel_8_Pro",
+				product: "husky",
+			},
+			{
+				kind: "other",
+				serial: "adb-R5CT9999-abcdef._adb-tls-connect._tcp",
+				state: "device",
+				transport: "wifi",
+				model: "SM_S901",
+				product: "b",
+			},
+			{
+				kind: "other",
+				serial: "localhost:5555",
+				state: "device",
+				transport: "wifi",
+				model: "Genymotion",
+				product: "vbox86p",
+			},
+			{ kind: "other", serial: "ZY22OFFLINE", state: "offline", transport: "usb" },
+			{ kind: "other", serial: "HEADROOM1", state: "recovery", transport: "usb" },
+			{ kind: "emulator", serial: "emulator-5554", port: 5554, state: "device" },
+		]);
+	});
+
+	test("parseAdbDevices stays emulator-only", () => {
+		expect(parseAdbDevices(ADB_DEVICES_STATES)).toEqual([{ serial: "emulator-5554", port: 5554, state: "device" }]);
+	});
+
+	test("skips the header, daemon noise and blank lines", () => {
+		const text =
+			"* daemon not running; starting now at tcp:5037\n* daemon started successfully\nList of devices attached\n\n";
+		expect(parseAdbDeviceList(text)).toEqual([]);
+	});
+});
+
+describe("classifyOther", () => {
+	test("one bounded shell reads qemu props, serial, model, sdk; a real phone is not an emulator", async () => {
+		const { exec, calls, options } = fakeExec({
+			[`${ADB} -s R5CT1234ABC shell ${PHONE_PROBE_SCRIPT}`]: out(PHONE_PROPS),
+		});
+		const result = await classifyOther(deps(exec), "R5CT1234ABC");
+		expect(result).toEqual(ok({ emulator: false, hwSerial: "R5CT1234ABC", model: "SM-A546E", sdk: "34" }));
+		expect(calls).toHaveLength(1);
+		expect(options.get(calls[0] ?? "")?.timeoutMs).toBe(5_000);
+	});
+
+	test("qemu=1 (Genymotion, localhost:5555) is a foreign emulator", async () => {
+		const { exec } = fakeExec({ [`${ADB} -s localhost:5555 shell ${PHONE_PROBE_SCRIPT}`]: out(EMULATOR_PROPS) });
+		const result = await classifyOther(deps(exec), "localhost:5555");
+		expect(result.success && result.data.emulator).toBe(true);
+	});
+
+	test("a failed read is an error, never a guess", async () => {
+		const { exec } = fakeExec({});
+		expect((await classifyOther(deps(exec), "X")).success).toBe(false);
+	});
+});
+
+function adbStateOf(device: InventoryDevice | undefined): string | undefined {
+	const physical = device?.physical;
+	return physical?.platform === "android" ? physical.adbState : undefined;
+}
+
+describe("physical phones", () => {
+	const PHONE = "R5CT1234ABC";
+	const phoneHandlers = (extra: Record<string, Handler> = {}): Record<string, Handler> => ({
+		[`${ADB} devices -l`]: out(ADB_DEVICES_STATES),
+		[`${ADB} -s ${PHONE} shell ${PHONE_PROBE_SCRIPT}`]: out(PHONE_PROPS),
+		[`${ADB} -s 192.168.1.20:5555 shell ${PHONE_PROBE_SCRIPT}`]: out("\n\nWIFI1\nPixel 8 Pro\n35\n"),
+		[`${ADB} -s adb-R5CT9999-abcdef._adb-tls-connect._tcp shell ${PHONE_PROBE_SCRIPT}`]:
+			out("\n\nR5CT9999\nSM-S901\n33\n"),
+		[`${ADB} -s localhost:5555 shell ${PHONE_PROBE_SCRIPT}`]: out(EMULATOR_PROPS),
+		[`${ADB} -s emulator-5554 emu avd name`]: out(EMU_AVD_NAME_PIXEL_10),
+		[`${ADB} -s emulator-5554 shell getprop ro.build.version.sdk`]: out("35\n"),
+		...extra,
+	});
+
+	test("inventory lists phones per adb state; non-ready ones are booting; a network emulator is not physical", async () => {
+		const { exec, calls } = fakeExec(phoneHandlers());
+		const result = await createAndroidProvider(deps(exec)).inventory();
+		if (!result.success) throw new Error(result.error);
+		const byId = new Map(result.data.map((d) => [d.id, d]));
+		expect(byId.get(PHONE)?.state).toBe("booted");
+		expect(byId.get(PHONE)?.physical).toEqual({
+			platform: "android",
+			transport: "usb",
+			adbState: "device",
+			hwSerial: PHONE,
+			model: "SM-A546E",
+		});
+		expect(byId.get("0123456789ABCDEF")).toMatchObject({
+			state: "booting",
+			physical: { adbState: "unauthorized", transport: "usb" },
+		});
+		expect(adbStateOf(byId.get("FA7AB1234567"))).toBe("no permissions");
+		expect(adbStateOf(byId.get("ZY22OFFLINE"))).toBe("offline");
+		expect(byId.get("192.168.1.20:5555")).toMatchObject({
+			name: "Pixel 8 Pro",
+			physical: { transport: "wifi" },
+			runtime: "android-35",
+		});
+		expect(byId.get("adb-R5CT9999-abcdef._adb-tls-connect._tcp")?.physical?.transport).toBe("wifi");
+		expect(byId.get("localhost:5555")?.physical).toBeUndefined();
+		expect(byId.get("localhost:5555")?.wardenCreated).toBe(false);
+		expect(byId.get("emulator-5554")?.physical).toBeUndefined();
+		// unauthorized/offline phones cannot answer getprop: never asked
+		expect(calls.some((c) => c.includes("0123456789ABCDEF shell"))).toBe(false);
+		expect(calls.some((c) => c.includes("ZY22OFFLINE shell"))).toBe(false);
+	});
+
+	test("boot refuses a phone; an unauthorized one says to accept the USB debugging prompt", async () => {
+		const { exec } = fakeExec(phoneHandlers());
+		const provider = createAndroidProvider(deps(exec));
+		const unauthorized = await provider.boot("0123456789ABCDEF");
+		expect(!unauthorized.success && unauthorized.error).toContain("USB debugging prompt");
+		const ready = await provider.boot(PHONE);
+		expect(ready.success).toBe(false);
+	});
+
+	test("shutdown refuses a phone, even one recorded as a warden device", async () => {
+		store.recordDevice({ platform: "android", id: PHONE, name: "x" }, 1);
+		const { exec, calls } = fakeExec(phoneHandlers());
+		const result = await createAndroidProvider(deps(exec)).shutdown(PHONE);
+		expect(!result.success && result.error).toContain("physical");
+		expect(calls.filter((c) => c.includes(PHONE))).toEqual([]);
+	});
+
+	test("waitReady waits for boot_completed and never applies BOOT_SETTINGS; verifyWarm is one getprop", async () => {
+		const { exec, calls } = fakeExec(
+			phoneHandlers({
+				[`${ADB} -s ${PHONE} wait-for-device shell ${BOOT_WAIT_SCRIPT}`]: out(""),
+				[`${ADB} -s ${PHONE} shell getprop sys.boot_completed`]: out("1\n"),
+			})
+		);
+		const provider = createAndroidProvider(deps(exec));
+		expect((await provider.waitReady(PHONE, 5_000)).success).toBe(true);
+		expect(await provider.verifyWarm?.(PHONE)).toEqual(ok(undefined));
+		expect(calls.some((c) => c.includes("settings put"))).toBe(false);
+	});
+
+	test("verifyWarm fails (full path) when the phone is not booted, and for emulators", async () => {
+		const { exec } = fakeExec(phoneHandlers({ [`${ADB} -s ${PHONE} shell getprop sys.boot_completed`]: out("\n") }));
+		const provider = createAndroidProvider(deps(exec));
+		expect((await provider.verifyWarm?.(PHONE))?.success).toBe(false);
+		expect((await provider.verifyWarm?.("emulator-5554"))?.success).toBe(false);
+	});
+
+	test("no emu, settings put global package_verifier*, or kill argv ever reaches a phone serial", async () => {
+		const phones = [PHONE, "0123456789ABCDEF", "192.168.1.20:5555", "ZY22OFFLINE"];
+		const { exec, calls } = fakeExec(
+			phoneHandlers({
+				[`${ADB} -s ${PHONE} wait-for-device shell ${BOOT_WAIT_SCRIPT}`]: out(""),
+				[`${ADB} -s ${PHONE} shell getprop sys.boot_completed`]: out("1\n"),
+			})
+		);
+		const provider = createAndroidProvider(deps(exec));
+		await provider.inventory();
+		for (const id of phones) {
+			await provider.boot(id);
+			await provider.shutdown(id);
+		}
+		await provider.waitReady(PHONE, 1_000);
+		await provider.verifyWarm?.(PHONE);
+		const toPhones = calls.filter((c) => phones.some((id) => c.includes(` ${id} `) || c.endsWith(` ${id}`)));
+		expect(toPhones.length).toBeGreaterThan(0);
+		for (const call of toPhones) {
+			expect(call).not.toMatch(/\bemu\b|package_verifier|verifier_verify|settings put|kill/);
+		}
+	});
+});
+
+describe("camera emulator", () => {
+	const CAM = "pixel-10+cam";
+	const camDir = () => join(dir, "camera", "emulator-5554");
+
+	function spawnRecorder(): { spawn: SpawnDetached; spawned: (readonly string[])[] } {
+		const spawned: (readonly string[])[] = [];
+		return {
+			spawned,
+			spawn: async (cmd) => {
+				spawned.push(cmd);
+				return ok({ pid: 4242 });
+			},
+		};
+	}
+
+	test("create launches both cameras on the grey placeholders, cold, with no VideoPlayback", async () => {
+		const { exec } = fakeExec({
+			[`${EMULATOR} -list-avds`]: out(EMULATOR_LIST_AVDS),
+			[`${ADB} devices -l`]: out(ADB_DEVICES_EMPTY),
+		});
+		const { spawn, spawned } = spawnRecorder();
+		await createAndroidProvider(deps(exec), { spawnDetached: spawn }).create("w", CAM);
+		const argv = spawned[0] ?? [];
+		expect(argv).toContain("-no-snapshot-load");
+		expect(argv).toContain(`imagefile:${camDir()}/back.png`);
+		expect(argv).toContain(`imagefile:${camDir()}/front.png`);
+		expect(argv).not.toContain("VideoPlayback");
+	});
+
+	test("a new device ignores feeds and a video mode a previous emulator on its port left behind", async () => {
+		mkdirSync(camDir(), { recursive: true });
+		writeFileSync(join(camDir(), "mode.json"), JSON.stringify({ back: "back.mp4" }));
+		const { exec } = fakeExec({
+			[`${EMULATOR} -list-avds`]: out(EMULATOR_LIST_AVDS),
+			[`${ADB} devices -l`]: out(ADB_DEVICES_EMPTY),
+		});
+		const { spawn, spawned } = spawnRecorder();
+		await createAndroidProvider(deps(exec), { spawnDetached: spawn }).create("w", CAM);
+		const argv = spawned[0] ?? [];
+		expect(argv).not.toContain("VideoPlayback");
+		expect(argv[argv.indexOf("-camera-back") + 1]).toBe(`imagefile:${camDir()}/back.png`);
+	});
+
+	describe("relaunch", () => {
+		function recordCam(profile: string = CAM): void {
+			store.recordDevice({ platform: "android", id: "emulator-5554", name: "w", profile }, 1);
+			store.insertLease({ resource: { kind: "port", port: 5554 }, owner, ttlMs: 1, label: "emulator w" }, 1);
+		}
+
+		/** `adb devices -l` lists the emulator until `emu kill` ran, then not. */
+		function killableExec(): { exec: Exec; calls: string[] } {
+			let up = true;
+			return fakeExec({
+				[`${EMULATOR} -list-avds`]: out(EMULATOR_LIST_AVDS),
+				[`${ADB} -s emulator-5554 emu kill`]: () => {
+					up = false;
+					return out("OK: killing emulator, bye bye\n");
+				},
+				[`${ADB} devices -l`]: () => out(up ? ADB_DEVICES_MIXED : ADB_DEVICES_EMPTY),
+			});
+		}
+
+		test("kills the emulator and launches the same serial / port again from the recorded mode, keeping lease and device", async () => {
+			recordCam();
+			mkdirSync(camDir(), { recursive: true });
+			writeFileSync(join(camDir(), "mode.json"), JSON.stringify({ front: "front.mov" }));
+			const { exec, calls } = killableExec();
+			const { spawn, spawned } = spawnRecorder();
+			const provider = createAndroidProvider(deps(exec), { spawnDetached: spawn, sleep: async () => {} });
+			expect(await provider.relaunch?.("emulator-5554")).toEqual(ok(undefined));
+			expect(calls).toContain(`${ADB} -s emulator-5554 emu kill`);
+			const argv = spawned[0] ?? [];
+			expect(argv.slice(argv.indexOf("-port"), argv.indexOf("-port") + 2)).toEqual(["-port", "5554"]);
+			expect(argv[argv.indexOf("-camera-front") + 1]).toBe(`videofile:${camDir()}/front.mov`);
+			expect(argv).toContain("VideoPlayback");
+			expect(store.listDevices("android").map((d) => d.id)).toEqual(["emulator-5554"]);
+			expect(store.findLeaseByResource({ kind: "port", port: 5554 })).toBeDefined();
+		});
+
+		test("refuses a foreign emulator and a device that is not a camera emulator, killing nothing", async () => {
+			const { exec, calls } = killableExec();
+			const provider = createAndroidProvider(deps(exec), {
+				spawnDetached: spawnRecorder().spawn,
+				sleep: async () => {},
+			});
+			expect((await provider.relaunch?.("emulator-5554"))?.success).toBe(false);
+			recordCam("pixel-10");
+			const plain = await provider.relaunch?.("emulator-5554");
+			expect(plain?.success === false && plain.error).toMatch(/not a camera emulator/);
+			expect(calls.some((c) => c.includes("emu kill"))).toBe(false);
+		});
+
+		test("an emulator that never goes away is an error and nothing is launched", async () => {
+			recordCam();
+			const { exec } = fakeExec({
+				[`${EMULATOR} -list-avds`]: out(EMULATOR_LIST_AVDS),
+				[`${ADB} -s emulator-5554 emu kill`]: out("OK\n"),
+				[`${ADB} devices -l`]: out(ADB_DEVICES_MIXED),
+			});
+			const { spawn, spawned } = spawnRecorder();
+			let t = 0;
+			const provider = createAndroidProvider(
+				deps(exec, () => t),
+				{
+					spawnDetached: spawn,
+					sleep: async (ms) => {
+						t += ms;
+					},
+				}
+			);
+			const result = await provider.relaunch?.("emulator-5554");
+			expect(result?.success).toBe(false);
+			expect(spawned).toHaveLength(0);
+		});
 	});
 });

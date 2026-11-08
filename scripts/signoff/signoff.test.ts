@@ -11,6 +11,7 @@ import {
 	parseTurboSummary,
 	renderReport,
 	signoffArgv,
+	turboCacheEnv,
 	turboTaskName,
 	umbrellaEarned,
 } from "./signoff";
@@ -19,6 +20,7 @@ import {
 	applyFilters,
 	planChecks,
 	REQUIRED_CONTEXTS,
+	RUNNER_BUILD_ARGV,
 	SIGNOFF_CHECKS,
 	UMBRELLA_CONTEXT,
 } from "./signoff-checks";
@@ -47,6 +49,22 @@ describe("planChecks", () => {
 
 	test("a warden-simd change runs the native check", () => {
 		expect(applicable(["packages/e2e/native/ios/Sources/WardenSimd/main.swift"])).toContain("native");
+	});
+
+	test("a warden-runner change runs the native check", () => {
+		expect(applicable(["packages/e2e/native/ios-runner/RunnerTests/XCUIExecutor.swift"])).toContain("native");
+		expect(applicable(["packages/e2e/native/ios-runner/WardenRunner.xcodeproj/project.pbxproj"])).toContain("native");
+		expect(applicable(["packages/e2e/native/ios-runner/RunnerCore/Sources/RunnerCore/Command.swift"])).toContain(
+			"native"
+		);
+	});
+
+	test("the native check runs RunnerCore's tests and the unsigned runner build", () => {
+		const native = SIGNOFF_CHECKS.find((check) => check.context === "native");
+		const argvs = native?.run.map((command) => command.argv.join(" "));
+		expect(argvs).toContain("swift test --package-path packages/e2e/native/ios-runner/RunnerCore");
+		expect(argvs).toContain(RUNNER_BUILD_ARGV.join(" "));
+		expect(RUNNER_BUILD_ARGV).toContain("CODE_SIGNING_ALLOWED=NO");
 	});
 
 	test("a TypeScript change outside native/ does not run the native check", () => {
@@ -111,7 +129,7 @@ describe("cpu-guard check", () => {
 	function candidate(cpu: number): string {
 		const dir = mkdtempSync(join(tmpdir(), "cpu-guard-"));
 		const file = join(dir, "candidate.json");
-		const frameworks = [{ framework: "warden", cpuSecondsPerRep: cpu, rssPeakBytes: 184_721_408 }];
+		const frameworks = [{ framework: "warden", cpuSecondsPerRep: cpu, rssPeakBytes: 170_000_000 }];
 		writeFileSync(
 			file,
 			JSON.stringify({ baselineVersion: 1, id: "cand", startedAt: "2026-10-26T00:00:00Z", platform: "ios", frameworks })
@@ -133,12 +151,12 @@ describe("cpu-guard check", () => {
 	});
 
 	test("compares the run dir with the baseline when it exists", async () => {
-		const ok = await runGuard({ WARDEN_BENCH_RUN_DIR: candidate(3.9) });
+		const ok = await runGuard({ WARDEN_BENCH_RUN_DIR: candidate(3.0) });
 		expect(ok.code).toBe(0);
-		expect(ok.out).toContain("ok: warden cpu-s/rep 3.79 → 3.90");
+		expect(ok.out).toContain("ok: warden cpu-s/rep 2.97 → 3.00");
 		const slow = await runGuard({ WARDEN_BENCH_RUN_DIR: candidate(12) });
 		expect(slow.code).toBe(1);
-		expect(slow.out).toContain("regression: warden cpu-s/rep 3.79 → 12.00 (+216.6 %) exceeds 10 %");
+		expect(slow.out).toContain("regression: warden cpu-s/rep 2.97 → 12.00 (+304.0 %) exceeds 10 %");
 	});
 });
 
@@ -488,6 +506,14 @@ describe("drift guard", () => {
 		expect(scripts).toMatch(new RegExp(`^post ${UMBRELLA_CONTEXT}$`, "m"));
 	});
 
+	test("the ci.yml native job runs the same warden-runner commands as the local check", async () => {
+		const steps = ((await ciWorkflow()).jobs.native?.steps ?? []).map((step) =>
+			(step.run ?? "").replace(/\s+/g, " ").trim()
+		);
+		expect(steps).toContain("swift test --package-path packages/e2e/native/ios-runner/RunnerCore");
+		expect(steps).toContain(RUNNER_BUILD_ARGV.join(" "));
+	});
+
 	test("no check declares an empty command", () => {
 		for (const check of SIGNOFF_CHECKS) {
 			expect(check.run.length).toBeGreaterThan(0);
@@ -498,5 +524,27 @@ describe("drift guard", () => {
 	test("contexts are unique", () => {
 		const contexts = SIGNOFF_CHECKS.map((check) => check.context);
 		expect(new Set(contexts).size).toBe(contexts.length);
+	});
+});
+
+describe("turboCacheEnv", () => {
+	test("points TURBO_CACHE_DIR at turbo-cache inside the git common dir, so every worktree shares one", () => {
+		const env = turboCacheEnv({ PATH: "/bin" }, "/repo/.git");
+		expect(env.TURBO_CACHE_DIR).toBe("/repo/.git/turbo-cache");
+		expect(env.PATH).toBe("/bin");
+	});
+
+	test("keeps a cache dir the caller already chose", () => {
+		expect(turboCacheEnv({ TURBO_CACHE_DIR: "/elsewhere" }, "/repo/.git").TURBO_CACHE_DIR).toBe("/elsewhere");
+	});
+
+	test("without a git common dir the env is left alone (turbo falls back to .turbo/cache)", () => {
+		expect(turboCacheEnv({ PATH: "/bin" }, null)).toEqual({ PATH: "/bin" });
+	});
+
+	test("does not mutate the env it was given", () => {
+		const env: Record<string, string | undefined> = { PATH: "/bin" };
+		turboCacheEnv(env, "/repo/.git");
+		expect(env.TURBO_CACHE_DIR).toBeUndefined();
 	});
 });

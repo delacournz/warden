@@ -76,3 +76,40 @@ describe("layers", () => {
 		expect(px(top, 0, 0)[3]).toBe(0);
 	});
 });
+
+describe("computeLayout wide (16:9)", () => {
+	const w = computeLayout({
+		width: 1920,
+		height: 1080,
+		phones: 2,
+		phoneAspect: 1206 / 2622,
+		terminalAspect: 1200 / 800,
+	});
+
+	test("fixed 1920x1080 canvas", () => {
+		expect([w.width, w.height]).toEqual([1920, 1080]);
+	});
+
+	test("two phones sit right of the terminal card, inside the margins and the canvas", () => {
+		const first = w.phones[0];
+		const last = w.phones.at(-1);
+		if (!first || !last) throw new Error("no phones");
+		expect(w.card.x + w.card.w).toBeLessThan(first.bezel.x);
+		expect(last.bezel.x + last.bezel.w).toBeLessThanOrEqual(w.width - w.margin);
+		expect(first.screen.w / first.screen.h).toBeCloseTo(1206 / 2622, 2);
+		expect(last.jobY).toBeLessThan(w.height - w.margin);
+		for (const p of w.phones) {
+			expect(p.screen.w % 2).toBe(0);
+			expect(p.screen.h % 2).toBe(0);
+		}
+	});
+
+	test("terminal fits inside its card and the phone band", () => {
+		const first = w.phones[0];
+		if (!first) throw new Error("no phones");
+		expect(w.terminal.x).toBeGreaterThanOrEqual(w.card.x);
+		expect(w.terminal.x + w.terminal.w).toBeLessThanOrEqual(w.card.x + w.card.w);
+		expect(w.card.y).toBeGreaterThanOrEqual(first.bezel.y);
+		expect(w.card.y + w.card.h).toBeLessThanOrEqual(first.bezel.y + first.bezel.h);
+	});
+});

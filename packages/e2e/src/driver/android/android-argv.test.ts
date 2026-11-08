@@ -7,11 +7,16 @@ import {
 	dragMotionCommand,
 	dumpFileCommand,
 	dumpStdoutArgv,
+	dumpsysFingerprintArgv,
 	dumpTtyHostArgv,
+	emuFingerTouchArgv,
 	forceStopArgv,
+	geoFixArgv,
+	geoFixFailure,
 	gestureMotionCommand,
 	getpropArgv,
 	installArgv,
+	isEmulatorSerial,
 	keycombinationArgv,
 	keyeventArgv,
 	keyNameKeycode,
@@ -36,6 +41,8 @@ import {
 	swipeArgv,
 	tapArgv,
 	textArgvs,
+	transitionRestoreArgv,
+	UNENROLLED_FINGER_ID,
 	uimodeGetArgv,
 	uimodeSetArgv,
 	uninstallArgv,
@@ -243,6 +250,13 @@ describe("app argv", () => {
 	});
 });
 
+describe("transition scale restore", () => {
+	test("puts the saved value back, or deletes a setting that was never set", () => {
+		expect(transitionRestoreArgv("1.0")).toEqual(["settings", "put", "global", "transition_animation_scale", "1.0"]);
+		expect(transitionRestoreArgv("null")).toEqual(["settings", "delete", "global", "transition_animation_scale"]);
+	});
+});
+
 describe("animation scale argv", () => {
 	test("reading asks for all three scales in a fixed order", () => {
 		expect(animationReadArgvs()).toEqual([
@@ -292,6 +306,27 @@ describe("device/app query argv", () => {
 	test("install/uninstall are host argv", () => {
 		expect(installArgv("adb", "s1", "/a b/app.apk")).toEqual(["adb", "-s", "s1", "install", "-r", "/a b/app.apk"]);
 		expect(uninstallArgv("adb", "s1", "com.x")).toEqual(["adb", "-s", "s1", "uninstall", "com.x"]);
+	});
+
+	test("geo fix puts LONGITUDE before latitude", () => {
+		expect(geoFixArgv("adb", "emulator-5554", { lat: 37.3318, lon: -122.0312 })).toEqual([
+			"adb",
+			"-s",
+			"emulator-5554",
+			"emu",
+			"geo",
+			"fix",
+			"-122.0312",
+			"37.3318",
+		]);
+		expect(geoFixArgv("adb", "e", { lat: -36.85, lon: 174.76 }, 12.5).slice(-3)).toEqual(["174.76", "-36.85", "12.5"]);
+	});
+
+	test("geo fix failure reads the console KO that adb exits 0 on", () => {
+		const base = { exitCode: 0, stdout: "OK\n", stderr: "" };
+		expect(geoFixFailure(base)).toBeUndefined();
+		expect(geoFixFailure({ ...base, stdout: "KO: bad arguments\n" })).toBe("emulator console: KO bad arguments");
+		expect(geoFixFailure({ exitCode: 1, stdout: "", stderr: "error: device offline" })).toContain("device offline");
 	});
 
 	test("queries and settings", () => {
@@ -367,5 +402,27 @@ describe("single-finger gesture line", () => {
 		expect(gestureMotionCommand(plan(1))).toBe(
 			"input motionevent DOWN 0 0 && sleep 0.000 && sleep 0.000 && input motionevent UP 0 0 || (input motionevent CANCEL 0 0; exit 1)"
 		);
+	});
+});
+
+describe("fingerprint", () => {
+	test("emu finger touch and dumpsys argv", () => {
+		expect(emuFingerTouchArgv("adb", "emulator-5554", 1)).toEqual([
+			"adb",
+			"-s",
+			"emulator-5554",
+			"emu",
+			"finger",
+			"touch",
+			"1",
+		]);
+		expect(UNENROLLED_FINGER_ID).toBe(99);
+		expect(dumpsysFingerprintArgv()).toEqual(["dumpsys", "fingerprint"]);
+	});
+
+	test("only emulator serials", () => {
+		expect(isEmulatorSerial("emulator-5554")).toBe(true);
+		expect(isEmulatorSerial("R58M123ABC")).toBe(false);
+		expect(isEmulatorSerial("192.168.1.5:5555")).toBe(false);
 	});
 });

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { Exec } from "@delacour/warden-core/exec";
 import {
 	adbReverseArgv,
+	bareAppLaunchArgvs,
 	devClientLaunchArgs,
 	devClientLaunchArgv,
 	launchMetro,
@@ -16,6 +17,7 @@ import {
 	prewarmMetro,
 	READY_POLL_MS,
 	resolveExpoBin,
+	resolveNodeBin,
 	reverseMetroPort,
 	startMetro,
 } from "./metro";
@@ -331,6 +333,32 @@ describe("metroArgv", () => {
 	});
 });
 
+describe("metroArgv for a bare React Native app", () => {
+	test("react-native start on the port (no --dev-client), through npx or the project's own bin", () => {
+		expect(metroArgv(8082, ["--reset-cache"], undefined, "react-native")).toEqual([
+			"npx",
+			"react-native",
+			"start",
+			"--port",
+			"8082",
+			"--reset-cache",
+		]);
+		expect(metroArgv(8082, [], "/p/node_modules/.bin/react-native", "react-native")).toEqual([
+			"/p/node_modules/.bin/react-native",
+			"start",
+			"--port",
+			"8082",
+		]);
+	});
+
+	test("resolveNodeBin finds the react-native bin the same way", () => {
+		const exists = (path: string) => path === "/repo/node_modules/.bin/react-native";
+		expect(resolveNodeBin("/repo/apps/a", "react-native", () => "/usr/bin/node", exists)).toBe(
+			"/repo/node_modules/.bin/react-native"
+		);
+	});
+});
+
 describe("resolveExpoBin", () => {
 	const present = new Set(["/repo/node_modules/.bin/expo"]);
 	const exists = (path: string) => present.has(path);
@@ -539,6 +567,31 @@ describe("devClientLaunchArgv", () => {
 			"http://127.0.0.1:8090",
 			"-Flag",
 			"YES",
+		]);
+	});
+});
+
+describe("bareAppLaunchArgvs", () => {
+	test("iOS: relaunch with RCT_jsLocation in the argument domain, so the app's bundle URL points at the leased port", () => {
+		expect(bareAppLaunchArgvs("ios", "UDID", "com.x", 8083)).toEqual([
+			[
+				"xcrun",
+				"simctl",
+				"launch",
+				"--terminate-running-process",
+				"UDID",
+				"com.x",
+				"-RCT_jsLocation",
+				"127.0.0.1:8083",
+			],
+		]);
+	});
+
+	test("Android: the app's compiled-in 8081 is reversed to the leased port, then the launcher activity starts", () => {
+		expect(bareAppLaunchArgvs("android", "emulator-5554", "com.x", 8083)).toEqual([
+			["adb", "-s", "emulator-5554", "reverse", "tcp:8081", "tcp:8083"],
+			["adb", "-s", "emulator-5554", "shell", "am", "force-stop", "com.x"],
+			["adb", "-s", "emulator-5554", "shell", "monkey", "-p", "com.x", "-c", "android.intent.category.LAUNCHER", "1"],
 		]);
 	});
 });

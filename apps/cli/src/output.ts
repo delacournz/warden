@@ -1,5 +1,5 @@
 import type { ChalkInstance } from "chalk";
-import type { CommandContext } from "./context";
+import type { CommandContext, FailureExtra } from "./context";
 import { SYMBOLS } from "./ui";
 
 /** What `heading` prints: `warden <scope>` + a dim detail. */
@@ -31,8 +31,9 @@ function say(ctx: CommandContext, paint: (text: string) => string, glyph: string
 	ctx.err(paint(ctx.ui.rich ? `${glyph} ${message}` : message));
 }
 
-/** A command's error: red `warden <scope>: <message>`. */
-export function reportError(ctx: CommandContext, scope: string, message: string): void {
+/** A command's error: red `warden <scope>: <message>`; `extra` gives the `--json` envelope its code and hint. */
+export function reportError(ctx: CommandContext, scope: string, message: string, extra?: FailureExtra): void {
+	ctx.failure?.record(message, extra);
 	say(ctx, ctx.ui.color.red, SYMBOLS.fail, `warden ${scope}: ${message}`);
 }
 

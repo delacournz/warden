@@ -24,6 +24,8 @@ on:
 
 permissions:
   contents: read
+  # bun install pulls @delacournz/* from GitHub Packages with the job token.
+  packages: read
 
 # One run per branch, newest wins. A signoff binds to a SHA, so once a branch moves on (a second
 # merge into develop re-pushes the version PR head seconds after the first; a maintainer dispatches
@@ -38,7 +40,7 @@ concurrency:
 jobs:
   # The SHA ends up in API paths and checkout refs; refuse anything but a full hex SHA.
   validate:
-    runs-on: namespace-profile-linux-small
+    runs-on: ubuntu-latest
     steps:
       - env:
           SHA: ${{ inputs.signoff-sha }}
@@ -53,7 +55,7 @@ jobs:
   # `signoff` job settles it as success or failure. Never checks anything out.
   pending:
     needs: validate
-    runs-on: namespace-profile-linux-small
+    runs-on: ubuntu-latest
     permissions:
       statuses: write
     steps:
@@ -67,9 +69,9 @@ jobs:
 
   checks:
     needs: validate
-    runs-on: namespace-profile-mac-small
+    runs-on: xcode-27
     steps:
-      - uses: namespacelabs/nscloud-checkout-action@66f2dc6f6c42a8ac6c4e53473c4840006822831e # v9.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.signoff-sha }}
           persist-credentials: false
@@ -78,14 +80,30 @@ jobs:
         with:
           bun-version-file: package.json
 
-      # After checkout (which wipes the workspace) and setup-bun (mode needs bun on PATH).
-      - uses: namespacelabs/nscloud-cache-action@1124a6f3ce44e5cf84cc22111530961f4d2a15f9 # v1.7.0
+      # bun's global package cache, keyed on the lockfile; a changed lockfile starts from the newest entry.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          cache: bun
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            bun-${{ runner.os }}-${{ runner.arch }}-
 
-      # No NPM_TOKEN: `@delacournz/*` (GitHub Packages) is only apps/docs' optional OpenTelemetry, which
-      # nothing here uses. The 401 is a warning, and this proves a tokenless clone installs.
+      # turbo's local cache (.turbo/cache): same task hashes as a local signoff, so a re-dispatch replays
+      # untouched greens. One entry per commit, restored from the branch's newest (else develop's).
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .turbo/cache
+          key: turbo-ci-${{ runner.os }}-${{ runner.arch }}-${{ inputs.signoff-sha }}
+          restore-keys: |
+            turbo-ci-${{ runner.os }}-${{ runner.arch }}-
+
+      # `@delacournz/cli-telemetry` (GitHub Packages, private) is a hard dependency of apps/cli, so the
+      # install needs a read token. bunfig.toml reads NPM_TOKEN; the job token works because the package
+      # grants this repo Actions read access (package settings > Manage Actions access). apps/docs'
+      # optional OpenTelemetry packages ride on the same token.
       - run: bun install --frozen-lockfile
+        env:
+          NPM_TOKEN: ${{ github.token }}
       - run: bun run typecheck
       - run: bun run check
       - run: bun run test
@@ -93,7 +111,7 @@ jobs:
   # Paths filter for the native job: does this commit touch packages/e2e/native/** against develop?
   native-changes:
     needs: validate
-    runs-on: namespace-profile-linux-small
+    runs-on: ubuntu-latest
     outputs:
       native: ${{ steps.paths.outputs.native }}
     steps:
@@ -116,9 +134,9 @@ jobs:
   native:
     needs: native-changes
     if: needs.native-changes.outputs.native == 'true'
-    runs-on: namespace-profile-mac-small
+    runs-on: xcode-27
     steps:
-      - uses: namespacelabs/nscloud-checkout-action@66f2dc6f6c42a8ac6c4e53473c4840006822831e # v9.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.signoff-sha }}
           persist-credentials: false
@@ -134,20 +152,38 @@ jobs:
           xcodebuild -version
           swift --version
 
-      # Namespace cache volume (keyless, persists across runs): idb tarball/source + SwiftPM build products
-      # (idb's library package compiles for minutes). SwiftPM's incremental build handles stale products.
-      - uses: namespacelabs/nscloud-cache-action@1124a6f3ce44e5cf84cc22111530961f4d2a15f9 # v1.7.0
+      # bun + SwiftPM caches, idb tarball/source + SwiftPM build products (idb's library package compiles for minutes),
+      # keyed on the pins and the Xcode like e2e.yml's helper cache. SwiftPM's incremental build handles stale products.
+      - id: xcode
+        run: echo "build=$(xcodebuild -version | awk '/Build version/ {print $3}')" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
+            ~/.bun/install/cache
+            ~/Library/Caches/org.swift.swiftpm
             ~/Library/Caches/warden-idb
             packages/e2e/native/ios/.build
+            packages/e2e/native/ios-runner/RunnerCore/.build
+          key: native-${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode.outputs.build }}-${{ hashFiles('bun.lock', 'packages/e2e/native/idb.lock.json', 'packages/e2e/native/ios/Package.swift', 'packages/e2e/native/ios-runner/RunnerCore/Package.swift') }}
+          restore-keys: |
+            native-${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode.outputs.build }}-
 
-      # No NPM_TOKEN: `@delacournz/*` (GitHub Packages) is only apps/docs' optional OpenTelemetry, which
-      # nothing here uses. The 401 is a warning, and this proves a tokenless clone installs.
+      # `@delacournz/cli-telemetry` (GitHub Packages, private) is a hard dependency of apps/cli, so the
+      # install needs a read token. bunfig.toml reads NPM_TOKEN; the job token works because the package
+      # grants this repo Actions read access (package settings > Manage Actions access). apps/docs'
+      # optional OpenTelemetry packages ride on the same token.
       - run: bun install --frozen-lockfile
+        env:
+          NPM_TOKEN: ${{ github.token }}
       - run: bun run --cwd packages/e2e native:deps
       - run: bun run --cwd packages/e2e native:build
       - run: swift test --package-path packages/e2e/native/ios
+      # warden-runner (XCUITest, real devices): RunnerCore's tests, then the unsigned iOS build of the checked-in project.
+      - run: swift test --package-path packages/e2e/native/ios-runner/RunnerCore
+      - run: >-
+          xcodebuild build-for-testing -project packages/e2e/native/ios-runner/WardenRunner.xcodeproj
+          -scheme WardenRunner -destination generic/platform=iOS CODE_SIGNING_ALLOWED=NO
+          WARDEN_RUNNER_BUNDLE_ID=nz.co.delacour.warden.runner.ci
 
   # Writes the statuses, sub-contexts first and the required `signoff` umbrella last, only when every
   # applicable check passed. Skipped jobs count as passing for `needs`, so results are checked explicitly.
@@ -156,7 +192,7 @@ jobs:
   signoff:
     needs: [pending, checks, native-changes, native]
     if: always()
-    runs-on: namespace-profile-linux-small
+    runs-on: ubuntu-latest
     permissions:
       statuses: write
     steps:

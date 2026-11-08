@@ -31,23 +31,25 @@ e2e/helpers/poll.ts      pollUntil
 ## Imports
 
 ```ts
-import { test, expect, describe, beforeEach, afterEach, beforeAll, afterAll, E2eError } from "@delacour/warden-e2e";
+import { test, expect, describe, beforeEach, afterEach, beforeAll, afterAll, run, E2eError } from "@delacour/warden-e2e";
 import type { App, Device, Screen, Locator, TestFixtures } from "@delacour/warden-e2e";
 ```
+
+Other type exports: `RunOptions RunResult RunCommand OpenOptions OpenWaitUntil SystemAlerts DevicePerf PerfStartOptions PerfReport PerfBudgets PerfBreach LocatorReading TapOptions TapUntil PinchOptions RotateOptions ScreenGestures ScreenPinchOptions ScreenRotateOptions ScreenPathOptions`; value `WARDEN_E2E_VERSION`.
 
 Never import subpaths (`/device`, `/screen/*`, `/env`). Only `.` and `./preload` are published. (The repo's example helpers use subpaths because the workspace exposes `./*`; copy the root type imports instead.)
 
 ## Test API
 
 - `test(title, [options], async ({ app, device, screen, platform }) => ...)`
-- `options`: `{ timeout, skip, only, platforms: ("ios"|"android")[], retry }`. `retry` is bun's retry; only the last attempt lands in `results.jsonl`.
+- `options`: `{ timeout, skip, only, platforms: ("ios"|"android")[], requires: ("pinch"|"multiTouch")[], retry }`. `retry` is bun's retry; only the last attempt lands in `results.jsonl`. `requires` skips the test at collection when the device's driver is known to lack the capability: a physical iPhone has neither (`WARDEN_DEVICE_KIND=physical`); elsewhere the driver decides at run time.
 - `test.skip`, `test.only`, `test.todo(title)`, `test.skipIf(cond)(title, body)`.
-- `test.use({ timeout?, actionTimeout?, assertionTimeout?, launch?: "fresh" | "none", systemAlerts?: "accept" | "dismiss" | "off" })` applies to the file or the enclosing `describe`. `systemAlerts` (default `"off"`): reads, actions and `expect` that see an alert on top answer it (`device.alert(mode)`, 3 answers max per look) and look again. Answers the app's own alerts too. `"dismiss"` answers iOS's "Open in …?" sheet with Open, and nothing is answered while `device.openLink` waits on a link (it owns the sheet).
+- `test.use({ timeout?, actionTimeout?, assertionTimeout?, launch?: "fresh" | "none", systemAlerts?: "accept" | "dismiss" | "off" })` applies to the file or the enclosing `describe`; put `timeout` above the tests it is for (after a test in the same scope it warns on stderr and that test keeps its old timeout). `systemAlerts` (default `"off"`): reads, actions and `expect` that see an alert on top answer it (`device.alert(mode)`, 3 answers max per look) and look again. Answers the app's own alerts too. `"dismiss"` answers iOS's "Open in …?" sheet with Open, and on Android both `"accept"` and `"dismiss"` close the autofill "Save password?" sheet (ids `autofill_save*`) with Back, never its Never / Continue buttons (they write to the user's Google account), and nothing is answered while `device.openLink` waits on a link (it owns the sheet).
 - `test.extend<Extra>({ name: async (base, use) => { await use(value) } })` returns a `test` with the extra fixture.
 - `describe(title, [{ serial }], body)`. `serial` is accepted but changes nothing (bun runs a file's tests in order).
 - `beforeEach/afterEach` receive the base fixtures; `it.beforeEach/afterEach` on a `test.extend` result receive its fixtures too and run only for its tests. `beforeAll/afterAll` receive `app`, `device`, `screen`, `platform` only.
 - The runner calls `app.open()` before every test unless `launch: "none"`. A spec starts from a fresh launch.
-- Timeouts: test 120 s, action 30 s, assertion 5 s. Precedence: test option, then `test.use`, then env (`WARDEN_E2E_*`). In a suite, set them under `spec`.
+- Timeouts: test 120 s, action 30 s (`waitFor`, `scrollTo`, actions), assertion 5 s (`expect`). Precedence: test option, then `test.use`, then env (`WARDEN_E2E_*`). In a suite, set them under `spec`.
 
 ## Fixtures
 
@@ -57,7 +59,7 @@ Never import subpaths (`/device`, `/screen/*`, `/env`). Only `.` and `./preload`
 |---|---|
 | `open({ url?, args?, env?, wait?: "quiet" \| "none" \| { until, timeout? } })` | terminate, relaunch with `WARDEN_LAUNCH_ARGS` + `args`, then open `url`; `wait: "quiet"` then polls (100 ms, 3 s max) until the screen has a visible control or testID (not the launch screen) and settles (250 ms quiet, 3 s max), never an error; `wait: { until: locator }` waits for the locator to be visible (`TIMEOUT` after `timeout`, default the assertion timeout) and settles once; default `"none"` |
 | `close()` | terminate |
-| `restart()` | relaunch with `WARDEN_LAUNCH_ARGS` |
+| `restart()` | relaunch with `WARDEN_LAUNCH_ARGS` (Android: no launch args; with Metro it then opens the dev-client deep link `exp+<slug>://expo-development-client/?url=<metro>` with onboarding, auto-launch menu and FAB off) |
 | `reinstall()` | uninstall + install from `WARDEN_APP_PATH` (throws without it) |
 | `clearData()` | wipe app data and keychain, keep the build |
 | `isRunning()` | boolean |
@@ -71,23 +73,133 @@ Never import subpaths (`/device`, `/screen/*`, `/env`). Only `.` and `./preload`
 | `home()` / `back()` | home key / Android back (iOS throws) |
 | `orientation(set?)` | `"portrait" \| "portraitUpsideDown" \| "landscapeLeft" \| "landscapeRight"`; returns current |
 | `appearance(set?)` | `"light" \| "dark"`; returns current |
+| `biometrics.status()` / `enroll()` / `unenroll()` / `match()` / `fail()` | simulated Face ID / Touch ID / fingerprint; each returns `{ enrolled, modality: "face" \| "fingerprint" }` after the op (type `BiometricState`). `match` / `fail` answer the pending prompt. Android `enroll` / `unenroll` and any physical device throw `ACTION_FAILED` (driver `E_UNSUPPORTED`) |
 | `clipboard()` / `setClipboard(text)` | read / write |
 | `hideKeyboard()` | iOS presses Enter (may submit the field); Android presses back |
 | `screenshot(name)` | saves `<attemptDir>/screenshots/NNN-<slug>.png`, returns the path |
 | `snapshot({ interactiveOnly? })` | AX tree as text (same format as `warden ui snapshot`) |
 | `settle({ quietMs = 250, timeout = 3000 })` | wait for a quiet UI; returns `{ quiet, waitedMs }`; hitting the deadline is not an error |
 | `devtools` | `undefined` without `WARDEN_METRO_URL` (release build) |
+| `perf` | `warden perf` from a spec, see below |
 
-### `device.devtools` (dev client over Metro)
+### `device.network` / `location` / `clock` / `timeline` (conditions)
+
+Everything a test changes is put back when it ends, to the suite's `conditions` (`suites.md`). A change that fails throws the driver's code (`E_NETWORK_RELAUNCH`, `E_UNSUPPORTED` on a physical device). `Duration` = ms or `"10s"` / `"2m"` / `"2d"`. Each change is also a `condition` line in `results.jsonl`.
 
 | Member | Does |
 |---|---|
-| `evaluate(expr)` | run JS in the app; returns a result object |
+| `network.set(c, { relaunch? })` | `c`: `"online"`, `"offline"`, a preset (`"edge" "3g" "4g" "lte" "wifi" "slow" "lossy"`) or `{ kind: "custom", latencyMs?, jitterMs?, downKbps?, upKbps?, lossPct? }`. A running flap stops first. iOS: the app must carry the network dylib: a suite that declares `conditions.network` launches it that way, otherwise it fails `E_NETWORK_RELAUNCH` until you pass `{ relaunch: true }` |
+| `network.during(c, fn, opts?)` | run `fn` under `c`, then put the previous condition (and flap) back, also when `fn` throws |
+| `network.flap({ up, down, jitterPct?, seed?, base? })` | alternates `base` (default online) and offline until `stop()` or the end of the test; resolves once the first phase is in place; returns `{ stop(), done, status() }` |
+| `network.fault(rule \| rules)` | `{ match: "api.*", action: { kind: "status", code: 503 } \| { kind: "reset" } \| { kind: "delay", ms } \| { kind: "blackhole" } }`; replaces the faults, `[]` clears; returns `{ notes }` (an `https://` request matching a `status` fault is reset, not answered) |
+| `network.status()` | `{ condition, faults, flapping }` |
+| `network.reset()` | stop the flap, clear faults, back to the suite's `conditions.network` (online without one) |
+| `location.set({ lat, lon, altM? })` | a point |
+| `location.route(points \| { gpx }, { speedMps?, intervalS?, loop? })` | waypoints `{ lat, lon }[]` or a GPX file (relative to the cwd); iOS plays it once (`loop` is `E_UNSUPPORTED`), Android ticks it until the next location call |
+| `location.scenario("city-run" \| "city-bike" \| "freeway")` | bundled route |
+| `location.clear()` | iOS clears; Android stops the ticker and keeps the last fix |
+| `clock.set(at, { frozen? })` · `advance(by)` · `during(at, fn, opts?)` · `reset()` · `status()` | wall clock (`at`: ISO string, `Date`, epoch ms; `by`: `Duration`); `E_UNSUPPORTED` on a driver with no clock |
+| `timeline([{ at, network?, location? }])` | plays steps from now (`at` = offset, a step takes a condition, not a flap); returns the same `ConditionRun` |
+
+```ts
+await device.network.during("offline", async () => {
+	await screen.getByTestId(ids.todos.add).tap();
+	await expect(screen.getByTestId(ids.banner.offline)).toBeVisible();
+});
+await device.network.fault({ match: "api.example.com", action: { kind: "status", code: 503 } });
+await device.location.route([{ lat: 37.33, lon: -122.03 }, { lat: 37.34, lon: -122.03 }], { speedMps: 5 });
+```
+
+- Assert timing as an ordering with a margin (`slow > online + 50`), not an absolute: an open keep-alive connection keeps its cost, so a 3g request after an online warm-up pays one round trip, not a cold handshake.
+- Only the wall clock moves. A JS timer armed while the clock was ahead waits for the shifted time after `clock.reset()`: re-read the time on demand or relaunch. A large offset breaks TLS (certificate dates).
+- Grant a permission the test needs with `device.permissions.set` before `app.open()` instead of tapping through the prompt: iOS does not always raise it.
+
+### `device.permissions` / `timezone` / `locale` / `a11y` / `battery` / `memoryWarning` / `push` (device settings)
+
+Put back when the test ends (to the suite's `conditions.permissions` / `locale` / `timezone` / `a11y`), recorded on the lease like the conditions above, and each change is a `condition` line in `results.jsonl`. Set permissions before `app.open()`: iOS terminates a running app whose permission changes.
+
+| Member | Does |
+|---|---|
+| `permissions.set({ location?, camera?, photos?, contacts?, notifications?, microphone?, … }, { bundleId? })` | each `"granted" \| "denied" \| "unset"`; names: `location locationAlways camera photos photosAdd contacts contactsLimited notifications microphone calendar reminders motion mediaLibrary siri`. Returns `{ bundleId, applied, skipped }` (`skipped` = no service on this platform, or the app does not declare it); none applicable throws `E_UNSUPPORTED`. Default app: the suite's |
+| `permissions.reset({ bundleId? })` | every name this test set back to the suite's value, else `"unset"` |
+| `timezone(tz \| null)` | IANA name (`"Asia/Tokyo"`); `null` puts it back. Android emulator: live, device-wide. iOS: `{ appliesOnLaunch: true }`, the app launched next gets it |
+| `locale(tag \| null, { bundleId? })` | BCP 47 (`"fr-FR"`). Android 13+: per-app, live. iOS: applies to the app launched next |
+| `a11y({ textSize?, boldText?, contrast?, reduceMotion? } \| null)` | `textSize`: a category name (`"accessibility-large"`) or a scale (`1.5`). iOS: text size, contrast, `boldText`, `reduceMotion`, `reduceTransparency`, `buttonShapes`, `differentiateWithoutColor`, `onOffLabels`, `screenReader` (fake VoiceOver flag, `screenReader: { mode: "simulated", engine: "voiceover" }` in the result), applied live. Android: text size, `boldText`, `highContrastText`, `colorInversion`, `reduceMotion` (off by default; `true` zeroes `transition_animation_scale`, which RN reads). Other-platform settings and Android `screenReader` are `skipped` with a reason. Returns `{ applied, skipped, notes }`; only-skipped throws `E_UNSUPPORTED`; `null` resets |
+| `battery({ level?, charging? } \| null)` | Android emulator: real. iOS: status bar only, result has `cosmetic: true`. `null` resets |
+| `memoryWarning({ bundleId? })` | Android: critical trim to the running app. iOS: throws `E_UNSUPPORTED` |
+| `push({ aps: { … } }, { bundleId? })` | iOS: delivers the payload to the app (4096 bytes max). Android: `E_UNSUPPORTED` |
+
+```ts
+await device.permissions.set({ location: "denied", notifications: "granted" });
+await app.open();
+await device.a11y({ textSize: "accessibility-large" });
+await device.locale("fr-FR");
+```
+Biometrics practice: set `biometrics: true` on the suite (suites.md) so the device is enrolled before the app is installed (a new enrollment invalidates biometry-bound keys); on iOS the first prompt per app shows "Allow X to use Face ID?", answer it with `device.alert("accept")` before `device.biometrics.match()`; Android emulators have fingerprint only; never add an app-side bypass. `fail()` leaves the prompt open (iOS "Face Not Recognized" alert, Android "Not recognized"): assert that, then cancel the prompt (the app gets `user_cancel`): `device.alert({ button: "Cancel" })` on iOS (it presses again if the press lands while the sheet animates in, and throws `ACTION_FAILED` if the alert stays up), `button_negative` on Android; a `match` / `fail` sent as the sheet appears can be dropped, so present again when nothing changed. warden enrolls an iOS biometrics sim again when a spec process starts (`WARDEN_BIOMETRICS=1`), so a spec that called `unenroll` does not leave a reused sim unenrolled.
+
+### `device.a11yAudit` / `screenReader` / `announcements` (screen readers and audits)
+
+| Member | Does |
+|---|---|
+| `a11yAudit({ rules?, ignore?, minSeverity?, textSize?, native? })` | `{ issues, checked, sources, skipped }`; the suite's `a11y` key supplies defaults, options win per key |
+| `screenReader.order()` | the simulated reading order (`Announcement[]`, `source: "simulated"`), both platforms |
+| `screenReader.state()` `next()` `prev()` `activate()` `focused()` `spoken({ since? })` | real TalkBack (Android emulator, after `device.a11y({ screenReader: true })`); elsewhere throws `ACTION_FAILED` (`E_UNSUPPORTED`). `next`/`prev` resolve the announcement now focused (`undefined` past the end); `spoken` returns `{ lines, cursor }` |
+| `announcements({ since? })` | `{ announcements, cursor, lost? }` of announcements and live-region changes; iOS needs the inject (`a11y.md`) |
+
+On Android with TalkBack on, locator `tap` / `scroll` / `swipe` use accessibility actions (a touch would only move focus); a raw coordinate tap stays a touch. The `a11y` op also takes `reduceTransparency buttonShapes differentiateWithoutColor onOffLabels highContrastText colorInversion screenReader` (table in `a11y.md`).
+
+### `device.camera` (simulated camera)
+
+Feeds a png, jpg, heic, mp4 or mov into the app's real camera. Taken off when the test ends (back to the suite's `camera`, else none), recorded on the lease, each change a `condition` line in `results.jsonl`.
+
+| Member | Does |
+|---|---|
+| `camera.set(path, { facing?, loop? })` | `path` is relative to the spec file (or absolute). `facing`: `"back"` (default) \| `"front"` \| `"both"`; the other facing keeps its feed. `loop` (video, default true). Returns `{ feeds, appliesOnLaunch?, appliesOnCameraOpen?, rebooted? }` |
+| `camera.clear(facing?)` | takes the feed off one facing, or both (default) |
+| `camera.status()` | `{ feeds }` this spec has in place |
+
+- Errors: `E_CAMERA_NOT_FOUND` (no such file), `E_CAMERA_MEDIA` (not a supported type) throw `INVALID_ARGUMENT` before the device is touched; `E_CAMERA_DEVICE` (Android emulator not claimed with `--camera`) throws `ACTION_FAILED`.
+- iOS: live in an app launched with the camera; otherwise `appliesOnLaunch: true` and the next `app.open()` picks it up. Set it before `app.open()`. QR is the only code type the iOS fake decodes.
+- Android emulator: the suite needs `camera` (or `--camera`); an image shows on the app's next camera open (`appliesOnCameraOpen: true`), a video feed reboots the emulator (`rebooted: true`).
+
+```ts
+await device.camera.set("fixtures/qr-hello.png");
+await app.open();
+await device.camera.set("fixtures/qr-bye.png"); // live on iOS
+```
+
+### `device.devtools` (dev client over Metro)
+
+With `WARDEN_METRO_URL` set, `app.open()` attaches devtools in the background and keeps React Native's LogBox off (no warning/error toasts, no error inspector, fatals included) in every JS context, after relaunches and reloads too. Logs still land in `console.jsonl` and Metro's terminal. Assert on the app's own UI, never on a LogBox toast.
+
+| Member | Does |
+|---|---|
+| `evaluate(expr)` | run JS in the app; returns a result object (`success`, `data` / `error`) |
 | `reloadJs()` | reload the JS bundle |
-| `tree()` | React component tree with rects |
-| `network.entries()` | captured requests |
+| `tree()` | React component tree with rects (`devtools_unavailable` without the DevTools hook) |
+| `network.entries()` / `clear()` | captured requests / drop them |
 | `console.lines()` / `clear()` / `mark(label)` | captured console |
 | `connect()` | the attached facet; throws `SESSION` when unreachable |
+
+### `device.perf` (profile the app from a spec)
+
+Shells out to the `warden` that started the run (`WARDEN_BIN`); by hand it throws `SESSION` ("device.perf unavailable"). One session per device at a time.
+
+| Member | Does |
+|---|---|
+| `start({ js?, react?, native?: boolean \| "perfetto" \| "simpleperf", metrics?, frames?, logs?, all?, relaunch?, reset?, maxDurationMs? })` | open a session; no capture flag = warden's default set; `relaunch` arms captures then launches (startup recorded); `reset` = relaunch after wiping app data; `maxDurationMs` caps it (warden default 30 s, max 5 min). Returns `{ sessionId }` |
+| `mark(label)` | label on the session timeline; commits, hangs and jank are tagged with the last mark |
+| `stop({ budgets? })` | end it, return the `PerfReport` (`metrics`, `findings`, `marks`, `summary`, `reportPath`). Copies `report.json`, `report.md`, `session.json` to `<attemptDir>/perf/`. Throws `PERF_BUDGET` when over budget |
+| `active` | a session this device opened and has not stopped |
+
+Budgets (lower is better, all optional): `startupColdMs jankPct maxCommitMs p95CpuPct peakMemoryMb`. They come from the suite's `perf.budgets` in `warden.config.ts` (`WARDEN_PERF_BUDGETS`); `stop({ budgets })` replaces them per key. A metric whose capture did not run cannot breach. `warden e2e --perf <all|react,js,...>` records the captures for every attempt (`WARDEN_PERF`).
+
+```ts
+await device.perf.start({ react: true, metrics: true, relaunch: true });
+await device.perf.mark("open list");
+// ...drive...
+const report = await device.perf.stop({ budgets: { maxCommitMs: 80 } });
+```
 
 ### `screen` (queries are lazy until an action or assertion)
 
@@ -106,7 +218,7 @@ Never import subpaths (`/device`, `/screen/*`, `/env`). Only `.` and `./preload`
 | `screen.gesture.path({ paths, durationMs? })` | 1-2 finger paths (`Point[][]`), down and lift together; 600 ms |
 | `screen.gesture.swipe(...)` | same as `swipe(...)` |
 
-Roles: button link textbox searchbox checkbox radio switch slider image heading text tab tablist menu menuitem list listitem row alert dialog navigation group other.
+Roles: button link textbox searchbox checkbox radio switch slider image heading text tab tablist menu menuitem list listitem row alert dialog navigation group other. A web view's `<input>` is a `textbox` on iOS (`secure` for `type=password`); target it by role (`getByRole("textbox", { name: "Password" })`), since its `<label>` is a separate `text` node with the same name.
 
 `TextMatch = string | RegExp`. A string matches the whole text, case-sensitive, whitespace collapsed. `exact: false` makes it a case-insensitive substring.
 
@@ -117,12 +229,24 @@ Roles: button link textbox searchbox checkbox radio switch slider image heading 
 - **Snapshot reuse:** the runner keeps the last whole-screen snapshot (iOS 150 ms, Android 1 s) and reuses it for the first look of a read or `expect` when nothing was done since (tap, key, launch, settle drop it). Actions that aim (`tap`, `longPress`, `fill`, `type`, `clear`, `press`, `scrollTo`) and `boundingBox` never reuse: they always take a new snapshot, so `expect(x).toBeVisible()` then `x.tap()` is two snapshots (a snapshot from a screen still sliding in has the wrong coordinates). `fill` confirm reads and `device.snapshot()` are always real.
 - **Wait:** `waitFor({ state: "attached" | "detached" | "visible" | "hidden", timeout? })`. Default state is `visible`.
 - **Actions** wait for exactly one visible match. Several matches fail with `LOCATOR_AMBIGUOUS`.
-  - `tap({ position?, timeout?, until?, retries = 2, windowMs = 4000, pollMs = 250 })`, `longPress({ durationMs? })`. `until` (a locator that must be visible, or `async () => boolean`) makes the tap retrying: after each tap it polls for `windowMs`, re-taps when `until` did not hold. With a locator `until` a screen that changed after the tap counts as landed (no re-tap, however late `until` is), and an unchanged screen is re-tapped from 750 ms on. The last tap is not waited on (the next assertion reports what is missing). `retries`/`windowMs`/`pollMs` without `until` are `INVALID_ARGUMENT`. Replaces hand-written `tapUntil` helpers.
-  - `fill(text)` backspaces, types, verifies on two reads, retries once. Secure fields are not verified.
+  - `tap({ position?, timeout?, until?, retries = 2, windowMs = 4000, pollMs = 250 })`, `longPress({ durationMs? })`. `until` (a locator that must be visible, or `async () => boolean`) makes the tap retrying: after each tap it polls for `windowMs`, re-taps when `until` did not hold. With a locator `until` a screen that reacted to the tap (something new on it, or the tapped element gone) counts as landed (no re-tap, however late `until` is); nodes that only left (the screen a navigation left, a keyboard going down) are not a reaction, and a screen with no reaction is re-tapped from 750 ms on. The last tap is not waited on (the next assertion reports what is missing). `retries`/`windowMs`/`pollMs` without `until` are `INVALID_ARGUMENT`. Replaces hand-written `tapUntil` helpers.
+  - `fill(text, { via? })` empties the field, puts the text in, verifies on two reads, retries once. `via` is `"type"` (default, per key) or `"paste"` (iOS pastes with one Cmd+V, ~400 ms flat; falls back to typing if the pasteboard write fails; Xcode 27 syncs every sim's pasteboard with the Mac clipboard both ways, so a paste lands in clipboard history and on other sims, so avoid it on parallel runs and for secrets). The retry always types. Android always types. Secure fields are not verified; a field that only reads back as bullets (`•`) is confirmed by their count against the typed length, and its failure message gives the length, never the text.
   - `clear()`, `type(text)` (at the caret)
   - `press(key, { modifiers? })` sends a KEY (`Enter Backspace Tab Space Escape Delete Up Down Left Right`), it is not a tap. Use `tap()` to tap.
-  - `swipe({ direction, momentum? })`, `scrollTo()`
+  - `swipe({ direction, momentum? })`, `scrollTo({ direction = "down", momentum?, maxSwipes = 10, timeout? })`
   - `pinch(scale, { durationMs?, radius?, timeout? })`, `rotate(degrees, { durationMs?, radius?, timeout? })` (positive = clockwise). Out-of-range `scale`/`degrees` and unsupported gestures throw `INVALID_ARGUMENT` (no `capabilities.pinch`, or more than `maxPointers` fingers; Android without `warden-uiad`: no pinch/rotate, 1-finger paths only): skip with `test({ platforms: ["ios"] })`.
+
+## Host commands (`run`)
+
+Specs run on the host (bun), not on the device: `fetch`, files and npm packages all work. `run` runs a command there:
+
+- `run(command, { cwd?, env?, timeout = "60s", input?, check = true })` → `{ ok, exitCode, stdout, stderr, ms, json() }`.
+- `command`: a string runs with `sh -c`; an argv array (`["bun", "scripts/seed.ts"]`) runs with no shell (nothing expanded).
+- `cwd` defaults to the spec process's (project root under `warden e2e`); `env` is merged over the spec's env (`undefined` removes one); `input` goes to stdin.
+- Non-zero exit throws `RUN_FAILED` (message: program, exit code, stderr tail); `check: false` returns `ok: false` instead. Over `timeout` the process is SIGKILLed and throws `TIMEOUT`. Empty command / bad timeout / `json()` on non-JSON stdout: `INVALID_ARGUMENT`.
+- Inside a test it is one `run` span in `trace.jsonl` (exit code only; the command is never recorded).
+- Seed through an API or script, then deep link: `const { id } = (await run(["bun", "scripts/seed-order.ts"])).json() as { id: string }; await app.open({ url: `myapp://orders/${id}` });`
+- Suite-wide servers/setup belong in `warden.config.ts` (`serve`, `setup`, `ports`: `suites.md`), not in `beforeAll`.
 
 ## Matchers
 
@@ -130,10 +254,13 @@ Roles: button link textbox searchbox checkbox radio switch slider image heading 
 
 `toBeVisible toBeHidden toHaveText(t, { exact? }) toContainText(t, { ignoreCase? }) toHaveValue(v) toBeChecked({ checked? }) toBeEnabled toBeDisabled toHaveCount(n)`. All take `{ timeout? }`.
 
+Accessibility matchers (`a11y.md`): on a locator `toHaveAccessibleName(t)`, `toHaveRole(role)`, `toHaveHint(t)` (iOS needs the inject), `toAnnounce(t, { exact? })` (the simulated phrase, "Save, button"), `toBeA11yFocused()` (Android TalkBack). On `expect(device)`: `toPassA11yAudit({ rules?, ignore?, minSeverity?, textSize?, native? })` (runs once, settle first; fails with the issue table and the `--a11y` screen) and `toHaveAnnounced(t, { timeoutMs?, since? })` (string = contains, RegExp; `.not` waits the timeout for none).
+
 - Zero matches keep polling. Several matches fail at once (except `toHaveCount`).
-- `.not` passes only after the inverted state held for 1000 ms.
+- **Degraded reads are inconclusive, never negative.** A look that fell back from the iOS bridge (`axbridge` stalled, host `ax` answered: it drops RN testIDs on static text) or came back an empty root cannot say a node is absent. With zero matches on such a look, `toBeHidden`, `.not.toBeVisible`, `toHaveCount(0)` (and every other matcher) keep polling; `waitFor`, the reads (`read`, `text`, `allTexts`, `boundingBox`, ...) and actions look again within the action timeout; `isVisible`, `isHidden` and `count` (checks a spec branches on) look again for at most 2000 ms (less when the action timeout is shorter). A plain `getByTestId` asks the React tree first (dev client with Metro). A component whose rect is a node's on that read (host `ax` keeps the text node, drops only its testID) resolves to that node: `text()`, `read()`, `toHaveText`, `toContainText`, visibility, `tap({ until })` and every action work as on a whole read. One with no such node (host `ax` drops plain Views) answers from the React tree: presence, rect, visibility, and `text()`/`read().text`/`toHaveText`/`toContainText` from the text it renders (its own, else its children's: a badge around a `Text`); value, state and fills need the node. A secure text input reads as `securefield` on host `ax` too (its `secure-text-field` trait), empty, focused or filled, whether React Native `secureTextEntry`, UIKit `isSecureTextEntry` or a SwiftUI `SecureField`, so `fill` on a password field works on a degraded read. Web content (Safari, a `WKWebView`) is not on host `ax` at all: a degraded look in a web view has no nodes for the page, so its fields wait for the bridge. Still unknown at the timeout: `READ_DEGRADED` (message names `fellBackFrom` and the backend; troubleshooting row 118).
+- `.not` passes only after the inverted state held for 1000 ms (sooner on iOS/Android when the driver reports a quiet screen).
 - `expect.soft(locator)` records the failure and the test fails when its body ends.
-- Failures are `E2eError` with a `code`: `LOCATOR_NOT_FOUND LOCATOR_AMBIGUOUS INVALID_LOCATOR ACTION_FAILED TIMEOUT NOT_ACTIONABLE INVALID_ARGUMENT SESSION DRIVER ASSERTION`.
+- Failures are `E2eError` with a `code`: `LOCATOR_NOT_FOUND LOCATOR_AMBIGUOUS INVALID_LOCATOR ACTION_FAILED TIMEOUT NOT_ACTIONABLE INVALID_ARGUMENT SESSION DRIVER ASSERTION PERF_BUDGET RUN_FAILED READ_DEGRADED`. `E2eError` also carries `screen` (AX tree text at the failure, when known) and `matches` (count for `LOCATOR_AMBIGUOUS`).
 
 ## Example spec (`apps/example/e2e/todos.e2e.ts`)
 
@@ -204,7 +331,7 @@ WARDEN_UDID=<udid> WARDEN_BUNDLE_ID=<bundleId> \
 ```
 
 - The preload is mandatory unless `bunfig.toml` already has it.
-- Optional env: `WARDEN_PLATFORM=android`, `WARDEN_METRO_URL` and `WARDEN_LAUNCH_ARGS` (JSON array) for a dev client (take both from `warden dev ios --json`), `WARDEN_E2E_OUT`, `WARDEN_E2E_TIMEOUT`, `WARDEN_E2E_ACTION_TIMEOUT`, `WARDEN_E2E_ASSERTION_TIMEOUT` (ms), `WARDEN_E2E_DEBUG=1` (log every helper op with its duration), `WARDEN_APP_PATH`, `WARDEN_SIMD_SOCKET`.
+- Optional env: `WARDEN_PLATFORM=android`, `WARDEN_METRO_URL` and `WARDEN_LAUNCH_ARGS` (JSON array) for a dev client (take both from `warden dev ios --json`), `WARDEN_E2E_OUT`, `WARDEN_E2E_TIMEOUT`, `WARDEN_E2E_ACTION_TIMEOUT`, `WARDEN_E2E_ASSERTION_TIMEOUT` (ms), `WARDEN_BIN` (JSON argv of warden; needed by `device.perf`), `WARDEN_PERF` / `WARDEN_PERF_BUDGETS`, `WARDEN_E2E_DEBUG=1` (log every helper op with its duration), `WARDEN_APP_PATH`, `WARDEN_SIMD_SOCKET`.
 - Release the lease when done: `warden release <leaseId>`.
 
 ## Artifacts
@@ -212,8 +339,10 @@ WARDEN_UDID=<udid> WARDEN_BUNDLE_ID=<bundleId> \
 `<out>/<specId>/<title-slug>-<hash6>/`. `<out>` is `WARDEN_E2E_OUT`, default `.warden-e2e/<ISO time>`. Under `warden e2e` it is `<batchDir>/e2e/<worker>-<seq>/`.
 
 - Always: `trace.jsonl`, `screenshots/`.
-- On failure: `failure.png`, `screen-at-failure.txt`, plus `console.jsonl` and `network.jsonl` with devtools.
-- `<out>/results.jsonl`: one line per test, status `passed | failed | skipped | timed-out`.
+- On failure: `failure.png`, `screen-at-failure.txt`, `native.log` (+ iOS `.ips` crash reports) best effort (iOS: read inside the sim with `simctl spawn <udid> log show --info --debug`; private data is made readable first with `log config --mode private_data:on`, `WARDEN_NATIVE_LOG_PRIVATE=0` skips that; a tail of at most 20 lines, errors first, is printed under the failure), plus `console.jsonl` and `network.jsonl` with devtools.
+- With `device.perf` / `--perf`: `perf/report.json`, `perf/report.md`, `perf/session.json`.
+- `<out>/results.jsonl`: one line per test (`file title status durationMs startedAt error? artifacts{dir,files} bridge? device`; `bridge` = iOS reads that left `axbridge`, see `suites.md`), status `passed | failed | skipped | timed-out`. `files` lists what was written into the attempt dir.
+- Under `warden e2e` the batch dir also holds `e2e-report.json` (verdicts; `--report <file>` copies it).
 - Read `screen-at-failure.txt` first: it is the full AX tree at the failure.
 
 ## Not in the API

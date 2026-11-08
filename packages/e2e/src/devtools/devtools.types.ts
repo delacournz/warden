@@ -55,6 +55,16 @@ export type CdpTap = (event: CdpTapEvent) => void;
 
 export type ConsoleLevel = "log" | "info" | "warn" | "error" | "debug";
 
+/** One stack frame; `line`/`col` are 1-based. Raw frames carry the bundle URL, symbolicated ones the source file. */
+export type StackFrame = {
+	file: string;
+	line: number;
+	col: number;
+	fn?: string;
+	/** library / runtime internals Metro marks collapsible */
+	collapsed?: boolean;
+};
+
 /** One captured console message (`console`), uncaught exception (`exception`) or `mark()` (`note`). */
 export type ConsoleLine = {
 	/** epoch ms (the runtime's own timestamp when it sent one) */
@@ -64,6 +74,10 @@ export type ConsoleLine = {
 	text: string;
 	/** top stack frame; `line`/`col` are 1-based */
 	source?: { url: string; line: number; col: number };
+	/** the runtime's stack when it sent one; the broker rewrites it to original files (symbolication) */
+	stack?: StackFrame[];
+	/** Metro's code frame around the first app frame (symbolication) */
+	codeFrame?: string;
 	/** each console argument rendered on its own (console messages only) */
 	args?: string[];
 };

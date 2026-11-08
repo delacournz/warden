@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { buildFromSource, compileArgs, type EmbeddedBuild, runtimeBlobArgs } from "./source-build";
+import { buildFromSource, compileArgs, type EmbeddedBuild, runnerBlobArgs, runtimeBlobArgs } from "./source-build";
 
 const info: EmbeddedBuild = { channel: "release", version: "1.2.3", builtAt: "2026-10-16T00:00:00.000Z" };
 
@@ -69,7 +69,7 @@ describe("bytecode build", () => {
 });
 
 describe("buildFromSource", () => {
-	test("packs the e2e runtime blob next to the outfile, embeds it, and removes it after", async () => {
+	test("packs the e2e runtime and iPhone runner blobs next to the outfile, embeds both, and removes them after", async () => {
 		const dir = mkdtempSync(join(tmpdir(), "warden-source-build-"));
 		const calls: Array<readonly string[]> = [];
 		try {
@@ -77,6 +77,7 @@ describe("buildFromSource", () => {
 				async (cmd) => {
 					calls.push(cmd);
 					if (cmd[0] === "bun" && cmd[1]?.endsWith("e2e-runtime.ts")) writeFileSync(cmd[3] ?? "", "{}");
+					if (cmd[0] === "bun" && cmd[1]?.endsWith("ios-runner-blob.ts")) writeFileSync(cmd[3] ?? "", "{}");
 					return { exitCode: 0, stdout: "", stderr: "" };
 				},
 				"/repo",
@@ -86,9 +87,13 @@ describe("buildFromSource", () => {
 			);
 			expect(built.success).toBe(true);
 			const blob = join(dir, "e2e-runtime.bin");
-			expect(calls[calls.length - 2]).toEqual(runtimeBlobArgs("/repo", blob, "1.2.3"));
+			const runnerBlob = join(dir, "ios-runner.bin");
+			expect(calls[calls.length - 3]).toEqual(runtimeBlobArgs("/repo", blob, "1.2.3"));
+			expect(calls[calls.length - 2]).toEqual(runnerBlobArgs("/repo", runnerBlob));
 			expect(calls[calls.length - 1]).toContain(blob);
+			expect(calls[calls.length - 1]).toContain(runnerBlob);
 			expect(existsSync(blob)).toBe(false);
+			expect(existsSync(runnerBlob)).toBe(false);
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}

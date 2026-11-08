@@ -1,10 +1,13 @@
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
-import { isHidLost } from "../driver/ios/hid-recovery";
+import { conditionsOf } from "../conditions/device-conditions";
+import { formatNativeTail } from "../devtools/native-log-tail";
+import { isRecoverableLoss } from "../driver/ios/hid-recovery";
 import { E2eError } from "../errors";
 import { perfStartFor } from "../perf/device-perf";
 import { type AttemptBinding, attemptSession, type Session } from "../session";
 import { attemptDir, hash6, specIdOf } from "./artifacts";
+import { bridgeEvidence } from "./bridge-evidence";
 import {
 	CAPTURE_TIMEOUT_MS,
 	captureDevtoolsArtifacts,
@@ -56,6 +59,9 @@ export function runnerTiming(): Readonly<RunnerTiming> {
 export function setRunnerTiming(next: Partial<RunnerTiming> | undefined): void {
 	timing = next === undefined ? { ...DEFAULT_TIMING } : { ...timing, ...next };
 }
+
+/** One thing to undo after the test; `when` false = nothing to undo, so no step line and no cleanup budget spent. */
+type Teardown = { name: string; run: () => Promise<void>; when?: () => boolean };
 
 type Bag = BaseFixtures & Record<string, unknown>;
 
@@ -232,8 +238,10 @@ async function runAttemptOnce<F extends object>(session: Session, spec: AttemptS
 	const files = new Set<string>();
 	// what this attempt's fixtures and steps run against: the run context, its cleanup context, then a finished one
 	let binding: AttemptBinding | undefined;
+	const bridge = bridgeEvidence();
 	const trace = openTrace(join(dir, "trace.jsonl"), (event) => {
 		files.add("trace.jsonl");
+		bridge.observe(event);
 		print(formatConsoleLine(event, { clock, short, depth: binding?.context.depth ?? 0 }));
 	});
 	const controller = new AbortController();
@@ -257,7 +265,7 @@ async function runAttemptOnce<F extends object>(session: Session, spec: AttemptS
 	);
 	session.enterAttempt(ctx);
 
-	const teardowns: Array<{ name: string; run: () => Promise<void> }> = [];
+	const teardowns: Teardown[] = [];
 	const state: { bag?: Bag } = {};
 	let outcome = await raceDeadline(controller, use.timeoutMs, () =>
 		setUpAndRun(bound, spec, use, controller.signal, state, teardowns)
@@ -278,7 +286,7 @@ async function runAttemptOnce<F extends object>(session: Session, spec: AttemptS
 
 	outcome = failIf(outcome, cleanupErrors.length > 0, () => cleanupErrors[0]);
 
-	return concludeAttempt(session, spec, ctx, { startedAt, device }, outcome, print, clock);
+	return concludeAttempt(session, spec, ctx, { startedAt, device, bridge: bridge.summary() }, outcome, print, clock);
 }
 
 type BodyOutcome = { failed: boolean; failure: unknown; deadlineHit: boolean };
@@ -318,7 +326,7 @@ async function concludeAttempt<F extends object>(
 	session: Session,
 	spec: AttemptSpec<F>,
 	ctx: AttemptContext,
-	run: { startedAt: number; device: TestResult["device"] },
+	run: AttemptRun,
 	outcome: BodyOutcome,
 	print: (line: string | undefined) => void,
 	clock: boolean
@@ -331,18 +339,25 @@ async function concludeAttempt<F extends object>(
 		outcome.failed ? { failed: true, error: outcome.failure, timedOut: outcome.deadlineHit } : { failed: false }
 	);
 	print(formatConsoleLine({ type: "test-end", result }, { clock }));
-	if (
-		outcome.failed &&
-		session.recoverHid !== undefined &&
-		isHidLost(outcome.failure) &&
-		(await session.recoverHid())
-	) {
-		return "again";
-	}
+	if (outcome.failed && (await recovered(session, outcome.failure, run.startedAt))) return "again";
 	if (!outcome.failed || spec.final) session.results.append(result);
 
 	if (outcome.failed) throw outcome.failure instanceof Error ? outcome.failure : new Error(String(outcome.failure));
 	return undefined;
+}
+
+/**
+ * Whether a failed attempt is worth running again: the device lost its HID connection or runner host and was
+ * recovered, or the iOS helper restarted a wedged accessibility service (which quit the app) during it.
+ */
+async function recovered(session: Session, failure: unknown, startedAt: number): Promise<boolean> {
+	if (
+		session.recoverHid !== undefined &&
+		isRecoverableLoss(failure, session.env.deviceKind) &&
+		(await session.recoverHid())
+	)
+		return true;
+	return session.recoverAxWedge !== undefined && (await session.recoverAxWedge(Date.now() - startedAt));
 }
 
 /** One error for every `expect.soft` failure of the attempt. */
@@ -354,10 +369,13 @@ export function softFailureError(failures: readonly E2eError[]): E2eError {
 
 type Outcome = { failed: false } | { failed: true; error: unknown; timedOut: boolean };
 
+/** What `results.jsonl` needs of the attempt beyond its outcome: when, on what, and its bridge fallbacks. */
+type AttemptRun = { startedAt: number; device: TestResult["device"]; bridge: TestResult["bridge"] };
+
 function buildResult<F extends object>(
 	spec: AttemptSpec<F>,
 	ctx: AttemptContext,
-	run: { startedAt: number; device: TestResult["device"] },
+	run: AttemptRun,
 	outcome: Outcome
 ): TestResult {
 	const status: TestResult["status"] = !outcome.failed ? "passed" : outcome.timedOut ? "timed-out" : "failed";
@@ -370,6 +388,7 @@ function buildResult<F extends object>(
 		...(spec.only ? { only: true } : {}),
 		...(outcome.failed ? { error: errorInfo(outcome.error) } : {}),
 		...(ctx.files.size > 0 ? { artifacts: { dir: ctx.dir, files: [...ctx.files].sort() } } : {}),
+		...(run.bridge === undefined ? {} : { bridge: run.bridge }),
 		device: run.device,
 	};
 }
@@ -385,7 +404,7 @@ async function setUpAndRun<F extends object>(
 	use: ResolvedUse,
 	signal: AbortSignal,
 	state: { bag?: Bag },
-	teardowns: Array<{ name: string; run: () => Promise<void> }>
+	teardowns: Teardown[]
 ): Promise<void> {
 	const base = await buildBaseFixtures(session, signal, use);
 	const built: Bag = { ...base };
@@ -401,6 +420,12 @@ async function setUpAndRun<F extends object>(
 				if (perf.active) await perf.stop();
 			},
 		});
+	}
+	const conditions = conditionsOf(base.device);
+	if (conditions !== undefined) {
+		// registered before it is applied, so a half-applied baseline is still put back
+		teardowns.push({ name: "conditions", run: () => conditions.teardown(), when: () => conditions.dirty() });
+		if (conditions.declared) await session.step("conditions", "conditions.baseline", () => conditions.applyBaseline());
 	}
 	if (use.launch === "fresh") await session.step("app", "app.open", () => base.app.open());
 	for (const entry of spec.fixtures) {
@@ -445,6 +470,7 @@ async function captureFailureArtifacts(
 				]),
 	];
 	for (const capture of captures) {
+		for (const line of formatNativeTail(capture.tail ?? [])) session.log(line);
 		for (const file of capture.files) ctx.files.add(file);
 		for (const problem of capture.problems) {
 			ctx.trace.write({ type: "note", ts: Date.now(), kind: "note", label: `failure capture: ${problem}` });
@@ -463,7 +489,7 @@ async function runCleanup<F extends object>(
 	spec: AttemptSpec<F>,
 	ctx: AttemptContext,
 	built: Bag | undefined,
-	teardowns: ReadonlyArray<{ name: string; run: () => Promise<void> }>,
+	teardowns: readonly Teardown[],
 	budget: () => number,
 	bind: (context: AttemptContext) => void
 ): Promise<unknown[]> {
@@ -490,6 +516,7 @@ async function runCleanup<F extends object>(
 		}
 	}
 	for (const fixture of [...teardowns].reverse()) {
+		if (fixture.when?.() === false) continue;
 		await attempt(`fixture ${fixture.name} teardown`, () => step("fixture", `${fixture.name} teardown`, fixture.run));
 	}
 	cleanup.abort(new E2eError("SESSION", "attempt finished"));

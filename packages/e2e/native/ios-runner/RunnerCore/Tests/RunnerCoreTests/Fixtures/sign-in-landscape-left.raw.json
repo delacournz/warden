@@ -1,0 +1,168 @@
+{
+  "children": [
+    {
+      "children": [
+        {
+          "children": [
+            {
+              "children": [
+                {
+                  "frame": {
+                    "height": 60,
+                    "width": 44,
+                    "x": 62,
+                    "y": 372
+                  },
+                  "identifier": "sign-in-back",
+                  "label": "Back",
+                  "type": "Button"
+                },
+                {
+                  "frame": {
+                    "height": 140,
+                    "width": 24,
+                    "x": 72,
+                    "y": 150
+                  },
+                  "label": "Sign in",
+                  "type": "StaticText"
+                }
+              ],
+              "frame": {
+                "height": 440,
+                "width": 44,
+                "x": 62,
+                "y": 0
+              },
+              "identifier": "Sign in",
+              "type": "NavigationBar"
+            },
+            {
+              "frame": {
+                "height": 392,
+                "width": 32,
+                "x": 140,
+                "y": 24
+              },
+              "label": "Welcome back",
+              "type": "StaticText"
+            },
+            {
+              "frame": {
+                "height": 392,
+                "width": 48,
+                "x": 200,
+                "y": 24
+              },
+              "hasFocus": true,
+              "identifier": "sign-in-email",
+              "placeholder": "Email",
+              "type": "TextField",
+              "value": "chris@delacour.co.nz"
+            },
+            {
+              "frame": {
+                "height": 392,
+                "width": 48,
+                "x": 264,
+                "y": 24
+              },
+              "identifier": "sign-in-password",
+              "placeholder": "Password",
+              "type": "SecureTextField"
+            },
+            {
+              "frame": {
+                "height": 51,
+                "width": 31,
+                "x": 330,
+                "y": 49
+              },
+              "identifier": "sign-in-remember",
+              "label": "Remember me",
+              "type": "Switch",
+              "value": "1"
+            },
+            {
+              "enabled": false,
+              "frame": {
+                "height": 392,
+                "width": 52,
+                "x": 380,
+                "y": 24
+              },
+              "identifier": "sign-in-submit",
+              "label": "Sign in",
+              "type": "Button"
+            },
+            {
+              "frame": {
+                "height": 0,
+                "width": 0,
+                "x": 0,
+                "y": 440
+              },
+              "label": "hidden-logo",
+              "type": "Image"
+            },
+            {
+              "children": [
+                {
+                  "frame": {
+                    "height": 40,
+                    "width": 56,
+                    "x": 650,
+                    "y": 396
+                  },
+                  "label": "q",
+                  "type": "Key"
+                },
+                {
+                  "frame": {
+                    "height": 40,
+                    "width": 56,
+                    "x": 650,
+                    "y": 352
+                  },
+                  "label": "w",
+                  "type": "Key"
+                }
+              ],
+              "frame": {
+                "height": 440,
+                "width": 316,
+                "x": 640,
+                "y": 0
+              },
+              "type": "Keyboard"
+            }
+          ],
+          "frame": {
+            "height": 440,
+            "width": 956,
+            "x": 0,
+            "y": 0
+          },
+          "identifier": "sign-in-screen",
+          "type": "Other"
+        }
+      ],
+      "frame": {
+        "height": 440,
+        "width": 956,
+        "x": 0,
+        "y": 0
+      },
+      "type": "Window"
+    }
+  ],
+  "frame": {
+    "height": 440,
+    "width": 956,
+    "x": 0,
+    "y": 0
+  },
+  "identifier": "nz.co.delacour.example",
+  "label": "Example",
+  "type": "Application"
+}

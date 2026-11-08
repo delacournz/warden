@@ -2,6 +2,24 @@ import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { z } from "zod";
 
+const bridgeReadSchema = z.object({
+	/** why the helper read on `ax` */
+	reason: z.string().optional(),
+	/** the error code of a read that failed */
+	code: z.string().optional(),
+	stage: z.string().optional(),
+	readMs: z.number().optional(),
+	deadlineMs: z.number().optional(),
+	guestAgeMs: z.number().optional(),
+	cold: z.boolean().optional(),
+	cooldownRemainingMs: z.number().optional(),
+	probes: z.number().optional(),
+	/** stalled AX guests the helper had recycled (at most 3 per helper) */
+	recycles: z.number().optional(),
+	/** the helper had no recycles left */
+	recyclesExhausted: z.boolean().optional(),
+});
+
 export const testStatusSchema = z.enum(["passed", "failed", "skipped", "timed-out"]);
 
 export const testResultSchema = z.object({
@@ -23,6 +41,17 @@ export const testResultSchema = z.object({
 		.optional(),
 	/** the attempt dir (`artifacts.attemptDir`) and the files written into it, relative to it */
 	artifacts: z.object({ dir: z.string(), files: z.array(z.string()) }).optional(),
+	/**
+	 * iOS reads that left `axbridge` in this attempt (answered by `ax` instead, or failed with a stall report): how
+	 * many, and the first and the last with the helper's stall report (`driver/bridge-stall.ts`). Absent when none did.
+	 */
+	bridge: z
+		.object({
+			fallbacks: z.number(),
+			first: bridgeReadSchema,
+			last: bridgeReadSchema,
+		})
+		.optional(),
 	device: z.object({
 		udid: z.string(),
 		platform: z.enum(["ios", "android"]),

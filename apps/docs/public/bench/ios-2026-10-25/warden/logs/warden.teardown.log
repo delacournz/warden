@@ -1,1 +1,1 @@
-2026-10-25T12:44:05.517Z {"ok":true,"command":"close","device":{"udid":"07FBA7CD-07EC-40FA-8ADF-5EC275C0C571","platform":"ios","name":"warden-iphone-17-1"},"durationMs":24,"result":{"app":null,"helper":{"stopped":true,"how":"shutdown"},"released":false}}
+2026-10-26T00:02:30.137Z {"ok":true,"command":"close","device":{"udid":"733DA5E8-BA9B-4E4A-98FD-6CD76BA8C161","platform":"ios","name":"warden-iphone-17-1"},"durationMs":19,"result":{"app":null,"helper":{"stopped":true,"how":"shutdown"},"released":false}}

@@ -1,8 +1,9 @@
 import type { Manifest } from "../results/manifest";
 import type { BenchRun, FrameworkResult, OkFrameworkResult, Series } from "../results/schema";
+import { stepGroups } from "../results/stats";
 import { escapeHtml } from "./escape";
 import { bytes, coldStartCost, cpuSeconds, DASH, ms, pct, ratio } from "./format";
-import { FAIRNESS_RULES, PROCESSES_NOTE } from "./markdown";
+import { FAIRNESS_RULES, PROCESSES_NOTE, STEP_SCOPE_NOTE } from "./markdown";
 import { type BarGroup, type BoxGroup, barChart, boxChart, tickMs } from "./svg";
 import {
 	cpuSecondsPerRep,
@@ -74,6 +75,7 @@ main{max-width:1040px;margin:0 auto;padding:24px 16px 48px}
 h1{font-size:1.6rem;line-height:1.25;margin:0 0 4px}
 h2{font-size:1.2rem;margin:40px 0 12px;padding-top:16px;border-top:1px solid var(--grid)}
 h3{font-size:1rem;margin:24px 0 8px}
+h4{font-size:0.9rem;margin:16px 0 6px}
 .sub{color:var(--text-2);margin:0 0 16px}
 code{font:0.9em ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--surface-2);padding:1px 5px;border-radius:4px;overflow-wrap:anywhere}
 dl.meta{display:grid;grid-template-columns:max-content 1fr;gap:4px 16px;margin:16px 0;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:12px 16px}
@@ -401,6 +403,30 @@ function matrixSection(run: BenchRun, manifest: Manifest): string {
 	].join("");
 }
 
+function stepGroupsBlock(oks: readonly OkFrameworkResult[]): string {
+	const headers = ["Verb", "n", "Share", "Median", "p95", "Max"].map((text) => ({ text }));
+	const tables = oks.flatMap((f) => {
+		const groups = stepGroups(f.reps);
+		if (groups.length === 0) return [];
+		const rows = groups.map((g) =>
+			tr(
+				[
+					td(escapeHtml(g.verb)),
+					td(String(g.n)),
+					td(escapeHtml(pct(g.share))),
+					td(escapeHtml(ms(g.median))),
+					td(escapeHtml(ms(g.p95))),
+					td(escapeHtml(ms(g.max))),
+				],
+				f.framework
+			)
+		);
+		return [`<h4>${escapeHtml(f.framework)}</h4>`, table(headers, rows, `Where step time goes: ${f.framework}`)];
+	});
+	if (tables.length === 0) return "";
+	return [`<h3>Where step time goes</h3>`, `<p class="note">${inlineCode(STEP_SCOPE_NOTE)}</p>`, ...tables].join("");
+}
+
 function stepsSection(run: BenchRun): string {
 	const oks = run.frameworks.filter(isOk).filter((f) => f.stats.stepLatency !== undefined);
 	if (oks.length === 0) {
@@ -447,6 +473,7 @@ function stepsSection(run: BenchRun): string {
 			"No step data."
 		),
 		table(headers, rows, "Per-step latency table"),
+		stepGroupsBlock(oks),
 		`</section>`,
 	].join("");
 }

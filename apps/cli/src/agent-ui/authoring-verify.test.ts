@@ -39,7 +39,7 @@ async function setup(code: number, results: string | undefined) {
 	const spawned: { argv: string[]; opts: SpawnOptions }[] = [];
 	const timers: number[] = [];
 	const deps: VerifyDeps = {
-		which: () => "/bin/bun",
+		execPath: () => "/bin/bun",
 		resolveModule: () => "/repo/node_modules/@delacour/warden-e2e/preload.ts",
 		e2eVersion: () => undefined,
 		bundledE2e: async () => ok("/bundled/preload.mjs"),
@@ -118,9 +118,22 @@ test("exit 0 with no results is not a pass", async () => {
 	expect(ran).toMatchObject({ success: true, data: { passed: false, tests: [] } });
 });
 
-test("a missing bun is an error before anything is spawned", async () => {
-	const { ctx, deps, suite, spawned } = await setup(0, undefined);
-	const ran = await runVerify(ctx, { ...deps, which: () => null }, input(suite));
-	expect(ran.success).toBe(false);
-	expect(spawned).toEqual([]);
+test("hands the spec process the lease id of the device it runs on", async () => {
+	const { ctx, deps, suite, spawned } = await setup(0, RESULT("/s", "passed"));
+	const lease = ctx.db.insertLease(
+		{
+			resource: { kind: "device", platform: "ios", id: "U1", name: "sim" },
+			owner: { kind: "agent", sessionId: "s", cwd: "/tmp" },
+			ttlMs: 60_000,
+		},
+		ctx.now()
+	);
+	await runVerify(ctx, deps, input(suite));
+	expect(spawned[0]?.opts.env.WARDEN_LEASE_ID).toBe(lease.id);
+});
+
+test("no lease on the device: no WARDEN_LEASE_ID", async () => {
+	const { ctx, deps, suite, spawned } = await setup(0, RESULT("/s", "passed"));
+	await runVerify(ctx, deps, input(suite));
+	expect("WARDEN_LEASE_ID" in (spawned[0]?.opts.env ?? {})).toBe(false);
 });

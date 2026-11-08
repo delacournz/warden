@@ -9,9 +9,16 @@ import { mkdirSync, writeSync } from "node:fs";
 import { resolve } from "node:path";
 import { type DevtoolsFacet, type DevtoolsResult, devtoolsErr } from "./devtools/devtools.types";
 import { openDevtoolsFacet } from "./devtools/facet";
-import type { NativeLogDeps } from "./devtools/native-log";
+import { enableNativePrivateData, NATIVE_PRIVATE_DATA_ENV, type NativeLogDeps } from "./devtools/native-log";
+import { canRecoverAxWedge, restartedWithin } from "./driver/ax-wedge";
 import type { Driver, DriverResult } from "./driver/driver.types";
-import { type HidRecoveryDeps, rebootSim, runAfterReboot, stopResidentHelper } from "./driver/ios/hid-recovery";
+import {
+	type HidRecoveryDeps,
+	rebootSim,
+	restartRunnerHost,
+	runAfterReboot,
+	stopResidentHelper,
+} from "./driver/ios/hid-recovery";
 import { cacheObservations } from "./driver/observation-cache";
 import { traceDriver } from "./driver/traced-driver";
 import { type E2eEnv, readEnv } from "./env";
@@ -21,6 +28,10 @@ import { openResults, type ResultsWriter } from "./runner/results";
 import { runSpan, type SpanRunner } from "./runner/span";
 import { runStep } from "./runner/step";
 import type { TraceWriter } from "./runner/trace";
+
+/** A biometrics enroll right after a boot can be dropped: re-apply until the read-back shows enrolled. */
+const ENROLL_TRIES = 5;
+const ENROLL_RETRY_MS = 500;
 
 export type DriverFactory = (env: E2eEnv) => DriverResult<Driver>;
 
@@ -35,7 +46,10 @@ export function devtoolsTarget(env: E2eEnv): { appId: string; deviceName?: strin
 	return { appId: env.bundleId, ...(env.deviceName === undefined ? {} : { deviceName: env.deviceName }) };
 }
 
-/** Metro's inspector for this env's app (`WARDEN_METRO_URL`), pinned by {@link devtoolsTarget}. */
+/**
+ * Metro's inspector for this env's app (`WARDEN_METRO_URL`), pinned by {@link devtoolsTarget}. LogBox is kept off:
+ * its toasts and inspector cover the app and take taps, while the logs still reach the console capture.
+ */
 export const openDevtools: DevtoolsOpener = (env) =>
 	openDevtoolsFacet({
 		env: { metroUrl: env.metroUrl },
@@ -44,6 +58,7 @@ export const openDevtools: DevtoolsOpener = (env) =>
 		WebSocket,
 		timeoutMs: 5_000,
 		log: (line) => process.stderr.write(`[devtools] ${line}\n`),
+		muteLogBox: true,
 	});
 
 export type Session = {
@@ -60,6 +75,12 @@ export type Session = {
 	 * reopens the driver and devtools, once per session. Resolves `true` when the test is worth running again.
 	 */
 	recoverHid: (() => Promise<boolean>) | undefined;
+	/**
+	 * Present for iOS simulator runs: after a test failed, asks the open driver whether `warden-simd` restarted the
+	 * sim's wedged accessibility service (backboardd, which quits the app) within the last `attemptMs` (waiting for a
+	 * restart still in flight). Resolves `true` once per restart: the test is worth running again.
+	 */
+	recoverAxWedge: ((attemptMs: number) => Promise<boolean>) | undefined;
 	/** closes the open driver and devtools so the next call opens them afresh (the device was rebooted under them) */
 	resetDevice(): Promise<void>;
 	/** where the console reporter prints one line; default fd 1 */
@@ -184,6 +205,10 @@ function resolveEnv(env: E2eEnv | undefined): E2eEnv {
 	return read.data;
 }
 
+/** How long a failed test waits for the helper to finish a backboardd restart it is still doing (≤ ~55 s). */
+const AX_WEDGE_WAIT_MS = 60_000;
+const AX_WEDGE_POLL_MS = 1_000;
+
 const WARM_TRIES = 15;
 const WARM_INTERVAL_MS = 2_000;
 
@@ -241,10 +266,51 @@ export function createSession(opts: SessionOptions = {}): Session {
 		}
 	}
 
+	/** The helper's restarts a test already ran again for: one run again per restart. */
+	let axWedgeRerunFor = 0;
+
+	async function recoverAxWedge(attemptMs: number): Promise<boolean> {
+		const driver = current;
+		if (closing !== undefined || driver === undefined || !canRecoverAxWedge(driver)) return false;
+		const sleep = hid?.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+		let state = await driver.axWedge();
+		let waited = 0;
+		while (state.success && state.data.recovering && waited < AX_WEDGE_WAIT_MS) {
+			await sleep(AX_WEDGE_POLL_MS);
+			waited += AX_WEDGE_POLL_MS;
+			state = await driver.axWedge();
+		}
+		if (!state.success || state.data.restarts <= axWedgeRerunFor) return false;
+		if (!restartedWithin(state.data, attemptMs + waited)) return false;
+		axWedgeRerunFor = state.data.restarts;
+		note(
+			`sim ${resolved.deviceName ?? resolved.udid}: accessibility service wedged, warden-simd restarted backboardd (the app was quit); running the test again`
+		);
+		return true;
+	}
+
+	/** A physical iPhone: restart its runner host once. The phone is never rebooted and `simctl` is never run. */
+	async function recoverRunner(deps: HidRecoveryDeps, name: string): Promise<boolean> {
+		if (hidRecovered) {
+			note(`iPhone ${name}: the runner connection was lost again after a restart; check the phone and retry`);
+			return false;
+		}
+		hidRecovered = true;
+		await resetDevice();
+		const restarted = await restartRunnerHost(deps, resolved.iosRunnerRestart, resolved.udid);
+		if (!restarted.success) {
+			note(`iPhone ${name}: runner connection lost, restart failed: ${restarted.error}`);
+			return false;
+		}
+		note(`iPhone ${name}: runner connection lost, runner host restarted; running the test again`);
+		return true;
+	}
+
 	/** Only the device `warden e2e` leased (this session's `WARDEN_UDID`), only once: a second loss fails as before. */
 	async function recoverHid(): Promise<boolean> {
 		if (hid === undefined || closing !== undefined) return false;
 		const name = resolved.deviceName ?? resolved.udid;
+		if (resolved.deviceKind === "physical") return recoverRunner(hid, name);
 		if (hidRecovered) {
 			note(`sim ${name}: HID connection lost again after a reboot; \`warden release <id> --shutdown\` and retry`);
 			return false;
@@ -268,6 +334,41 @@ export function createSession(opts: SessionOptions = {}): Session {
 		return true;
 	}
 
+	/**
+	 * A biometrics iOS sim is enrolled again when the session opens, before any app install: a reused booted sim
+	 * is left unenrolled by a spec that called `unenroll`. Best effort and idempotent; Android keeps its enrollment
+	 * in the golden snapshot. A physical iPhone is never enrolled: its Face ID / Touch ID is the real sensor.
+	 */
+	async function reenroll(driver: Driver): Promise<Driver> {
+		if (resolved.biometrics !== true || resolved.platform !== "ios" || resolved.deviceKind === "physical")
+			return driver;
+		const sleep = hid?.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+		for (let attempt = 1; attempt <= ENROLL_TRIES; attempt += 1) {
+			const state = await driver.biometrics("enroll");
+			if (!state.success) {
+				note(`biometrics enroll failed: ${state.error.code}: ${state.error.message}`);
+				return driver;
+			}
+			if (state.data.enrolled) return driver;
+			if (attempt < ENROLL_TRIES) await sleep(ENROLL_RETRY_MS);
+		}
+		note(`biometrics enroll did not take after ${ENROLL_TRIES} attempts`);
+		return driver;
+	}
+
+	/**
+	 * Private data on in a simulator's logd before the app runs, so `native.log` shows `%{private}` values: what
+	 * logd redacts when it writes cannot be recovered when it is read. Simulators only (a physical iPhone's logd
+	 * is not ours to configure); `WARDEN_NATIVE_LOG_PRIVATE=0` opts out. Best effort, noted on failure.
+	 */
+	async function nativePrivateData(): Promise<void> {
+		const deps = opts.nativeLog ?? defaultNativeLog;
+		if (deps === undefined || resolved.platform !== "ios" || resolved.deviceKind === "physical") return;
+		if (process.env[NATIVE_PRIVATE_DATA_ENV] === "0") return;
+		const problem = await enableNativePrivateData(resolved.udid, deps.exec);
+		if (problem !== undefined) note(problem);
+	}
+
 	const session: Session = {
 		env: resolved,
 		out,
@@ -275,6 +376,7 @@ export function createSession(opts: SessionOptions = {}): Session {
 		fixtures: opts.fixtures ?? defaultFixtures,
 		nativeLog: opts.nativeLog ?? defaultNativeLog,
 		recoverHid: hid === undefined || resolved.platform !== "ios" ? undefined : recoverHid,
+		recoverAxWedge: resolved.platform !== "ios" || resolved.deviceKind === "physical" ? undefined : recoverAxWedge,
 		resetDevice,
 		log: opts.log ?? writeLine,
 		get attempt() {
@@ -301,7 +403,10 @@ export function createSession(opts: SessionOptions = {}): Session {
 						throw new E2eError("DRIVER", `${code}: ${message}`);
 					}
 					current = cacheObservations(traceDriver(result.data, { trace: () => attempt?.trace }));
-					return current;
+					return reenroll(current).then(async (driver) => {
+						await nativePrivateData();
+						return driver;
+					});
 				},
 				(cause: unknown) => {
 					opened = undefined;
@@ -427,6 +532,9 @@ export function attemptSession(session: Session, binding: () => AttemptBinding):
 		get recoverHid() {
 			return session.recoverHid;
 		},
+		get recoverAxWedge() {
+			return session.recoverAxWedge;
+		},
 		resetDevice: () => session.resetDevice(),
 		get fixtures() {
 			return session.fixtures;
@@ -472,6 +580,11 @@ export function getSession(opts: SessionOptions = {}): Session {
 	const session = createSession(opts);
 	slot()[SESSION_KEY] = session;
 	return session;
+}
+
+/** The process-wide session if one exists; never creates one (so a caller outside a test opens no device). */
+export function peekSession(): Session | undefined {
+	return slot()[SESSION_KEY];
 }
 
 /** Closes and forgets the process-wide session, if any. */

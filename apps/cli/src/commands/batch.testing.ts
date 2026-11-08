@@ -58,6 +58,10 @@ export function harness(
 		ready?: () => boolean;
 		isTTY?: boolean;
 		serveExitsOnKill?: boolean;
+		/** with `manual`: a killed job exits (143) instead of running on */
+		jobsExitOnKill?: boolean;
+		/** serve dies the moment it is spawned with this exit code (a port already taken, a bad command) */
+		serveExitsAtStart?: number;
 		/** overrides `exitCodes`: the exit code for one job spawn, from its env */
 		exitCodeFor?: (env: Record<string, string | undefined>) => number;
 		/** the failure-screenshot capture: "fail" resolves false, "throw" rejects */
@@ -72,6 +76,8 @@ export function harness(
 		warm?: "ok" | "fail" | "snapshot-fail";
 		/** `bun` on PATH (default `/usr/bin/bun`; null = not installed) */
 		bun?: string | null;
+		/** this process's executable, what the specs run as when `WARDEN_BUN` is unset (default `/usr/bin/bun`) */
+		execPath?: string;
 		/** where `@delacour/warden-e2e/preload` resolves (default under `/proj/node_modules`; null = not installed) */
 		preload?: string | null;
 		/** the published version of the repo's `@delacour/warden-e2e` (default: undefined = workspace sources) */
@@ -119,6 +125,10 @@ export function harness(
 				h.events.push(
 					daemon ? `${daemon}:start` : spawnOpts.setup ? `setup:${spawnOpts.env.WARDEN_UDID}` : `job:${job}`
 				);
+				if (daemon === "serve" && opts.serveExitsAtStart !== undefined) {
+					const code = opts.serveExitsAtStart;
+					queueMicrotask(() => resolveExit(code));
+				}
 				if (!daemon && !opts.manual)
 					queueMicrotask(() => resolveExit(opts.exitCodeFor?.(spawnOpts.env) ?? opts.exitCodes?.[job ?? ""] ?? 0));
 				return {
@@ -128,6 +138,7 @@ export function harness(
 						entry.kills.push(signal);
 						h.events.push(`${daemon ?? `job:${job}`}:${signal}`);
 						if (daemon && opts.serveExitsOnKill !== false) resolveExit(143);
+						if (!daemon && opts.manual && opts.jobsExitOnKill) resolveExit(143);
 					},
 				};
 			},
@@ -185,6 +196,11 @@ export function harness(
 			after: (ms, fn) => {
 				const timer = { ms, fire: fn, cancelled: false };
 				h.timers.push(timer);
+				if (opts.warm === "snapshot-fail" && (ms === 2_000 || ms === 5_000)) {
+					queueMicrotask(() => {
+						if (!timer.cancelled) fn();
+					});
+				}
 				return () => {
 					timer.cancelled = true;
 				};
@@ -194,6 +210,7 @@ export function harness(
 				return opts.metroOwner ?? { kind: "ours" };
 			},
 			which: (cmd) => (cmd === "bun" ? (opts.bun === undefined ? "/usr/bin/bun" : opts.bun) : null),
+			execPath: () => opts.execPath ?? "/usr/bin/bun",
 			resolveModule: (specifier) => {
 				if (opts.preload === null) throw new Error(`Cannot find package '${specifier}'`);
 				return opts.preload ?? "/proj/node_modules/@delacour/warden-e2e/src/preload.ts";

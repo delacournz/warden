@@ -6,7 +6,7 @@ import type { Driver, DriverResult, KeyName } from "./driver.types";
  * fill`/`type` all go through it).
  *
  * iOS: `warden-simd` holds, paces and spaces repeated keys itself (`WARDEN_SIMD_PACE_MS`, `WARDEN_SIMD_HOLD_MS`,
- * `WARDEN_SIMD_REPEAT_GAP_MS`), so the whole string goes in one request and the client adds no gap. Before that
+ * `WARDEN_SIMD_REPEAT_GAP_MS`, `WARDEN_SIMD_LEAD_MS`), so the whole string goes in one request and the client adds no gap. Before that
  * the client sent one grapheme per request, 25 ms apart (set `KEY_PACE_MS` 25 and `SPLIT_TEXT` true to go back).
  */
 
@@ -51,6 +51,18 @@ export type SetsText = { setText(text: string): DriverResult<void> };
 
 export function canSetText(driver: Driver): driver is Driver & SetsText {
 	return typeof (driver as Partial<SetsText>).setText === "function";
+}
+
+/**
+ * Optional fast path next to the frozen `Driver`: put `text` on the device pasteboard and paste it into the focused
+ * field with one Cmd+V (iOS `simctl.pbcopy` then `warden-simd` `paste`), replacing the selection. Cost is flat (~400 ms)
+ * where typing is 70-260 ms per character. A pasteboard write that cannot be confirmed is an error (nothing was
+ * pasted) and the caller types the old way.
+ */
+export type PastesText = { pasteText(text: string): DriverResult<void> };
+
+export function canPasteText(driver: Driver): driver is Driver & PastesText {
+	return typeof (driver as Partial<PastesText>).pasteText === "function";
 }
 
 const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });

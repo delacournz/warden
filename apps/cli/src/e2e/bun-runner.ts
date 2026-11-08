@@ -1,4 +1,7 @@
+import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
+import type { A11yAuditConfig } from "@delacour/warden-core/a11y/a11y.config";
+import type { CameraSuiteFeeds, ConditionsConfig } from "@delacour/warden-core/conditions/conditions.config";
 import type { Platform } from "@delacour/warden-core/types";
 import { ENV_NAMES } from "@delacour/warden-e2e/env";
 import { err, ok, type Result } from "@delacour/warden-types/result";
@@ -37,15 +40,13 @@ export function runnerArgv(o: RunnerArgvOptions): string[] {
 	];
 }
 
-/** `WARDEN_BUN`, else `bun` on PATH. */
-export function findBun(
-	env: Readonly<Record<string, string | undefined>>,
-	which: (cmd: string) => string | null | undefined
-): Result<string> {
+/**
+ * `WARDEN_BUN`, else warden's own executable: a `bun build --compile` binary run with `BUN_BE_BUN=1` (`specEnv`)
+ * is the full bun CLI, `bun test` included, so the specs need no bun install. From source `execPath` is bun.
+ */
+export function findBun(env: Readonly<Record<string, string | undefined>>, execPath: string): string {
 	const set = env.WARDEN_BUN;
-	if (set !== undefined && set !== "") return ok(set);
-	const found = which("bun");
-	return found ? ok(found) : err("bun >= 1.3 is required on PATH (or set WARDEN_BUN)");
+	return set !== undefined && set !== "" ? set : execPath;
 }
 
 /**
@@ -62,6 +63,9 @@ export function shardSpecs<T extends { id: string }>(specs: readonly T[], n: num
 	return shards;
 }
 
+/** The hidden `warden` subcommand that runs the lease shaping proxy; a compiled warden hands specs `<self> __netproxy` (`WARDEN_NETPROXY_COMMAND`). */
+export const NETPROXY_SUBCOMMAND = "__netproxy";
+
 export type SpecEnvOptions = {
 	platform: Platform;
 	bundleId: string;
@@ -70,19 +74,38 @@ export type SpecEnvOptions = {
 	out: string;
 	timeouts: { timeoutMs: number; actionTimeoutMs: number; assertionTimeoutMs: number };
 	specsDir: string;
-	/** where `warden-simd` lives (the spec's helper lookup) */
-	helperDir: string;
+	/** where `warden-simd` lives (the spec's helper lookup); unset when it is not beside warden, so the spec looks under `$WARDEN_HOME/simd/<version>` */
+	helperDir?: string;
 	/** warden's own version: the spec preload refuses to run when `@delacour/warden-e2e` is not the same */
 	version: string;
 	/** argv that re-runs this warden: `device.perf` shells out to it (`WARDEN_BIN`) */
 	bin?: readonly string[] | undefined;
+	/** argv that restarts a physical iPhone's runner host, `{udid}` replaced by the session (`WARDEN_IOS_RUNNER_RESTART`) */
+	iosRunnerRestart?: readonly string[] | undefined;
 	/** `warden e2e --perf`: the captures every attempt records (`WARDEN_PERF`) */
 	perf?: readonly string[] | undefined;
 	/** the suite's `perf.budgets` (`WARDEN_PERF_BUDGETS`) */
 	perfBudgets?: Readonly<Record<string, number>> | undefined;
+	/** the suite's `conditions` (`WARDEN_CONDITIONS`): what every spec starts from */
+	conditions?: ConditionsConfig | undefined;
+	/** argv that runs the shaping proxy when warden is a compiled binary (`WARDEN_NETPROXY_COMMAND`); absent from source */
+	netproxyCommand?: readonly string[] | undefined;
+	/** the suite's devices are biometrics devices (`WARDEN_BIOMETRICS=1`) */
+	biometrics?: boolean | undefined;
+	/** the dev client's url scheme (`WARDEN_DEV_CLIENT_SCHEME`): an Android spec opens Metro's url as a deep link on it */
+	devClientScheme?: string | undefined;
+	/** the suite's `a11y` (`WARDEN_A11Y_AUDIT`): the defaults `device.a11yAudit()` / `toPassA11yAudit()` judge by */
+	a11yAudit?: A11yAuditConfig | undefined;
+	/** iOS apps launch with the injected library (`WARDEN_A11Y=1`) */
+	a11y?: boolean | undefined;
+	/** the suite's `camera` with absolute paths (`WARDEN_CAMERA_FEEDS`): fed before each spec's first `app.open()` */
+	cameraFeeds?: CameraSuiteFeeds | undefined;
 };
 
-/** The env contract of one spec process (the per-device `WARDEN_UDID` etc. come from batch). */
+/**
+ * The env contract of one spec process (the per-device `WARDEN_UDID` etc. come from batch). `BUN_BE_BUN=1` makes a
+ * compiled warden act as bun (`findBun`); bun itself ignores it, and the spec preload drops it again.
+ */
 export function specEnv(o: SpecEnvOptions): Record<string, string> {
 	return {
 		[ENV_NAMES.platform]: o.platform,
@@ -93,23 +116,43 @@ export function specEnv(o: SpecEnvOptions): Record<string, string> {
 		[ENV_NAMES.actionTimeout]: String(o.timeouts.actionTimeoutMs),
 		[ENV_NAMES.assertionTimeout]: String(o.timeouts.assertionTimeoutMs),
 		[ENV_NAMES.specsDir]: o.specsDir,
-		[ENV_NAMES.helperDir]: o.helperDir,
+		...(o.helperDir === undefined ? {} : { [ENV_NAMES.helperDir]: o.helperDir }),
 		[ENV_NAMES.version]: o.version,
 		...(o.bin === undefined ? {} : { [ENV_NAMES.bin]: JSON.stringify(o.bin) }),
+		...(o.iosRunnerRestart === undefined ? {} : { [ENV_NAMES.iosRunnerRestart]: JSON.stringify(o.iosRunnerRestart) }),
 		...(o.perf === undefined ? {} : { [ENV_NAMES.perf]: o.perf.join(",") }),
 		...(o.perfBudgets === undefined || Object.keys(o.perfBudgets).length === 0
 			? {}
 			: { [ENV_NAMES.perfBudgets]: JSON.stringify(o.perfBudgets) }),
+		...(o.conditions === undefined || Object.keys(o.conditions).length === 0
+			? {}
+			: { [ENV_NAMES.conditions]: JSON.stringify(o.conditions) }),
+		...(o.netproxyCommand === undefined ? {} : { [ENV_NAMES.netproxyCommand]: JSON.stringify(o.netproxyCommand) }),
+		...(o.biometrics === true ? { [ENV_NAMES.biometrics]: "1" } : {}),
+		...(o.a11yAudit === undefined ? {} : { [ENV_NAMES.a11yAudit]: JSON.stringify(o.a11yAudit) }),
+		...(o.devClientScheme === undefined ? {} : { [ENV_NAMES.devClientScheme]: o.devClientScheme }),
+		...(o.a11y === true ? { [ENV_NAMES.a11y]: "1" } : {}),
+		...(o.cameraFeeds === undefined || Object.keys(o.cameraFeeds).length === 0
+			? {}
+			: { [ENV_NAMES.cameraFeeds]: JSON.stringify(o.cameraFeeds) }),
+		BUN_BE_BUN: "1",
 	};
 }
 
 /**
  * Where `warden-simd` sits for the spec processes (`WARDEN_HELPER_DIR`): next to the compiled
- * binary, or the helper's build output when warden runs from source (`main` = `apps/cli/src/cli.ts`).
+ * binary, or the helper's build output when warden runs from source (`main` = `apps/cli/src/cli.ts`); undefined
+ * when it is not there.
  */
-export function helperDir(main: string, execPath: string): string {
+export function helperDir(
+	main: string,
+	execPath: string,
+	exists: (path: string) => boolean = existsSync
+): string | undefined {
 	const compiled = main.startsWith("/$bunfs/") || main.startsWith("B:/~BUN/");
-	return compiled ? dirname(execPath) : join(sourceDirFromCliPath(main), "packages/e2e/native/dist");
+	const dir = compiled ? dirname(execPath) : join(sourceDirFromCliPath(main), "packages/e2e/native/dist");
+	// `WARDEN_HELPER_DIR` set to a directory without the helper is an error in the spec, never a fall-through
+	return exists(join(dir, "warden-simd")) ? dir : undefined;
 }
 
 const PERF_CAPTURES = ["all", "js", "react", "native", "metrics", "frames", "logs"] as const;

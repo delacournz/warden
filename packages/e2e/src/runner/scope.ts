@@ -144,6 +144,7 @@ export function registrationDefaults(env: Readonly<Record<string, string | undef
 		actionTimeoutMs: parsed?.actionTimeoutMs ?? DEFAULT_ACTION_TIMEOUT_MS,
 		assertionTimeoutMs: parsed?.assertionTimeoutMs ?? DEFAULT_ASSERTION_TIMEOUT_MS,
 		platform: parsed?.platform,
+		deviceKind: parsed?.deviceKind,
 	};
 }
 

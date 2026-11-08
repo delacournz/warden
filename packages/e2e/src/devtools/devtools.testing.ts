@@ -17,7 +17,7 @@ export type FakeReply = { result: unknown } | { error: { message: string } } | "
 export type FakeConnection = {
 	readonly id: number;
 	emit: (method: string, params?: unknown) => void;
-	close: () => void;
+	close: (code?: number, reason?: string) => void;
 };
 
 export type FakeMetroOptions = {
@@ -131,7 +131,7 @@ export function startFakeMetro(options: FakeMetroOptions = {}): FakeMetro {
 				const connection: FakeConnection = {
 					id,
 					emit: (method, params) => ws.send(JSON.stringify({ method, params: params ?? {} })),
-					close: () => ws.close(),
+					close: (code, reason) => ws.close(code, reason),
 				};
 				ws.data.connection = connection;
 				sockets.set(id, ws);

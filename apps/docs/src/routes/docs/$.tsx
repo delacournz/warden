@@ -1,15 +1,17 @@
 import { createFileRoute, notFound, redirect } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
+import { getBreadcrumbItems } from "fumadocs-core/breadcrumb";
 import { useFumadocsLoader } from "fumadocs-core/source/client";
-import { DocsLayout } from "fumadocs-ui/layouts/docs";
-import { DocsBody, DocsDescription, DocsPage, DocsTitle } from "fumadocs-ui/layouts/docs/page";
+import { DocsLayout } from "fumadocs-ui/layouts/notebook";
+import { DocsBody, DocsDescription, DocsPage, DocsTitle } from "fumadocs-ui/layouts/notebook/page";
+import { getLayoutTabs } from "fumadocs-ui/layouts/shared";
 import { Suspense, use } from "react";
 import { DocsToolbar } from "@/components/docs-toolbar";
 import { useMDXComponents } from "@/components/mdx";
-import { baseOptions } from "@/lib/layout.shared";
+import { baseOptions, docsTabs } from "@/lib/layout.shared";
 import { redirectSlugs } from "@/lib/redirects";
-import { docsHead } from "@/lib/seo";
-import { encodeMarkdownUrl } from "@/lib/shared";
+import { type Crumb, docsHead, docsJsonLd } from "@/lib/seo";
+import { docsRoute, encodeMarkdownUrl } from "@/lib/shared";
 import { docs, source } from "@/lib/source";
 
 export const Route = createFileRoute("/docs/$")({
@@ -20,7 +22,13 @@ export const Route = createFileRoute("/docs/$")({
 		await docs.getPage(data.path)?.preload();
 		return data;
 	},
-	head: ({ loaderData }) => (loaderData ? docsHead(loaderData) : {}),
+	head: ({ loaderData }) =>
+		loaderData
+			? {
+					...docsHead(loaderData),
+					scripts: [{ type: "application/ld+json", children: JSON.stringify(docsJsonLd(loaderData)) }],
+				}
+			: {},
 });
 
 const serverLoader = createServerFn({
@@ -35,7 +43,18 @@ const serverLoader = createServerFn({
 			throw notFound();
 		}
 
+		const tree = source.getPageTree();
+		const tab = getLayoutTabs(tree).find((t) => t.url === `${docsRoute}/${page.slugs[0] ?? ""}`);
+		const trail = [
+			...(tab && typeof tab.title === "string" ? [{ name: tab.title, url: tab.url }] : []),
+			...getBreadcrumbItems(page.url, tree, { includePage: true }),
+		];
+		const crumbs: Crumb[] = trail.flatMap((item) =>
+			typeof item.name === "string" && item.url ? [{ name: item.name, path: item.url }] : []
+		);
+
 		return {
+			crumbs,
 			path: page.path,
 			slugs: page.slugs,
 			title: page.data.title,
@@ -52,8 +71,10 @@ function Content({ path, markdownUrl }: { path: string; markdownUrl: string }) {
 	const { toc } = use(page.load());
 	const MDX = page.body;
 
+	// In-app browsers (X, Threads, LinkedIn) float a toolbar over the page bottom that no safe-area inset reports,
+	// so phones get extra bottom room to scroll the footer nav clear of it.
 	return (
-		<DocsPage toc={toc}>
+		<DocsPage className="max-md:pb-28" toc={toc}>
 			<DocsTitle>{page.title}</DocsTitle>
 			<DocsDescription>{page.description}</DocsDescription>
 			<DocsToolbar markdownUrl={markdownUrl} path={path} />
@@ -68,7 +89,14 @@ function Page() {
 	const { path, pageTree, markdownUrl } = useFumadocsLoader(Route.useLoaderData());
 
 	return (
-		<DocsLayout {...baseOptions()} links={[]} tree={pageTree}>
+		<DocsLayout
+			{...baseOptions()}
+			links={[]}
+			nav={{ ...baseOptions().nav, mode: "top" }}
+			tabMode="navbar"
+			tabs={docsTabs}
+			tree={pageTree}
+		>
 			<Suspense>
 				<Content markdownUrl={markdownUrl} path={path} />
 			</Suspense>

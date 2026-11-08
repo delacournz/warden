@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -9,9 +9,19 @@ const MARKER = "LOADED:";
 /**
  * Cold-start guard. Runs the CLI in a child `bun` with a preload that prints every module the process has
  * loaded (`require.cache` lists ESM modules too) when it exits, so we can assert what a command does NOT pull in.
+ * The child sees stub `xcrun`/`adb`/`emulator` first on PATH: a command that reaches the device sweep (`gc --json`)
+ * must never wait on the host's CoreSimulator or adb, which on a cold CI runner outlasts the test timeout.
  */
 let scratch = "";
 let preload = "";
+let stubBin = "";
+
+/** Answers every device tool at once with an empty machine: no sims, no runtimes, no emulators. */
+const STUBS: Record<string, string> = {
+	xcrun: `#!/bin/sh\ncase "$*" in *list*) echo '{"devices":{},"runtimes":[],"devicetypes":[],"pairs":{}}';; esac\nexit 0\n`,
+	adb: `#!/bin/sh\ncase "$1" in devices) printf 'List of devices attached\\n\\n';; esac\nexit 0\n`,
+	emulator: "#!/bin/sh\nexit 0\n",
+};
 
 beforeAll(() => {
 	scratch = mkdtempSync(join(tmpdir(), "warden-startup-"));
@@ -20,13 +30,25 @@ beforeAll(() => {
 		preload,
 		`process.on("exit", () => console.error("${MARKER}" + JSON.stringify(Object.keys(require.cache))));\n`
 	);
+	stubBin = join(scratch, "bin");
+	mkdirSync(stubBin);
+	for (const [name, body] of Object.entries(STUBS)) {
+		writeFileSync(join(stubBin, name), body);
+		chmodSync(join(stubBin, name), 0o755);
+	}
 });
+
+/** The child's env: temp home, stub device tools first on PATH, no Android SDK dir to find the real ones in. */
+function childEnv(home: string): Record<string, string | undefined> {
+	const { ANDROID_HOME: _home, ANDROID_SDK_ROOT: _root, ...rest } = process.env;
+	return { ...rest, PATH: `${stubBin}:${process.env.PATH ?? ""}`, WARDEN_HOME: home, NO_COLOR: "1", CI: "1" };
+}
 
 afterAll(() => rmSync(scratch, { recursive: true, force: true }));
 
 async function loadedBy(args: string[], home: string = join(scratch, "home")): Promise<string[]> {
 	const proc = Bun.spawn(["bun", "--preload", preload, resolve(SRC, "cli.ts"), ...args], {
-		env: { ...process.env, WARDEN_HOME: home, NO_COLOR: "1", CI: "1" },
+		env: childEnv(home),
 		stdout: "ignore",
 		stderr: "pipe",
 		stdin: "ignore",
@@ -107,6 +129,25 @@ describe("cold start: the commands agents call most", () => {
 	for (const { args, forbid } of CASES) {
 		test(`\`warden ${args.join(" ")}\` loads none of zod, ora, clack, the e2e package or typescript`, async () => {
 			expect(loaded(await loadedBy(args), forbid)).toEqual([]);
+		});
+	}
+});
+
+describe("cold start: the dev dashboard is lazy", () => {
+	// dev.ts imports hud.ts for --hud-interval (small, no xterm); the dashboard itself loads only on the TUI path
+	const TUI = ["/src/dev-tui/tui.ts", "/src/dev-tui/metro-pane.ts", "/src/dev-tui/render.ts", "/node_modules/@xterm/"];
+
+	for (const args of [
+		["version"],
+		["claim", "--help"],
+		["heartbeat"],
+		["gc", "--json"],
+		["release", "--help"],
+		["ui", "--help"],
+		["dev", "--help"],
+	]) {
+		test(`\`warden ${args.join(" ")}\` loads neither the dashboard nor xterm`, async () => {
+			expect(loaded(await loadedBy(args), TUI)).toEqual([]);
 		});
 	}
 });
@@ -198,6 +239,8 @@ describe("cold start: warden ui", () => {
 		"/agent-ui/controls.ts",
 		"/agent-ui/gestures.ts",
 		"/agent-ui/ui-driver.ts",
+		"/agent-ui/conditions.ts",
+		"/agent-ui/conditions-real.ts",
 	];
 	const without = (needles: string[], skip: string) => needles.filter((needle) => needle !== skip);
 
@@ -207,6 +250,10 @@ describe("cold start: warden ui", () => {
 			["ui", "snapshot", "--help"],
 			["ui", "press", "--help"],
 			["ui", "record", "start", "--help"],
+			["ui", "network", "--help"],
+			["ui", "network", "log", "--help"],
+			["ui", "network", "set", "--help"],
+			["ui", "location", "--help"],
 		]) {
 			const files = await loadedBy(args);
 			expect(loaded(files, [...OTHERS, "/packages/e2e/", "/node_modules/zod/", "/agent-ui/helper.ts"])).toEqual([]);
@@ -230,6 +277,19 @@ describe("cold start: warden ui", () => {
 		const files = await loadedBy(["ui", "gesture", "pinch", "@e1", "2", "--json"]);
 		expect(has(files, "/agent-ui/gestures.ts")).toBe(true);
 		expect(loaded(files, [...without(OTHERS, "/agent-ui/gestures.ts"), ...DRIVERS, "/agent-ui/query.ts"])).toEqual([]);
+	});
+
+	test("`ui net` / `ui location` without a lease load conditions.ts, not its real side effects or any driver", async () => {
+		for (const args of [
+			["ui", "network", "set", "3g", "--json"],
+			["ui", "location", "set", "1,2", "--json"],
+		]) {
+			const files = await loadedBy(args);
+			expect(has(files, "/agent-ui/conditions.ts")).toBe(true);
+			expect(
+				loaded(files, [...without(OTHERS, "/agent-ui/conditions.ts"), ...DRIVERS, "/agent-ui/actions.ts"])
+			).toEqual([]);
+		}
 	});
 
 	test("`ui status` and `ui close` read the helper record without loading a driver", async () => {
@@ -264,6 +324,14 @@ describe("cold start: warden ui", () => {
 		const logs = await loadedBy(["ui", "logs", "--json"]);
 		expect(has(logs, "/agent-ui/devtools-cli.ts")).toBe(true);
 		expect(loaded(logs, [...without(OTHERS, "/agent-ui/devtools-cli.ts"), ...DRIVERS])).toEqual([]);
+		for (const args of [
+			["ui", "network", "log", "--json"],
+			["ui", "network", "--json"],
+		]) {
+			const files = await loadedBy(args);
+			expect(has(files, "/agent-ui/devtools-cli.ts")).toBe(true);
+			expect(loaded(files, [...without(OTHERS, "/agent-ui/devtools-cli.ts"), ...DRIVERS])).toEqual([]);
+		}
 	});
 });
 

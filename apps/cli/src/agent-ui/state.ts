@@ -58,12 +58,18 @@ export type UiState = {
 	app?: string;
 	recording?: RecordingPointer;
 	helper?: HelperRecord;
+	/** the device's resident `warden __android-host` (Android): same record as `helper`, the binary being warden itself */
+	androidHost?: HelperRecord;
+	/** the physical iPhone's resident `warden __ios-runner-host`: same record as `helper`, the binary being warden itself */
+	iosRunner?: HelperRecord;
 	/** the running `logs start` collector (`warden ui-collect`): host pid, start time and (newer warden) its `--out` dir */
 	collector?: { pid: number; startedAt: number; out?: string };
 	/** the running `video start` recorder: host pid, output file, and (Android) the file on the device */
 	video?: { pid: number; path: string; remote?: string; startedAt: number };
 	/** the device's active `warden perf` session: one per device, whoever owns the lease */
 	perf?: { sessionId: string };
+	/** `warden ui open --a11y` ran: iOS launches carry the injected library from then on (hint, actions, order, announcements) */
+	a11y?: true;
 	updatedAt: number;
 };
 
@@ -80,6 +86,17 @@ type StoredSnapshotFile = Omit<StoredSnapshot, "snapshot"> & { snapshot: Omit<Sn
 
 const rectSchema = z.object({ x: z.number(), y: z.number(), width: z.number(), height: z.number() });
 const pointSchema = z.object({ x: z.number(), y: z.number() });
+
+const a11ySchema = z.object({
+	hint: z.string().optional(),
+	actions: z.array(z.string()).optional(),
+	focusable: z.boolean().optional(),
+	important: z.boolean().optional(),
+	a11yFocused: z.boolean().optional(),
+	liveRegion: z.enum(["polite", "assertive"]).optional(),
+	order: z.number().optional(),
+	traversal: z.number().optional(),
+});
 
 const elementSchema: z.ZodType<Element> = z.lazy(() =>
 	z.object({
@@ -102,6 +119,7 @@ const elementSchema: z.ZodType<Element> = z.lazy(() =>
 		hittable: z.boolean().optional(),
 		tapPoint: pointSchema.optional(),
 		pid: z.number().optional(),
+		a11y: a11ySchema.optional(),
 		depth: z.number(),
 		children: z.array(elementSchema),
 	})
@@ -125,6 +143,15 @@ const storedSnapshotSchema = z.object({
 		truncated: z.boolean(),
 		modal: z.object({ pid: z.number().optional(), description: z.string().optional() }).optional(),
 	}),
+});
+
+const helperRecordSchema = z.object({
+	pid: z.number(),
+	socket: z.string(),
+	owner: z.string().optional(),
+	binary: z.object({ path: z.string(), mtimeMs: z.number() }).optional(),
+	env: z.string().optional(),
+	lease: z.string().optional(),
 });
 
 const stateSchema = z.object({
@@ -155,21 +182,15 @@ const stateSchema = z.object({
 				.optional(),
 		})
 		.optional(),
-	helper: z
-		.object({
-			pid: z.number(),
-			socket: z.string(),
-			owner: z.string().optional(),
-			binary: z.object({ path: z.string(), mtimeMs: z.number() }).optional(),
-			env: z.string().optional(),
-			lease: z.string().optional(),
-		})
-		.optional(),
+	helper: helperRecordSchema.optional(),
+	androidHost: helperRecordSchema.optional(),
+	iosRunner: helperRecordSchema.optional(),
 	collector: z.object({ pid: z.number(), startedAt: z.number(), out: z.string().optional() }).optional(),
 	video: z
 		.object({ pid: z.number(), path: z.string(), remote: z.string().optional(), startedAt: z.number() })
 		.optional(),
 	perf: z.object({ sessionId: z.string() }).optional(),
+	a11y: z.literal(true).optional(),
 	updatedAt: z.number().optional(),
 });
 

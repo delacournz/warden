@@ -1,0 +1,7 @@
+{
+	"title": "Releases",
+	"description": "Release notes, updating and contributing",
+	"icon": "Rocket",
+	"root": true,
+	"pages": ["index", "updating", "contributing"]
+}

@@ -3,13 +3,24 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { canProbeFrontmost, canReadAlertOn } from "../alerts";
+import { canRecoverAxWedge } from "../ax-wedge";
 import { el, snapshotOf } from "../driver.testing";
 import type { Driver, Snapshot } from "../driver.types";
-import { settleDetailOf } from "../settle";
+import { fakeProxy } from "../network-proxy.testing";
+import { withReadDeadline } from "../read-deadline";
+import { HASH_FALLBACK_MIN_QUIET_MS, settleDetailOf } from "../settle";
 import { collectSpanDetail, type SpanDetail } from "../span-detail";
-import { canSelectAll } from "../typing";
+import { canPasteText, canSelectAll } from "../typing";
 import { type ExecCall, fakeExec, joined } from "./exec.testing";
-import { KEY_USAGE, type OpenIosDriverOptions, openIosDriver } from "./ios-driver";
+import type { InjectFs } from "./inject";
+import {
+	BRIDGE_COLD_DEADLINE_MS,
+	COLD_READ_TIMEOUT_MS,
+	coldReadTimeoutMs,
+	KEY_USAGE,
+	type OpenIosDriverOptions,
+	openIosDriver,
+} from "./ios-driver";
 import { type FakeSimdReply, type FakeSimdRequest, fakeSimd } from "./simd.testing";
 import { spawnSimd } from "./simd-client";
 import { bunSpawn } from "./simd-transport";
@@ -64,6 +75,7 @@ async function open(
 		helperPath: "/opt/warden-simd",
 		exists: () => false,
 		log: (line) => logs.push(line),
+		coldBridgeBudgetMs: 0,
 		...extra,
 	});
 	if (!result.success) throw new Error(`${result.error.code}: ${result.error.message}`);
@@ -78,6 +90,200 @@ const unwrapped = async <T>(
 	if (!result.success) throw new Error(`${result.error.code}: ${result.error.message}`);
 	return result.data;
 };
+
+describe("cold bridge", () => {
+	const TIMEOUT = { error: { code: "E_TIMEOUT", message: "silent", retryable: true } } as const;
+
+	/** a driver on a fake clock whose sleeps advance it; the helper answers `replies` in order, then `snapshotData` */
+	async function coldOpen(replies: Array<"timeout" | "ok" | { code: string }>) {
+		let t = 0;
+		const sleeps: number[] = [];
+		const script = [...replies];
+		const made = await open(
+			(request) => {
+				if (request.op !== "snapshot") return undefined;
+				const step = script.shift() ?? "ok";
+				if (step === "ok") return { data: snapshotData };
+				if (step === "timeout") return TIMEOUT;
+				return { error: { code: step.code, message: "x" } };
+			},
+			{
+				coldBridgeBudgetMs: 60_000,
+				now: () => t,
+				sleep: async (ms) => {
+					sleeps.push(ms);
+					t += ms;
+				},
+			}
+		);
+		return { ...made, sleeps, now: () => t };
+	}
+
+	test("the first snapshot times out twice, waits for the bridge, then passes, and the span says how long", async () => {
+		const { driver, helper, sleeps } = await coldOpen(["timeout", "timeout"]);
+		const notes: SpanDetail = {};
+		const result = await collectSpanDetail(notes, () => driver.snapshot());
+		expect(result.success).toBe(true);
+		expect(helper.of("snapshot")).toHaveLength(3);
+		expect(sleeps).toEqual([2_000, 5_000]);
+		expect(notes.coldBridgeMs).toBe(7_000);
+	});
+
+	test("after one success a failed snapshot gets the normal budget: one try, no waiting", async () => {
+		const { driver, helper, sleeps } = await coldOpen(["ok", "timeout"]);
+		await unwrapped(driver.snapshot());
+		const second = await driver.snapshot();
+		expect(!second.success && second.error.code).toBe("E_TIMEOUT");
+		expect(helper.of("snapshot")).toHaveLength(2);
+		expect(sleeps).toEqual([]);
+	});
+
+	test("a bound rebind does not prove the bridge: the stream's guest answered, the reader's may still be cold", async () => {
+		let t = 0;
+		const { driver, helper } = await open(
+			(request) => {
+				if (request.op === "rebind") return { data: { bound: true, waitedMs: 700, pid: 4242, restarts: 0 } };
+				if (request.op === "snapshot") return TIMEOUT;
+				return lifecycle(request);
+			},
+			{
+				coldBridgeBudgetMs: 60_000,
+				now: () => t,
+				sleep: async (ms) => {
+					t += ms;
+				},
+			}
+		);
+		await unwrapped(driver.app.launch(BUNDLE));
+		const result = await driver.snapshot();
+		expect(!result.success && result.error.code).toBe("E_TIMEOUT");
+		expect(helper.of("snapshot").length).toBeGreaterThan(1);
+	});
+
+	test("inside a poll's read deadline the cold wait ends at the deadline, not at the cold budget", async () => {
+		const { driver, helper, sleeps, now } = await coldOpen(Array(40).fill("timeout"));
+		const started = now();
+		const notes: SpanDetail = {};
+		const result = await withReadDeadline(
+			() => started + 5_000 - now(),
+			() => collectSpanDetail(notes, () => driver.snapshot())
+		);
+		expect(!result.success && result.error.code).toBe("E_TIMEOUT");
+		// one 2 s wait fits in 5 s, the 5 s one after it would not
+		expect(sleeps).toEqual([2_000]);
+		expect(helper.of("snapshot")).toHaveLength(2);
+		expect(notes.coldBridgeMs).toBe(2_000);
+	});
+
+	test("a read deadline that is already spent tries once and does not wait", async () => {
+		const { driver, helper, sleeps } = await coldOpen(Array(40).fill("timeout"));
+		const result = await withReadDeadline(
+			() => 0,
+			() => driver.snapshot()
+		);
+		expect(!result.success && result.error.code).toBe("E_TIMEOUT");
+		expect(sleeps).toEqual([]);
+		expect(helper.of("snapshot")).toHaveLength(1);
+	});
+
+	test("a read deadline longer than the cold budget changes nothing", async () => {
+		const { driver, helper, sleeps, now } = await coldOpen(["timeout", "timeout"]);
+		const started = now();
+		const result = await withReadDeadline(
+			() => started + 600_000 - now(),
+			() => driver.snapshot()
+		);
+		expect(result.success).toBe(true);
+		expect(sleeps).toEqual([2_000, 5_000]);
+		expect(helper.of("snapshot")).toHaveLength(3);
+	});
+
+	test("an error that is not the bridge being late is not retried", async () => {
+		const { driver, helper, sleeps } = await coldOpen([{ code: "E_APP_UNAVAILABLE" }]);
+		const result = await driver.snapshot();
+		expect(!result.success && result.error.code).toBe("E_APP_UNAVAILABLE");
+		expect(helper.of("snapshot")).toHaveLength(1);
+		expect(sleeps).toEqual([]);
+	});
+
+	test("a bridge that never comes up fails with its error once the cold budget is spent", async () => {
+		const { driver, helper } = await coldOpen(Array(40).fill("timeout"));
+		const notes: SpanDetail = {};
+		const result = await collectSpanDetail(notes, () => driver.snapshot());
+		expect(!result.success && result.error.code).toBe("E_TIMEOUT");
+		expect(helper.of("snapshot").length).toBeGreaterThan(3);
+		expect(helper.of("snapshot").length).toBeLessThan(40);
+		expect(Number(notes.coldBridgeMs)).toBeGreaterThanOrEqual(50_000);
+	});
+});
+
+describe("cold read timeout", () => {
+	const fellBack = {
+		data: { ...snapshotData, backend: "ax", fallback: { from: "axbridge", to: "ax", reason: "warm-up stalled" } },
+	};
+	const bridgeAnswers: Handler = (request) => {
+		if (request.op === "snapshot") return { data: snapshotData };
+		if (request.op === "rebind") return { data: { bound: true, waitedMs: 700, pid: 4242, restarts: 0 } };
+		return lifecycle(request);
+	};
+	const timeouts = (requests: FakeSimdRequest[]) => requests.map((request) => request.timeoutMs);
+
+	test("the cold timeout outlasts the helper's cold bridge deadline plus an ax read", () => {
+		expect(BRIDGE_COLD_DEADLINE_MS).toBe(12_000);
+		expect(COLD_READ_TIMEOUT_MS).toBeGreaterThanOrEqual(BRIDGE_COLD_DEADLINE_MS + 5_000);
+	});
+
+	test("a longer cold deadline given to the helper stretches the client's timeout with it", () => {
+		expect(coldReadTimeoutMs({})).toBe(COLD_READ_TIMEOUT_MS);
+		expect(coldReadTimeoutMs({ WARDEN_SIMD_BRIDGE_COLD_DEADLINE_MS: "30000" })).toBe(
+			30_000 + COLD_READ_TIMEOUT_MS - BRIDGE_COLD_DEADLINE_MS
+		);
+		expect(coldReadTimeoutMs({ WARDEN_SIMD_BRIDGE_COLD_DEADLINE_MS: "5000" })).toBe(COLD_READ_TIMEOUT_MS);
+		expect(coldReadTimeoutMs({ WARDEN_SIMD_BRIDGE_COLD_DEADLINE_MS: "soon" })).toBe(COLD_READ_TIMEOUT_MS);
+	});
+
+	test("reads get the cold timeout until one comes back from the bridge, then the default", async () => {
+		const { driver, helper } = await open(bridgeAnswers);
+		await unwrapped(driver.snapshot());
+		await unwrapped(driver.snapshot());
+		expect(timeouts(helper.of("snapshot"))).toEqual([COLD_READ_TIMEOUT_MS, 10_000]);
+	});
+
+	test("a read that fell back to ax leaves the bridge cold", async () => {
+		let first = true;
+		const { driver, helper } = await open((request) => {
+			if (request.op === "snapshot" && first) {
+				first = false;
+				return fellBack;
+			}
+			return bridgeAnswers(request);
+		});
+		await unwrapped(driver.snapshot());
+		await unwrapped(driver.snapshot());
+		await unwrapped(driver.snapshot());
+		expect(timeouts(helper.of("snapshot"))).toEqual([COLD_READ_TIMEOUT_MS, COLD_READ_TIMEOUT_MS, 10_000]);
+	});
+
+	test("a launch makes the next read cold again, even after a bound rebind", async () => {
+		const { driver, helper } = await open(bridgeAnswers);
+		await unwrapped(driver.snapshot());
+		await unwrapped(driver.app.launch(BUNDLE));
+		await unwrapped(driver.snapshot());
+		expect(timeouts(helper.of("snapshot"))).toEqual([COLD_READ_TIMEOUT_MS, COLD_READ_TIMEOUT_MS]);
+	});
+
+	test("hit-tests and alert reads on a cold bridge get the cold timeout too", async () => {
+		const { driver, helper } = await open(bridgeAnswers);
+		await unwrapped(driver.elementAtPoint({ x: 1, y: 1 }));
+		if (!canReadAlertOn(driver)) throw new Error("the iOS driver reads alerts through one backend");
+		await driver.alertOn("axbridge");
+		expect(timeouts(helper.of("elementAtPoint"))).toEqual([COLD_READ_TIMEOUT_MS]);
+		expect(timeouts(helper.of("alertButtons"))).toEqual([COLD_READ_TIMEOUT_MS]);
+		await unwrapped(driver.snapshot());
+		await unwrapped(driver.elementAtPoint({ x: 1, y: 1 }));
+		expect(timeouts(helper.of("elementAtPoint"))).toEqual([COLD_READ_TIMEOUT_MS, 10_000]);
+	});
+});
 
 describe("openIosDriver", () => {
 	test("spawns the helper with --udid, enables AX automation and reports capabilities from ready", async () => {
@@ -304,6 +510,164 @@ describe("Driver methods over the helper", () => {
 		expect(snap.backend).toBe("ax");
 		expect("modal" in snap).toBe(false);
 		expect(logs.some((line) => line.includes("axbridge -> ax: applicationUnavailable"))).toBe(true);
+	});
+
+	test("a snapshot the helper read on ax says why on its span, so a silent bridge shows in trace.jsonl", async () => {
+		const reason = "the axbridge guest did not answer within 4000 ms (stage: bridge read)";
+		const { driver } = await open(() => ({
+			data: { ...snapshotData, backend: "ax", fallback: { from: "axbridge", to: "ax", reason } },
+		}));
+		const notes: SpanDetail = {};
+		await collectSpanDetail(notes, () => unwrapped(driver.snapshot()));
+		expect(notes).toEqual({ backend: "ax", fallback: reason });
+	});
+
+	test("a fallback's stall report goes on the span and the log", async () => {
+		const reason = "the axbridge guest did not answer within 12000 ms (stage: bridge read)";
+		const stall = { stage: "read", readMs: 12004, deadlineMs: 12000, guestAgeMs: 2500, cold: true, probes: 1 };
+		const { driver, logs } = await open(() => ({
+			data: { ...snapshotData, backend: "ax", fallback: { from: "axbridge", to: "ax", reason, stall } },
+		}));
+		const notes: SpanDetail = {};
+		const snap = await collectSpanDetail(notes, () => unwrapped(driver.snapshot()));
+		expect(snap.bridgeStall).toEqual(stall);
+		expect(notes).toEqual({
+			backend: "ax",
+			fallback: reason,
+			stallStage: "read",
+			stallReadMs: 12004,
+			stallDeadlineMs: 12000,
+			stallGuestAgeMs: 2500,
+			stallCold: true,
+			stallProbes: 1,
+		});
+		expect(logs.some((line) => line.includes("stage read · read 12004 ms of a 12000 ms deadline · cold"))).toBe(true);
+	});
+
+	test("an explicit bridge read that stalled leaves its stall report on the span", async () => {
+		const { driver } = await open((request) =>
+			request.op === "health"
+				? { error: { code: "E_INTERNAL", message: "no health", retryable: false } }
+				: {
+						error: {
+							code: "E_TIMEOUT",
+							message: "the axbridge guest did not answer within 4000 ms",
+							retryable: true,
+							detail: {
+								afterMs: 4000,
+								stage: "axbridge",
+								stall: {
+									stage: "read",
+									readMs: 4001,
+									deadlineMs: 4000,
+									cold: false,
+									cooldownRemainingMs: 20000,
+									probes: 2,
+								},
+							},
+						},
+					}
+		);
+		const notes: SpanDetail = {};
+		await collectSpanDetail(notes, () => driver.snapshot({ backend: "axbridge" }));
+		expect(notes).toMatchObject({
+			axStage: "axbridge",
+			stallStage: "read",
+			stallReadMs: 4001,
+			stallDeadlineMs: 4000,
+			stallCold: false,
+			stallCooldownMs: 20000,
+			stallProbes: 2,
+		});
+	});
+
+	test("a snapshot read on the bridge names its reader on the span", async () => {
+		const { driver } = await open(() => ({ data: snapshotData }));
+		const notes: SpanDetail = {};
+		await collectSpanDetail(notes, () => unwrapped(driver.snapshot()));
+		expect(notes).toEqual({ backend: "axbridge" });
+	});
+
+	test("a snapshot read by pid because the frontmost app was unresolved says so on its span", async () => {
+		const reason = "frontmost unresolved: did not answer a frontmost request; read pid 42 (launched)";
+		const { driver } = await open(() => ({
+			data: {
+				...snapshotData,
+				fallback: { from: "axbridge", to: "axbridge", reason },
+				target: { pid: 42, source: "launched" },
+			},
+		}));
+		const notes: SpanDetail = {};
+		await collectSpanDetail(notes, () => unwrapped(driver.snapshot()));
+		expect(notes).toEqual({ backend: "axbridge", fallback: reason, targetPid: 42, targetSource: "launched" });
+	});
+
+	test("a failed snapshot records both readers' errors and the helper's toolchain on its span", async () => {
+		const health = {
+			version: "0.1.0",
+			udid: UDID,
+			hid: { transport: "indigo" },
+			ax: { default: "axbridge", bridge: "degraded", lastError: { message: "window-server frontmost", agoMs: 10 } },
+			screen: { width: 402, height: 874, scale: 3 },
+			xcode: "26.6 (17F113)",
+			builtWith: { xcode: "27.1 (27A9275)", idb: "v1.7.7" },
+			coreSimulatorVersion: "1051.55",
+			bridgeRecycles: { count: 3, exhausted: true },
+		};
+		const { driver } = await open((request) =>
+			request.op === "health"
+				? { data: health }
+				: {
+						error: {
+							code: "E_TIMEOUT",
+							message: "did not answer a frontmost request within 5.0s",
+							retryable: true,
+							detail: {
+								stage: "ax",
+								reason: "frontmost_unresolved",
+								request: "frontmost",
+								bridgeError: "window-server frontmost returned no application object",
+								axError: "did not answer a frontmost request within 5.0s",
+							},
+						},
+					}
+		);
+		const notes: SpanDetail = {};
+		const result = await collectSpanDetail(notes, () => driver.snapshot());
+		expect(result.success).toBe(false);
+		expect(notes).toEqual({
+			axStage: "ax",
+			axReason: "frontmost_unresolved",
+			axRequest: "frontmost",
+			bridgeError: "window-server frontmost returned no application object",
+			axError: "did not answer a frontmost request within 5.0s",
+			bridge: "degraded",
+			bridgeLastError: "window-server frontmost",
+			hostXcode: "26.6 (17F113)",
+			helperXcode: "27.1 (27A9275)",
+			coreSimulator: "1051.55",
+			bridgeRecycles: 3,
+			bridgeRecyclesExhausted: true,
+		});
+	});
+
+	test("the helper's health is asked once per failure streak, not on every failed read", async () => {
+		const { driver, helper } = await open((request) =>
+			request.op === "health"
+				? {
+						data: {
+							version: "0.1.0",
+							udid: UDID,
+							hid: { transport: "indigo" },
+							ax: { default: "axbridge", bridge: "available" },
+							screen: { width: 1, height: 1, scale: 1 },
+						},
+					}
+				: { error: { code: "E_TIMEOUT", message: "silent", retryable: true } }
+		);
+		await driver.snapshot();
+		await driver.snapshot();
+		expect(helper.of("health")).toHaveLength(1);
 	});
 
 	test("snapshot without options sends no null params", async () => {
@@ -653,6 +1017,31 @@ describe("system alerts through one reader and the frontmost probe", () => {
 		expect(helper.of("frontmost")[0]).toMatchObject({ bundleId: BUNDLE });
 	});
 
+	test("axWedge reads the helper's wedge check and asks it to recover", async () => {
+		const reply = {
+			restarts: 1,
+			maxRestarts: 1,
+			recovering: false,
+			last: { outcome: "restarted" as const, agoMs: 40, ms: 2300 },
+		};
+		const { driver, helper } = await open((request) => (request.op === "axWedge" ? { data: reply } : undefined));
+		if (!canRecoverAxWedge(driver)) throw new Error("the iOS driver offers the wedge check");
+		expect(await unwrapped(driver.axWedge({ recover: true }))).toEqual(reply);
+		expect(await unwrapped(driver.axWedge())).toEqual(reply);
+		expect(helper.of("axWedge").map((params) => params.recover)).toEqual([true, false]);
+	});
+
+	test("axWedge on a helper that predates it is E_UNSUPPORTED helper_outdated", async () => {
+		const { driver } = await open((request) => (request.op === "axWedge" ? unknownOp("axWedge") : undefined));
+		if (!canRecoverAxWedge(driver)) throw new Error("the iOS driver offers the wedge check");
+		const result = await driver.axWedge({ recover: true });
+		expect(result.success).toBe(false);
+		if (!result.success) {
+			expect(result.error.code).toBe("E_UNSUPPORTED");
+			expect(result.error.detail).toEqual({ reason: "helper_outdated" });
+		}
+	});
+
 	test("without the AX bridge alertOn('axbridge') reads the host reader and isFrontmost is never asked", async () => {
 		const helper = fakeSimd((request) => (request.op === "alertButtons" ? { data: null } : undefined), {
 			ready: { ax: { default: "ax", bridge: "missing" } },
@@ -765,6 +1154,52 @@ describe("selectAll", () => {
 	});
 });
 
+describe("pasteText", () => {
+	test("puts the text on the pasteboard, then sends one paste", async () => {
+		const { driver, helper, calls } = await open(() => ({ data: null }), {}, [
+			["sh -c", {}],
+			["xcrun simctl pbpaste", { stdout: "ada@example.com" }],
+		]);
+		expect(canPasteText(driver)).toBe(true);
+		if (!canPasteText(driver)) return;
+		await unwrapped(driver.pasteText("ada@example.com"));
+		expect(calls.find((call) => call.cmd[0] === "sh")?.cmd.slice(3)).toEqual(["sh", "ada@example.com", UDID]);
+		expect(helper.requests.map((request) => request.op)).toEqual(["paste"]);
+	});
+
+	test("a pasteboard write that was not confirmed is E_IO and nothing is pasted", async () => {
+		const { driver, helper } = await open(() => ({ data: null }), {}, [
+			["sh -c", {}],
+			["xcrun simctl pbpaste", { stdout: "whatever the Mac had" }],
+		]);
+		if (!canPasteText(driver)) throw new Error("expected pasteText");
+		const result = await driver.pasteText("ada@example.com");
+		expect(!result.success && result.error.code).toBe("E_IO");
+		expect(helper.of("paste")).toHaveLength(0);
+	});
+
+	test("a failed paste is logged, so a fill that fell back to typing can be told apart", async () => {
+		const { driver, logs } = await open(() => ({ data: null }), {}, [
+			["sh -c", {}],
+			["xcrun simctl pbpaste", { stdout: "whatever the Mac had" }],
+		]);
+		if (!canPasteText(driver)) throw new Error("expected pasteText");
+		await driver.pasteText("ada@example.com");
+		const line = logs.find((entry) => entry.includes("pasteText"));
+		expect(line).toContain("E_IO");
+		expect(line).toContain("pasteboard did not take the text");
+		expect(line).not.toContain("ada@example.com");
+	});
+
+	test("empty text does nothing", async () => {
+		const { driver, helper, calls } = await open(() => ({ data: null }));
+		if (!canPasteText(driver)) throw new Error("expected pasteText");
+		await unwrapped(driver.pasteText(""));
+		expect(helper.requests).toEqual([]);
+		expect(calls.some((call) => call.cmd[0] === "sh")).toBe(false);
+	});
+});
+
 describe("settle", () => {
 	test("native settle: params and timeout margin", async () => {
 		const { driver, helper } = await open((request) =>
@@ -856,7 +1291,7 @@ describe("settle", () => {
 		const notes: SpanDetail = {};
 		await collectSpanDetail(notes, () => unwrapped(driver.app.launch(BUNDLE)));
 		expect(helper.of("rebind")).toHaveLength(1);
-		expect(helper.of("rebind")[0]).toMatchObject({ bundleId: BUNDLE, rebindTimeoutMs: 3000, timeoutMs: 5000 });
+		expect(helper.of("rebind")[0]).toMatchObject({ bundleId: BUNDLE, rebindTimeoutMs: 10000, timeoutMs: 12000 });
 		expect(notes).toEqual({ via: "simd", pid: 4242, rebind: "bound", rebindMs: 700 });
 		await unwrapped(driver.settle());
 		expect(helper.of("settle")[0]).not.toHaveProperty("bundleId");
@@ -950,6 +1385,71 @@ describe("settle", () => {
 		expect(helper.of("settle")).toHaveLength(1);
 	});
 
+	/** A driver whose native settle answers from `settles` in order (last repeats), with snapshots that never change. */
+	async function settleSequence(settles: Array<"ax" | "quiet">) {
+		let t = 0;
+		let asked = 0;
+		const opened = await open(
+			(request) => {
+				if (request.op === "settle") {
+					const answer = settles[Math.min(asked++, settles.length - 1)];
+					return answer === "ax"
+						? {
+								error: {
+									code: "E_AX_UNAVAILABLE",
+									message:
+										"The axbridge guest reader could not bind the simulator's accessibility runtime: AXObserverAddNotification(4002) failed with AX error -25204 (kAXErrorCannotComplete)",
+								},
+							}
+						: { data: { quiet: true, waitedMs: 5 } };
+				}
+				if (request.op === "snapshot") return { data: snapshotData };
+				return undefined;
+			},
+			{
+				now: () => t,
+				sleep: async (ms) => {
+					t += ms;
+				},
+			}
+		);
+		return opened;
+	}
+
+	test("E_AX_UNAVAILABLE from the native settle falls back to snapshot-hash polling for that settle", async () => {
+		const { driver, helper } = await settleSequence(["ax"]);
+		const notes: SpanDetail = {};
+		const result = await collectSpanDetail(notes, () => unwrapped(driver.settle({ quietMs: 100, timeoutMs: 2000 })));
+		expect(result).toMatchObject({ quiet: true, via: "hash" });
+		expect(notes.via).toBe("hash");
+		expect(helper.of("settle")).toHaveLength(1);
+		expect(helper.of("snapshot").length).toBeGreaterThanOrEqual(3);
+	});
+
+	test("the hash fallback holds the screen still for at least the minimum fallback window", async () => {
+		const { driver } = await settleSequence(["ax"]);
+		const result = await unwrapped(driver.settle({ quietMs: 250, timeoutMs: 3000 }));
+		expect(result.quiet).toBe(true);
+		expect(result.waitedMs).toBeGreaterThanOrEqual(HASH_FALLBACK_MIN_QUIET_MS);
+	});
+
+	test("two native settles in a row that cannot bind the AX observer: the helper's settle is not asked again", async () => {
+		const { driver, helper, logs } = await settleSequence(["ax"]);
+		await unwrapped(driver.settle({ quietMs: 100, timeoutMs: 2000 }));
+		await unwrapped(driver.settle({ quietMs: 100, timeoutMs: 2000 }));
+		expect(helper.of("settle")).toHaveLength(2);
+		const third = await unwrapped(driver.settle({ quietMs: 100, timeoutMs: 2000 }));
+		expect(third).toMatchObject({ via: "hash" });
+		expect(helper.of("settle")).toHaveLength(2);
+		expect(logs.filter((line) => line.includes("native settle")).length).toBe(1);
+	});
+
+	test("a native settle that works between two AX failures keeps the helper's settle", async () => {
+		const { driver, helper } = await settleSequence(["ax", "quiet", "ax", "quiet"]);
+		for (let i = 0; i < 4; i++) await unwrapped(driver.settle({ quietMs: 100, timeoutMs: 2000 }));
+		expect(helper.of("settle")).toHaveLength(4);
+	});
+
 	test("a UI that keeps changing times out with quiet:false", async () => {
 		let t = 0;
 		let n = 0;
@@ -1035,6 +1535,131 @@ describe("screenshot", () => {
 		const result = await driver.screenshot({ path: "/out/c.png" });
 		expect(!result.success && result.error.code).toBe("E_TIMEOUT");
 		expect(joined(calls).some((line) => line.includes("simctl io"))).toBe(false);
+	});
+});
+
+describe("network conditions", () => {
+	/** an in-memory state dir whose app "acks" every state write */
+	function stateDir() {
+		const files = new Map<string, string>();
+		const app = { running: true };
+		const fs: InjectFs = {
+			mkdir: () => undefined,
+			writeAtomic: (path, text) => {
+				files.set(path, text);
+				if (app.running && path.endsWith("state.json")) {
+					files.set(
+						`${path}.ack`,
+						JSON.stringify({ seq: (JSON.parse(text) as { seq: number }).seq, pid: 4242, proxy: true })
+					);
+				}
+			},
+			read: (path) => files.get(path),
+			remove: (path) => void files.delete(path),
+			pidAlive: () => true,
+		};
+		return { files, fs, app };
+	}
+	const dylib = "/opt/libwarden-inject.dylib";
+	const exists = (path: string) => path === dylib;
+
+	test("without a lease proxy the op is E_UNSUPPORTED, and says what is missing", async () => {
+		const { driver } = await open(lifecycle);
+		const result = await driver.network({ kind: "offline" });
+		expect(!result.success && result.error.code).toBe("E_UNSUPPORTED");
+		expect(!result.success && result.error.message).toContain("shaping proxy");
+	});
+
+	test("a network condition set before launch makes the launch load the dylib and carry the proxy address", async () => {
+		const dir = stateDir();
+		dir.app.running = false;
+		const proxy = fakeProxy(19_123);
+		const { driver, helper } = await open(lifecycle, {
+			networkProxy: proxy,
+			injectFs: dir.fs,
+			exists,
+			env: { helperDir: "/opt" } as OpenIosDriverOptions["env"],
+			wardenHome: "/w",
+		});
+		const set = await driver.network({ kind: "preset", preset: "3g" });
+		expect(set.success && set.data.appliesOnLaunch).toBe(true);
+		dir.app.running = true;
+		await unwrapped(driver.app.launch(BUNDLE, { env: { A: "1" } }));
+		expect(helper.of("launch")[0]).toMatchObject({
+			env: {
+				A: "1",
+				DYLD_INSERT_LIBRARIES: dylib,
+				WARDEN_NET_PROXY: "127.0.0.1:19123",
+				WARDEN_INJECT_STATE: "/w/inject/UDID-1/state.json",
+			},
+		});
+	});
+
+	test("the camera without a lease is E_UNSUPPORTED and says what is missing", async () => {
+		const { driver } = await open(lifecycle);
+		const result = await driver.camera({ back: { kind: "image", path: "/w/camera/UDID-1/back-a.png" } });
+		expect(!result.success && result.error.code).toBe("E_UNSUPPORTED");
+		expect(!result.success && result.error.message).toContain("injected dylib");
+	});
+
+	test("a camera feed set before launch loads the dylib with the camera on, no proxy", async () => {
+		const dir = stateDir();
+		dir.app.running = false;
+		const { driver, helper } = await open(lifecycle, {
+			networkProxy: fakeProxy(19_124),
+			injectFs: dir.fs,
+			exists,
+			env: { helperDir: "/opt" } as OpenIosDriverOptions["env"],
+			wardenHome: "/w",
+		});
+		const set = await driver.camera({ back: { kind: "image", path: "/w/camera/UDID-1/back-a.png" } });
+		expect(set.success && set.data.appliesOnLaunch).toBe(true);
+		dir.app.running = true;
+		await unwrapped(driver.app.launch(BUNDLE));
+		const env = helper.of("launch")[0]?.env;
+		expect(env).toMatchObject({ DYLD_INSERT_LIBRARIES: dylib, WARDEN_CAMERA: "1" });
+		expect(env).not.toHaveProperty("WARDEN_NET_PROXY");
+	});
+
+	test("a plain run launches exactly as before: no injected env at all", async () => {
+		const { driver, helper } = await open(lifecycle, {
+			networkProxy: fakeProxy(),
+			injectFs: stateDir().fs,
+			wardenHome: "/w",
+		});
+		await unwrapped(driver.app.launch(BUNDLE, { env: { A: "1" } }));
+		expect(helper.of("launch")[0]).toMatchObject({ env: { A: "1" } });
+		expect(helper.of("launch")[0]?.env).not.toHaveProperty("DYLD_INSERT_LIBRARIES");
+	});
+
+	test("simctl fallback gets the same env through SIMCTL_CHILD_*", async () => {
+		const dir = stateDir();
+		const { driver, calls } = await open(
+			(request) => (["launch", "terminate", "openUrl"].includes(request.op) ? unknownOp(request.op) : { data: null }),
+			{
+				networkProxy: fakeProxy(19_123, true),
+				injectFs: dir.fs,
+				exists,
+				env: { helperDir: "/opt" } as OpenIosDriverOptions["env"],
+				wardenHome: "/w",
+			},
+			[["xcrun simctl launch", {}]]
+		);
+		await unwrapped(driver.app.launch(BUNDLE));
+		const launch = calls.find((call) => call.cmd.includes("launch") && call.cmd.includes("simctl"));
+		expect(launch?.opts?.env).toMatchObject({
+			SIMCTL_CHILD_DYLD_INSERT_LIBRARIES: dylib,
+			SIMCTL_CHILD_WARDEN_NET_PROXY: "127.0.0.1:19123",
+		});
+	});
+
+	test("networkFaults goes through the proxy and carries the https note", async () => {
+		const dir = stateDir();
+		const proxy = fakeProxy(19_123, true);
+		const { driver } = await open(lifecycle, { networkProxy: proxy, injectFs: dir.fs, wardenHome: "/w" });
+		const result = await driver.networkFaults([{ match: "api.example.com", action: { kind: "status", code: 503 } }]);
+		expect(result.success && result.data.notes).toHaveLength(1);
+		expect(proxy.calls[0]).toMatchObject({ op: "update", update: { faults: [{ match: "api.example.com" }] } });
 	});
 });
 
@@ -1224,7 +1849,13 @@ describe("bridge-stale recovery", () => {
 
 		const second = await unwrapped(driver.snapshot());
 		expect(second.flat.length).toBeGreaterThan(0);
-		expect(helper.requests.map((request) => request.op)).toEqual(["snapshot", "snapshot", "shutdown", "snapshot"]);
+		expect(helper.requests.map((request) => request.op)).toEqual([
+			"snapshot",
+			"health",
+			"snapshot",
+			"shutdown",
+			"snapshot",
+		]);
 		expect(helper.spawns).toHaveLength(2);
 		expect(logs.some((line) => line.includes("AX bridge looks stale"))).toBe(true);
 	});
@@ -1328,7 +1959,7 @@ describe("bridge-stale recovery", () => {
 			await driver.snapshot();
 			const recovered = await unwrapped(driver.snapshot());
 			expect(recovered.flat.length).toBeGreaterThan(0);
-			expect(seen).toEqual(["snapshot", "snapshot", "shutdown"]);
+			expect(seen).toEqual(["snapshot", "health", "snapshot", "shutdown"]);
 			expect(helper.spawns).toHaveLength(1);
 		} finally {
 			server.stop(true);

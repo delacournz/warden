@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { rmSync } from "node:fs";
-import { makeSuiteRepo } from "@delacour/warden-core/affected/fixture.testing";
+import { makeSuiteRepo, SUITE_REPO_HOOK_TIMEOUT_MS } from "@delacour/warden-core/affected/fixture.testing";
 import { bunExec } from "@delacour/warden-core/exec";
 import { type TestContext, testContext } from "../testing";
 import { affectedCommand } from "./affected";
@@ -11,7 +11,7 @@ let ctx: TestContext | undefined;
 
 beforeEach(async () => {
 	({ dir, write } = await makeSuiteRepo());
-});
+}, SUITE_REPO_HOOK_TIMEOUT_MS);
 afterEach(() => {
 	ctx?.cleanup();
 	ctx = undefined;

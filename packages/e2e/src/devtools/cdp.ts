@@ -14,6 +14,9 @@ export type CdpOptions = {
 	timeoutMs?: number;
 };
 
+/** How a socket closed: the WebSocket close code and reason (Metro's proxy puts a `[TAG]` in the reason). */
+export type CloseInfo = { code: number; reason: string };
+
 export type CdpClient = {
 	/** `Runtime.evaluate`-style JSON-RPC call; resolves with the reply's `result`. */
 	send: (
@@ -23,8 +26,8 @@ export type CdpClient = {
 	) => Promise<DevtoolsResult<unknown>>;
 	/** Subscribe to a CDP event by method name; returns the unsubscribe function. */
 	on: (event: string, handler: (params: unknown) => void) => () => void;
-	/** Called when the socket closes on its own (not after `close()`). */
-	onClose: (handler: () => void) => () => void;
+	/** Called when the socket closes on its own (not after `close()`), with the close code and reason Metro sent. */
+	onClose: (handler: (info: CloseInfo) => void) => () => void;
 	/** Every event of every method, in arrival order (a wildcard `on`). */
 	onAny: (handler: (method: string, params: unknown) => void) => () => void;
 	/**
@@ -187,7 +190,7 @@ export async function openCdp(wsUrl: string, options: CdpOptions = {}): Promise<
 	const pending = new Map<number, PendingRequest>();
 	const bindings = new Map<string, PendingBinding>();
 	const listeners = new Map<string, Set<(params: unknown) => void>>();
-	const closeHandlers = new Set<() => void>();
+	const closeHandlers = new Set<(info: CloseInfo) => void>();
 	const anyHandlers = new Set<(method: string, params: unknown) => void>();
 
 	const send: CdpClient["send"] = (method, params = {}, opts = {}) => {
@@ -229,7 +232,7 @@ export async function openCdp(wsUrl: string, options: CdpOptions = {}): Promise<
 		if (method) dispatch(method, params);
 	});
 
-	ws.addEventListener("close", () => {
+	ws.addEventListener("close", (event) => {
 		if (closed) return;
 		closed = true;
 		for (const [, request] of pending) {
@@ -238,7 +241,7 @@ export async function openCdp(wsUrl: string, options: CdpOptions = {}): Promise<
 		}
 		pending.clear();
 		for (const binding of [...bindings.values()]) binding.settle(devtoolsErr("cdp_closed", "CDP connection closed"));
-		if (!intentional) for (const handler of [...closeHandlers]) handler();
+		if (!intentional) for (const handler of [...closeHandlers]) handler({ code: event.code, reason: event.reason });
 	});
 
 	const subscribe = <T>(set: Set<T>, handler: T) => {

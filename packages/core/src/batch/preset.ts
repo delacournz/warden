@@ -50,6 +50,10 @@ export type BatchPreset = {
 	headless?: boolean;
 	/** the preset's `slim`, else the top-level one (undefined: neither sets it) */
 	slim?: NonNullable<BatchPresetConfig["slim"]>;
+	/** the preset's `biometrics`, else the top-level one (undefined: neither sets it) */
+	biometrics?: boolean;
+	/** the preset's `reclaim`, else the top-level one (undefined: neither sets it) */
+	reclaim?: BatchPresetConfig["reclaim"];
 	cmd: string[];
 };
 
@@ -74,10 +78,11 @@ function resolvePreset(
 	cwd: string,
 	projectRoot?: string,
 	defaultHeadless?: boolean,
-	defaultSlim?: BatchPresetConfig["slim"]
+	defaultSlim?: BatchPresetConfig["slim"],
+	defaultBiometrics?: boolean,
+	defaultReclaim?: BatchPresetConfig["reclaim"]
 ): BatchPreset {
 	const {
-		headless: ownHeadless,
 		project: _project,
 		jobs: _jobs,
 		jobsFrom: _jobsFrom,
@@ -90,8 +95,6 @@ function resolvePreset(
 	} = preset;
 	const { app, installMode, resetKeychain, variant } = appSwitches(appOption);
 	const jobs = jobsSource(preset, cwd);
-	const headless = ownHeadless ?? defaultHeadless;
-	const slim = preset.slim ?? defaultSlim;
 	return {
 		...rest,
 		name,
@@ -102,12 +105,49 @@ function resolvePreset(
 		...(resetKeychain ? { resetKeychain } : {}),
 		...(variant !== undefined ? { variant } : {}),
 		...(projectRoot !== undefined ? { projectRoot } : {}),
+		...pathFields({ serveReady, record, logs }, cwd),
+		...(jobs ? { jobs } : {}),
+		...defaultedFields(preset, {
+			headless: defaultHeadless,
+			slim: defaultSlim,
+			biometrics: defaultBiometrics,
+			reclaim: defaultReclaim,
+		}),
+	};
+}
+
+/** serveReady / record / logs, resolved against `cwd` when set. */
+function pathFields(
+	input: { serveReady?: string; record?: string; logs?: string },
+	cwd: string
+): Pick<BatchPreset, "serveReady" | "record" | "logs"> {
+	const { serveReady, record, logs } = input;
+	return {
 		...(serveReady !== undefined ? { serveReady: readySpec(serveReady, cwd) } : {}),
 		...(record !== undefined ? { record: absolute(cwd, record) } : {}),
 		...(logs !== undefined ? { logs: absolute(cwd, logs) } : {}),
-		...(jobs ? { jobs } : {}),
+	};
+}
+
+/** headless / slim / biometrics / reclaim: the preset's own value, else the default; omitted when both unset. */
+function defaultedFields(
+	preset: BatchPresetConfig,
+	defaults: {
+		headless?: boolean;
+		slim?: BatchPresetConfig["slim"];
+		biometrics?: boolean;
+		reclaim?: BatchPresetConfig["reclaim"];
+	}
+): Pick<BatchPreset, "headless" | "slim" | "biometrics" | "reclaim"> {
+	const headless = preset.headless ?? defaults.headless;
+	const slim = preset.slim ?? defaults.slim;
+	const biometrics = preset.biometrics ?? defaults.biometrics;
+	const reclaim = preset.reclaim ?? defaults.reclaim;
+	return {
 		...(headless !== undefined ? { headless } : {}),
 		...(slim !== undefined ? { slim } : {}),
+		...(biometrics !== undefined ? { biometrics } : {}),
+		...(reclaim !== undefined ? { reclaim } : {}),
 	};
 }
 
@@ -136,6 +176,15 @@ export function findBatchPreset(input: FindBatchPresetInput): Result<{ preset?: 
 	const projectRoot = project ? resolve(dir, project.root) : undefined;
 	return ok({
 		names,
-		preset: resolvePreset(input.name, preset, projectRoot ?? dir, projectRoot, config.headless, config.slim),
+		preset: resolvePreset(
+			input.name,
+			preset,
+			projectRoot ?? dir,
+			projectRoot,
+			config.headless,
+			config.slim,
+			config.biometrics,
+			config.reclaim
+		),
 	});
 }

@@ -2,12 +2,12 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fakeApp } from "@delacour/warden-core/builds/builds.testing";
+import { fakeApp, testProject } from "@delacour/warden-core/builds/builds.testing";
 import { getInstall, recordInstall, storeArtifact } from "@delacour/warden-core/builds/cache";
 import type { ExecResult } from "@delacour/warden-core/exec";
 import { OWNER_ENV } from "../simctl.testing";
 import { fakeExec, scriptedUi, type TestContext, testContext } from "../testing";
-import { type AppDeps, createAppCommand } from "./app";
+import { type AppDeps, createAppCommand, kindAppInput } from "./app";
 
 let ctx: TestContext | undefined;
 let deviceDir: string | undefined;
@@ -122,6 +122,27 @@ describe("warden app fingerprint", () => {
 		expect(await createAppCommand(deps).run(c)).toBe(0);
 		expect(c.stdout.join("\n")).toBe(`android  ${HASH}ff`);
 	});
+
+	test("--kind simulator: the native fingerprint the simulator base is keyed on, and its cache hash", async () => {
+		const c = setup(["fingerprint", "ios", "--kind", "simulator", "--json"]);
+		expect(await createAppCommand(deps).run(c)).toBe(0);
+		const out = JSON.parse(c.stdout.join("\n"));
+		expect(out.kind).toBe("simulator");
+		expect(out.fingerprints.ios).toMatch(/^[0-9a-f]{40}$/);
+		expect(out.fingerprints.ios).not.toBe(HASH);
+		expect(out.hashes).toEqual({ ios: `${out.fingerprints.ios}:base` });
+
+		const text = setup(["fingerprint", "ios", "--kind", "simulator"]);
+		expect(await createAppCommand(deps).run(text)).toBe(0);
+		expect(text.stdout.join("\n")).toBe(`ios      ${out.fingerprints.ios}`);
+	});
+
+	test("--kind dev / release: the kind's native fingerprint and hash", async () => {
+		const c = setup(["fingerprint", "ios", "--kind", "dev", "--json"]);
+		expect(await createAppCommand(deps).run(c)).toBe(0);
+		const out = JSON.parse(c.stdout.join("\n"));
+		expect(out.hashes.ios).toBe(`${out.fingerprints.ios}:dev`);
+	});
 });
 
 describe("git facts of one command", () => {
@@ -168,6 +189,19 @@ describe("git facts of one command", () => {
 });
 
 describe("warden app ensure", () => {
+	test("--kind with --variant is refused before anything is built", async () => {
+		const calls: string[][] = [];
+		const c = setup(["ensure", "ios", "--no-install", "--kind", "simulator", "--variant", "dev"], [], calls);
+		expect(await createAppCommand(deps).run(c)).toBe(1);
+		expect(c.stderr.join("\n")).toContain("--kind and --variant can't be combined");
+		expect(calls.some((cmd) => cmd.includes("make-ios"))).toBe(false);
+	});
+
+	test("--kind takes dev, simulator or release only", async () => {
+		const c = setup(["ensure", "ios", "--no-install", "--kind", "debug"]);
+		expect(await createAppCommand(deps).run(c)).not.toBe(0);
+	});
+
 	test("--udid: cache hit → simctl install, then installed on the second run", async () => {
 		const calls: string[][] = [];
 		const c = setup(
@@ -182,8 +216,16 @@ describe("warden app ensure", () => {
 		const path = await seed(c);
 		const cmd = createAppCommand(deps);
 		expect(await cmd.run(c)).toBe(0);
-		expect(JSON.parse(c.stdout.join("\n"))).toEqual({ appPath: path, hash: HASH, source: "cache", installed: true });
-		expect(getInstall(c.db, "ios", "U1", "com.demo")?.hash).toBe(HASH);
+		// the kind-less build is the dev build: found at its old key, ensured and installed under the dev kind's
+		expect(JSON.parse(c.stdout.join("\n"))).toEqual({
+			appPath: path,
+			hash: `${HASH}:dev`,
+			source: "cache",
+			installed: true,
+			kind: "dev",
+			requestedKind: "dev",
+		});
+		expect(getInstall(c.db, "ios", "U1", "com.demo")?.hash).toBe(`${HASH}:dev`);
 
 		c.stdout.length = 0;
 		calls.length = 0;
@@ -335,5 +377,129 @@ describe("warden app ensure", () => {
 		c.argv = ["fingerprint", "ios", "--project", "apps/nope"];
 		expect(await createAppCommand(deps).run(c)).toBe(1);
 		expect(calls).toEqual([]);
+	});
+});
+
+describe("one dev build per fingerprint", () => {
+	/** every spawn that would build: anything run through `sh -c` but the fingerprint */
+	const builds = (calls: string[][]) =>
+		calls.filter((cmd) => cmd[0] === "sh" && cmd[1] === "-c" && !cmd[2]?.startsWith("fp "));
+
+	test("app ensure --kind dev warms what a kind-less ensure (warden dev) reads: no second build", async () => {
+		const calls: string[][] = [];
+		const c = setup(["ensure", "ios", "--no-install", "--no-eas", "--kind", "dev", "--json"], [], calls);
+		const root = realpathSync(join(c.cwd, "app"));
+		const devApp = await storeArtifact({
+			store: c.db,
+			env: c.env,
+			projectKey: `path:${root}`,
+			platform: "ios",
+			profile: "local:dev",
+			hash: `${HASH}:dev`,
+			artifact: fakeApp(join(c.cwd, "src")),
+			source: "build",
+			layout: { dir: join(c.cwd, "dev-dir"), kind: "dev" },
+			now: 1,
+		});
+		if (!devApp.success) throw new Error(devApp.error);
+		const cmd = createAppCommand(deps);
+		expect(await cmd.run(c)).toBe(0);
+		expect(JSON.parse(c.stdout.join("\n"))).toMatchObject({ hash: `${HASH}:dev`, source: "cache" });
+
+		c.stdout.length = 0;
+		c.argv = ["ensure", "ios", "--no-install", "--no-eas", "--json"];
+		expect(await cmd.run(c)).toBe(0);
+		expect(JSON.parse(c.stdout.join("\n"))).toMatchObject({
+			appPath: devApp.data.path,
+			hash: `${HASH}:dev`,
+			source: "cache",
+			kind: "dev",
+		});
+		expect(builds(calls)).toEqual([]);
+	});
+
+	test("a build cached under the old kind-less key still hits, for both, and is installed once", async () => {
+		const calls: string[][] = [];
+		const c = setup(
+			["ensure", "ios", "--udid", "U1", "--no-eas", "--no-build", "--json"],
+			[
+				["xcrun simctl install U1", {}],
+				["xcrun simctl get_app_container U1 com.demo", { stdout: installedApp() }],
+				["plutil -convert json", { stdout: JSON.stringify({ CFBundleVersion: "1", CFBundleExecutable: "App" }) }],
+			],
+			calls
+		);
+		const path = await seed(c);
+		recordInstall(c.db, { platform: "ios", deviceId: "U1", bundleId: "com.demo", hash: HASH, installedAt: 1 });
+		const cmd = createAppCommand(deps);
+		expect(await cmd.run(c)).toBe(0);
+		expect(JSON.parse(c.stdout.join("\n"))).toMatchObject({ appPath: path, hash: `${HASH}:dev`, source: "installed" });
+
+		c.stdout.length = 0;
+		c.argv = ["ensure", "ios", "--udid", "U1", "--no-eas", "--no-build", "--kind", "dev", "--json"];
+		expect(await cmd.run(c)).toBe(0);
+		expect(JSON.parse(c.stdout.join("\n"))).toMatchObject({ hash: `${HASH}:dev`, source: "installed" });
+		expect(calls.some((x) => x.join(" ").startsWith("xcrun simctl install"))).toBe(false);
+		expect(builds(calls)).toEqual([]);
+	});
+});
+
+describe("warden app ensure on a physical iPhone", () => {
+	const IPHONE = "00008140-000A0B0C0D0E0F10";
+
+	test("--kind simulator is refused with the way out; nothing is built or installed", async () => {
+		const calls: string[][] = [];
+		const c = setup(["ensure", "ios", "--udid", IPHONE, "--kind", "simulator"], [], calls);
+		expect(await createAppCommand(deps).run(c)).toBe(1);
+		expect(c.stderr.join("\n")).toContain("simulator kind is not supported on a physical iPhone");
+		expect(calls.some((cmd) => cmd.includes("devicectl") || cmd.includes("xcodebuild") || cmd.includes("simctl"))).toBe(
+			false
+		);
+	});
+
+	test("--variant builds are simulator builds: refused on a phone", async () => {
+		const c = setup(["ensure", "ios", "--udid", IPHONE, "--variant", "dev"]);
+		expect(await createAppCommand(deps).run(c)).toBe(1);
+		expect(c.stderr.join("\n")).toContain("use --kind release");
+	});
+
+	test("an iPhone build is keyed on the env team: the dev kind misses at <fp>:device-<team>:dev", async () => {
+		const calls: string[][] = [];
+		const c = setup(["ensure", "ios", "--udid", IPHONE, "--kind", "dev", "--no-build", "--no-eas"], [], calls);
+		c.env = { ...c.env, WARDEN_IOS_TEAM_ID: "ABCDE12345" };
+		expect(await createAppCommand(deps).run(c)).toBe(1);
+		expect(c.stderr.join("\n")).toContain(`${HASH}:device-ABCDE12345:dev`);
+	});
+
+	test("kindAppInput carries the team from warden.config.ts only for an iPhone", () => {
+		const base = { project: testProject(), projectKey: "k" };
+		const owner = { kind: "user", pid: 1, cwd: "/repo" } as const;
+		const c = testContext([], { env: { HOME: "/h" } });
+		writeFileSync(join(c.cwd, "warden.config.json"), JSON.stringify({ ios: { teamId: "ABCDE12345" }, e2e: {} }));
+		const phone = kindAppInput(c, deps, owner, "ios", base, "release", { eas: false, build: true, physical: true });
+		const sim = kindAppInput(c, deps, owner, "ios", base, "release", { eas: false, build: true });
+		expect(phone.configTeamId).toBe("ABCDE12345");
+		expect(phone.physical).toBe(true);
+		expect(sim.configTeamId).toBeUndefined();
+		c.cleanup();
+	});
+});
+
+describe("kindAppInput bundle env", () => {
+	const project = { project: testProject(), projectKey: "k" };
+	const owner = { kind: "user", pid: 1, cwd: "/repo" } as const;
+	const bundleEnv = { EXPO_PUBLIC_API: "http://fake" };
+	const input = (kind: "dev" | "simulator" | "release") => {
+		const c = testContext([], { env: { HOME: "/h", EXPO_PUBLIC_API: "http://real" } });
+		return kindAppInput(c, deps, owner, "ios", project, kind, { eas: false, build: true, bundleEnv }).env;
+	};
+
+	test("the kinds that bundle JS take it over the process env", () => {
+		expect(input("simulator")).toEqual({ HOME: "/h", EXPO_PUBLIC_API: "http://fake" });
+		expect(input("release")).toEqual({ HOME: "/h", EXPO_PUBLIC_API: "http://fake" });
+	});
+
+	test("dev ignores it: Metro bundles with its own env", () => {
+		expect(input("dev")).toEqual({ HOME: "/h", EXPO_PUBLIC_API: "http://real" });
 	});
 });

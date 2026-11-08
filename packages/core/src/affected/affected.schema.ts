@@ -1,6 +1,8 @@
 import { z } from "zod";
-import { duration, portSpec, slimConfigSchema } from "../batch/preset.schema";
+import { a11yAuditConfigSchema } from "../a11y/a11y.config";
+import { duration, portSpec, reclaimSchema, slimConfigSchema } from "../batch/preset.schema";
 import { appOptionSchema } from "../builds/app-option.schema";
+import { cameraConfigSchema, conditionsConfigSchema } from "../conditions/conditions.config";
 import { DEFAULT_JOB_TIMEOUT_MS, DEFAULT_METRO_PORT_SPEC, DEFAULT_METRO_READY_TIMEOUT } from "../config.defaults";
 import { validateProfile } from "../sims/slim.profile";
 
@@ -31,6 +33,7 @@ type RunSettings = {
 	passes: number;
 	count?: number | undefined;
 	profile?: string | undefined;
+	runtime?: string | undefined;
 	devices?: Array<{ profile: string; default: boolean }> | undefined;
 };
 
@@ -65,6 +68,39 @@ function runIssues(suite: RunSettings): Array<{ message: string; path: string[] 
 	return issues;
 }
 
+/** What `physical` rules out: simulator daemon slimming, closing Simulator.app windows and simulated biometrics mean nothing on a real device. */
+function physicalIssues(suite: {
+	physical?: unknown;
+	slim?: unknown;
+	headless?: boolean | undefined;
+	biometrics?: boolean | undefined;
+	conditions?: unknown;
+	camera?: unknown;
+}): Array<{ message: string; path: string[] }> {
+	if (suite.physical === undefined) return [];
+	const issues: Array<{ message: string; path: string[] }> = [];
+	if (suite.slim !== undefined && suite.slim !== false)
+		issues.push({ message: "slim cannot be used with physical devices", path: ["slim"] });
+	if (suite.headless === true)
+		issues.push({ message: "headless cannot be used with physical devices", path: ["headless"] });
+	if (suite.biometrics === true)
+		issues.push({
+			message: "biometrics cannot be used with physical devices (use a simulator or emulator suite)",
+			path: ["biometrics"],
+		});
+	if (suite.conditions !== undefined)
+		issues.push({
+			message: "conditions cannot be used with physical devices (use a simulator or emulator suite)",
+			path: ["conditions"],
+		});
+	if (suite.camera !== undefined)
+		issues.push({
+			message: "camera cannot be used with physical devices (use a simulator or emulator suite)",
+			path: ["camera"],
+		});
+	return issues;
+}
+
 /** `e2e.<suite>.metro`: warden starts one Metro for the run and points the dev client at it. */
 export const e2eMetroSchema = z
 	.object({
@@ -83,6 +119,9 @@ export const e2eMetroSchema = z
 	})
 	.strict();
 
+/** `physical` on a suite or leg: `true` = any ready physical device, `{ ids }` = exactly these (adb serials / CoreDevice UDIDs). Never booted, created or arranged. */
+export const physicalSchema = z.union([z.literal(true), z.object({ ids: z.array(z.string().min(1)).min(1) }).strict()]);
+
 /** `e2e.<suite>.devices[]`: one leg of the run, with its own device pool. */
 export const e2eDeviceLegSchema = z
 	.object({
@@ -92,6 +131,8 @@ export const e2eDeviceLegSchema = z
 		env: z.record(z.string(), z.string()).optional(),
 		/** false = only with `--devices all` (or naming the profile) */
 		default: z.boolean().default(true),
+		/** run this leg on physical devices instead of simulators / emulators */
+		physical: physicalSchema.optional(),
 	})
 	.strict();
 
@@ -151,7 +192,7 @@ export const e2eSuiteSchema = z
 		spec: e2eSpecSchema.optional(),
 		/** device (default): one `bun test` process per device runs its shard of the specs (round-robin by spec id). spec: one process per spec, one worker per device */
 		isolate: z.enum(["device", "spec"]).optional(),
-		/** `always`: shut down the devices warden booted once the gate passes. `idle`: leave them booted for the next run and let `warden gc` reap them when idle. Default: `idle` locally, `always` under CI. `--no-shutdown` wins */
+		/** `always`: shut down the devices warden booted once the gate passes. `idle`: leave them booted for the next run and let `warden gc` reap them when idle. Default: `always`. `--no-shutdown` wins */
 		shutdown: z.enum(["always", "idle"]).optional(),
 		/** per spec: a spec process still going after this long for each spec it runs is killed and counts as failed */
 		jobTimeoutMs: z.number().int().min(1_000).default(DEFAULT_JOB_TIMEOUT_MS),
@@ -164,6 +205,8 @@ export const e2eSuiteSchema = z
 		/** file-based router dir (e.g. `apps/mobile/src/app`): `_layout` files above an entry are entries too */
 		routerRoot: path.optional(),
 		platform: platform.optional(),
+		/** run the suite on physical devices (every leg without its own `physical`); needs no slim or headless */
+		physical: physicalSchema.optional(),
 		/** git ref changes are measured against (merge-base with HEAD) */
 		base: z.string().min(1).default("main"),
 		/** only import chains of at most this many hops from an entry select a spec (default: any length) */
@@ -189,6 +232,8 @@ export const e2eSuiteSchema = z
 		retry: z.number().int().min(0).default(0),
 		count: z.number().int().min(1).optional(),
 		profile: z.string().min(1).optional(),
+		/** iOS simulator runtime the run's devices and golden use: `latest`, `iOS-26-5`, `26.5` (`--runtime` overrides) */
+		runtime: z.string().min(1).optional(),
 		/** install the project's app on each device first (`warden batch --app`); `{ installMode }` = `--install-mode` */
 		app: appOptionSchema.optional(),
 		/** ports leased for the run (`<from>[:<span>]`), exported as `WARDEN_PORT_<i>` / `WARDEN_PORTS` to serve, setup and every spec process */
@@ -204,6 +249,12 @@ export const e2eSuiteSchema = z
 		setup: z.string().min(1).optional(),
 		/** iOS: switch off the simulator daemons specs never need on each device, before `setup`. An object keeps categories (`except`, ids) or single labels (`keep`) on */
 		slim: slimConfigSchema.optional(),
+		/** iOS: clone the suite's simulators from a golden image (`true`); default off = each is a fresh `simctl create` + first boot */
+		golden: z.boolean().optional(),
+		/** devices of this suite have a fingerprint / Face ID enrolled (own golden, own pool); overrides the top-level `biometrics` */
+		biometrics: z.boolean().optional(),
+		/** `erase` | `uninstall` | `none`: reclaim the suite's devices when they are released; overrides the top-level `reclaim` */
+		reclaim: reclaimSchema.optional(),
 		/** removed: renamed `warmDrivers` */
 		warmRunners: removedKey("warmRunners", "renamed to warmDrivers"),
 		/** iOS: start every device's automation helper in parallel before the specs (default on; `false` = off) */
@@ -212,6 +263,12 @@ export const e2eSuiteSchema = z
 		headless: z.boolean().optional(),
 		/** perf budgets for this suite; each key replaces the top-level `perf.budgets` one */
 		perf: perfConfigSchema.optional(),
+		/** device conditions every spec of the suite starts from; each area replaces the top-level one */
+		conditions: conditionsConfigSchema.optional(),
+		/** accessibility audit settings for this suite; each key replaces the top-level `a11y` one */
+		a11y: a11yAuditConfigSchema.optional(),
+		/** the simulated camera every spec starts from, applied before the first `app.open()`; Android devices of the suite claim `+cam` */
+		camera: cameraConfigSchema.optional(),
 		/** default `required` for specs that don't set it */
 		required: z.boolean().default(true),
 		specs: z.record(z.string().min(1), e2eSpecEntrySchema).default({}),
@@ -228,11 +285,13 @@ export const e2eSuiteSchema = z
 			const checked = validateProfile({ except: suite.slim.except ?? [], keep: suite.slim.keep ?? [] });
 			if (!checked.success) issue.addIssue({ code: "custom", message: checked.error, path: ["slim"] });
 		}
-		for (const message of runIssues(suite)) issue.addIssue({ code: "custom", ...message });
+		for (const message of [...runIssues(suite), ...physicalIssues(suite)])
+			issue.addIssue({ code: "custom", ...message });
 	});
 
 export type E2eSpecConfig = z.infer<typeof e2eSpecSchema>;
 export type E2eMetroConfig = z.infer<typeof e2eMetroSchema>;
+export type E2ePhysical = z.infer<typeof physicalSchema>;
 export type E2eDeviceLeg = z.infer<typeof e2eDeviceLegSchema>;
 export type E2eSpecEntryConfig = z.infer<typeof e2eSpecEntrySchema>;
 export type E2eSlimConfig = z.infer<typeof slimConfigSchema>;

@@ -73,6 +73,26 @@ describe("memoryPressure", () => {
 	});
 
 	test.each([
+		[37, "normal"],
+		[20, "warn"],
+		[5, "critical"],
+	] as const)("macOS sysctl warn with memory_pressure free %i%% is %s", async (free, expected) => {
+		const exec = fakeExec({
+			"sysctl -n kern.memorystatus_vm_pressure_level": { stdout: "2\n" },
+			memory_pressure: { stdout: `System-wide memory free percentage: ${free}%\n` },
+		});
+		expect(await memoryPressure(exec, "darwin")).toEqual({ success: true, data: expected });
+	});
+
+	test("macOS sysctl critical holds whatever memory_pressure says", async () => {
+		const exec = fakeExec({
+			"sysctl -n kern.memorystatus_vm_pressure_level": { stdout: "4\n" },
+			memory_pressure: { stdout: "System-wide memory free percentage: 60%\n" },
+		});
+		expect(await memoryPressure(exec, "darwin")).toEqual({ success: true, data: "critical" });
+	});
+
+	test.each([
 		[60, "normal"],
 		[20, "warn"],
 		[5, "critical"],

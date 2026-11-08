@@ -1,7 +1,8 @@
 {
 	"name": "@delacour/warden-e2e",
-	"version": "0.3.1",
+	"version": "0.14.0",
 	"description": "warden e2e: TypeScript spec API (bun test), simulator/emulator driver, RN devtools facet",
+	"homepage": "https://warden.co.nz/docs/e2e",
 	"type": "module",
 	"private": true,
 	"exports": {
@@ -13,12 +14,16 @@
 		"lint": "biome lint --write ./src ./native/scripts ./native/android/scripts",
 		"check": "biome check ./src ./native/scripts ./native/android/scripts",
 		"typecheck": "tsc --noEmit",
-		"test": "bun test",
+		"test": "bun test --parallel --timings=test-timings.json",
+		"test:timings": "bun test --parallel --timings=test-timings.json --update-timings",
 		"native:deps": "bun native/scripts/deps.ts",
-		"native:build": "bun native/scripts/build.ts",
+		"native:build": "bun native/scripts/build.ts && bun native/scripts/inject.ts",
+		"native:inject": "bun native/scripts/inject.ts",
 		"native:smoke": "bun native/scripts/smoke.ts",
 		"android:build": "bun native/android/scripts/build.ts",
 		"android:emit": "bun native/android/scripts/build.ts --emit-ts",
+		"android:atf": "bun native/android/scripts/build-atf.ts",
+		"android:emit-atf": "bun native/android/scripts/build-atf.ts --emit-ts",
 		"android:smoke": "bun native/android/scripts/smoke.ts"
 	},
 	"dependencies": {

@@ -1,14 +1,17 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { CLAIM_ERRORS } from "@delacour/warden-core/claim-errors";
 import { HEARTBEAT_INTERVAL_MS } from "@delacour/warden-core/config.defaults";
 import type { Exec } from "@delacour/warden-core/exec";
-import type { Owner } from "@delacour/warden-core/types";
+import type { InventoryDevice, Lease, Owner } from "@delacour/warden-core/types";
 import { type ClaimFlags, parseClaimFlags } from "./claim-flags";
 import type { EnsureOptions, PreparedApp } from "./commands/app";
 import {
+	childEnv,
 	claimAll,
 	type ForwardedSignal,
 	holdLeases,
 	INTERRUPTED,
+	installLegApp,
 	LEASES_LOST,
 	type LeaseArgs,
 	overlapHide,
@@ -127,6 +130,31 @@ describe("claimAll with device legs", () => {
 		...(ensureApp ? { ensureApp } : {}),
 	});
 	const twoShutdown = () => [sim("U1", "warden-iphone-17-1", "Shutdown"), sim("P1", "warden-ipad-1", "Shutdown")];
+
+	test("WARDEN_MAX_PER_OWNER=1: a two-leg wrapper is one claim, a second claim of the owner is refused", async () => {
+		const s = legSetup([sim("U1", "warden-iphone-17-1", "Booted"), sim("P1", "warden-ipad-1", "Booted")]);
+		s.ctx.env = { ...s.ctx.env, WARDEN_MAX_PER_OWNER: "1" };
+		const session = await claimAll(
+			s.ctx,
+			deps(),
+			agent,
+			args({ flags: flagsOf("iphone-17"), legFlags: [flagsOf("iphone-17"), flagsOf("ipad")] }),
+			"e2e"
+		);
+		if (!session.success) throw new Error(session.error);
+		const ids = new Set(s.ctx.db.listLeases().map((l) => l.claimId));
+		expect(ids.size).toBe(1);
+		expect([...ids][0]).toBeDefined();
+		const second = await claimAll(
+			s.ctx,
+			deps(),
+			agent,
+			args({ flags: { ...flagsOf("iphone-17"), waitMs: 0 }, legFlags: [{ ...flagsOf("iphone-17"), waitMs: 0 }] }),
+			"e2e"
+		);
+		expect(second.success).toBe(false);
+		if (!second.success) expect(second.error).toContain("REQUESTER_LIMIT");
+	});
 
 	test("every leg is claimed at once: the second boot starts before the first has finished", async () => {
 		const s = legSetup(twoShutdown(), { gated: ["U1", "P1"] });
@@ -305,6 +333,8 @@ describe("holdLeases", () => {
 	function hold(ports: number[]) {
 		const c = testContext([]);
 		ctx = c;
+		const recorded: unknown[] = [];
+		c.failure = { record: (message, extra) => recorded.push([message, extra]) };
 		const ids = ports.map(
 			(port) => c.db.insertLease({ resource: { kind: "port", port }, owner, ttlMs: 60_000, pid: 4242 }, 0).id
 		);
@@ -327,7 +357,7 @@ describe("holdLeases", () => {
 		const tick = () => {
 			for (const fn of ticks) fn();
 		};
-		return { c, ids, tick, aborts, stop, intervals };
+		return { c, ids, tick, aborts, stop, intervals, recorded };
 	}
 
 	test("leases released by another process between ticks abort the run once, naming the cause", () => {
@@ -339,8 +369,29 @@ describe("holdLeases", () => {
 		h.tick();
 		expect(h.aborts).toEqual(["SIGTERM"]);
 		expect(h.c.stderr.filter((l) => l.includes(LEASES_LOST))).toHaveLength(1);
+		expect(h.recorded).toEqual([[LEASES_LOST, { code: "LEASE_LOST", hint: CLAIM_ERRORS.LEASE_LOST.hint }]]);
 		expect(LEASES_LOST).toContain("leases were released by another process: warden release or SessionEnd");
 		h.stop();
+	});
+
+	test("a lost device lease logs heartbeat_lost; a lost port lease does not", () => {
+		const h = hold([9001]);
+		const lease = h.c.db.insertLease(
+			{ resource: { kind: "device", platform: "ios", id: "U1", name: "n" }, owner, ttlMs: 60_000, pid: 4242 },
+			0
+		);
+		h.c.db.recordEvent({
+			at: 1,
+			type: "granted",
+			leaseId: lease.id,
+			data: { platform: "ios", deviceId: "U1", deviceName: "n", action: "boot", waitMs: 0 },
+		});
+		h.stop();
+		h.c.db.deleteLeases([...h.ids, lease.id]);
+		const stop = holdLeases(h.c, { every: () => () => {}, onSignal: () => () => {} }, [...h.ids, lease.id], () => {});
+		stop();
+		const lost = h.c.db.listEvents().filter((e) => e.type === "heartbeat_lost");
+		expect(lost.map((e) => e.leaseId)).toEqual([lease.id]);
 	});
 
 	test("leases intact: every tick heartbeats, nothing aborts", () => {
@@ -469,5 +520,91 @@ describe("setAfterRebootEnv", () => {
 		env.WARDEN_AFTER_REBOOT = '["x"]';
 		setAfterRebootEnv(env, false, self, "linux");
 		expect(env.WARDEN_AFTER_REBOOT).toBeUndefined();
+	});
+});
+
+describe("physical devices in a lease session", () => {
+	const phone = (platform: "android" | "ios", id: string): ClaimedPhone => ({
+		device: {
+			platform,
+			id,
+			name: id,
+			state: "booted",
+			wardenCreated: false,
+			physical:
+				platform === "android"
+					? { platform, transport: "usb", adbState: "device" }
+					: { platform, transport: "wired", deviceType: "iPhone", osVersion: "27.2", developerMode: true, ddi: true },
+		},
+		lease: { id: `L-${id}` } as Lease,
+		action: "reuse",
+	});
+	const emulator = (): ClaimedPhone => ({
+		device: { platform: "android", id: "emulator-5554", name: "e", state: "booted", wardenCreated: true },
+		lease: { id: "L-emu" } as Lease,
+		action: "reuse",
+	});
+	type ClaimedPhone = { device: InventoryDevice; lease: Lease; action: "reuse" };
+	const IPHONE = "00008140-000A0B0C0D0E0F10";
+
+	test("childEnv: WARDEN_UDIDS carries the serial; WARDEN_DEVICE_KIND=physical only when every device is a phone", () => {
+		const only = childEnv(
+			{ WARDEN_DEVICE_KIND: "stale" },
+			{ claimed: [phone("android", "R5CT1234ABC")], reclaimed: [] },
+			[]
+		);
+		expect(only.WARDEN_UDIDS).toBe("R5CT1234ABC");
+		expect(only.WARDEN_UDID_0).toBe("R5CT1234ABC");
+		expect(only.WARDEN_DEVICE_KIND).toBe("physical");
+		const mixed = childEnv(
+			{ WARDEN_DEVICE_KIND: "physical" },
+			{ claimed: [phone("android", "R5CT1234ABC"), emulator()], reclaimed: [] },
+			[]
+		);
+		expect(mixed.WARDEN_DEVICE_KIND).toBeUndefined();
+	});
+
+	test("an Android phone's install is told it is physical (the ABI check runs); an emulator's is not", async () => {
+		ctx = testContext([]);
+		const seen: Array<[string, boolean | undefined]> = [];
+		const ensure: RunEnsureApp = async (_c, _o, _p, deviceId, o) => {
+			seen.push([deviceId, o.physical]);
+			return { success: true, data: { appPath: "/c/a.apk", hash: "H", source: "cache", installed: true } };
+		};
+		const claim = { claimed: [phone("android", "R5CT1234ABC"), emulator()], reclaimed: [] };
+		const res = await installLegApp(ctx, ensure, owner, claim, opts);
+		expect(res.success).toBe(true);
+		expect(seen).toEqual([
+			["R5CT1234ABC", true],
+			["emulator-5554", undefined],
+		]);
+	});
+
+	test("an iPhone's install is told it is physical, like an Android phone's", async () => {
+		ctx = testContext([]);
+		const seen: Array<[string, boolean | undefined]> = [];
+		const ensure: RunEnsureApp = async (_c, _o, _p, deviceId, o) => {
+			seen.push([deviceId, o.physical]);
+			return { success: true, data: { appPath: "/c/a.app", hash: "H", source: "cache", installed: true } };
+		};
+		const res = await installLegApp(ctx, ensure, owner, { claimed: [phone("ios", IPHONE)], reclaimed: [] }, opts);
+		expect(res.success).toBe(true);
+		expect(seen).toEqual([[IPHONE, true]]);
+	});
+
+	test("sessionEnsureApp prepares a platform's phones and simulators apart (an iPhone's build is signed for a device)", async () => {
+		ctx = testContext([]);
+		const seen: Array<boolean | undefined> = [];
+		const app = sessionEnsureApp({
+			prepare: async (_c, o) => {
+				seen.push(o.physical);
+				return { success: true, data: prepared };
+			},
+			install: async () => ({ success: true, data: { appPath: "/a", hash: "H", source: "cache", installed: true } }),
+		});
+		await app.ensure(ctx, owner, "ios", IPHONE, { ...opts, physical: true });
+		await app.ensure(ctx, owner, "ios", "SIM-1", opts);
+		await app.ensure(ctx, owner, "ios", IPHONE, { ...opts, physical: true });
+		expect(seen).toEqual([true, undefined]);
 	});
 });

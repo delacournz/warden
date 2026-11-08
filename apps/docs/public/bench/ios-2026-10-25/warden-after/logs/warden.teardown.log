@@ -1,1 +1,0 @@
-2026-10-25T15:34:35.319Z {"ok":true,"command":"close","device":{"udid":"6A9A3A44-CC76-4F8F-8212-8D690E7969B9","platform":"ios","name":"warden-iphone-17-1"},"durationMs":25,"result":{"app":null,"helper":{"stopped":true,"how":"shutdown"},"released":false}}

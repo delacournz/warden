@@ -12,6 +12,7 @@ const INFRASTRUCTURE: ReadonlySet<DriverErrorCode> = new Set<DriverErrorCode>([
 	"E_AX_UNAVAILABLE",
 	"E_APP_UNAVAILABLE",
 	"E_INTERNAL",
+	"E_DEVICE_LOCKED",
 ]);
 
 function codeFor(code: DriverErrorCode): E2eErrorCode {

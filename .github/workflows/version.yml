@@ -15,7 +15,7 @@ name: version
 #
 # The PR still needs the required `signoff` status to merge, and nobody authors it from a machine
 # that can run `bun run signoff`. So after every create/update this dispatches ci.yml on the PR head,
-# which runs the checks on Namespace runners and writes the same statuses a local run would.
+# which runs the checks on GitHub-hosted runners and writes the same statuses a local run would.
 on:
   push:
     branches: [develop]
@@ -34,14 +34,15 @@ jobs:
     # Loop guard 1: never react to the App's own pushes (it writes only changeset-release/* and tags,
     # but a stray write to develop must not start a second version run).
     if: github.actor != 'delacour-release[bot]'
-    runs-on: namespace-profile-linux-small
+    runs-on: ubuntu-latest
     # Repo writes use the App token. The workflow token checks out and dispatches ci.yml (the App
     # has no `actions` permission), hence actions: write.
     permissions:
       contents: read
       actions: write
+      packages: read
     steps:
-      - uses: namespacelabs/nscloud-checkout-action@66f2dc6f6c42a8ac6c4e53473c4840006822831e # v9.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -91,14 +92,21 @@ jobs:
           node-version: 24
 
       - if: steps.detect.outputs.skip == 'false'
-        uses: namespacelabs/nscloud-cache-action@1124a6f3ce44e5cf84cc22111530961f4d2a15f9 # v1.7.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          cache: bun
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            bun-${{ runner.os }}-${{ runner.arch }}-
 
-      # No NPM_TOKEN: `@delacournz/*` (GitHub Packages) is only apps/docs' optional OpenTelemetry, which
-      # nothing here uses. The 401 is a warning, and this proves a tokenless clone installs.
+      # `@delacournz/cli-telemetry` (GitHub Packages, private) is a hard dependency of apps/cli, so the
+      # install needs a read token. bunfig.toml reads NPM_TOKEN; the job token works because the package
+      # grants this repo Actions read access (package settings > Manage Actions access). apps/docs'
+      # optional OpenTelemetry packages ride on the same token.
       - if: steps.detect.outputs.skip == 'false'
         run: bun install --frozen-lockfile
+        env:
+          NPM_TOKEN: ${{ github.token }}
 
       # The PR title and its squash commit carry the version this release will ship, so a `git log`
       # on develop reads "🔖 chore(release): v0.3.0" rather than a bare "version packages". changesets

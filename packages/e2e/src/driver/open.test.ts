@@ -8,7 +8,10 @@ import { fakeAndroidHost } from "./android/android-host.testing";
 import { memoryAndroidState } from "./android/android-state";
 import { fakeExec } from "./ios/exec.testing";
 import { fakeSimd } from "./ios/simd.testing";
-import { androidOptions, defaultDriverFactory, openDriver } from "./open";
+import { fakeProxy } from "./network-proxy.testing";
+import { androidOptions, defaultDriverFactory, leaseClockRecorderFor, leaseProxyFor, openDriver } from "./open";
+
+const PHONE = "00008140-000A0B0C0D0E0F10";
 
 const env = (platform: "ios" | "android", extra: Partial<E2eEnv> = {}): E2eEnv => ({
 	udid: "UDID-1",
@@ -37,6 +40,27 @@ describe("openDriver", () => {
 		expect(result.data.id).toBe("UDID-1");
 		expect(helper.spawns[0]?.slice(0, 3)).toEqual(["/x/warden-simd", "--udid", "UDID-1"]);
 		await result.data.close();
+	});
+
+	test("a physical iPhone udid opens the device driver, not warden-simd", async () => {
+		const helper = fakeSimd(() => ({ data: null }));
+		const result = await openDriver(env("ios", { udid: PHONE }), {
+			exec: fakeExec([]),
+			spawn: helper.spawn,
+			helperPath: "/x/warden-simd",
+		});
+		expect(!result.success && result.error.code).toBe("E_HELPER_MISSING");
+		expect(!result.success && result.error.message).toContain("WARDEN_IOS_RUNNER_SOCKET");
+		expect(helper.spawns).toEqual([]);
+	});
+
+	test("a physical iPhone connects to env.iosRunnerSocket", async () => {
+		const result = await openDriver(env("ios", { udid: PHONE, iosRunnerSocket: "/nonexistent/r.sock" }), {
+			exec: fakeExec([]),
+			defaultTimeoutMs: 100,
+		});
+		expect(result.success).toBe(false);
+		expect(!result.success && result.error.message).not.toContain("WARDEN_IOS_RUNNER_SOCKET is not set");
 	});
 
 	test("WARDEN_E2E_DEBUG=1 turns the latency log on", async () => {
@@ -195,5 +219,63 @@ describe("androidOptions and the resident server", () => {
 			const options = androidOptions(env("android"), { android: { uiad: false, state: memoryAndroidState() } }, false);
 			expect(options.uiad).toBe(false);
 		});
+	});
+});
+
+describe("the lease's shaping proxy", () => {
+	test("none without WARDEN_LEASE_ID: network stays unsupported, as under a bare bun test", () => {
+		expect(leaseProxyFor(env("android"))).toBeUndefined();
+		expect(androidOptions(env("android"), {}, false).networkProxy).toBeUndefined();
+	});
+
+	test("built from WARDEN_LEASE_ID for android and ios, without opening the store", async () => {
+		const opened: string[] = [];
+		const deps = {
+			openStore: () => {
+				opened.push("store");
+				return { success: false as const, error: "not here" };
+			},
+		};
+		expect(androidOptions(env("android", { leaseId: "L1" }), deps, false).networkProxy).toBeDefined();
+		expect(leaseProxyFor(env("ios", { leaseId: "L1" }), deps)).toBeDefined();
+		expect(opened).toEqual([]);
+	});
+
+	test("a caller's own proxy wins over the lease's", () => {
+		const own = fakeProxy();
+		const options = androidOptions(env("android", { leaseId: "L1" }), { android: { networkProxy: own } }, false);
+		expect(options.networkProxy).toBe(own);
+	});
+
+	test("ios driver opened under a lease gets a proxy; opening it opens no store", async () => {
+		const helper = fakeSimd(() => ({ data: null }));
+		let opened = 0;
+		const result = await openDriver(env("ios", { simd: "/x/warden-simd", leaseId: "L1" }), {
+			exec: fakeExec([["xcrun", {}]]),
+			spawn: helper.spawn,
+			exists: (path) => path === "/x/warden-simd",
+			openStore: () => {
+				opened++;
+				return { success: false, error: "not here" };
+			},
+		});
+		expect(result.success).toBe(true);
+		if (result.success) await result.data.close();
+		expect(opened).toBe(0);
+	});
+});
+
+describe("the lease's clock recorder", () => {
+	test("none without a lease id; with one it is wired for android and opens no store until a clock is set", () => {
+		let opened = 0;
+		const deps = {
+			openStore: () => {
+				opened++;
+				return { success: false as const, error: "not here" };
+			},
+		};
+		expect(leaseClockRecorderFor(env("android"), deps)).toBeUndefined();
+		expect(androidOptions(env("android", { leaseId: "L1" }), deps, false).clockRecorder).toBeDefined();
+		expect(opened).toBe(0);
 	});
 });

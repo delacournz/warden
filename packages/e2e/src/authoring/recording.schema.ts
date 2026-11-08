@@ -187,7 +187,15 @@ export const stepSchema = z.discriminatedUnion("kind", [
 		partial: z.literal(true).optional(),
 	}),
 	z.strictObject({ ...base, kind: z.literal("press"), target: targetSchema }),
-	z.strictObject({ ...base, kind: z.literal("fill"), target: targetSchema, text: textSchema }),
+	z.strictObject({
+		...base,
+		kind: z.literal("fill"),
+		target: targetSchema,
+		text: textSchema,
+		/** only `"paste"` is written (`warden ui fill --via paste`); absent = the default, typed. `"type"` comes from
+		 * journals written while paste was the default and means the same as absent */
+		via: z.enum(["paste", "type"]).optional(),
+	}),
 	z.strictObject({ ...base, kind: z.literal("type"), target: targetSchema.optional(), text: textSchema }),
 	z.strictObject({
 		...base,

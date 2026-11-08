@@ -1,0 +1,116 @@
+---
+title: Installation
+description: Install warden from npm or from source, wire up agent hooks, and check your setup.
+icon: Download
+---
+
+Install `warden` with one command, then let `warden install` wire your coding agents. Use this page for one-shot installs, source builds, the skill alone, and CI.
+
+```bash
+npm i -g @delacour/warden && warden install
+```
+
+macOS and Linux on arm64 and x64 are supported. Windows is not. iOS needs macOS with Xcode.
+
+<Steps>
+<Step>
+
+### Install warden
+
+```bash
+npm i -g @delacour/warden && warden install    # or: bun add -g @delacour/warden && warden install
+```
+
+`warden install` links `~/.local/bin/warden` (what the hooks call) to the global package, so `npm i -g @delacour/warden@latest` upgrades both.
+
+For a one-shot run with nothing installed globally:
+
+```bash
+npx @delacour/warden install     # or: bunx @delacour/warden install
+```
+
+This copies the binary to `~/.local/bin/warden` and wires the hooks. It only puts `warden` on your `PATH` if `~/.local/bin` is already on it, which macOS doesn't do by default. If `warden` isn't found afterwards, use the global install. To update a one-shot install, run `warden update`, which fetches it from npm, or re-run `npx @delacour/warden@latest install`.
+
+The package is a small node shim plus one prebuilt binary per platform (`@delacour/warden-{darwin,linux}-{arm64,x64}`, an optional dependency). macOS and Linux on arm64 and x64 are supported; Windows isn't.
+
+</Step>
+<Step>
+
+### Choose agents
+
+```bash
+warden install            # binary + skill, rule and hooks for every detected agent
+warden install --claude   # force Claude Code only: skill (via `skills add`) + rule + SessionEnd hook in ~/.claude/settings.json
+warden install --codex    # force Codex only: hooks in $CODEX_HOME/hooks.json
+```
+
+Every agent-config change shows a diff and asks first. `--yes` skips the prompt, `--dry-run` only prints, and a non-TTY without `--yes` skips. Merges are idempotent and keep all other config. See [Set up your agent](/docs/getting-started/agent-setup) for what gets installed.
+
+`warden install` also sets up tab completion for your shell (zsh, bash or fish, from `$SHELL`): `warden sims <tab>` lists `audit / prune / delete`, and in zsh further tabs cycle through them. The `.zshrc` / `.bashrc` line is shown and confirmed like the rest; `--no-completion` skips it. See [`warden completion`](/docs/reference/cli#warden-completion-zshbashfish).
+
+</Step>
+<Step>
+
+### Check it
+
+```bash
+warden doctor
+```
+
+`doctor` checks warden's home, the db, device tools (`xcrun simctl`, `adb`, `emulator`), how warden was installed (and how to upgrade it), `ccache` (for native iOS builds), the iOS simulator helper `warden-simd` (`warden doctor --fetch-helper` downloads it for this version when a standalone or self-updated binary has none), `PATH`, Claude/Codex hooks, skill and rule, and stale leases. Only a failing home or db makes it exit 1; everything else warns. `--json` for machines.
+
+</Step>
+</Steps>
+
+## From source
+
+Only needed to work on warden itself or run an unreleased branch. From a checkout of the warden repo:
+
+```bash
+bun install
+bun run --cwd apps/cli install:global   # local build of this checkout → ~/.local/bin/warden
+warden install
+```
+
+No registry token is needed. The docs site's OpenTelemetry packages (`@delacournz/otel*`) live on GitHub Packages and are optional: without a `read:packages` `NPM_TOKEN`, `bun install` prints a `401` warning for them and carries on. Only the docs deploy uses them; the CLI never does.
+
+`~/.local/bin` must be on `PATH`. Set `WARDEN_HOME` to override `~/.warden`. `warden update` rebuilds from the checkout.
+
+While working on warden itself, `bun run cli:link` points `~/.local/bin/warden` at the checkout's source, so every `warden` call (and every agent hook) runs your working tree with no rebuild. `bun run cli:unlink` puts back whatever was there before: the binary it moved aside, another checkout's link, or nothing.
+
+## Agent skill only
+
+For Claude Code, Codex, Cursor and others via the [`skills`](https://github.com/vercel-labs/skills) CLI:
+
+```bash
+warden skill show | pbcopy                         # raw SKILL.md to paste by hand
+warden skill show --file references/ui.md          # print one file of the skill folder
+warden skill install                               # this binary's embedded copy, global
+warden skill install --from github                 # delacournz/warden, updatable via `skills update`
+warden skill install --project -a claude-code -y   # into the current project, one agent, no prompts
+```
+
+The skill is a folder, `skills/warden/` (`SKILL.md` + `references/{ui,specs,suites,troubleshooting}.md`), embedded in the binary. `npx` is used when `bunx` isn't available; `--dry-run` prints the command.
+
+## In GitHub Actions
+
+The repo is public at [github.com/delacournz/warden](https://github.com/delacournz/warden). In CI, install from npm like anywhere else:
+
+```yaml
+- run: npm i -g @delacour/warden
+```
+
+Or download the release binary (checksum-verified, no Node needed):
+
+```yaml
+- uses: delacournz/warden/.github/actions/install-warden@main   # optional: with: { version: v0.1.1 }
+```
+
+The action downloads `warden-<os>-<arch>` from the latest (or `version:`) release, checks `checksums.txt` and adds `warden` to `PATH`. `token` defaults to the workflow's own `github.token`, which can read the public releases; set it only for a private fork named by `repo`. Runner setup is in [CI](/docs/e2e/ci).
+
+A clean macOS runner needs no setup beyond an installed iOS runtime: the profile's simulators are created on claim, cloned from a golden image built on first use (cache `~/Library/Developer/CoreSimulator/Devices` to skip that next time).
+
+<Cards>
+  <Card title="Quickstart" href="/docs/getting-started/quickstart" />
+  <Card title="Set up your agent" href="/docs/getting-started/agent-setup" />
+</Cards>

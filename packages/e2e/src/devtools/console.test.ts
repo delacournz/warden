@@ -121,6 +121,7 @@ describe("console capture lines", () => {
 				text: "hi 2",
 				args: ["hi", "2"],
 				source: { url: "http://x/index.bundle", line: 10, col: 5 },
+				stack: [{ file: "http://x/index.bundle", line: 10, col: 5, fn: "f" }],
 			},
 		]);
 	});
@@ -169,6 +170,28 @@ describe("console capture lines", () => {
 				source: { url: "app.js", line: 3, col: 1 },
 			},
 		]);
+	});
+
+	test("exception stackTrace call frames become 1-based stack frames", () => {
+		const capture = createConsoleCapture({});
+		capture.handle({
+			method: "Runtime.exceptionThrown",
+			params: {
+				timestamp: 1,
+				exceptionDetails: {
+					text: "Uncaught",
+					stackTrace: {
+						callFrames: [
+							{ url: "http://x/index.bundle", lineNumber: 0, columnNumber: 9, functionName: "boom" },
+							{ lineNumber: 1, columnNumber: 1 },
+						],
+					},
+				},
+			},
+			connection: 1,
+			replay: false,
+		});
+		expect(capture.lines()[0]?.stack).toEqual([{ file: "http://x/index.bundle", line: 1, col: 10, fn: "boom" }]);
 	});
 
 	test("other events and malformed params are ignored", () => {

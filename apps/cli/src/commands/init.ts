@@ -5,7 +5,7 @@ import { err, ok, type Result } from "@delacour/warden-types/result";
 import { z } from "zod";
 import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
-import { missingPackages } from "../expo-app";
+import { expoInstallCommand, missingPackages } from "../expo-app";
 import { emit, note, reportError, success, warn } from "../output";
 import { currentBuild } from "../update/build-info";
 import { projectStart } from "./app";
@@ -107,7 +107,7 @@ function installCommands(root: string): string[] {
 	const dev = missingPackages(root, ["expo-dev-client"]);
 	const e2e = missingPackages(root, ["@delacour/warden-e2e"]);
 	return [
-		...(dev.length > 0 ? [`bunx expo install ${dev.join(" ")}`] : []),
+		...(dev.length > 0 ? [expoInstallCommand(root, dev).join(" ")] : []),
 		...(e2e.length > 0 ? [`bun add -d ${e2e.map((name) => `${name}@${currentBuild().version}`).join(" ")}`] : []),
 	];
 }

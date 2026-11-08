@@ -36,6 +36,17 @@ describe("judgeJob (one spec process over its specs)", () => {
 		expect(verdictsOf(judgeJob([A, B], all, 1, real))).toEqual({ a: "failed", b: "failed" });
 	});
 
+	test("a failed spec does not drag down the spec that ran last, nor a skipped spec before it", () => {
+		const skipped = spec("skipped");
+		const all = [res("a", "t"), res("b", "t", "failed"), res("c", "t")];
+		expect(verdictsOf(judgeJob([skipped, A, B, C], all, 1, real))).toEqual({
+			skipped: "passed",
+			a: "passed",
+			b: "failed",
+			c: "passed",
+		});
+	});
+
 	test("a crash: the spec running when the process died and every spec after it fail, those before it pass", () => {
 		const all = [res("a", "t"), res("b", "first test")];
 		expect(verdictsOf(judgeJob([A, B, C], all, 1, real))).toEqual({ a: "passed", b: "failed", c: "failed" });

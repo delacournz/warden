@@ -164,6 +164,34 @@ describe("evaluate", () => {
 });
 
 describe("reconnect", () => {
+	test("yieldOnClose: a close the predicate claims emits yielded with the close code and reason, and does not reconnect", async () => {
+		const fake = metro();
+		const session = await connect(fake, { yieldOnClose: (info) => info.reason.includes("[NEW_DEBUGGER_OPENED]") });
+		const yielded: { code: number; reason: string }[] = [];
+		const reconnected: string[] = [];
+		session.on("yielded", (info) => yielded.push(info));
+		session.on("reconnected", (target) => reconnected.push(target.id));
+		fake.connections[0]?.close(1000, "[NEW_DEBUGGER_OPENED] New debugger opened for the same app instance");
+		await until(() => yielded.length === 1);
+		expect(yielded[0]).toEqual({
+			code: 1000,
+			reason: "[NEW_DEBUGGER_OPENED] New debugger opened for the same app instance",
+		});
+		await Bun.sleep(60);
+		expect(reconnected).toEqual([]);
+		expect(fake.upgrades).toHaveLength(1);
+		expect((await session.evaluate("1")).success).toBe(false);
+	});
+
+	test("yieldOnClose: a close the predicate does not claim still reconnects", async () => {
+		const fake = metro();
+		const session = await connect(fake, { yieldOnClose: (info) => info.reason.includes("[NEW_DEBUGGER_OPENED]") });
+		const reconnected: string[] = [];
+		session.on("reconnected", (target) => reconnected.push(target.id));
+		fake.connections[0]?.close(1000, "[CONNECTION_LOST] Connection lost to corresponding device");
+		await until(() => reconnected.length === 1);
+	});
+
 	test("a forced socket close reconnects within 2 s, emits reconnected, evaluate works again", async () => {
 		const fake = metro({
 			respond: (r) =>

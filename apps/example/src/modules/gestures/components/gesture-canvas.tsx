@@ -107,7 +107,7 @@ export function GestureCanvas({ onCommit, onPointers }: GestureCanvasProps): Rea
 				style={{ height: CANVAS_HEIGHT }}
 				testID="gestures-canvas"
 			>
-				<Animated.View className="rounded-xl bg-accent" style={[{ width: SQUARE, height: SQUARE }, squareStyle]} />
+				<Animated.View className="rounded-xl bg-primary" style={[{ width: SQUARE, height: SQUARE }, squareStyle]} />
 			</View>
 		</GestureDetector>
 	);

@@ -1,9 +1,14 @@
 import { registerAuthoringCommands } from "../agent-ui/authoring-register";
+import { registerCameraGroup } from "../agent-ui/camera-register";
 import type { CloseOptionValues } from "../agent-ui/close";
+import { registerConditionCommands } from "../agent-ui/conditions-register";
 import { registerDevtoolsCommands } from "../agent-ui/devtools-register";
 import { defaultUiDeps, type UiDeps } from "../agent-ui/driver";
+import { registerNetworkGroup } from "../agent-ui/network-register";
+import { registerSettingsCommands } from "../agent-ui/settings-register";
 import { withUiOptions } from "../agent-ui/ui-options";
 import { type Command, defineCommand } from "../command";
+import { kindOption } from "../install-flags";
 
 /**
  * `warden ui <subcommand>`: drive a leased device for agents. Every subcommand is one `cmd.command(...)`
@@ -48,6 +53,7 @@ export function createUiCommand(deps: UiDeps): Command {
 					.option("--all", "no line cap")
 					.option("--settle [ms]", "wait for a quiet screen (default budget 3000 ms), then print a +/-/= diff")
 					.option("--depth <n>", "only the first n levels of the tree")
+					.option("--a11y", "add hint, actions, a11y-focused and live-region facts (iOS: needs `open --a11y`)")
 			).action(async (opts) => {
 				const { uiSnapshot } = await import("../agent-ui/snapshot-command");
 				done(await uiSnapshot(ctx, deps, opts));
@@ -65,11 +71,19 @@ export function createUiCommand(deps: UiDeps): Command {
 			withUiOptions(
 				cmd
 					.command("open")
-					.description("launch an app (bundle id) or open a URL; --metro starts the dev client on that Metro")
+					.description(
+						"launch an app (bundle id) or open a URL; --metro starts the dev client on that Metro; --kind installs that build first"
+					)
 					.argument("<target>", "bundle id or URL")
 					.option("--relaunch", "terminate a running app first")
 					.option("--metro <url>", "Metro URL: launch with --initialUrl and remember it")
 					.option("--args <args...>", "extra launch arguments")
+					.option(
+						"--a11y",
+						"iOS: launch with the injected library so a11y audit/order/speak/announcements can read hints, actions and announcements (remembered for the device; relaunches the app the first time)"
+					)
+					.addOption(kindOption())
+					.option("--project <dir>", "--kind: the app's project directory (default: cwd)")
 					.option("--settle [ms]", SETTLE)
 			).action(async (target, opts) => {
 				const { uiOpen } = await import("../agent-ui/open");
@@ -95,6 +109,10 @@ export function createUiCommand(deps: UiDeps): Command {
 					.argument("<args...>", "<target> <text>: the last word is the text")
 					.option("--secure", "password field: skip the read-back, never echo or record the text")
 					.option("--no-verify", "skip the read-back")
+					.option(
+						"--via <mode>",
+						"type (default; one key per character) or paste (iOS pastes through the pasteboard Xcode syncs with the Mac clipboard)"
+					)
 					.option("--settle [ms]", SETTLE)
 			).action(async (words, opts) => {
 				const { uiFill } = await import("../agent-ui/actions");
@@ -158,6 +176,16 @@ export function createUiCommand(deps: UiDeps): Command {
 					done(await uiHardware(ctx, deps, button, opts));
 				});
 			}
+			withUiOptions(
+				cmd
+					.command("biometrics")
+					.description("simulated Face ID / Touch ID / fingerprint: status (default), enroll, unenroll, match, fail")
+					.argument("[op]", "status | enroll | unenroll | match | fail")
+					.option("--settle [ms]", SETTLE)
+			).action(async (op, opts) => {
+				const { uiBiometrics } = await import("../agent-ui/controls");
+				done(await uiBiometrics(ctx, deps, op, opts));
+			});
 			const screen = cmd.command("screen").description("the device screen: orientation, appearance, screenshot, video");
 			withUiOptions(
 				screen
@@ -306,6 +334,10 @@ export function createUiCommand(deps: UiDeps): Command {
 			});
 			registerAuthoringCommands(cmd, ctx, done, deps);
 			registerDevtoolsCommands(cmd, ctx, done, deps);
+			registerNetworkGroup(cmd, ctx, done, deps);
+			registerConditionCommands(cmd, ctx, done, deps);
+			registerSettingsCommands(cmd, ctx, done, deps);
+			registerCameraGroup(cmd, ctx, done, deps);
 		},
 	});
 }

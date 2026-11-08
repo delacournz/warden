@@ -1,5 +1,6 @@
 import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { registerA11yTarget } from "./a11y/a11y-target";
 import {
 	ACCEPT_BUTTONS,
 	ANDROID_NEGATIVE_ID,
@@ -10,9 +11,25 @@ import {
 	DISMISS_BUTTONS,
 	findButton,
 	firstOf,
+	isAutofillSaveSheet,
 	nameOf,
 } from "./alert-buttons";
 import { createAlertReader } from "./alert-reader";
+import {
+	type ConditionRun,
+	conditionSinkFor,
+	createDeviceConditions,
+	type DeviceCamera,
+	type DeviceClock,
+	type DeviceConditions,
+	type DeviceLocation,
+	type DeviceNetwork,
+	type DevicePermissions,
+	registerConditions,
+	type TimelineStepInput,
+} from "./conditions/device-conditions";
+import { type ConditionRecorder, leaseRecorderFor } from "./conditions/lease-recorder";
+import { createDeviceA11y, type DeviceA11y, withA11yRead } from "./device-a11y";
 import { createDeviceDevtools, type DeviceDevtools } from "./device-devtools";
 import {
 	isOpenInSheet,
@@ -24,10 +41,20 @@ import {
 	whileLinkInFlight,
 } from "./device-link";
 import { canProbeFrontmost } from "./driver/alerts";
-import type { AlertInfo, Driver, Element, Orientation, Platform, Snapshot } from "./driver/driver.types";
+import type {
+	AlertInfo,
+	BiometricOp,
+	BiometricState,
+	Driver,
+	Element,
+	Orientation,
+	Platform,
+	Snapshot,
+} from "./driver/driver.types";
 import {
 	DEFAULT_SETTLE_QUIET_MS,
 	DEFAULT_SETTLE_TIMEOUT_MS,
+	hashFallbackQuietMs,
 	type SettleDetail,
 	settleByHash,
 	settleDetailOf,
@@ -58,7 +85,11 @@ export type OpenLinkOptions = {
 	waitMs?: number;
 };
 
-export type SnapshotTextOptions = { interactiveOnly?: boolean };
+export type SnapshotTextOptions = {
+	interactiveOnly?: boolean;
+	/** append hint, actions, focus and live-region facts to each line (the iOS injected read is merged in when available) */
+	a11y?: boolean;
+};
 
 export type SettleOptions = {
 	/** how long the UI must stay unchanged. Default 250 ms. */
@@ -67,12 +98,35 @@ export type SettleOptions = {
 	timeout?: number;
 };
 
-export type Device = {
+export type { BiometricState };
+
+/**
+ * Simulated Face ID / Touch ID / fingerprint (simulators and emulators only). Every method answers the state after the op.
+ * iOS: the first prompt per app shows an "Allow X to use Face ID?" alert; answer it with `device.alert("accept")`.
+ * Enroll before installing or launching the app: a new enrollment invalidates biometry-bound keys.
+ * Android: `enroll` / `unenroll` throw `ACTION_FAILED` (driver `E_UNSUPPORTED`); enrollment comes from the golden snapshot, so set
+ * the profile's `biometrics: true`.
+ */
+export type DeviceBiometrics = {
+	status(): Promise<BiometricState>;
+	/** iOS: enrolls Face ID / Touch ID. Android: unsupported, use profile `biometrics: true`. */
+	enroll(): Promise<BiometricState>;
+	/** iOS: removes the enrollment. Android: unsupported. */
+	unenroll(): Promise<BiometricState>;
+	/** Presents a matching face / finger to the pending prompt. */
+	match(): Promise<BiometricState>;
+	/** Presents a non-matching face / finger to the pending prompt. */
+	fail(): Promise<BiometricState>;
+};
+
+export type Device = DeviceA11y & {
 	/**
 	 * Answers the system alert / sheet on top. `accept` presses the first present of OK, Allow, Open,
 	 * Continue, Yes, Done, Allow While Using App, Allow Once (else the last button); `dismiss` the first
 	 * of Cancel, Don't Allow, Not Now, Dismiss, No, Close (else the first button); `{button}` the button
-	 * with that name (`ACTION_FAILED` when absent). Resolves false when no alert is showing.
+	 * with that name (`ACTION_FAILED` when absent). The Android autofill "Save password?" sheet is closed with Back for
+	 * `accept` and `dismiss` alike (never its Never / Continue buttons, which write to the user's account). Resolves false
+	 * when no alert is showing.
 	 */
 	alert(action: AlertAction): Promise<boolean>;
 	/**
@@ -88,6 +142,8 @@ export type Device = {
 	back(): Promise<void>;
 	orientation(set?: Orientation): Promise<Orientation>;
 	appearance(set?: "light" | "dark"): Promise<"light" | "dark">;
+	/** Simulated biometrics: `status`, `enroll`, `unenroll`, `match`, `fail`; see {@link DeviceBiometrics}. */
+	readonly biometrics: DeviceBiometrics;
 	clipboard(): Promise<string>;
 	setClipboard(text: string): Promise<void>;
 	/**
@@ -116,6 +172,37 @@ export type Device = {
 	 * typed report. The report is copied under the attempt's `perf/`; budgets from `warden.config.ts` fail `stop`.
 	 */
 	readonly perf: DevicePerf;
+	/**
+	 * Network conditions: `set("offline" | "3g" | …)`, `during`, `flap`, `fault`, `status`, `reset`. Everything a test
+	 * changes is put back when it ends, to the suite's `conditions` (`warden.config.ts`).
+	 */
+	readonly network: DeviceNetwork;
+	/** Simulated location: `set`, `route`, `scenario`, `clear`. Put back when the test ends. */
+	readonly location: DeviceLocation;
+	/** The device's wall clock: `set`, `advance("2d")`, `during`, `reset`. Needs a driver with a clock op. */
+	readonly clock: DeviceClock;
+	/** Runtime permissions of the app: `set({ location: "denied", camera: "granted" })`, `reset`. Set before `app.open()`. */
+	readonly permissions: DevicePermissions;
+	/** Device timezone (`"Asia/Tokyo"`, `null` resets). iOS: for the app launched next. */
+	timezone: DeviceConditions["timezone"];
+	/** The app's locale (`"fr-FR"`, `null` resets). iOS: for the app launched next. Android 13+. */
+	locale: DeviceConditions["locale"];
+	/** Text size, bold text, contrast, reduce motion (`null` resets); the result names what the platform skipped. */
+	a11y: DeviceConditions["a11y"];
+	/** Battery level and charging: real on Android emulators, status bar only on iOS (`cosmetic: true`). */
+	battery: DeviceConditions["battery"];
+	/**
+	 * Simulated camera: `set("fixtures/qr.png", { facing })`, `clear`, `status`. The asset (png, jpg, heic, mp4, mov; path relative
+	 * to the spec file) plays in the app's real camera. iOS: live in an app launched with the camera, else from the next launch.
+	 * Android: a `--camera` device; an image shows on the next camera open, a video feed reboots the emulator.
+	 */
+	readonly camera: DeviceCamera;
+	/** Android: a critical trim-memory signal to the app. iOS: `E_UNSUPPORTED`. */
+	memoryWarning: DeviceConditions["memoryWarning"];
+	/** iOS: delivers an APNs payload to the app. Android: `E_UNSUPPORTED`. */
+	push: DeviceConditions["push"];
+	/** Applies network and location changes at times from now; stopped when the test ends. */
+	timeline(steps: readonly TimelineStepInput[]): Promise<ConditionRun>;
 };
 
 export type DeviceDeps = {
@@ -125,6 +212,8 @@ export type DeviceDeps = {
 	clock?: Clock;
 	/** runs `warden …` for `device.perf`; default spawns `WARDEN_BIN` */
 	perfExec?: PerfExec;
+	/** shared with `app` so a launch knows to load the network dylib; default: made here */
+	conditions?: DeviceConditions;
 };
 
 function nextShotNumber(dir: string, issued: ReadonlyMap<string, number>): number {
@@ -151,6 +240,13 @@ function androidButton(buttons: readonly Element[], ids: readonly string[]): Ele
 
 /** The button `device.alert(action)` presses; undefined = none to press. Android `accept`/`dismiss` go by the permission
  * prompt's ids, then the names, then `AlertDialog`'s `button1`/`button2` (React Native fills those by position). */
+const ALERT_PRESS_ATTEMPTS = 3;
+const ALERT_PRESS_SETTLE_MS = 250;
+
+function buttonNames(info: AlertInfo): string {
+	return info.buttons.map((b) => nameOf(b) ?? "?").join(", ");
+}
+
 function alertTarget(info: AlertInfo, action: AlertAction, platform: Platform): Element | undefined {
 	const { buttons } = info;
 	if (action === "accept") {
@@ -181,16 +277,47 @@ function alertTarget(info: AlertInfo, action: AlertAction, platform: Platform): 
 	return target;
 }
 
-export function createDevice({ session, driver, env, clock = systemClock, perfExec }: DeviceDeps): Device {
+export function createDevice({
+	session,
+	driver,
+	env,
+	clock = systemClock,
+	perfExec,
+	conditions = createSessionConditions(session, driver, env),
+}: DeviceDeps): Device {
 	const issued = new Map<string, number>();
 	// the signal is read per call: the runner swaps it for every attempt
 	const signal = (): AbortSignal | undefined => session.signal;
+	const biometric = (op: BiometricOp): Promise<BiometricState> =>
+		unwrap(() => driver.biometrics(op), `biometrics ${op}`, signal());
 
 	const pressAlertButton = async (button: Element, action: string): Promise<void> => {
 		await unwrap(() => driver.tap(centre(button)), action, signal());
 	};
 
 	const readAlert = createAlertReader({ driver, clock, signal });
+
+	/**
+	 * A press on an iOS sheet that is still animating in (LocalAuthentication's "Face Not Recognized") lands on nothing and
+	 * reports success, so `answered` is only true once the alert is gone or has become a different one. Presses again
+	 * (`ALERT_PRESS_ATTEMPTS` in all) while the same buttons show; `ACTION_FAILED` when they never leave.
+	 */
+	const confirmAlertGone = async (shown: AlertInfo, pressed: Element): Promise<void> => {
+		let target = pressed;
+		for (let attempt = 1; ; attempt += 1) {
+			await clock.sleep(ALERT_PRESS_SETTLE_MS);
+			const now = await readAlert("axbridge", 0);
+			if (now === null || buttonNames(now) !== buttonNames(shown)) return;
+			if (attempt >= ALERT_PRESS_ATTEMPTS) {
+				throw new E2eError(
+					"ACTION_FAILED",
+					`alert still showing after pressing "${nameOf(pressed) ?? "?"}" ${ALERT_PRESS_ATTEMPTS} times (buttons: ${buttonNames(now)})`
+				);
+			}
+			target = now.buttons.find((b) => nameOf(b) === nameOf(pressed)) ?? target;
+			await pressAlertButton(target, "press alert button again");
+		}
+	};
 
 	/** Whether the app under test is in front; `undefined` when the driver (or the bundle id) cannot say. */
 	const appInFront = async (): Promise<boolean | undefined> => {
@@ -237,11 +364,44 @@ export function createDevice({ session, driver, env, clock = systemClock, perfEx
 			: {}),
 	});
 
+	const a11y = createDeviceA11y({
+		driver,
+		env,
+		signal,
+		step: (label, fn) => (session.step === undefined ? fn() : session.step("locator", label, fn)),
+	});
+
+	/** Closes the autofill "Save password?" sheet with Back; a named button is refused. */
+	async function closeAutofillSaveSheet(action: Parameters<Device["alert"]>[0]): Promise<void> {
+		if (typeof action !== "string") {
+			throw new E2eError(
+				"ACTION_FAILED",
+				`the autofill "Save password?" sheet is closed with Back only, never "${action.button}": use accept or dismiss`
+			);
+		}
+		await unwrap(() => driver.pressButton("back"), "dismiss autofill save sheet", signal());
+	}
+
 	const device: Device = {
+		a11yAudit: a11y.a11yAudit,
+		screenReader: a11y.screenReader,
+		announcements: a11y.announcements,
 		get devtools() {
 			return lazyDevtools();
 		},
 		perf,
+		network: conditions.network,
+		location: conditions.location,
+		clock: conditions.clock,
+		permissions: conditions.permissions,
+		timezone: conditions.timezone,
+		locale: conditions.locale,
+		a11y: conditions.a11y,
+		battery: conditions.battery,
+		camera: conditions.camera,
+		memoryWarning: conditions.memoryWarning,
+		push: conditions.push,
+		timeline: (steps) => conditions.timeline(steps),
 
 		async alert(action) {
 			// the bridge also sees what the app itself shows (Keychain "Save Password?"), so it answers "none" alone
@@ -249,9 +409,15 @@ export function createDevice({ session, driver, env, clock = systemClock, perfEx
 			if (info === null || info.buttons.length === 0) return false;
 			// openLink is answering this sheet itself and must see it to know the link has one
 			if (isOpenInSheet(info) && typeof action === "string" && linkInFlight(session)) return false;
+			// "Never" and "Continue" both change the user's Google account: only Back closes the sheet
+			if (driver.platform === "android" && isAutofillSaveSheet(info.buttons)) {
+				await closeAutofillSaveSheet(action);
+				return true;
+			}
 			const target = alertTarget(info, action, driver.platform);
 			if (target === undefined) return false;
 			await pressAlertButton(target, "press alert button");
+			if (driver.platform === "ios") await confirmAlertGone(info, target);
 			return true;
 		},
 
@@ -297,6 +463,14 @@ export function createDevice({ session, driver, env, clock = systemClock, perfEx
 			return unwrap(() => driver.appearance(set), "appearance", signal());
 		},
 
+		biometrics: {
+			status: () => biometric("status"),
+			enroll: () => biometric("enroll"),
+			unenroll: () => biometric("unenroll"),
+			match: () => biometric("match"),
+			fail: () => biometric("fail"),
+		},
+
 		clipboard() {
 			return unwrap(() => driver.clipboard(), "read clipboard", signal());
 		},
@@ -326,8 +500,18 @@ export function createDevice({ session, driver, env, clock = systemClock, perfEx
 
 		async snapshot(options = {}) {
 			const interactiveOnly = options.interactiveOnly ?? false;
-			const snapshot = await readSnapshot({ interactiveOnly });
-			const rendered = renderSnapshot(snapshot, { interactiveOnly, refs: new Map() });
+			const taken = await readSnapshot({ interactiveOnly });
+			let snapshot = taken;
+			if (options.a11y === true) {
+				const merged = await withA11yRead(driver, taken);
+				if (!merged.success) throw toE2eError(merged.error, "read accessibility facts");
+				snapshot = merged.data;
+			}
+			const rendered = renderSnapshot(snapshot, {
+				interactiveOnly,
+				refs: new Map(),
+				...(options.a11y === true ? { a11y: true } : {}),
+			});
 			return [renderHeader({ snapshot, rendered, interactiveOnly }), ...rendered.lines].join("\n");
 		},
 
@@ -338,7 +522,7 @@ export function createDevice({ session, driver, env, clock = systemClock, perfEx
 			if (native.success) return settleDetailOf(native.data);
 			if (native.error.code !== "E_UNSUPPORTED") throw toE2eError(native.error, "settle");
 			const polled = await settleByHash(async () => snapshotHash(await readSnapshot()), {
-				quietMs,
+				quietMs: hashFallbackQuietMs(quietMs),
 				timeoutMs,
 				now: clock.now,
 				sleep: clock.sleep,
@@ -346,5 +530,24 @@ export function createDevice({ session, driver, env, clock = systemClock, perfEx
 			return { ...polled, via: "hash" };
 		},
 	};
+	registerConditions(device, conditions.internals);
+	registerA11yTarget(device, a11y.target);
 	return device;
+}
+
+/** The conditions of one attempt's device: events go to the session's `results.jsonl`, calls honour its signal. */
+export function createSessionConditions(
+	session: FixtureSession,
+	driver: Driver,
+	env: E2eEnv,
+	recorder: ConditionRecorder | undefined = leaseRecorderFor(env)
+): DeviceConditions {
+	const sink = conditionSinkFor(session);
+	return createDeviceConditions({
+		driver,
+		env,
+		signal: () => session.signal,
+		...(sink === undefined ? {} : { sink }),
+		...(recorder === undefined ? {} : { recorder }),
+	});
 }

@@ -5,9 +5,9 @@ import { join } from "node:path";
 import { ok } from "@delacour/warden-types/result";
 import { openStore, type Store } from "../store";
 import { fakeApp } from "./builds.testing";
-import { aliasBuild, type BuildRecord, listBuilds, storeArtifact } from "./cache";
+import { aliasBuild, type BuildRecord, listBuilds, recordRepack, storeArtifact, upsertBuild } from "./cache";
 import { buildLockKey, buildResource } from "./lock";
-import { cacheCap, formatSize, parseSize, planPrune, pruneBuilds } from "./prune";
+import { cacheCap, formatSize, isAlias, parseSize, planPrune, pruneBuilds } from "./prune";
 
 const GB = 1024 ** 3;
 
@@ -181,5 +181,150 @@ describe("cacheCap (fingerprint-memo-R6)", () => {
 		const bad = cacheCap(undefined, { WARDEN_MAX_CACHE_SIZE: "huge" });
 		expect(bad.source).toBe("env");
 		expect(bad.bytes.success).toBe(false);
+	});
+});
+
+describe("planPrune with build kinds", () => {
+	const MB = 1024 ** 2;
+	const mk = {
+		base: (fp: string, size: number, lastUsedAt: number, createdAt = 0): BuildRecord => ({
+			...rec(`${fp}:base`, size, lastUsedAt),
+			path: `/c/${fp}/simulator/base/A.app`,
+			kind: "simulator-base",
+			createdAt,
+		}),
+		repack: (
+			fp: string,
+			jsKey: string,
+			size: number,
+			lastUsedAt: number,
+			worktree?: string,
+			createdAt = 0
+		): BuildRecord => ({
+			...rec(`${fp}:${jsKey}`, size, lastUsedAt),
+			path: `/c/${fp}/simulator/repacks/${jsKey}/A.app`,
+			kind: "simulator-repack",
+			baseHash: `${fp}:base`,
+			jsKey,
+			createdAt,
+			...(worktree !== undefined ? { worktree } : {}),
+		}),
+		dev: (fp: string, size: number, lastUsedAt: number): BuildRecord => ({
+			...rec(`${fp}:dev`, size, lastUsedAt),
+			path: `/c/${fp}/dev/A.app`,
+			kind: "dev",
+		}),
+	};
+	const hashes = (rows: readonly BuildRecord[]) => rows.map((b) => b.hash);
+
+	test("a kind row's alias is recognised by its size 0, not by its dir name", () => {
+		expect(isAlias(mk.dev("fp", 10, 1))).toBe(false);
+		expect(isAlias({ ...mk.dev("fp", 10, 1), size: 0 })).toBe(true);
+		expect(isAlias(rec("h", 1, 1))).toBe(false);
+	});
+
+	test("repacks go before a base that was used less recently", () => {
+		const builds = [mk.base("fp", 100 * MB, 1), mk.repack("fp", "a", 10 * MB, 50), mk.repack("fp", "b", 10 * MB, 60)];
+		const plan = planPrune(builds, 110 * MB, new Set());
+		expect(hashes(plan.remove)).toEqual(["fp:a"]);
+		expect(hashes(plan.keep)).toEqual(["fp:base", "fp:b"]);
+	});
+
+	test("repacks are removed least-recently-used first", () => {
+		const builds = [
+			mk.base("fp", 100 * MB, 1),
+			mk.repack("fp", "new", 10 * MB, 90),
+			mk.repack("fp", "old", 10 * MB, 10),
+			mk.repack("fp", "mid", 10 * MB, 50),
+		];
+		expect(hashes(planPrune(builds, 115 * MB, new Set()).remove)).toEqual(["fp:old", "fp:mid"]);
+	});
+
+	test("the newest repack of each worktree is never removed", () => {
+		const builds = [
+			mk.base("fp", 100 * MB, 1),
+			mk.repack("fp", "a-old", 10 * MB, 10, "/w/a", 1),
+			mk.repack("fp", "a-new", 10 * MB, 20, "/w/a", 2),
+			mk.repack("fp", "b-only", 10 * MB, 5, "/w/b", 3),
+			mk.repack("fp", "anon", 10 * MB, 30),
+		];
+		const plan = planPrune(builds, 0, new Set());
+		expect(hashes(plan.remove).sort()).toEqual(["fp:a-old", "fp:anon"]);
+		expect(hashes(plan.keep).sort()).toEqual(["fp:a-new", "fp:b-only", "fp:base"]);
+	});
+
+	test("newest is per worktree across bases: another fingerprint's repack of the same worktree is not protected", () => {
+		const builds = [
+			mk.base("fp1", 10 * MB, 1),
+			mk.base("fp2", 10 * MB, 1),
+			mk.repack("fp1", "x", 10 * MB, 10, "/w/a", 1),
+			mk.repack("fp2", "y", 10 * MB, 20, "/w/a", 2),
+		];
+		const plan = planPrune(builds, 0, new Set());
+		expect(hashes(plan.keep).sort()).toEqual(["fp2:base", "fp2:y"]);
+	});
+
+	test("removing a base removes its repacks and counts their bytes", () => {
+		const builds = [mk.base("fp", 100 * MB, 1), mk.repack("fp", "a", 10 * MB, 2), mk.dev("other", 50 * MB, 3)];
+		const plan = planPrune(builds, 50 * MB, new Set());
+		expect(hashes(plan.remove).sort()).toEqual(["fp:a", "fp:base"]);
+		expect(plan.after).toBe(50 * MB);
+		expect(hashes(plan.keep)).toEqual(["other:dev"]);
+	});
+
+	test("a base whose repack is protected stays", () => {
+		const builds = [mk.base("fp", 100 * MB, 1), mk.repack("fp", "a", 10 * MB, 2, "/w/a")];
+		const plan = planPrune(builds, 0, new Set());
+		expect(plan.remove).toEqual([]);
+	});
+
+	test("a base with a repack whose build lock is held stays", () => {
+		const builds = [mk.base("fp", 100 * MB, 1), mk.repack("fp", "a", 10 * MB, 2), mk.dev("o", MB, 3)];
+		const byHash = planPrune(builds, 0, new Set([buildLockKey("k", "ios", "fp:a")]));
+		expect(hashes(byHash.keep).sort()).toEqual(["fp:a", "fp:base"]);
+		const byJsKey = planPrune(builds, 0, new Set([buildLockKey("k", "ios", "a")]));
+		expect(hashes(byJsKey.keep).sort()).toEqual(["fp:a", "fp:base"]);
+	});
+
+	test("graceMs protects a recently used repack and so its base", () => {
+		const builds = [mk.base("fp", 100 * MB, 1), mk.repack("fp", "a", 10 * MB, 95)];
+		const plan = planPrune(builds, 0, new Set(), { now: 100, graceMs: 10 });
+		expect(plan.remove).toEqual([]);
+	});
+
+	test("legacy rows behave as before next to kind rows", () => {
+		const builds = [rec("legacy", 4 * GB, 1), mk.dev("fp", 4 * GB, 2)];
+		expect(hashes(planPrune(builds, 5 * GB, new Set()).remove)).toEqual(["legacy"]);
+	});
+});
+
+describe("pruneBuilds with repacks", () => {
+	let dir: string;
+	let store: Store;
+	beforeEach(() => {
+		dir = mkdtempSync(join(tmpdir(), "warden-prune-kinds-"));
+		store = openStore(join(dir, "warden.db"));
+	});
+	afterEach(() => {
+		store.close();
+		rmSync(dir, { recursive: true, force: true });
+	});
+
+	test("deletes a base's repacks from disk and store with it", () => {
+		const env = { WARDEN_HOME: dir };
+		const baseApp = fakeApp(join(dir, "builds", "k", "ios", "fp", "simulator", "base"));
+		const repackApp = fakeApp(join(dir, "builds", "k", "ios", "fp", "simulator", "repacks", "j1"));
+		upsertBuild(store, { ...rec("fp:base", 100, 1), path: baseApp, kind: "simulator-base" });
+		recordRepack(store, {
+			...rec("fp:j1", 10, 2),
+			path: repackApp,
+			kind: "simulator-repack",
+			baseHash: "fp:base",
+			jsKey: "j1",
+		});
+		pruneBuilds({ store, env, maxBytes: 0, now: 100, pidAlive: () => false });
+		expect(listBuilds(store)).toEqual([]);
+		expect(existsSync(baseApp)).toBe(false);
+		expect(existsSync(repackApp)).toBe(false);
 	});
 });

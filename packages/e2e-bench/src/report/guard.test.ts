@@ -147,6 +147,6 @@ describe("baseline files", () => {
 		const loaded = loadGuardSide(join(import.meta.dir, "../../baselines/ios-warden.json"));
 		expect(loaded.success).toBe(true);
 		if (!loaded.success) return;
-		expect(loaded.data.side.metrics.warden?.cpuSecondsPerRep).toBeCloseTo(3.79, 2);
+		expect(loaded.data.side.metrics.warden?.cpuSecondsPerRep).toBeCloseTo(2.97, 2);
 	});
 });

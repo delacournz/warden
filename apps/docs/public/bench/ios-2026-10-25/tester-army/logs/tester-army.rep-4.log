@@ -1,20 +1,20 @@
-2026-10-25T12:23:15.544Z node v22.23.1
-2026-10-25T12:23:15.816Z 
-2026-10-25T12:23:15.816Z [1m[30m[46m RUN [49m[39m[22m [36me2e v0.20.0[39m [90m/Users/expo/workingdir/build/packages/e2e-bench/suites/tester-army[39m
-2026-10-25T12:23:15.816Z       [2mrun 01a17303-de29-7248-b8cc-012ad121bcde · targets: ios · CI[22m
-2026-10-25T12:23:15.816Z 
-2026-10-25T12:23:15.825Z [2mℹ[22m booting 3C5306E2-29B8-4814-A251-945E2183431E (1 of 1)
-2026-10-25T12:23:17.153Z  [32m✓[39m mobile engine for target "ios" [2mprepared 1.33s[22m
-2026-10-25T12:23:23.353Z  [32m✓[39m [30m[103m ios [49m[39m onboarding.e2e.ts [2m([22m[2m1 test[22m[2m)[22m [2m6.06s[22m
-2026-10-25T12:23:41.411Z  [32m✓[39m [30m[103m ios [49m[39m settings.e2e.ts [2m([22m[2m1 test[22m[2m)[22m [2m18.05s[22m
-2026-10-25T12:24:29.778Z  [32m✓[39m [30m[103m ios [49m[39m sign-in.e2e.ts [2m([22m[2m3 tests[22m[2m)[22m [2m48.36s[22m
-2026-10-25T12:25:05.850Z  [32m✓[39m [30m[103m ios [49m[39m todo-detail.e2e.ts [2m([22m[2m2 tests[22m[2m)[22m [2m36.07s[22m
-2026-10-25T12:25:27.098Z  [32m✓[39m [30m[103m ios [49m[39m todos.e2e.ts [2m([22m[2m1 test[22m[2m)[22m [2m21.25s[22m
-2026-10-25T12:25:27.118Z 
-2026-10-25T12:25:27.118Z [2m Test Files  [22m[1m[32m5 passed[39m[22m[90m (5)[39m
-2026-10-25T12:25:27.118Z [2m      Tests  [22m[1m[32m8 passed[39m[22m[90m (8)[39m
-2026-10-25T12:25:27.118Z [2m   Start at  [22m05:23:17
-2026-10-25T12:25:27.118Z [2m   Duration  [22m129.97s [2m(2m 10s)[22m
-2026-10-25T12:25:27.118Z 
-2026-10-25T12:25:27.119Z [2m      JUnit  [22m.bench-out/junit.xml
-2026-10-25T12:25:27.119Z 
+2026-10-25T23:46:38.284Z node v22.23.1
+2026-10-25T23:46:38.543Z 
+2026-10-25T23:46:38.543Z [1m[30m[46m RUN [49m[39m[22m [36me2e v0.20.0[39m [90m/Users/expo/workingdir/build/packages/e2e-bench/suites/tester-army[39m
+2026-10-25T23:46:38.544Z       [2mrun 01a17575-8514-72eb-adb0-4c194ca0c6bd · targets: ios · CI[22m
+2026-10-25T23:46:38.544Z 
+2026-10-25T23:46:38.552Z [2mℹ[22m booting 6E375570-E6F4-4EE3-9442-5E83CD919B12 (1 of 1)
+2026-10-25T23:46:39.891Z  [32m✓[39m mobile engine for target "ios" [2mprepared 1.34s[22m
+2026-10-25T23:46:46.061Z  [32m✓[39m [30m[103m ios [49m[39m onboarding.e2e.ts [2m([22m[2m1 test[22m[2m)[22m [2m6.03s[22m
+2026-10-25T23:47:03.998Z  [32m✓[39m [30m[103m ios [49m[39m settings.e2e.ts [2m([22m[2m1 test[22m[2m)[22m [2m17.93s[22m
+2026-10-25T23:47:52.657Z  [32m✓[39m [30m[103m ios [49m[39m sign-in.e2e.ts [2m([22m[2m3 tests[22m[2m)[22m [2m48.66s[22m
+2026-10-25T23:48:28.799Z  [32m✓[39m [30m[103m ios [49m[39m todo-detail.e2e.ts [2m([22m[2m2 tests[22m[2m)[22m [2m36.14s[22m
+2026-10-25T23:48:50.047Z  [32m✓[39m [30m[103m ios [49m[39m todos.e2e.ts [2m([22m[2m1 test[22m[2m)[22m [2m21.25s[22m
+2026-10-25T23:48:50.066Z 
+2026-10-25T23:48:50.066Z [2m Test Files  [22m[1m[32m5 passed[39m[22m[90m (5)[39m
+2026-10-25T23:48:50.066Z [2m      Tests  [22m[1m[32m8 passed[39m[22m[90m (8)[39m
+2026-10-25T23:48:50.066Z [2m   Start at  [22m16:46:39
+2026-10-25T23:48:50.066Z [2m   Duration  [22m130.18s [2m(2m 10s)[22m
+2026-10-25T23:48:50.066Z 
+2026-10-25T23:48:50.067Z [2m      JUnit  [22m.bench-out/junit.xml
+2026-10-25T23:48:50.067Z 

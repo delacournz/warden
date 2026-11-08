@@ -1,4 +1,5 @@
 import type { TraceMap } from "@jridgewell/trace-mapping";
+import { isBundleUrl, toNormalBundleUrl } from "./bundle-url";
 import type { CallFrame } from "./cpu-profile";
 import type { JsCdp, JsResult } from "./js.types";
 import { jsOk } from "./js.types";
@@ -66,10 +67,14 @@ function decodeDataMap(declared: string): MapUrl {
 	}
 }
 
-/** `sourceMapURL`, else Metro's convention: `index.bundle?…` has its map at `index.map?…`. */
+/**
+ * `sourceMapURL`, else Metro's convention: `index.bundle?…` has its map at `index.map?…`. Hermes reports the
+ * JSC-safe `index.bundle//&…` form React Native loads, so the URL is normalised first.
+ */
 function declaredMapUrl(script: ScriptInfo): string | undefined {
-	if (script.sourceMapURL !== undefined) return script.sourceMapURL;
-	return /\.bundle(\?|$)/.test(script.url) ? script.url.replace(/\.bundle(\?|$)/, ".map$1") : undefined;
+	if (script.sourceMapURL !== undefined && script.sourceMapURL !== "") return script.sourceMapURL;
+	if (!isBundleUrl(script.url)) return undefined;
+	return toNormalBundleUrl(script.url).replace(/\.bundle(\?|$)/, ".map$1");
 }
 
 /**

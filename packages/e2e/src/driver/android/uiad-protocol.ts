@@ -42,6 +42,14 @@ export type UiadNode = {
 	editable?: boolean;
 	disabled?: boolean;
 	invisible?: boolean;
+	/** holds the accessibility (TalkBack) focus */
+	a11yFocused?: boolean;
+	/** `importantForAccessibility` resolved to "no"; absent means screen readers see the node */
+	notImportant?: boolean;
+	/** `AccessibilityNodeInfo.getLiveRegion()`: 1 polite, 2 assertive; absent for none */
+	live?: 1 | 2;
+	/** labels of the app-defined accessibility actions (the framework's own are left out by the server) */
+	actions?: string[];
 	/** drawing order among siblings */
 	order?: number;
 	children?: UiadNode[];
@@ -61,6 +69,8 @@ const FLAG_FIELDS = [
 	"editable",
 	"disabled",
 	"invisible",
+	"a11yFocused",
+	"notImportant",
 ] as const;
 
 type Bounds = UiadNode["bounds"];
@@ -90,6 +100,22 @@ function copyFields<K extends keyof UiadNode>(
 	return undefined;
 }
 
+/** `live` (1 | 2) and `actions` (strings) of a node; a string is what is wrong. */
+function readA11yFields(node: UiadNode, from: Record<string, unknown>, path: string): string | undefined {
+	if (from.live !== undefined) {
+		if (from.live !== 1 && from.live !== 2) return `${path}.live: not 1 or 2`;
+		node.live = from.live;
+	}
+	if (from.actions !== undefined) {
+		const actions = from.actions;
+		if (!Array.isArray(actions) || !actions.every((a): a is string => typeof a === "string")) {
+			return `${path}.actions: not a string array`;
+		}
+		node.actions = actions;
+	}
+	return undefined;
+}
+
 /**
  * A node read off the wire, or why it is not one. Hand-written rather than zod: a snapshot is hundreds of nodes and
  * this runs on every one, with no allocation beyond the node itself.
@@ -103,6 +129,8 @@ export function readNode(value: unknown, path = "elements"): UiadNode | string {
 		copyFields(node, value, FLAG_FIELDS, "boolean", path) ??
 		copyFields(node, value, ["order"], "number", path);
 	if (wrong !== undefined) return wrong;
+	const extra = readA11yFields(node, value, path);
+	if (extra !== undefined) return extra;
 	if (value.children === undefined) return node;
 	if (!Array.isArray(value.children)) return `${path}.children: not an array`;
 	const children: UiadNode[] = [];

@@ -15,10 +15,11 @@ export const readFileOrUndefined: ReadFile = async (path) => {
 	}
 };
 
-/** Paths (relative to the project root) matching any of `globs`. */
+/** Paths (relative to the project root) matching any of `globs`, minus those matching a `!`-prefixed glob. */
 export function matchJsInputs(paths: readonly string[], globs: readonly string[]): string[] {
-	const matchers = globs.map((g) => new Bun.Glob(g));
-	return paths.filter((p) => matchers.some((m) => m.match(p)));
+	const include = globs.filter((g) => !g.startsWith("!")).map((g) => new Bun.Glob(g));
+	const exclude = globs.filter((g) => g.startsWith("!")).map((g) => new Bun.Glob(g.slice(1)));
+	return paths.filter((p) => include.some((m) => m.match(p)) && !exclude.some((m) => m.match(p)));
 }
 
 export type JsInputsDeps = {

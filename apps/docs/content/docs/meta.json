@@ -1,24 +1,4 @@
 {
 	"title": "warden",
-	"pages": [
-		"---Get started---",
-		"index",
-		"quickstart",
-		"installation",
-		"agent-setup",
-		"concepts",
-		"---Agents drive devices---",
-		"...agents",
-		"---e2e tests---",
-		"...e2e",
-		"---Devices & parallel---",
-		"...devices",
-		"---Benchmarks---",
-		"...bench",
-		"---Reference---",
-		"...reference",
-		"---Project---",
-		"updating",
-		"contributing"
-	]
+	"pages": ["getting-started", "sims", "e2e", "reference", "releases"]
 }
