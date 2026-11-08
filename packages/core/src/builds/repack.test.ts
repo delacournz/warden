@@ -12,12 +12,15 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { err, ok } from "@delacour/warden-types/result";
 import { bunExec, type Exec, type ExecResult } from "../exec";
 import { openStore, type Store } from "../store";
+import type { Platform } from "../types";
 import { fakeApp, testProject } from "./builds.testing";
 import { findRepack, getBuild, getInstall, kindDir, kindHash, recordInstall, storeArtifact } from "./cache";
+import type { ensureKindBuild } from "./ensure";
+import { readRepackMeta } from "./js-key";
 import { computeKindKey } from "./kind-key";
 import {
 	bundlerFlags,
@@ -29,6 +32,7 @@ import {
 	resolveEntryFile,
 } from "./repack";
 import type { ApplyRepack } from "./repack.types";
+import type { ResolveSource } from "./resolve";
 
 let dir: string;
 let root: string;
@@ -76,8 +80,30 @@ function fakeHermesc(over: { hermescFails?: boolean; hermescBadMagic?: boolean }
 	return { exitCode: 0, stdout: "", stderr: "" };
 }
 
+/** the bundler: logs its start / end to `events`, fails, or writes the bundle and its map */
+async function fakeBundler(over: HostOver, args: string[]): Promise<ExecResult> {
+	const flagOf = (name: string) => args[args.indexOf(name) + 1] ?? "";
+	over.events?.push("bundle");
+	await Bun.sleep(5);
+	over.events?.push("bundle:end");
+	if (over.bundleFails) return { exitCode: 1, stdout: "", stderr: "metro exploded" };
+	writeFileSync(flagOf("--bundle-output"), "JS");
+	writeFileSync(flagOf("--sourcemap-output"), "{}");
+	return { exitCode: 0, stdout: "", stderr: "" };
+}
+
 /** git is real; the project's fingerprint command, the bundler, hermesc and the compose script are fake */
-function host(over: { bundleFails?: boolean; hermescFails?: boolean; hermescBadMagic?: boolean } = {}): Host {
+type HostOver = {
+	bundleFails?: boolean;
+	hermescFails?: boolean;
+	hermescBadMagic?: boolean;
+	/** "bundle" is pushed when the bundler starts, "bundle:end" when it returns */
+	events?: string[];
+	/** what `unzip -Z1 <apk>` lists */
+	apkEntries?: string[];
+};
+
+function host(over: HostOver = {}): Host {
 	const calls: string[][] = [];
 	const done: ExecResult = { exitCode: 0, stdout: "", stderr: "" };
 	const flagOf = (args: string[], name: string) => args[args.indexOf(name) + 1] ?? "";
@@ -86,12 +112,8 @@ function host(over: { bundleFails?: boolean; hermescFails?: boolean; hermescBadM
 		if (cmd.join(" ") === "sh -c fp") return { ...done, stdout: '{"hash":"native-1"}' };
 		if (bin === "git") return bunExec(cmd, opts);
 		calls.push([...cmd]);
-		if (bin.endsWith("/.bin/expo") || bin.endsWith("/.bin/react-native")) {
-			if (over.bundleFails) return { exitCode: 1, stdout: "", stderr: "metro exploded" };
-			writeFileSync(flagOf(args, "--bundle-output"), "JS");
-			writeFileSync(flagOf(args, "--sourcemap-output"), "{}");
-			return done;
-		}
+		if (bin.endsWith("/.bin/expo") || bin.endsWith("/.bin/react-native")) return fakeBundler(over, args);
+		if (bin === "unzip" && over.apkEntries) return { ...done, stdout: `${over.apkEntries.join("\n")}\n` };
 		if (bin.endsWith("/hermesc")) return fakeHermesc(over, flagOf(args, "-out"));
 		if (bin === "node") {
 			writeFileSync(args[args.indexOf("-o") + 1] ?? "", "{}");
@@ -115,6 +137,11 @@ function applier(applied: Applied, over: { fail?: boolean; fallback?: string } =
 			return err("codesign exploded");
 		}
 		if (over.fallback) return ok({ fallback: true, reason: over.fallback });
+		if (baseArtifact.endsWith(".apk")) {
+			const apk = join(outDir, basename(baseArtifact));
+			writeFileSync(apk, "REPACKED");
+			return ok({ artifact: apk });
+		}
 		const target = join(outDir, "App.app");
 		cpSync(baseArtifact, target, { recursive: true });
 		writeFileSync(join(target, "main.jsbundle"), "REPACKED");
@@ -147,6 +174,55 @@ async function seedBase(binary = "binary!"): Promise<void> {
 		now: 1,
 	});
 	if (!stored.success) throw new Error(stored.error);
+}
+
+/** A fake Android base: an apk file. */
+function fakeApk(parent: string, body = "apk-bytes"): string {
+	mkdirSync(parent, { recursive: true });
+	const apk = join(parent, "app-release.apk");
+	writeFileSync(apk, body);
+	return apk;
+}
+
+/**
+ * `ensureKindBuild` that "builds" the simulator base: pushes "base:start", waits `delayMs`, caches a fake `.app` /
+ * `.apk` at the base's kind dir, pushes "base:end" and reports `source`.
+ */
+function baseBuilder(
+	events: string[],
+	platform: Platform,
+	over: { source?: ResolveSource; delayMs?: number; fails?: string } = {}
+): typeof ensureKindBuild {
+	return async (inp) => {
+		events.push("base:start");
+		await Bun.sleep(over.delayMs ?? 40);
+		if (over.fails) {
+			events.push("base:end");
+			return err(over.fails);
+		}
+		const src = mkdtempSync(join(dir, "built-"));
+		let artifact: string;
+		if (platform === "ios") {
+			artifact = fakeApp(src);
+			mkdirSync(join(artifact, "Frameworks", "hermesvm.framework"), { recursive: true });
+		} else artifact = fakeApk(src);
+		const hash = kindHash(inp.key);
+		const stored = await storeArtifact({
+			store,
+			env,
+			projectKey: KEY,
+			platform,
+			profile: "local:simulator",
+			hash,
+			artifact,
+			source: "build",
+			layout: { dir: kindDir(env, KEY, platform, inp.key), kind: "simulator-base" },
+			now: 1,
+		});
+		if (!stored.success) throw new Error(stored.error);
+		events.push("base:end");
+		return ok({ appPath: stored.data.path, hash, source: over.source ?? "build", installed: false });
+	};
 }
 
 function input(h: Host, applied: Applied, over: Partial<RepackInput> = {}): RepackInput {
@@ -466,6 +542,140 @@ describe("repackApp", () => {
 		);
 		expect(res.success).toBe(true);
 		expect(h.calls.find((c) => c[0]?.endsWith("/.bin/react-native"))?.[1]).toBe("bundle");
+	});
+});
+
+describe("repackApp: a base built in this run", () => {
+	const scratchLeft = () => (existsSync(join(dir, "scratch")) ? readdirSync(join(dir, "scratch")) : []);
+
+	test("iOS: the JS is bundled while the base builds, Hermes-compiled once the base is there", async () => {
+		const events: string[] = [];
+		const h = host({ events });
+		const applied = fresh();
+		mkdirSync(join(root, "node_modules", "hermes-compiler", "hermesc", "osx-bin"), { recursive: true });
+		writeFileSync(join(root, "node_modules", "hermes-compiler", "hermesc", "osx-bin", "hermesc"), "");
+		const hermes = async (_e: Exec, _p: Platform, base: string) => {
+			events.push("hermes?");
+			return existsSync(base);
+		};
+		const res = await repackApp(input(h, applied, { build: true, hermes, ensureBase: baseBuilder(events, "ios") }));
+		if (!res.success || res.data.kind !== "repacked") throw new Error(JSON.stringify(res));
+		expect(events.indexOf("bundle")).toBeLessThan(events.indexOf("base:end"));
+		expect(events.indexOf("hermes?")).toBeGreaterThan(events.indexOf("base:end"));
+		expect(applied).toEqual({ count: 1, bundles: [true] });
+		expect(h.calls.filter((c) => c[0]?.endsWith("/.bin/expo"))).toHaveLength(1);
+		expect(res.data.bundleMs).toBeGreaterThan(0);
+		expect(res.data.fromBase).toBeUndefined();
+		expect(getBuild(store, KEY, "ios", res.data.hash)).toMatchObject({ kind: "simulator-repack" });
+		expect(stagingLeft()).toEqual([]);
+		expect(scratchLeft()).toEqual([]);
+	});
+
+	test("iOS: a cached base is never raced (bundled after, as before)", async () => {
+		await seedBase();
+		const events: string[] = [];
+		const res = await repackApp(
+			input(host({ events }), fresh(), {
+				build: true,
+				hermes: async () => false,
+				ensureBase: baseBuilder(events, "ios", { source: "cache" }),
+			})
+		);
+		expect(res).toMatchObject({ success: true, data: { kind: "repacked" } });
+		expect(events.indexOf("bundle")).toBeGreaterThan(events.indexOf("base:end"));
+	});
+
+	test("iOS: a failed bundle still waits for the base (cached for next time) and cleans up", async () => {
+		const events: string[] = [];
+		const applied = fresh();
+		const res = await repackApp(
+			input(host({ events, bundleFails: true }), applied, {
+				build: true,
+				hermes: async () => false,
+				ensureBase: baseBuilder(events, "ios"),
+			})
+		);
+		expect(res).toMatchObject({ success: false });
+		expect(!res.success && res.error).toContain("metro exploded");
+		expect(events).toContain("base:end");
+		expect(applied.count).toBe(0);
+		expect(stagingLeft()).toEqual([]);
+		expect(scratchLeft()).toEqual([]);
+	});
+
+	test("iOS: a failed base build discards the bundle made alongside it", async () => {
+		const events: string[] = [];
+		const res = await repackApp(
+			input(host({ events }), fresh(), {
+				build: true,
+				hermes: async () => false,
+				ensureBase: baseBuilder(events, "ios", { fails: "xcodebuild exploded" }),
+			})
+		);
+		expect(!res.success && res.error).toContain("xcodebuild exploded");
+		expect(scratchLeft()).toEqual([]);
+	});
+
+	test("Android: a base built here embeds this JS, so it becomes the repack with no second bundle", async () => {
+		const events: string[] = [];
+		const h = host({ events, apkEntries: ["AndroidManifest.xml", "assets/index.android.bundle", "classes.dex"] });
+		const applied = fresh();
+		const res = await repackApp(
+			input(h, applied, { platform: "android", build: true, ensureBase: baseBuilder(events, "android") })
+		);
+		if (!res.success || res.data.kind !== "repacked") throw new Error(JSON.stringify(res));
+		expect(res.data.fromBase).toBe(true);
+		expect(h.calls.some((c) => c[0]?.endsWith("/.bin/expo"))).toBe(false);
+		expect(applied.count).toBe(0);
+		expect(readFileSync(res.data.artifact, "utf8")).toBe("apk-bytes");
+		const base = getBuild(store, KEY, "android", res.data.baseHash);
+		expect(res.data.artifact).not.toBe(base?.path);
+		expect(getBuild(store, KEY, "android", res.data.hash)).toMatchObject({
+			kind: "simulator-repack",
+			baseHash: res.data.baseHash,
+			jsKey: res.data.jsKey,
+		});
+		const meta = await readRepackMeta(dirname(res.data.artifact));
+		expect(meta?.baseId).toMatch(/^sha256:/);
+		expect(stagingLeft()).toEqual([]);
+
+		const again = await repackApp(input(h, applied, { platform: "android" }));
+		expect(again).toMatchObject({ success: true, data: { kind: "reused", artifact: res.data.artifact } });
+	});
+
+	test("Android: a base built here without an embedded bundle is bundled and repacked as usual", async () => {
+		const events: string[] = [];
+		const h = host({ events, apkEntries: ["AndroidManifest.xml", "classes.dex"] });
+		const applied = fresh();
+		const res = await repackApp(
+			input(h, applied, {
+				platform: "android",
+				build: true,
+				hermes: async () => false,
+				ensureBase: baseBuilder(events, "android"),
+			})
+		);
+		expect(res).toMatchObject({ success: true, data: { kind: "repacked" } });
+		expect(res.success && res.data.kind === "repacked" && res.data.fromBase).toBeFalsy();
+		expect(events.indexOf("bundle")).toBeGreaterThan(events.indexOf("base:end"));
+		expect(applied.count).toBe(1);
+	});
+
+	test("Android: a base another warden built (cache) may hold other JS: bundled and repacked as usual", async () => {
+		const events: string[] = [];
+		const h = host({ events, apkEntries: ["assets/index.android.bundle"] });
+		const applied = fresh();
+		const res = await repackApp(
+			input(h, applied, {
+				platform: "android",
+				build: true,
+				hermes: async () => false,
+				ensureBase: baseBuilder(events, "android", { source: "cache" }),
+			})
+		);
+		expect(res).toMatchObject({ success: true, data: { kind: "repacked" } });
+		expect(applied.count).toBe(1);
+		expect(h.calls.some((c) => c[0]?.endsWith("/.bin/expo"))).toBe(true);
 	});
 });
 

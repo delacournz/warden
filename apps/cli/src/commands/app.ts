@@ -158,7 +158,11 @@ function warnKind(ctx: CommandContext, project: ProjectContext, kind: BuildKind)
 function describeKindApp(app: KindApp): string {
 	if (app.kind === "simulator") {
 		const { repack } = app;
-		const took = repack.bundleMs !== undefined ? ` in ${(repack.bundleMs / 1000).toFixed(1)}s` : "";
+		const took = repack.fromBase
+			? " from the base build's bundle"
+			: repack.bundleMs !== undefined
+				? ` in ${(repack.bundleMs / 1000).toFixed(1)}s`
+				: "";
 		return `simulator repack ${repack.jsKey.slice(0, 12)} ${repack.reused ? "reused" : `built${took}`}`;
 	}
 	return app.fallbackReason !== undefined
@@ -393,6 +397,7 @@ export function kindJson(app: KindApp): Record<string, unknown> {
 					baseHash: app.repack.baseHash,
 					reused: app.repack.reused,
 					bundleMs: app.repack.bundleMs,
+					...(app.repack.fromBase ? { fromBase: true } : {}),
 				}
 			: {}),
 		...(app.kind !== "simulator" && app.fallbackReason !== undefined ? { fallbackReason: app.fallbackReason } : {}),
