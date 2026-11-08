@@ -21,6 +21,7 @@ import {
 } from "@delacour/warden-core/config.defaults";
 import { parseDuration } from "@delacour/warden-core/duration";
 import { resolveHeadless } from "@delacour/warden-core/headless";
+import { isCi } from "@delacour/warden-core/owner";
 import { checkIosRuntime } from "@delacour/warden-core/providers/ios";
 import { DEFAULT_SLIM_PROFILE, type SlimProfile, validateProfile } from "@delacour/warden-core/sims/slim.profile";
 import type { Platform } from "@delacour/warden-core/types";
@@ -454,13 +455,15 @@ const inCi = (env: Record<string, string | undefined>): boolean => !["", "0", "f
 
 /**
  * Whether a passed gate shuts the devices warden booted down (closing their windows) before their
- * leases are released: the suite's `shutdown`, else yes, locally and under CI. `shutdown: "idle"`
- * keeps them booted for the next run (`warden gc` reaps them once idle). `--no-shutdown` always wins.
+ * leases are released: the suite's `shutdown`, else yes locally and no under CI (the runner is
+ * thrown away, so a shutdown is only time spent; the golden is its own sim, never one of these).
+ * `shutdown: "idle"` keeps them booted for the next run (`warden gc` reaps them once idle).
+ * `--no-shutdown` always wins.
  */
-function shutsDownOnPass(suite: Suite, opts: E2eOpts, physical: boolean): boolean {
+function shutsDownOnPass(ctx: CommandContext, suite: Suite, opts: E2eOpts, physical: boolean): boolean {
 	// a phone is never shut down: with only phones in the run there is nothing to do
 	if (!opts.shutdown || physical) return false;
-	return (suite.config.shutdown ?? "always") === "always";
+	return (suite.config.shutdown ?? (isCi(ctx.env) ? "idle" : "always")) === "always";
 }
 
 /** `--headless` / `--no-headless` > the suite's (else top-level) `headless` > `WARDEN_HEADLESS`. */
@@ -565,7 +568,7 @@ async function e2e(
 		jobs.argvs.get(jobs.jobs[0] ?? "") ?? [],
 		sessionHooks(suite, specs, shape, spec, runs, {
 			platform: selection.platform,
-			shutdown: shutsDownOnPass(suite, opts, physical),
+			shutdown: shutsDownOnPass(ctx, suite, opts, physical),
 			physical,
 			...warmHooks(ctx, deps, suite, opts, physical && selection.platform === "ios"),
 			...jsonLinesHook(ctx, opts),
@@ -1038,7 +1041,7 @@ export function createE2eCommand(deps: BatchDeps): Command {
 				.option("--devices <legs>", "which e2e.<suite>.devices legs run: default | all | <profile,…>")
 				.option(
 					"--no-shutdown",
-					"keep the devices running after the gate passes (default: shut down the ones warden created; suite shutdown)"
+					"keep the devices running after the gate passes (default: shut down the ones warden created, kept under CI; suite shutdown)"
 				)
 				.option(
 					"--perf [captures]",

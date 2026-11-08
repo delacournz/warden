@@ -539,12 +539,28 @@ describe("warden e2e", () => {
 		}
 		const shutdowns = (calls: string[][]) => calls.filter((x) => x[2] === "shutdown").map((x) => x[3]);
 
-		test("under CI a passed gate shuts the devices warden created down, then releases them", async () => {
+		test("under CI a passed gate leaves the devices booted (the runner is thrown away), then releases them", async () => {
+			const calls: string[][] = [];
+			const c = wardenSetup(["--all", "--count", "2"], calls, "true");
+			expect(await createE2eCommand(harness().deps).run(c)).toBe(0);
+			expect(shutdowns(calls)).toEqual([]);
+			expect(c.db.listLeases()).toEqual([]);
+		});
+
+		test("GITHUB_ACTIONS without CI counts as CI", async () => {
+			const calls: string[][] = [];
+			const c = wardenSetup(["--all", "--count", "2"], calls);
+			c.env = { ...c.env, GITHUB_ACTIONS: "true" };
+			expect(await createE2eCommand(harness().deps).run(c)).toBe(0);
+			expect(shutdowns(calls)).toEqual([]);
+		});
+
+		test("shutdown: always shuts down under CI too", async () => {
+			await resuite({ shutdown: "always" });
 			const calls: string[][] = [];
 			const c = wardenSetup(["--all", "--count", "2"], calls, "true");
 			expect(await createE2eCommand(harness().deps).run(c)).toBe(0);
 			expect(shutdowns(calls).sort()).toEqual(["U1", "U2"]);
-			expect(c.db.listLeases()).toEqual([]);
 		});
 
 		test("locally a passed gate shuts the devices warden created down too, then releases them", async () => {
