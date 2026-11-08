@@ -286,8 +286,8 @@ describe("warden e2e", () => {
 			job?.finish(1);
 			await running;
 			const text = c.stderr.join("\n");
-			expect(text).toContain("✓ chats › list › opens (1.25s)");
-			expect(text).toContain("✗ settings › toggle (1.25s)");
+			expect(text).toContain("✓ chats › list › opens (1.25s · total 0s)");
+			expect(text).toContain("✗ settings › toggle (1.25s · total 0s)");
 			expect(text).toContain("warden-iphone-17-1 ✓ chats");
 		});
 
@@ -295,7 +295,7 @@ describe("warden e2e", () => {
 			const h = writing(() => jsonl(spec("chats", "opens")));
 			const c = setup(["--files", "src/chat/lazy.tsx", "--no-tui"]);
 			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
-			expect(c.stderr.join("\n")).toContain("✓ chats › opens (1.25s)");
+			expect(c.stderr.join("\n")).toContain("✓ chats › opens (1.25s · total 0s)");
 		});
 	});
 
