@@ -205,14 +205,27 @@ describe("wait text", () => {
 });
 
 describe("wait stable", () => {
-	test("returns once the screen has held still for the quiet period (default 250 ms)", async () => {
+	test("returns once the screen has held still for the quiet period (default 500 ms)", async () => {
 		let n = 0;
 		const h = harness(() => snapshotOf([el("text", { label: n++ < 3 ? `tick ${n}` : "still" })]));
 		expect(await h.run("wait", "stable", "--json")).toBe(0);
 		const out = doc(h.c);
 		expect(out.result.matched).toBe(true);
-		expect(out.result.waitedMs).toBeGreaterThanOrEqual(250);
+		expect(out.result.waitedMs).toBeGreaterThanOrEqual(500);
 		expect(out.generation).toBe(1);
+	});
+
+	test("the default outlasts a navigation push: a mixed tree held 460 ms is not stable", async () => {
+		let start: number | undefined;
+		let h: Harness | undefined;
+		h = harness(() => {
+			const t = h?.clock.t ?? 0;
+			start ??= t;
+			return snapshotOf([el("text", { label: t - start < 460 ? "mid-push" : "pushed" })]);
+		});
+		expect(await h.run("wait", "stable", "--json")).toBe(0);
+		expect(doc(h.c).result.waitedMs).toBeGreaterThanOrEqual(460 + 500);
+		expect(readLastSnapshot(h.c, UDID)?.snapshot.flat.map((e) => e.label)).toContain("pushed");
 	});
 
 	test("an explicit quiet period", async () => {

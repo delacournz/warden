@@ -46,6 +46,26 @@ final class ElementTests: XCTestCase {
     XCTAssertEqual(RoleMap.role(forType: "Image", traits: ["button"]), .image)
   }
 
+  func testSecureTextFieldTraitMakesATextFieldSecure() {
+    XCTAssertEqual(RoleMap.role(forType: "TextField", traits: ["text-entry", "secure-text-field"]), .securefield)
+    XCTAssertEqual(RoleMap.role(forType: "SecureTextField", traits: ["secure-text-field"]), .securefield)
+    XCTAssertEqual(RoleMap.role(forType: "TextField", traits: ["text-entry"]), .textfield)
+    XCTAssertEqual(RoleMap.role(forType: "StaticText", traits: ["secure-text-field"]), .text)
+  }
+
+  /// Web inputs on the bridge are typed by their wrapper class and carry only the text-entry trait (plus
+  /// `secure-text-field` for a password input): an unknown type with `text-entry` is a field.
+  func testTextEntryTraitMakesAnUnknownTypeAField() {
+    XCTAssertEqual(
+      RoleMap.role(forType: "WebAccessibilityObjectWrapper", traits: ["web-content", "text-entry"]), .textfield)
+    XCTAssertEqual(
+      RoleMap.role(forType: "WebAccessibilityObjectWrapper", traits: ["web-content", "text-entry", "secure-text-field"]),
+      .securefield)
+    XCTAssertEqual(RoleMap.role(forType: "WebAccessibilityObjectWrapper", traits: ["web-content"]), .other)
+    XCTAssertEqual(RoleMap.role(forType: "StaticText", traits: ["text-entry"]), .text)
+    XCTAssertEqual(RoleMap.role(forType: "SearchField", traits: ["text-entry"]), .searchfield)
+  }
+
   func testEveryMappedRoleIsAKnownRole() {
     XCTAssertTrue(Set(RoleMap.table.values).isSubset(of: Set(Role.allCases)))
   }

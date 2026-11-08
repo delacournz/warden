@@ -55,6 +55,8 @@ export function fieldFixture(
 	options: {
 		value?: string;
 		secure?: boolean;
+		/** a secure field the tree names a plain `textfield` with no secure trait: empty reads as empty, text as one `•` per character */
+		maskedTextfield?: boolean;
 		dropTypes?: number;
 		dropCall?: number;
 		dropTail?: number;
@@ -148,7 +150,8 @@ export function fieldFixture(
 			if (state.lag > 0) state.lag -= 1;
 			else state.shown = state.value;
 			const empty = state.shown === "";
-			const masked = options.secure ? "•".repeat(state.shown.length) : state.shown;
+			const masks = options.secure === true || options.maskedTextfield === true;
+			const masked = masks ? "•".repeat(state.shown.length) : state.shown;
 			return snapshotOf([
 				el(options.secure ? "securefield" : "textfield", {
 					id: "field",

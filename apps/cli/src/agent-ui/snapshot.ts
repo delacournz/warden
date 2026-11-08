@@ -1,7 +1,12 @@
 import { canReadA11y } from "@delacour/warden-e2e/driver/a11y-read";
 import type { Driver, Element, ElementA11y, Rect, Snapshot } from "@delacour/warden-e2e/driver/driver.types";
 import { assignRefs, type RefTable } from "@delacour/warden-e2e/driver/refs";
-import { DEFAULT_SETTLE_QUIET_MS, settleByHash, snapshotHash } from "@delacour/warden-e2e/driver/settle";
+import {
+	DEFAULT_SETTLE_QUIET_MS,
+	hashFallbackQuietMs,
+	settleByHash,
+	snapshotHash,
+} from "@delacour/warden-e2e/driver/settle";
 import { indexSnapshot, type NodeEntry } from "@delacour/warden-e2e/screen/nodes";
 import { resolve } from "@delacour/warden-e2e/screen/query";
 import { isListed, renderEntryLine, renderHeader, renderSnapshot } from "@delacour/warden-e2e/screen/render";
@@ -139,8 +144,9 @@ async function fetchSnapshot(
 		return snapshotHash(taken.data);
 	};
 	try {
+		// A navigation push holds a mixed tree still for 300-460 ms: a shorter window would call it settled.
 		const outcome = await settleByHash(poll, {
-			quietMs: DEFAULT_SETTLE_QUIET_MS,
+			quietMs: hashFallbackQuietMs(DEFAULT_SETTLE_QUIET_MS),
 			timeoutMs: settle.budgetMs,
 			now: ctx.now,
 			sleep: deps.sleep,
@@ -176,7 +182,7 @@ function missingIdHints(missing: number): string[] {
 
 /**
  * Take a snapshot of the device, give it the next generation and `@eN` refs, store it as the device's
- * `last-snapshot.json` and render it. With `settle`, polls until the screen hash stays equal for 250 ms
+ * `last-snapshot.json` and render it. With `settle`, polls until the screen hash stays equal for 500 ms
  * (or the budget runs out: `settle.quiet === false`) and diffs against the previously stored snapshot.
  * Refs are numbered over the whole tree, so `-i`, `--depth` and `--all` print the same `@eN` for the same element.
  */

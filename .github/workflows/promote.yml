@@ -27,7 +27,7 @@ concurrency:
 
 jobs:
   promote:
-    runs-on: namespace-profile-linux-medium
+    runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
@@ -40,7 +40,7 @@ jobs:
 
       # The App token is used for the checkout so the persisted credential can push to `main` and the
       # tag. fetch-depth 0 brings every tag and origin/main for the ancestry and tag checks.
-      - uses: namespacelabs/nscloud-checkout-action@66f2dc6f6c42a8ac6c4e53473c4840006822831e # v9.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           token: ${{ steps.app.outputs.token }}
           fetch-depth: 0

@@ -289,6 +289,31 @@ describe("lost HID connection", () => {
 	});
 });
 
+describe("accessibility service restarted by the helper", () => {
+	test("a test that failed across a backboardd restart runs again once; a later failure does not", async () => {
+		const run = await runSpec("ax-wedge", { FIXTURE_AX_WEDGE: "1" });
+		expect(run.log).toEqual([
+			"body run 1",
+			"axWedge restarts=1 recovering=true",
+			"axWedge restarts=1 recovering=false",
+			"body run 2",
+			"body run 3",
+			"axWedge restarts=1 recovering=false",
+		]);
+		expect(run.stdout).toContain("warden-simd restarted backboardd");
+		const first = run.results.filter(
+			(r) => r.title.at(-1) === "the app vanished when the accessibility service was restarted"
+		);
+		expect(first.map((r) => r.status)).toEqual(["passed"]);
+		expect(run.exitCode).toBe(1);
+	});
+
+	test("a phone never asks", async () => {
+		const run = await runSpec("ax-wedge", { FIXTURE_AX_WEDGE: "1", WARDEN_DEVICE_KIND: "physical" });
+		expect(run.log.filter((line) => line.startsWith("axWedge"))).toEqual([]);
+	});
+});
+
 describe("lost runner connection on a physical iPhone", () => {
 	const physical = {
 		WARDEN_DEVICE_KIND: "physical",

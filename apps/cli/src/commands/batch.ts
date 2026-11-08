@@ -11,6 +11,7 @@ import {
 	runBatch,
 } from "@delacour/warden-core/batch/schedule";
 import type { ClaimedDevice, ClaimOutcome } from "@delacour/warden-core/claim";
+import { WARM_QUARANTINE_PREFIX } from "@delacour/warden-core/claim";
 import { parseClaimError } from "@delacour/warden-core/claim-errors";
 import { formatDuration, parseDuration } from "@delacour/warden-core/duration";
 import { bunExec, execError } from "@delacour/warden-core/exec";
@@ -53,7 +54,8 @@ import {
 	render,
 	withRunners,
 } from "../batch/tui";
-import type { WarmConnect, WarmHelper } from "../batch/warm-drivers";
+import { type DroppedDevice, warmAdmit } from "../batch/warm-admit";
+import type { AxRecoveryRecord, WarmConnect, WarmHelper } from "../batch/warm-drivers";
 import { warmGate } from "../batch/warm-gate";
 import { buildCapacityDeps } from "../capacity-deps";
 import {
@@ -108,9 +110,10 @@ import {
 	reverseMetroPort,
 	startMetro,
 } from "../metro";
-import { emit, note, reportError, warn } from "../output";
+import { emit, note, plural, reportError, warn } from "../output";
 import { isLockedClaimError, reportClaimFailure } from "../physical-lock";
 import { canPrompt, pickPhysicalArgs, reportPick } from "../physical-pick";
+import { quarantineLeases } from "../quarantine";
 import { hideSimWindows } from "../sim-windows";
 import { withSpinner } from "../spinner-context";
 import type { Spinner } from "../ui";
@@ -657,7 +660,7 @@ async function runGrid(
 	const screen = display(ctx, deps, args, { current: startView(rows, o.total, o.startedAt, specs) }, specs, sized);
 	const ended = new Set<string>();
 	const sink = o.onTest ? { specs: screen.specs, tests: screen.tests, finished: o.onTest } : screen;
-	const poller = specs ? specPoller(deps, specs, o.resultFiles, ended, sink) : undefined;
+	const poller = specs ? specPoller(deps, specs, o.resultFiles, ended, sink, { startedAt: o.startedAt }) : undefined;
 	const shown = new Set(o.ready);
 	try {
 		const summary = await runPools(pending, {
@@ -1017,9 +1020,51 @@ export type SessionResult = {
 	devices?: Array<{ worker: number; udid: string; name: string; leg?: string }>;
 	/** per-device setup outcomes, when the session ran a setup */
 	setups?: DeviceSetup[] | undefined;
+	/** per-device driver warm-up outcomes, when the session warmed its iOS devices */
+	warm?: DeviceWarmReport[] | undefined;
 	/** why the run stopped before any job: a phone whose runner would not start (`device_locked`, ...) */
 	error?: { code: string; message: string; udid: string };
+	/** epoch ms the jobs started / ended (the grid's window); absent when the run stopped before any job */
+	testsStartedAt?: number;
+	testsEndedAt?: number;
 };
+
+/** One device's driver warm-up as the report keeps it (`e2e-report.json` `warm`). */
+export type DeviceWarmReport = {
+	worker: number;
+	udid: string;
+	ok: boolean;
+	error?: string;
+	axRecovery?: AxRecoveryRecord;
+	/** dropped before its first job: its accessibility service stayed wedged (`axVerdict`) */
+	dropped?: true;
+	/** dropped and quarantined: claims skip it until `warden sim unquarantine <udid>` */
+	quarantined?: true;
+};
+
+/** Each leased device's settled warm-up, worker order; undefined without a warm-up. */
+function warmReport(
+	warm: EarlyWarm | undefined,
+	devices: ReadonlyArray<{ worker: number; udid: string }>,
+	dropped: ReadonlyMap<string, DroppedDevice>
+): DeviceWarmReport[] | undefined {
+	if (!warm) return undefined;
+	return devices.flatMap((d) => {
+		const done = warm.peek(d.udid);
+		if (!done) return [];
+		return [
+			{
+				worker: d.worker,
+				udid: d.udid,
+				ok: done.socketPath !== undefined,
+				...(done.error !== undefined ? { error: done.error } : {}),
+				...(done.axRecovery ? { axRecovery: done.axRecovery } : {}),
+				...(dropped.has(d.udid) ? { dropped: true as const } : {}),
+				...(dropped.get(d.udid)?.quarantined ? { quarantined: true as const } : {}),
+			},
+		];
+	});
+}
 
 /** Extras for callers building on batch (`warden e2e`). */
 export type SessionHooks = {
@@ -1366,6 +1411,7 @@ async function runPools(
 				now: o.now,
 				signal: o.signal,
 				...(o.onStart ? { onStart: (handle: BatchHandle) => o.onStart?.(pool, handle) } : {}),
+				...(pool.admit ? { admit: pool.admit } : {}),
 				// each pool reports its own `done`; the run has one
 				onEvent: (e) => {
 					if (e.type !== "done") o.onEvent(e);
@@ -1378,7 +1424,14 @@ async function runPools(
 	// a pool with no device left ran nothing: that is not a pass
 	const ok = summaries.every((s) => s.ok) && pools.every((p) => p.workers.length > 0 || p.jobs.length === 0);
 	o.onEvent({ type: "done", ok, stopped, at: o.now() });
-	return { ok, stopped, results: summaries.flatMap((s) => s.results), failed: summaries.flatMap((s) => s.failed) };
+	const unrun = summaries.flatMap((s) => s.unrun ?? []);
+	return {
+		ok,
+		stopped,
+		results: summaries.flatMap((s) => s.results),
+		failed: summaries.flatMap((s) => s.failed),
+		...(unrun.length > 0 ? { unrun } : {}),
+	};
 }
 
 /** What the phases of one supervised run share. */
@@ -1535,9 +1588,21 @@ async function stopResidentHosts(ctx: CommandContext, name: string, devices: rea
 /**
  * One pool from its claim to its first job, on its own devices only (12-3): setup (slim, then the
  * command), then Metro's open beside the late-window hide. A device whose setup fails, or that cannot
- * reach Metro (Android, 12-7), is dropped, and its warm helper closed.
+ * reach Metro (Android, 12-7), is dropped, and its warm helper closed. However it ends, the early warm-up
+ * then knows nothing else works on these devices: only from then may it reboot one (a wedged accessibility
+ * service), so a reboot never cuts an install, a setup command or the dev client's launch short.
  */
-async function preparePool(
+async function preparePool(...a: Parameters<typeof preparePoolDevices>): Promise<PreparedPool> {
+	const [, , , , , pool, o] = a;
+	try {
+		return await preparePoolDevices(...a);
+	} finally {
+		for (const d of pool.devices) o.warm?.prepared(d.udid);
+	}
+}
+
+/** `preparePool`'s work. */
+async function preparePoolDevices(
 	ctx: CommandContext,
 	deps: BatchDeps,
 	args: BatchArgs,
@@ -1667,7 +1732,14 @@ function firstLive(pending: readonly Promise<PreparedPool>[]): Promise<boolean> 
 }
 
 /** `rows`: the grid's rows (every live device). */
-type Queue = { workers: Device[]; rows: Device[]; jobs: string[]; run: ReturnType<typeof jobRunner> };
+type Queue = {
+	workers: Device[];
+	rows: Device[];
+	jobs: string[];
+	run: ReturnType<typeof jobRunner>;
+	/** asked before a worker's first job: false drops it from the run (`warmAdmit`) */
+	admit?: ((worker: BatchWorker) => Promise<boolean>) | undefined;
+};
 
 /** A pool's job queue: its workers (one per device that survived setup) and its job runner. */
 function poolQueue(
@@ -1686,6 +1758,7 @@ function poolQueue(
 		resultFiles: Map<string, string>;
 		socketFor: (udid: string) => Promise<string | undefined>;
 		drains?: Map<string, number>;
+		admit?: ((worker: BatchWorker) => Promise<boolean>) | undefined;
 	}
 ): Queue {
 	const qualified = r.pools.length > 1;
@@ -1696,6 +1769,7 @@ function poolQueue(
 	return {
 		workers: p.live,
 		rows: p.live,
+		...(o.admit ? { admit: o.admit } : {}),
 		jobs: o.jobs.map((job) => legJob(job, qualified ? p.pool.leg : undefined)),
 		run: jobRunner(deps, {
 			cmd: o.cmd,
@@ -1942,6 +2016,44 @@ async function teardownServices(deps: BatchDeps, services: Services): Promise<vo
 	await metro?.stop();
 }
 
+/**
+ * iOS with a warm-up: each worker's admission before its first job. A device whose accessibility service stayed
+ * wedged is dropped, and quarantined when it is warden's (`release --bad` semantics), so no later claim gets it.
+ */
+function runAdmit(
+	ctx: CommandContext,
+	r: RunContext,
+	warm: EarlyWarm | undefined,
+	dropped: Map<string, DroppedDevice>
+): ((worker: BatchWorker) => Promise<boolean>) | undefined {
+	if (!warm || r.platform !== "ios") return undefined;
+	return warmAdmit({
+		warm,
+		dropped,
+		report: (line) => reportError(ctx, r.name, line),
+		quarantine: (udid, reason) => {
+			const leaseId = r.devices.find((d) => d.udid === udid)?.leaseId;
+			const store = ctx.store();
+			const lease = leaseId !== undefined ? store.getLease(leaseId) : undefined;
+			return lease
+				? quarantineLeases(store, [lease], `${WARM_QUARANTINE_PREFIX}${reason}`, ctx.now()).quarantined.includes(udid)
+				: false;
+		},
+	});
+}
+
+/** Jobs no worker pulled (every device of their pool was dropped before its first job), unless interrupted. */
+function reportUnrun(
+	ctx: CommandContext,
+	r: RunContext,
+	summary: BatchSummary,
+	dropped: ReadonlyMap<string, DroppedDevice>
+): void {
+	if (!summary.unrun || r.interrupted()) return;
+	const why = [...dropped].map(([udid, d]) => `${udid}: ${d.reason}`).join("; ");
+	reportError(ctx, r.name, `no device left to run ${plural(summary.unrun.length, "job")}${why ? ` (${why})` : ""}`);
+}
+
 /** A phone's jobs reach its runner only through the warm socket: no runner, no specs. Undefined when nothing stopped. */
 async function warmGateOf(r: RunContext, warm: EarlyWarm | undefined): Promise<Awaited<ReturnType<typeof warmGate>>> {
 	if (!warm) return undefined;
@@ -1997,6 +2109,8 @@ async function supervise(
 		for (const job of r.running) job.kill(signal);
 	});
 	const services: Services = { recordings: [], warm: run.warm, closed: new Set() };
+	/** devices dropped before their first job (a wedged accessibility service), by udid */
+	const dropped = new Map<string, DroppedDevice>();
 	/** elastic workers: the background claims (awaited before the release) and what they prepared */
 	let elastic = NO_ELASTIC;
 	// a live grid owns the terminal: what a pool still preparing (or a warm-up) says waits until it ends
@@ -2030,6 +2144,7 @@ async function supervise(
 			);
 		}
 		const socketFor = deviceSockets(ctx, r, run.warm, run.warm ? undefined : hooks.residentSocket, say);
+		const admit = runAdmit(pctx, r, run.warm, dropped);
 		const toQueue = queueMaker(ctx, deps, args, r, {
 			jobs,
 			cmd,
@@ -2040,6 +2155,7 @@ async function supervise(
 			resultFiles,
 			drains,
 			socketFor,
+			admit,
 		});
 		const total = r.pools.length * jobs.length;
 		const startedAt = ctx.now();
@@ -2063,6 +2179,7 @@ async function supervise(
 			}
 		);
 		await elastic.settled();
+		reportUnrun(pctx, r, summary, dropped);
 		const setups = setupsOf(r, [...(await Promise.all(preparing)), ...elastic.prepared]);
 		const endedAt = ctx.now();
 		screen.end();
@@ -2093,6 +2210,9 @@ async function supervise(
 			resultFiles,
 			devices,
 			setups,
+			warm: warmReport(run.warm, devices, dropped),
+			testsStartedAt: startedAt,
+			testsEndedAt: endedAt,
 		};
 	} catch (error) {
 		return fail(error instanceof Error ? error.message : String(error));

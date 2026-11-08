@@ -6,6 +6,9 @@ enum HealthOps {
     "health": { session, params in
       await session.health(probe: params["probe"]?.boolValue ?? false)
     },
+    "axWedge": { session, params in
+      await session.axWedge(recover: params["recover"]?.boolValue ?? false)
+    },
     Dispatcher<Session>.shutdownOp: { _, _ in
       ["bye": true]
     },
@@ -110,6 +113,8 @@ extension Session {
         "method": .string(frontmostPolicy.method.rawValue),
       ]
     }
+    if let recycles = bridgeReaper.healthJSON { fields["bridgeRecycles"] = recycles }
+    fields["axWedge"] = axWedgeRecovery.state()
     fields["coreSimulatorVersion"] = coreSimulatorVersion.map(JSON.string) ?? .null
     fields["state"] = .string(Session.describe(simulator.state))
     fields["uptimeMs"] = .int(uptimeMs)

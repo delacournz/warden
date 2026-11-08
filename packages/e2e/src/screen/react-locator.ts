@@ -1,4 +1,4 @@
-import type { DevtoolsFacet, TreeOptions } from "../devtools/devtools.types";
+import type { DevtoolsFacet, TreeComponent, TreeOptions } from "../devtools/devtools.types";
 import type { Platform, Point, Rect, ScreenInfo } from "../driver/driver.types";
 import { matchesText, type TextMatch } from "./text";
 
@@ -47,7 +47,8 @@ export async function lookUpTestIdViaReact(
 	}
 	if (!result.success) return { answered: false };
 	const matches: ReactMatch[] = [];
-	for (const component of result.data.components) {
+	const { components } = result.data;
+	for (const component of components) {
 		const { testID, rect } = component;
 		if (testID === undefined || rect === undefined || !matchesText(testID, testId)) continue;
 		matches.push({
@@ -56,10 +57,26 @@ export async function lookUpTestIdViaReact(
 			source: "react",
 			testId: testID,
 			name: component.name,
-			...(component.text === undefined ? {} : { text: component.text }),
+			...textOf(component, components),
 		});
 	}
 	return { answered: true, matches };
+}
+
+/**
+ * The text a component renders: its own, else its descendants' in tree order (a padded container such as a badge
+ * around a `Text`, where the `Text` reports the string and the testID sits on the container).
+ */
+function textOf(component: TreeComponent, components: readonly TreeComponent[]): { text?: string } {
+	if (component.text !== undefined) return { text: component.text };
+	const inside = new Set<number>([component.id]);
+	const texts: string[] = [];
+	for (const other of components) {
+		if (other.parent === null || !inside.has(other.parent)) continue;
+		inside.add(other.id);
+		if (other.text !== undefined) texts.push(other.text);
+	}
+	return texts.length === 0 ? {} : { text: texts.join(" ") };
 }
 
 /** `lookUpTestIdViaReact` where any failure means "nothing found", so callers keep their own not-found error. */

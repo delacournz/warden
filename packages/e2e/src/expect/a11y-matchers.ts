@@ -16,6 +16,8 @@ export type AnnouncedOptions = {
 	since?: number;
 };
 
+const KEYBOARD_POLL_MS = 100;
+
 export type PassA11yAuditOptions = DeviceA11yAuditOptions;
 
 function show(match: TextMatch): string {
@@ -97,6 +99,34 @@ export class DeviceAssertions {
 				`expect(device).${call}`,
 				`Expected: an announcement matching ${show(expected)} within ${timeoutMs} ms`,
 				`Received: ${seen.length === 0 ? "(no announcements)" : seen.map((text) => JSON.stringify(text)).join(", ")}`,
+			]);
+		});
+	}
+
+	/**
+	 * The on-screen keyboard is up (`.not`: it is gone), read from the accessibility tree. Polls until it holds or
+	 * `timeout` (default: the assertion timeout) passes. Under `hardware` mode the keyboard never shows.
+	 */
+	async toHaveKeyboard(options: { timeout?: number } = {}): Promise<void> {
+		for (const key of Object.keys(options)) {
+			if (key !== "timeout")
+				throw new E2eError("INVALID_ARGUMENT", `toHaveKeyboard does not take "${key}"; it takes timeout`);
+		}
+		checkMillis("toHaveKeyboard", "timeout", options.timeout);
+		const timeoutMs = options.timeout ?? this.target.assertionTimeout();
+		const want = !this.context.negate;
+		return this.run("toHaveKeyboard()", async () => {
+			const deadline = Date.now() + timeoutMs;
+			let visible = await this.target.keyboardVisible();
+			while (visible !== want && Date.now() < deadline) {
+				await new Promise<void>((resolve) => setTimeout(resolve, KEYBOARD_POLL_MS));
+				visible = await this.target.keyboardVisible();
+			}
+			if (visible === want) return;
+			throw await this.failure([
+				`expect(device)${this.context.negate ? ".not" : ""}.toHaveKeyboard()`,
+				`Expected: ${want ? "a keyboard on screen" : "no keyboard on screen"} within ${timeoutMs} ms`,
+				`Received: ${visible ? "a keyboard on screen" : "no keyboard on screen"}`,
 			]);
 		});
 	}

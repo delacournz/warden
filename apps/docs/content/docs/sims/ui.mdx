@@ -63,7 +63,7 @@ A line is `@ref [role] "name" id=<testID> value="…" <states> (x,y w×h)`. Stat
 | Command | Use |
 |---|---|
 | `snapshot [-i\|--interactive] [--all] [--depth n] [--a11y]` | the screen. `-i` filters to interactive elements and `testID`s; the default caps at 200 lines (`--all` removes the cap); `--depth n` keeps the first `n` levels; `--a11y` adds `hint`, `actions`, `a11y-focused`, `not-important` and `live` per line ([Accessibility](/docs/e2e/accessibility)) |
-| `snapshot --settle [ms]` | wait for a quiet screen (the tree hash is unchanged for 250 ms; default budget 3000 ms), then print what changed against the previous snapshot as `-` / `+` lines and a `= N unchanged` count |
+| `snapshot --settle [ms]` | wait for a quiet screen (the tree hash is unchanged for 500 ms, so a navigation push is never caught mid-transition; default budget 3000 ms), then print what changed against the previous snapshot as `-` / `+` lines and a `= N unchanged` count |
 | `find <selector…>` | only the elements matching a [selector](#targets-and-selectors), each with a fresh `@eN` |
 | `screen screenshot [path]` | a PNG; default `$WARDEN_HOME/ui/<udid>/shots/NNN.png` |
 | `screen video start [path]` · `screen video stop` | record the screen (iOS `simctl recordVideo`, Android `screenrecord`, 3 min device limit); default `$WARDEN_HOME/ui/<udid>/videos/NNN.mp4` |
@@ -133,7 +133,7 @@ These poll the live screen every 100 ms for the first second, then every 250 ms 
 | `wait <selector>` | until a match is on screen; prints it with a fresh `@eN` (the snapshot it matched in becomes the new generation) |
 | `wait absent <selector>` | until no match is visible |
 | `wait text "…"` | until that text is visible |
-| `wait stable [ms]` | until the screen has stopped changing for that long (default 250 ms) |
+| `wait stable [ms]` | until the screen has stopped changing for that long (default 500 ms: a navigation push holds a mixed screen still for up to ~460 ms) |
 | `is <selector> visible\|hittable\|enabled\|checked\|selected\|focused` | prints `true` / `false`; exit 0 when true, 1 when false or nothing matches: usable in a shell `if` (`--json`: `{ matched, state, element?, waitedMs, reason? }`) |
 | `get <selector> text\|value\|label\|id\|role\|frame\|count` | print one bare value (`frame` as `x y w h`; `count`: how many match, `0` is a success); no match is `target_not_found` |
 

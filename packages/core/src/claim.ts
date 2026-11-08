@@ -132,6 +132,12 @@ export type HostLoad = { load1: number; cores: number };
  * has no prefix and stays until `warden sim unquarantine`.
  */
 export const CLAIM_QUARANTINE_PREFIX = "claim: ";
+/**
+ * Quarantines `warden e2e` / `batch` set on a sim whose accessibility service stayed wedged after its warm-up
+ * carry this prefix: they expire like `claim: ` ones (a later boot clears the wedge).
+ */
+export const WARM_QUARANTINE_PREFIX = "warm: ";
+const EXPIRING_QUARANTINE_PREFIXES = [CLAIM_QUARANTINE_PREFIX, WARM_QUARANTINE_PREFIX];
 export const QUARANTINE_TTL_MS = 24 * 60 * 60_000;
 /** Wait before the one re-probe of a sim that timed out on an overloaded host. */
 export const OVERLOAD_REPROBE_MS = 5_000;
@@ -571,7 +577,7 @@ function pickEvictions(
 function claimQuarantineExpired(record: DeviceRecord, now: number): boolean {
 	return (
 		record.quarantinedAt !== undefined &&
-		record.quarantineReason?.startsWith(CLAIM_QUARANTINE_PREFIX) === true &&
+		EXPIRING_QUARANTINE_PREFIXES.some((prefix) => record.quarantineReason?.startsWith(prefix) === true) &&
 		now - record.quarantinedAt >= QUARANTINE_TTL_MS
 	);
 }

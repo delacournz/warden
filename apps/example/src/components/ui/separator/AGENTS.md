@@ -16,7 +16,7 @@ carries nothing a screen reader can use, and announcing them buries the rows.
 
 - **`separatorVariants` lives in `separator.tsx`**, above the component, not in a
   `*.variants.ts` sibling — the pattern C carve-out. That file imports React
-  Native, so the `tv()` is not reachable from `bun test`; the exclusive-axis and
+  Native, so the `tv()` is not unit-testable; the exclusive-axis and
   `self-stretch` rules below are stated in its doc comment instead of asserted.
 - **Orientations**: `horizontal` (default), `vertical`.
 - **The long axis is `self-stretch`, never `w-full` / `h-full`.** Yoga resolves

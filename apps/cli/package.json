@@ -1,6 +1,6 @@
 {
 	"name": "@delacour/warden",
-	"version": "0.13.0",
+	"version": "0.14.0",
 	"description": "Give every AI coding agent its own iOS simulator or Android emulator: machine-wide leasing of devices, ports and app builds, plus TypeScript e2e testing for React Native and Expo",
 	"homepage": "https://warden.co.nz",
 	"license": "MIT",

@@ -545,6 +545,24 @@ describe("fill", () => {
 		expect(driver.calls.at(-1)?.method).toBe("typeText");
 	});
 
+	test("a field that reads back as mask bullets is confirmed by their count (a secure field not known as one)", async () => {
+		const { driver, state } = fieldFixture({ maskedTextfield: true });
+		const { screen } = setup(driver);
+		await screen.getByTestId("field").fill("password1");
+		expect(state.value).toBe("password1");
+		expect(typed(driver)).toBe("password1");
+		expect(driver.callsOf("key")).toEqual([]);
+	});
+
+	test("a masked read-back with the wrong number of bullets is retried, then fails naming the dots", async () => {
+		const { driver } = fieldFixture({ maskedTextfield: true, dropTail: 2, dropTailCalls: 2 });
+		const { screen } = setup(driver);
+		const error = await failure(screen.getByTestId("field").fill("password1"));
+		expect(error.message).toContain("fill did not take: expected 9 characters (secure)");
+		expect(error.message).toContain('the field holds "•••••••"');
+		expect(error.message).not.toContain("passwo");
+	});
+
 	test("an empty string only clears", async () => {
 		const { driver, state } = fieldFixture({ value: "ab" });
 		const { screen } = setup(driver);

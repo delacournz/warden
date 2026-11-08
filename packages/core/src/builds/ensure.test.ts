@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { Exec, ExecResult } from "../exec";
 import { createGitFactsCache } from "../git-facts";
 import { openStore, type Store } from "../store";
@@ -29,6 +29,7 @@ import {
 import { computeCacheKey } from "./fingerprint";
 import { projectForKind } from "./kinds";
 import type { AppPhase } from "./resolve";
+import { readCachedSigning } from "./signing-key";
 
 let dir: string;
 let store: Store;
@@ -548,6 +549,73 @@ describe("ensureApp", () => {
 		);
 		expect(res.success).toBe(true);
 		expect(phases).toEqual([{ phase: "building", platform: "ios", hash: "H" }, { phase: "ready" }]);
+	});
+
+	describe("a local build nobody watches", () => {
+		function heartbeatSetup() {
+			const root = join(dir, "app");
+			const products = join(root, "ios", "build", "Build", "Products", "Debug-iphonesimulator");
+			const timer = { tick: undefined as (() => void) | undefined, scheduled: 0 };
+			const exec: Exec = async (cmd, opts) => {
+				const joined = cmd.join(" ");
+				if (joined === "sh -c make-ios") {
+					opts?.onLine?.("› Compiling Pods/React-Core");
+					timer.tick?.();
+					fakeApp(products, "Built.app");
+					return { exitCode: 0, stdout: "", stderr: "" };
+				}
+				if (joined === "sh -c fp") return { exitCode: 0, stdout: '{"hash":"H"}', stderr: "" };
+				if (joined.startsWith("plutil -extract CFBundleIdentifier")) return BUNDLE_ID;
+				return { exitCode: 127, stdout: "", stderr: joined };
+			};
+			const project = testProject({ root, fingerprintCommand: "fp", build: { ios: "make-ios", android: "x" } });
+			const heartbeatSchedule = (fn: () => void) => {
+				timer.tick = fn;
+				timer.scheduled += 1;
+				return () => {};
+			};
+			return { exec, project, timer, heartbeatSchedule };
+		}
+
+		test("says it is a cache miss, then reports progress on a timer", async () => {
+			const s = heartbeatSetup();
+			const logs: string[] = [];
+			const res = await ensureApp(
+				input(s.exec, {
+					project: s.project,
+					deviceId: undefined,
+					build: true,
+					now: () => Date.now(),
+					log: (l) => logs.push(l),
+					heartbeatSchedule: s.heartbeatSchedule,
+				})
+			);
+			expect(res.success).toBe(true);
+			expect(s.timer.scheduled).toBe(1);
+			const miss = logs.findIndex((l) => l.startsWith("no cached ios build for H"));
+			const building = logs.findIndex((l) => l.startsWith("building ios locally"));
+			expect(miss).toBeGreaterThanOrEqual(0);
+			expect(miss).toBeLessThan(building);
+			expect(logs.some((l) => /^still building ios \(\d+s\): › Compiling Pods\/React-Core$/.test(l))).toBe(true);
+		});
+
+		test("no heartbeat when the caller streams the build output", async () => {
+			const s = heartbeatSetup();
+			const lines: string[] = [];
+			const res = await ensureApp(
+				input(s.exec, {
+					project: s.project,
+					deviceId: undefined,
+					build: true,
+					now: () => Date.now(),
+					buildOutput: (l) => lines.push(l),
+					heartbeatSchedule: s.heartbeatSchedule,
+				})
+			);
+			expect(res.success).toBe(true);
+			expect(s.timer.scheduled).toBe(0);
+			expect(lines).toEqual(["› Compiling Pods/React-Core"]);
+		});
 	});
 
 	test("a local build stamps the native fingerprint its native dir was prebuilt for", async () => {
@@ -1229,6 +1297,27 @@ describe("ensureKindBuild", () => {
 			profile: "local:dev",
 		});
 		expect(calls.some((c) => c.includes("expo run:ios") && !c.includes("--configuration Release"))).toBe(true);
+	});
+
+	test("an Android build caches the keystore it was signed with beside the APK", async () => {
+		const root = join(dir, "app");
+		const app = join(root, "android", "app");
+		const exec = fpExec([], () => {
+			mkdirSync(join(app, "build", "outputs", "apk", "debug"), { recursive: true });
+			writeFileSync(join(app, "build", "outputs", "apk", "debug", "app-debug.apk"), "apk");
+			writeFileSync(join(app, "debug.keystore"), "the-keystore");
+			writeFileSync(
+				join(app, "build.gradle"),
+				"signingConfigs { debug { storeFile file('debug.keystore') storePassword 'android' keyAlias 'androiddebugkey' keyPassword 'android' } }\nbuildTypes { debug { signingConfig signingConfigs.debug } }"
+			);
+		});
+		const res = await ensureKindBuild(
+			kindInput(exec, { platform: "android", deviceId: undefined, build: true, now: () => Date.now() })
+		);
+		if (!res.success) throw new Error(res.error);
+		const cached = readCachedSigning(dirname(res.data.appPath));
+		expect(cached).toMatchObject({ alias: "androiddebugkey", storePass: "android", keyPass: "android" });
+		expect(cached && readFileSync(cached.path, "utf8")).toBe("the-keystore");
 	});
 
 	test("the simulator base builds the Release configuration with SKIP_BUNDLING into simulator/base", async () => {

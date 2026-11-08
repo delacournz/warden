@@ -203,8 +203,10 @@ describe("camera at the start and end of a test", () => {
 		});
 	});
 
-	test("without a suite camera nothing is declared", () => {
-		expect(setup().c.internals.declared).toBe(false);
+	test("without a suite camera the baseline leaves the camera alone", async () => {
+		const { c, driver } = setup();
+		await c.internals.applyBaseline();
+		expect(driver.callsOf("camera")).toEqual([]);
 	});
 });
 

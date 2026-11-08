@@ -147,6 +147,46 @@ describe("undoConditions", () => {
 		]);
 	});
 
+	test("android keyboard reset puts the recorded IMEs back exactly and drops the stash", async () => {
+		const l = lease("android", "emulator-5554");
+		const enabled = "a.b/.LatinIME;12:c.d/.Voice";
+		recordCondition(
+			store,
+			l.id,
+			"keyboard",
+			{ mode: "hardware", previousIme: { enabled, default: "a.b/.LatinIME" } },
+			1
+		);
+		const result = await undoConditions(deps(), l);
+		expect(result.success).toBe(true);
+		expect(calls).toEqual([
+			[...ADB, "shell", "settings", "put", "secure", "enabled_input_methods", `'${enabled}'`],
+			[...ADB, "shell", "settings", "put", "secure", "default_input_method", "a.b/.LatinIME"],
+			[...ADB, "shell", "settings", "delete", "global", "warden_ime_enabled"],
+			[...ADB, "shell", "settings", "delete", "global", "warden_ime_default"],
+		]);
+	});
+
+	test("android keyboard reset without a recorded state restores from the device-side stash", async () => {
+		const l = lease("android", "emulator-5554");
+		recordCondition(store, l.id, "keyboard", { mode: "hardware" }, 1);
+		const result = await undoConditions(deps(), l);
+		expect(result.success).toBe(true);
+		expect(calls).toHaveLength(3);
+		expect(calls[0]?.slice(0, 5)).toEqual([...ADB, "shell", "sh"]);
+		expect(calls[0]?.join(" ")).toContain("warden_ime_enabled");
+		expect(calls[1]).toEqual([...ADB, "shell", "settings", "delete", "global", "warden_ime_enabled"]);
+	});
+
+	test("ios keyboard has no simctl reset command and its row clears", async () => {
+		const l = lease("ios", UDID);
+		recordCondition(store, l.id, "keyboard", { mode: "hardware" }, 1);
+		const result = await undoConditions(deps(), l);
+		expect(result.success).toBe(true);
+		expect(calls).toEqual([]);
+		expect(activeConditions(store, l.id)).toEqual([]);
+	});
+
 	test("android locale puts the timezone back to the recorded one and clears the app locale", async () => {
 		const l = lease("android", "emulator-5554");
 		recordCondition(
@@ -362,6 +402,30 @@ describe("undoConditions", () => {
 		expect(res.success).toBe(true);
 		expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({ seq: 8, offline: false, clockOffsetMs: 0, camera: {} });
 		expect(activeConditions(store, l.id)).toEqual([]);
+	});
+
+	test("ios keyboard release puts software back in a running injected app's state file", async () => {
+		const home = join(dir, "home");
+		const path = injectStatePath(home, UDID);
+		mkdirSync(dirname(path), { recursive: true });
+		writeFileSync(path, JSON.stringify({ seq: 7, keyboard: "hardware" }));
+		const l = lease("ios", UDID);
+		recordCondition(store, l.id, "keyboard", { mode: "hardware" }, 1);
+		const res = await undoConditions({ ...deps(), env: { WARDEN_HOME: home } }, l);
+		expect(res.success).toBe(true);
+		expect(JSON.parse(readFileSync(path, "utf8"))).toMatchObject({ seq: 8, keyboard: "software" });
+		expect(activeConditions(store, l.id)).toEqual([]);
+	});
+
+	test("an ios clock release leaves the keyboard mode in the state file alone", async () => {
+		const home = join(dir, "home");
+		const path = injectStatePath(home, UDID);
+		mkdirSync(dirname(path), { recursive: true });
+		writeFileSync(path, JSON.stringify({ seq: 7, keyboard: "hardware", clockOffsetMs: 5 }));
+		const l = lease("ios", UDID);
+		recordCondition(store, l.id, "clock", { kind: "offset", ms: 5 }, 1);
+		await undoConditions({ ...deps(), env: { WARDEN_HOME: home } }, l);
+		expect(JSON.parse(readFileSync(path, "utf8"))).toMatchObject({ seq: 8, keyboard: "hardware", clockOffsetMs: 0 });
 	});
 
 	test("ios camera blanks the injected app's feeds, removes the staged files and clears the row", async () => {

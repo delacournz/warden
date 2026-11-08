@@ -341,18 +341,25 @@ async function concludeAttempt<F extends object>(
 		outcome.failed ? { failed: true, error: outcome.failure, timedOut: outcome.deadlineHit } : { failed: false }
 	);
 	print(formatConsoleLine({ type: "test-end", result }, { clock }));
-	if (
-		outcome.failed &&
-		session.recoverHid !== undefined &&
-		isRecoverableLoss(outcome.failure, session.env.deviceKind) &&
-		(await session.recoverHid())
-	) {
-		return "again";
-	}
+	if (outcome.failed && (await recovered(session, outcome.failure, run.startedAt))) return "again";
 	if (!outcome.failed || spec.final) session.results.append(result);
 
 	if (outcome.failed) throw outcome.failure instanceof Error ? outcome.failure : new Error(String(outcome.failure));
 	return undefined;
+}
+
+/**
+ * Whether a failed attempt is worth running again: the device lost its HID connection or runner host and was
+ * recovered, or the iOS helper restarted a wedged accessibility service (which quit the app) during it.
+ */
+async function recovered(session: Session, failure: unknown, startedAt: number): Promise<boolean> {
+	if (
+		session.recoverHid !== undefined &&
+		isRecoverableLoss(failure, session.env.deviceKind) &&
+		(await session.recoverHid())
+	)
+		return true;
+	return session.recoverAxWedge !== undefined && (await session.recoverAxWedge(Date.now() - startedAt));
 }
 
 /** One error for every `expect.soft` failure of the attempt. */

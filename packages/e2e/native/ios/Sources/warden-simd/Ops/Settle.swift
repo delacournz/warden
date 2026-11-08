@@ -732,10 +732,15 @@ struct GuestReaper: Sendable {
   /// The guests that belong to simulator `udid` among `processes`; empty when the simulator's `launchd_sim` is not
   /// there (never matches another simulator's guests, whose parent is another `launchd_sim`).
   static func guests(of udid: String, in processes: [ProcessEntry]) -> [pid_t] {
+    children(of: udid, in: processes, matching: guestMarker)
+  }
+
+  /// The processes of simulator `udid` (children of its `launchd_sim`) whose command line contains `marker`.
+  static func children(of udid: String, in processes: [ProcessEntry], matching marker: String) -> [pid_t] {
     let launchd = processes.filter { $0.command.contains("launchd_sim") && $0.command.contains("/Devices/\(udid)/") }
     let parents = Set(launchd.map(\.pid))
     guard !parents.isEmpty else { return [] }
-    return processes.filter { parents.contains($0.ppid) && $0.command.contains(guestMarker) }.map(\.pid)
+    return processes.filter { parents.contains($0.ppid) && $0.command.contains(marker) }.map(\.pid)
   }
 
   /// Ends the guests of `udid`; returns the pids it signalled.
@@ -786,6 +791,24 @@ enum GuestRecycling {
     if settleSeconds > 0 { try? await Task.sleep(for: .seconds(settleSeconds)) }
     await monitor.restart()
     return ended
+  }
+}
+
+extension GuestRecycling {
+  /// Ends the guests of `udid` after a bridge read stalled on a guest that had answered, and reopens the stream when
+  /// one is open (its guest went with them). Returns how many it ended; none found changes nothing.
+  static func endStalledGuests(
+    udid: String, wedge: WedgeWatch, reaper: GuestReaper, monitor: QuiescenceMonitor?,
+    now: Double = ProcessInfo.processInfo.systemUptime, settleSeconds: Double = 0.15
+  ) async -> Int {
+    if let monitor {
+      return await endGuests(
+        udid: udid, wedge: wedge, reaper: reaper, monitor: monitor, now: now, settleSeconds: settleSeconds
+      ).count
+    }
+    let ended = reaper.reap(udid: udid)
+    if !ended.isEmpty { wedge.didReap(now: now) }
+    return ended.count
   }
 }
 
@@ -841,15 +864,26 @@ extension Session {
     await monitor.start()
   }
 
-  /// Starts a background `axbridge` read while the guest is cold (helper start, after a recycle or a launch's rebind),
-  /// so the first read a caller makes finds it warm or joins this one (`BridgeWarmth.warmUp`). No-op without a bridge
-  /// or with `ax` as the default reader.
+  /// Starts a background `axbridge` read while the guest is cold (helper start, after a stall recycle or a launch's
+  /// rebind), so the first read a caller makes finds it warm or joins this one (`BridgeWarmth.warmUp`); an answer ends
+  /// any stall cooldown. No-op without a bridge or with `ax` as the default reader.
   @discardableResult
   func warmBridge() -> Task<BridgeWarmth.WarmUp, Never>? {
     guard axDefault == "axbridge", let reader = axBridgeReader else { return nil }
     return bridgeWarmth.warmUp(
       deadlineMs: bridgeDeadline.coldDeadlineMs, log: { OpLog.shared.log(.info, $0, op: "warmUp") },
-      read: { _ = try await reader.describe(.frontmost, options: AccessibilityRequestOptions()) })
+      read: { _ = try await reader.describe(.frontmost, options: AccessibilityRequestOptions()) },
+      answered: { [bridgeHealth, bridgeStall] in
+        // a fresh guest that answered (after a recycle) ends the cooldown its stalled predecessor armed
+        bridgeHealth.recordSuccess()
+        bridgeStall.recordSuccess()
+      })
+  }
+
+  /// Ends this simulator's guests after a stall on a warm guest (`BridgeReaper`); idb starts a new one on the next read.
+  func recycleStalledGuest() async -> Int {
+    await GuestRecycling.endStalledGuests(
+      udid: udid, wedge: quiescence.wedge, reaper: .system, monitor: quiescence.existing)
   }
 
   /// The stream's monitor if a stream was ever opened; never opens one.

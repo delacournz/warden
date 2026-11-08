@@ -24,7 +24,7 @@ export type { TabsLabelProps };
  * covers a finger dragging, a flick and a plain tap without knowing which is
  * happening, because all three write the same value. `Checkbox`'s border makes
  * the same trade: a colour that travels cannot be a class, so it interpolates
- * between two tokens and the decision stays in a pure map `bun test` can sweep.
+ * between two tokens and the decision stays in a pure map a unit test can sweep.
  *
  * The `label` slot therefore carries **no** colour. Two sources for one colour is
  * how a class and a style end up disagreeing for a frame on every commit.

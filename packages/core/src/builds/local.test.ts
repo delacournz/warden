@@ -316,6 +316,111 @@ describe("runLocalBuild", () => {
 		expect(seen).toEqual(["> Task :app:assembleDebug"]);
 	});
 
+	/** A heartbeat whose timer the test fires by hand, on a clock the test moves. */
+	function manualHeartbeat() {
+		const state = { clock: 0, tick: undefined as (() => void) | undefined, everyMs: 0, stopped: false };
+		const heartbeat = {
+			everyMs: 60_000,
+			now: () => state.clock,
+			schedule: (fn: () => void, ms: number) => {
+				state.tick = fn;
+				state.everyMs = ms;
+				return () => {
+					state.stopped = true;
+				};
+			},
+		};
+		return { state, heartbeat };
+	}
+
+	test("heartbeat: a long build logs how long it has run and its last output line", async () => {
+		const s = setup(["h1"]);
+		const { state, heartbeat } = manualHeartbeat();
+		const logs: string[] = [];
+		const exec: Exec = async (cmd, opts) => {
+			if (cmd[2] === "gradle-build") {
+				state.clock = 60_000;
+				state.tick?.();
+				opts?.onLine?.("\u001b[32m> Task :app:compileDebugKotlin\u001b[0m   ");
+				opts?.onLine?.("   ");
+				state.clock = 125_000;
+				state.tick?.();
+			}
+			return s.exec(cmd, opts);
+		};
+		const res = await runLocalBuild({
+			...base,
+			log: (line) => logs.push(line),
+			exec,
+			project: s.project,
+			platform: "android",
+			hash: "h1",
+			heartbeat,
+		});
+		expect(res.success).toBe(true);
+		expect(state.everyMs).toBe(60_000);
+		expect(logs.filter((line) => line.startsWith("still building"))).toEqual([
+			"still building android (1m 0s)",
+			"still building android (2m 5s): > Task :app:compileDebugKotlin",
+		]);
+		expect(state.stopped).toBe(true);
+	});
+
+	test("heartbeat: stopped when the build fails too", async () => {
+		const s = setup(["h1"]);
+		const { state, heartbeat } = manualHeartbeat();
+		const res = await runLocalBuild({
+			...base,
+			exec: s.exec,
+			project: s.project,
+			platform: "ios",
+			hash: "h1",
+			heartbeat,
+		});
+		expect(res.success).toBe(false);
+		expect(state.stopped).toBe(true);
+	});
+
+	test("no heartbeat unless asked", async () => {
+		const s = setup(["h1"]);
+		const logs: string[] = [];
+		const exec: Exec = async (cmd, opts) => {
+			if (cmd[2] === "gradle-build") opts?.onLine?.("> Task :app:assembleDebug");
+			return s.exec(cmd, opts);
+		};
+		await runLocalBuild({
+			...base,
+			log: (l) => logs.push(l),
+			exec,
+			project: s.project,
+			platform: "android",
+			hash: "h1",
+		});
+		expect(logs.some((line) => line.startsWith("still building"))).toBe(false);
+	});
+
+	test("a green build keeps its whole output in the build log too", async () => {
+		const s = setup(["h1"]);
+		const exec: Exec = async (cmd, opts) => {
+			if (cmd[2] === "gradle-build") {
+				await s.exec(cmd, opts);
+				return { exitCode: 0, stdout: "> Task :app:assembleDebug\nBUILD SUCCESSFUL\n", stderr: "" };
+			}
+			return s.exec(cmd, opts);
+		};
+		const wh = join(dir, "wh");
+		const res = await runLocalBuild({
+			...base,
+			exec,
+			project: s.project,
+			platform: "android",
+			hash: "h1",
+			wardenHome: wh,
+		});
+		expect(res.success).toBe(true);
+		expect(readFileSync(join(wh, "logs", "build-android-h1.log"), "utf8")).toContain("BUILD SUCCESSFUL");
+	});
+
 	test("fingerprint changed during build, native dir already there → error (a real native edit)", async () => {
 		const s = setup(["h2"]);
 		mkdirSync(join(s.root, "android"), { recursive: true });
@@ -920,6 +1025,26 @@ describe("runLocalBuild: a stale CNG native dir is regenerated before the build"
 		expect((await result).success).toBe(true);
 		expect(s.seen.staleAtBuild).toBe(true);
 		expect(written).toEqual(["h1"]);
+	});
+
+	test("an Android build reports the keystore Gradle signed with, read from the prebuilt project", async () => {
+		const s = cng();
+		const app = join(dir, "app", "android", "app");
+		mkdirSync(app, { recursive: true });
+		writeFileSync(join(app, "debug.keystore"), "ks");
+		writeFileSync(
+			join(app, "build.gradle"),
+			"signingConfigs { debug { storeFile file('debug.keystore') storePassword 'android' keyAlias 'androiddebugkey' keyPassword 'android' } }\nbuildTypes { debug { signingConfig signingConfigs.debug } }"
+		);
+		const { result } = s.run("h1");
+		const built = await result;
+		if (!built.success) throw new Error(built.error);
+		expect(built.data.signing).toEqual({
+			path: join(app, "debug.keystore"),
+			alias: "androiddebugkey",
+			storePass: "android",
+			keyPass: "android",
+		});
 	});
 
 	test("a committed (not git-ignored) native dir is never removed", async () => {

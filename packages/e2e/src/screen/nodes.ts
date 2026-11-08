@@ -62,6 +62,7 @@ function isSecure(element: Element, traits: ReadonlySet<string>): boolean {
 		element.role === "securefield" ||
 		traits.has("password") ||
 		traits.has("secure") ||
+		traits.has("secure-text-field") ||
 		element.rawType.toLowerCase().includes("secure")
 	);
 }

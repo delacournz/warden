@@ -1,7 +1,7 @@
 import type { Driver, Element, KeyName, Modifier, Point, Rect, Snapshot } from "../driver/driver.types";
 import { canActOnElements } from "../driver/element-actions";
 import { canDetectAlerts, canObserve, OBSERVATION_MAX_AGE_MS } from "../driver/observation-cache";
-import { snapshotHash } from "../driver/settle";
+import { elementKey } from "../driver/settle";
 import { typeText } from "../driver/typing";
 import { E2eError } from "../errors";
 import {
@@ -10,8 +10,10 @@ import {
 	centreOf,
 	fieldValue,
 	focusPoint,
+	graphemes,
 	isOnScreen,
 	type Momentum,
+	maskedReading,
 	PINCH_MS,
 	pinchRadius,
 	ROTATE_MS,
@@ -35,6 +37,7 @@ import {
 	hitTestField,
 	tapToFocus,
 } from "./field";
+import { COVER_SCROLL_SWIPE, coverOf, dismissKeyboard, scrollPath } from "./keyboard-cover";
 import type { NodeEntry } from "./nodes";
 import type { PollStep } from "./poll";
 import {
@@ -107,6 +110,15 @@ const VERIFY_MS = 1000;
 const CONFIRM_FLOOR_MS = 500;
 /** Quiet time asked of the driver after each scroll step. */
 const SCROLL_SETTLE = { quietMs: 150, timeoutMs: 1000 };
+
+/** Swipes one tap spends scrolling a target out from under the keyboard. */
+const MAX_COVER_SCROLLS = 3;
+/**
+ * How long `isVisible()` / `isHidden()` / `count()` look again at a degraded read before `READ_DEGRADED` (capped by the
+ * action timeout): long enough for a stalled bridge's background probe or the React tree to settle it, short enough
+ * that a spec branching on the answer is not held for the whole action timeout.
+ */
+const QUICK_CHECK_WINDOW_MS = 2000;
 
 function assertOptions(verb: string, options: object, allowed: readonly string[]): void {
 	const unknown = Object.keys(options).filter((key) => !allowed.includes(key));
@@ -309,13 +321,15 @@ export class Locator {
 
 	/**
 	 * One look that settles this locator. A whole read answers at once (never waits); a degraded one that cannot say
-	 * whether the locator is there is looked at again until one can, within the action timeout, then `READ_DEGRADED`.
+	 * whether the locator is there is looked at again until one can, within the action timeout (`quick`: within
+	 * `QUICK_CHECK_WINDOW_MS`, for checks a spec branches on), then `READ_DEGRADED`.
 	 */
-	private async conclusive(options: { reuse?: boolean } = {}): Promise<Conclusive> {
-		const first = await this.look(options);
+	private async conclusive(options: { reuse?: boolean; quick?: boolean } = {}): Promise<Conclusive> {
+		const first = await this.look(options.reuse === undefined ? {} : { reuse: options.reuse });
 		const settled = await this.settled(first.observed);
 		if (settled !== undefined) return settled;
-		const timeoutMs = this.rt.actionTimeout();
+		const actionMs = this.rt.actionTimeout();
+		const timeoutMs = options.quick === true ? Math.min(actionMs, QUICK_CHECK_WINDOW_MS) : actionMs;
 		let last: { read: DegradedRead; snapshot: Observed["snapshot"] } | undefined;
 		const result = await this.rt.poll<Conclusive, undefined>(async () => {
 			const observation = await this.rt.tryObserve({ reuse: false });
@@ -386,7 +400,7 @@ export class Locator {
 
 	count(): Promise<number> {
 		return this.traced("count", async () => {
-			const { entries, react } = await this.conclusive();
+			const { entries, react } = await this.conclusive({ quick: true });
 			return react?.length ?? entries.length;
 		});
 	}
@@ -427,7 +441,7 @@ export class Locator {
 
 	isVisible(): Promise<boolean> {
 		return this.traced("isVisible", async () => {
-			const { entries, react, observed } = await this.conclusive();
+			const { entries, react, observed } = await this.conclusive({ quick: true });
 			if (react !== undefined) return reactVisible(this.reactOnly(react, observed), observed);
 			return entries.length > 0 && this.exactlyOne(entries, observed).visible;
 		});
@@ -679,6 +693,36 @@ export class Locator {
 	}
 
 	/**
+	 * A target under the on-screen keyboard (the default `software` mode keeps it up) would get the touch on a key. In a
+	 * scroll container it is scrolled into the free part of the screen (at most `MAX_COVER_SCROLLS` swipes, each looked at
+	 * fresh); otherwise, or when scrolling does not clear it, the keyboard is dismissed once (`dismissKeyboard`). Either way
+	 * the match is looked at again, and whatever that look shows is what the action uses: no retry.
+	 */
+	private async clearOfKeyboard(
+		found: Actionable,
+		spec: ActionSpec,
+		position: Point | undefined,
+		timeoutMs: number
+	): Promise<Actionable> {
+		const coverAt = (at: Actionable) => coverOf(at.entry, tapPointOf(at.entry, position), at.observed.snapshot);
+		let current = found;
+		let cover = coverAt(current);
+		if (cover === undefined) return found;
+		const { driver } = found.observed;
+		for (let scrolls = 0; cover?.scroller !== undefined && scrolls < MAX_COVER_SCROLLS; scrolls += 1) {
+			const path = scrollPath(cover.scroller, cover.shift);
+			this.rt.drive("scrollIntoView", await driver.swipe(path.from, path.to, COVER_SCROLL_SWIPE));
+			await driver.settle(SCROLL_SETTLE);
+			current = await this.actionable(spec, timeoutMs);
+			cover = coverAt(current);
+		}
+		if (cover === undefined) return current;
+		this.rt.drive("dismissKeyboard", await dismissKeyboard(driver));
+		await driver.settle(SCROLL_SETTLE);
+		return this.actionable(spec, timeoutMs);
+	}
+
+	/**
 	 * Taps the one visible, enabled match. With `until` it is also the retrying tap: the press on a tab bar or a list row
 	 * right after a navigation is sometimes dropped with nothing on screen to tell, so it checks that `until` shows
 	 * within `windowMs` and presses again, up to `retries` more times.
@@ -693,7 +737,7 @@ export class Locator {
 				let before = await this.tapOnce(options);
 				if (retry === undefined) return;
 				for (let resent = 0; resent < retry.retries; resent += 1) {
-					const outcome = await this.arrivedWithin(retry, snapshotHash(before));
+					const outcome = await this.arrivedWithin(retry, before);
 					// a screen that reacted got the press: pressing again would be a second submit or toggle
 					if (outcome !== "press-again") return;
 					before = await this.tapOnce(options);
@@ -704,25 +748,32 @@ export class Locator {
 	}
 
 	/**
-	 * One press; resolves to the snapshot it aimed from (the screen just before the press). A plain tap may aim from the
-	 * kept snapshot (`aimFromKept`); a tap with `until` takes a fresh look, since the screen it aimed from is what the
-	 * checks compare against to tell the press landed, and an older one could differ only because it was older.
+	 * One press; resolves to the snapshot it aimed from (the screen just before the press) and the element pressed (none
+	 * for a match only the React tree knows). A plain tap may aim from the kept snapshot (`aimFromKept`); a tap with
+	 * `until` takes a fresh look, since the screen it aimed from is what the checks compare against to tell the press
+	 * landed, and an older one could differ only because it was older.
 	 */
-	private async tapOnce(options: TapOptions): Promise<Snapshot> {
+	private async tapOnce(options: TapOptions): Promise<AimedFrom> {
 		const withPosition = options.position !== undefined;
 		const spec = { enabled: !withPosition, tapPointOnScreen: !withPosition };
-		const found =
+		const timeoutMs = options.timeout ?? this.rt.actionTimeout();
+		const look =
 			(options.until === undefined ? await this.aimFromKept(spec, options.position) : undefined) ??
-			(await this.actionable(spec, options.timeout ?? this.rt.actionTimeout(), true));
+			(await this.actionable(spec, timeoutMs, true));
+		const found = "entry" in look ? await this.clearOfKeyboard(look, spec, options.position, timeoutMs) : look;
 		const point =
 			"react" in found ? reactTapPoint(found.react, options.position) : tapPointOf(found.entry, options.position);
 		const { driver } = found.observed;
 		// a screen reader changes what a touch means, so a resolved element is pressed through its accessibility action
+		const aimed: AimedFrom = {
+			snapshot: found.observed.snapshot,
+			target: "entry" in found ? found.entry.element : undefined,
+		};
 		if (!withPosition && "entry" in found && canActOnElements(driver)) {
-			if (this.rt.drive("tap", await driver.pressElement(found.entry.element))) return found.observed.snapshot;
+			if (this.rt.drive("tap", await driver.pressElement(found.entry.element))) return aimed;
 		}
 		this.rt.drive("tap", await driver.tap(point));
-		return found.observed.snapshot;
+		return aimed;
 	}
 
 	/**
@@ -730,15 +781,21 @@ export class Locator {
 	 * (`driver.tap` returns once the HID press is over, ~85 ms, and an AX read queues behind the app's main thread, so
 	 * that look usually already shows the screen the press made; measured: holding it back to `pollMs` saved no read
 	 * and cost 250 ms a press). A locator is checked on the snapshot of
-	 * the poll itself, which is also compared with `pressedOn` (the hash of the screen the press aimed from): once the
-	 * screen changed the press landed, so it is never sent again (`landed`, even when `until` is late); a screen still
-	 * unchanged on `UNCHANGED_CHECKS` checks in a row from `UNCHANGED_AFTER_MS` on is pressed again at once. A function
+	 * the poll itself, which is also compared with the screen the press aimed from (`reacted`): once the screen reacted
+	 * the press landed, so it is never sent again (`landed`, even when `until` is late); a screen that has not reacted
+	 * on `UNCHANGED_CHECKS` checks in a row from `UNCHANGED_AFTER_MS` on is pressed again at once. A function
 	 * is called with the kept snapshot forgotten (after the first check), so its own reads take one new snapshot
 	 * between them rather than the previous check's; it gets the whole window.
 	 */
-	private async arrivedWithin(plan: RetryPlan, pressedOn: string): Promise<TapOutcome> {
+	private async arrivedWithin(plan: RetryPlan, aimed: AimedFrom): Promise<TapOutcome> {
 		const { until } = plan;
-		const watch: PressWatch = { pressedOn, started: this.rt.clock.now(), changed: false, unchanged: 0 };
+		const watch: PressWatch = {
+			before: new Set(aimed.snapshot.flat.map(elementKey)),
+			target: aimed.target === undefined ? undefined : elementKey(aimed.target),
+			started: this.rt.clock.now(),
+			changed: false,
+			unchanged: 0,
+		};
 		const result = await this.rt.poll<TapOutcome, undefined>(
 			async (attempt) => {
 				if (typeof until !== "function") return this.checkLocatorUntil(until, watch, attempt);
@@ -767,7 +824,7 @@ export class Locator {
 			return { done: false, state: undefined };
 		}
 		if (await until.shownIn(observation.observed)) return { done: true, value: "arrived" };
-		if (snapshotHash(observation.observed.snapshot) === watch.pressedOn) watch.unchanged += 1;
+		if (!reacted(observation.observed.snapshot, watch)) watch.unchanged += 1;
 		else {
 			watch.changed = true;
 			watch.unchanged = 0;
@@ -782,9 +839,13 @@ export class Locator {
 	async longPress(options: LongPressOptions = {}): Promise<void> {
 		assertOptions("longPress", options, ["durationMs", "timeout"]);
 		return this.act("longPress", async () => {
-			const { entry, observed } = await this.actionable(
-				{ enabled: true, tapPointOnScreen: true },
-				options.timeout ?? this.rt.actionTimeout()
+			const spec = { enabled: true, tapPointOnScreen: true };
+			const timeoutMs = options.timeout ?? this.rt.actionTimeout();
+			const { entry, observed } = await this.clearOfKeyboard(
+				await this.actionable(spec, timeoutMs),
+				spec,
+				undefined,
+				timeoutMs
 			);
 			const opts = options.durationMs === undefined ? undefined : { durationMs: options.durationMs };
 			this.rt.drive("longPress", await observed.driver.longPress(tapPointOf(entry), opts));
@@ -807,6 +868,8 @@ export class Locator {
 		return this.act("fill", async () => {
 			const budget = this.rt.budget(options.timeout);
 			let target = await this.actionable({ enabled: true, tapPointOnScreen: false }, budget.remaining());
+			// decided once: a field that only shows as secure after the first attempt (masked read-back) stays verified
+			const verify = !target.entry.secure;
 			let firstHeld: string | undefined;
 			for (let attempt = 1; ; attempt += 1) {
 				const point = focusPoint(target.entry.element.frame);
@@ -823,14 +886,13 @@ export class Locator {
 						viaFor(attempt, via)
 					)
 				);
-				if (target.entry.secure) return;
+				if (!verify) return;
 				const outcome = await this.confirm(target, text, budget);
 				if (outcome.ok) return;
 				if (attempt === 2) {
-					const earlier = firstHeld === undefined ? "" : ` (first attempt held ${JSON.stringify(firstHeld)})`;
 					throw new E2eError(
 						"ACTION_FAILED",
-						`${this}: fill did not take: expected ${JSON.stringify(text)} but the field holds ${JSON.stringify(outcome.held)}${earlier}`,
+						`${this}: ${fillMismatch(text, target.entry.secure, outcome.held, firstHeld)}`,
 						outcome.screen
 					);
 				}
@@ -1033,7 +1095,12 @@ export class Locator {
 	): Promise<{ ok: true } | { ok: false; held: string; screen: string | undefined }> {
 		const span = Math.max(budget.remaining(), CONFIRM_FLOOR_MS);
 		let lastSeen: Observed["snapshot"] | undefined;
-		const readValue = (found: NodeEntry): string => (text === "" ? fieldValue(found) : rawValue(found));
+		// a field not known as secure when the fill started (an empty one on a read without its secure trait) can read
+		// back masked: its bullets are counted against the typed text
+		const readValue = (found: NodeEntry): string => {
+			if (text === "") return fieldValue(found);
+			return found.secure ? maskedReading(found, text) : rawValue(found);
+		};
 		const outcome = await confirmFieldValue<never>({
 			text,
 			now: this.rt.clock.now,
@@ -1127,16 +1194,37 @@ type RetryPlan = { until: TapUntil; retries: number; windowMs: number; pollMs: n
 /** How one press's window ended: `until` showed; the screen reacted without it (no second press); or press again. */
 type TapOutcome = "arrived" | "landed" | "press-again";
 
+/** What a press aimed from: the screen just before it and the element pressed (none for a React-only match). */
+type AimedFrom = { snapshot: Snapshot; target: Element | undefined };
+
 /** What the checks after one press have seen of the screen. */
 type PressWatch = {
-	/** hash of the snapshot the press aimed from */
-	pressedOn: string;
+	/** `elementKey` of every node of the snapshot the press aimed from */
+	before: ReadonlySet<string>;
+	/** `elementKey` of the element pressed */
+	target: string | undefined;
 	started: number;
-	/** some check saw a screen other than `pressedOn`: the press landed */
+	/** some check saw the screen react: the press landed */
 	changed: boolean;
-	/** checks in a row that saw `pressedOn` */
+	/** checks in a row that saw no reaction */
 	unchanged: number;
 };
+
+/**
+ * Whether `snapshot` shows a reaction to the press `watch` follows: a node the aimed-from screen did not have (a new
+ * element, or one whose label, value or frame changed), or the pressed element gone. Nodes that only left are not one:
+ * right after a navigation the screen it left and a keyboard going down stay in the tree until the transition ends,
+ * a transition that also drops presses, and their leaving looked like a landed press that was never sent again.
+ */
+function reacted(snapshot: Snapshot, watch: PressWatch): boolean {
+	const now = new Set<string>();
+	for (const element of snapshot.flat) {
+		const key = elementKey(element);
+		if (!watch.before.has(key)) return true;
+		now.add(key);
+	}
+	return watch.target !== undefined && !now.has(watch.target);
+}
 
 function wholeNumber(name: string, value: number, atLeast: number): void {
 	if (!Number.isInteger(value) || value < atLeast) {
@@ -1199,6 +1287,13 @@ function clearMethodFor(attempt: number): ClearMethod {
 }
 
 /** What the field shows, placeholder and all (used to compare against what was typed). */
+/** Why a fill failed. A field that reads masked is never quoted the typed text: only its length. */
+function fillMismatch(text: string, secure: boolean, held: string, firstHeld: string | undefined): string {
+	const expected = secure ? `${graphemes(text)} characters (secure)` : JSON.stringify(text);
+	const earlier = firstHeld === undefined ? "" : ` (first attempt held ${JSON.stringify(firstHeld)})`;
+	return `fill did not take: expected ${expected} but the field holds ${JSON.stringify(held)}${earlier}`;
+}
+
 function rawValue(entry: NodeEntry): string {
 	return entry.value ?? (entry.role === "textbox" || entry.role === "searchbox" ? (entry.element.text ?? "") : "");
 }

@@ -28,7 +28,7 @@ private final class Clock: @unchecked Sendable {
 /// deadline, a stall is a bridge failure that falls back to the host `ax` reader, and the bridge is skipped for a
 /// cooldown so every later read does not pay the deadline again.
 final class BridgeStallTests: XCTestCase {
-  private let policy = BridgeDeadline(readMs: 100, cooldownSeconds: 20)
+  private let policy = BridgeDeadline(readMs: 100, coldReadMs: 300, cooldownSeconds: 20)
 
   private func hang(_ calls: Calls) -> @Sendable () async throws -> String {
     {
@@ -55,11 +55,12 @@ final class BridgeStallTests: XCTestCase {
     health: BridgeHealth = BridgeHealth(),
     clock: Clock = Clock(),
     recovery: BridgeRecovery? = nil,
+    reaper: BridgeReaper? = nil,
     calls: Calls
   ) async throws -> AXOutcome<String> {
     try await Session.readAX(
       requested: requested, bridge: bridge, host: host, recover: { _ in calls.bump("recover") },
-      policy: policy ?? self.policy, gate: gate, warmth: warmth, health: health, recovery: recovery,
+      policy: policy ?? self.policy, gate: gate, warmth: warmth, health: health, recovery: recovery, reaper: reaper,
       now: { clock.now }, log: { calls.add($0) }, bridgeName: "available")
   }
 
@@ -343,6 +344,23 @@ final class BridgeStallTests: XCTestCase {
       warmth.warmUp(deadlineMs: 1000, log: { _ in }) { calls.bump("warm") }, "a warm guest needs no warm-up")
   }
 
+  func testAWarmUpThatAnswersTellsTheSession() async {
+    let calls = Calls()
+    let warmth = BridgeWarmth()
+    let task = warmth.warmUp(
+      deadlineMs: 300, log: { _ in }, read: { calls.bump("bridge") }, answered: { calls.bump("answered") })
+    let outcome = await task?.value
+    XCTAssertEqual(outcome, .warmed)
+    XCTAssertEqual(calls.count("answered"), 1, "so a cooldown armed before a recycle ends once the fresh guest answers")
+    let stalled = BridgeWarmth()
+    let silent = stalled.warmUp(
+      deadlineMs: 50, log: { _ in }, read: { try await Task.sleep(for: .seconds(30)) },
+      answered: { calls.bump("answered") })
+    let silentOutcome = await silent?.value
+    XCTAssertEqual(silentOutcome, .stalled(afterMs: 50))
+    XCTAssertEqual(calls.count("answered"), 1)
+  }
+
   func testAUserReadJoinsTheInFlightWarmUp() async throws {
     let calls = Calls()
     let warmth = BridgeWarmth()
@@ -547,5 +565,328 @@ final class BridgeStallTests: XCTestCase {
       bridge: answer("bridge", calls), host: answer("ax", calls), gate: gate, warmth: warmth, policy: coldPolicy,
       clock: clock, recovery: recovery, calls: calls)
     XCTAssertEqual(next.backend, .axbridge)
+  }
+
+  func testAReadInTheCooldownJoinsARunningWarmUpInsteadOfProbing() async throws {
+    let calls = Calls()
+    let gate = BridgeStallGate()
+    let warmth = BridgeWarmth()
+    let clock = Clock()
+    gate.recordStall(at: clock.now)
+    let warmUp = warmth.warmUp(deadlineMs: 1000, log: { _ in }) {
+      calls.bump("warm")
+      try await Task.sleep(for: .milliseconds(150))
+    }
+    let recovery = recovery(calls) {}
+    let first = try await read(
+      bridge: answer("bridge", calls), host: answer("ax", calls), gate: gate, warmth: warmth, policy: coldPolicy,
+      clock: clock, recovery: recovery, calls: calls)
+    XCTAssertEqual(first.backend, .ax, "the cooldown still sends the read to ax at once")
+    _ = await warmUp?.value
+    _ = await recovery.probe.current?.value
+    XCTAssertEqual(calls.count("probe"), 0, "no second cold read on the guest while its warm-up runs")
+    XCTAssertEqual(calls.count("warm"), 1)
+    // the read's join of the warm-up is its own task: give it a moment to see the answer
+    for _ in 0..<100 where gate.skipReason(now: clock.now, cooldownSeconds: 20) != nil {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    XCTAssertNil(gate.skipReason(now: clock.now, cooldownSeconds: 20), "the warm-up answered: the cooldown is over")
+    let next = try await read(
+      bridge: answer("bridge", calls), host: answer("ax", calls), gate: gate, warmth: warmth, policy: coldPolicy,
+      clock: clock, recovery: recovery, calls: calls)
+    XCTAssertEqual(next.backend, .axbridge)
+  }
+
+  func testAnExplicitReadInTheCooldownWaitsForARunningWarmUpThenReads() async throws {
+    let calls = Calls()
+    let gate = BridgeStallGate()
+    let warmth = BridgeWarmth()
+    let clock = Clock()
+    gate.recordStall(at: clock.now)
+    _ = warmth.warmUp(deadlineMs: 1000, log: { _ in }) { try await Task.sleep(for: .milliseconds(30)) }
+    let recovery = recovery(calls) {}
+    let outcome = try await read(
+      requested: .axbridge, bridge: answer("bridge", calls), host: answer("ax", calls), gate: gate, warmth: warmth,
+      policy: coldPolicy, clock: clock, recovery: recovery, calls: calls)
+    XCTAssertEqual(outcome.backend, .axbridge)
+    XCTAssertEqual(calls.count("probe"), 0)
+  }
+
+  func testOnceTheWarmUpHasEndedAReadInTheCooldownProbesAgain() async throws {
+    let calls = Calls()
+    let gate = BridgeStallGate()
+    let warmth = BridgeWarmth()
+    let clock = Clock()
+    gate.recordStall(at: clock.now)
+    _ = await warmth.warmUp(deadlineMs: 50, log: { _ in }) { try await Task.sleep(for: .seconds(30)) }?.value
+    let recovery = recovery(calls) {}
+    _ = try await read(
+      bridge: answer("bridge", calls), host: answer("ax", calls), gate: gate, warmth: warmth, policy: coldPolicy,
+      clock: clock, recovery: recovery, calls: calls)
+    _ = await recovery.probe.current?.value
+    XCTAssertEqual(calls.count("probe"), 1, "a stalled warm-up is over: the probe takes over")
+  }
+
+  // MARK: reaping a stalled guest
+
+  /// A reaper whose recycle is counted as `recycle` calls.
+  private func reaper(_ calls: Calls, max: Int = BridgeReaper.defaultMaxRecycles) -> BridgeReaper {
+    BridgeReaper(maxRecycles: max) {
+      calls.bump("recycle")
+      return 1
+    }
+  }
+
+  func testAStallOnAWarmGuestRecyclesItAndTheNextReadIsCold() async throws {
+    let calls = Calls()
+    let warmth = BridgeWarmth.warmed()
+    let reaper = reaper(calls)
+    let outcome = try await read(
+      bridge: hang(calls), host: answer("ax", calls), gate: BridgeStallGate(), warmth: warmth, reaper: reaper,
+      calls: calls)
+    XCTAssertEqual(outcome.backend, .ax)
+    await reaper.current?.value
+    XCTAssertEqual(calls.count("recycle"), 1)
+    XCTAssertEqual(reaper.recycles, 1)
+    XCTAssertTrue(warmth.isCold, "the guest was replaced: its first read is cold again")
+    XCTAssertEqual(warmth.deadlineMs(policy), 300)
+    XCTAssertTrue(calls.logged.contains { $0.contains("recycl") }, "\(calls.logged)")
+  }
+
+  func testAColdGuestThatStallsIsNeverRecycled() async throws {
+    let calls = Calls()
+    let warmth = BridgeWarmth()
+    let reaper = reaper(calls)
+    let gate = BridgeStallGate()
+    for _ in 0..<2 {
+      _ = try await read(
+        bridge: hang(calls), host: answer("ax", calls), gate: gate, warmth: warmth, policy: coldPolicy, reaper: reaper,
+        calls: calls)
+    }
+    XCTAssertNil(reaper.current)
+    XCTAssertEqual(calls.count("recycle"), 0, "a cold guest is slow, not stuck: recycling it would loop")
+    XCTAssertNotNil(gate.skipReason(now: 1000, cooldownSeconds: 20), "the second cold stall still arms the cooldown")
+  }
+
+  func testARecycledGuestGetsTheColdRulesOfAFreshOne() async throws {
+    let calls = Calls()
+    let warmth = BridgeWarmth.warmed()
+    let gate = BridgeStallGate()
+    let clock = Clock()
+    let reaper = reaper(calls)
+    _ = try await read(
+      bridge: hang(calls), host: answer("ax", calls), gate: gate, warmth: warmth, clock: clock, reaper: reaper,
+      calls: calls)
+    await reaper.current?.value
+    clock.advance(25)
+    XCTAssertNil(gate.skipReason(now: clock.now, cooldownSeconds: 20))
+    let first = try await read(
+      bridge: hang(calls), host: answer("ax", calls), gate: gate, warmth: warmth, clock: clock, reaper: reaper,
+      calls: calls)
+    XCTAssertEqual(first.fallback?.stall?.deadlineMs, 300, "the recycled guest's first read has the cold deadline")
+    XCTAssertTrue(first.fallback?.stall?.cold ?? false)
+    XCTAssertNil(
+      gate.skipReason(now: clock.now, cooldownSeconds: 20),
+      "the recycled guest's first stall is exempt, like a freshly started guest's: the bridge is asked again")
+    XCTAssertEqual(calls.count("recycle"), 1, "a cold guest is never recycled")
+    _ = try await read(
+      bridge: hang(calls), host: answer("ax", calls), gate: gate, warmth: warmth, clock: clock, reaper: reaper,
+      calls: calls)
+    XCTAssertNotNil(gate.skipReason(now: clock.now, cooldownSeconds: 20), "its second stall arms the cooldown")
+    XCTAssertEqual(calls.count("recycle"), 1)
+  }
+
+  func testAGuestMadeColdByAStallItWasNotRecycledForHasNoExemptStall() async throws {
+    for reaper in [nil, reaper(Calls(), max: 0)] {
+      let calls = Calls()
+      let warmth = BridgeWarmth.warmed()
+      let gate = BridgeStallGate()
+      let clock = Clock()
+      _ = try await read(
+        bridge: hang(calls), host: answer("ax", calls), gate: gate, warmth: warmth, clock: clock, reaper: reaper,
+        calls: calls)
+      XCTAssertTrue(warmth.isCold, "idb ended the guest of the cancelled read: the next one is cold")
+      clock.advance(25)
+      XCTAssertNil(gate.skipReason(now: clock.now, cooldownSeconds: 20))
+      _ = try await read(
+        bridge: hang(calls), host: answer("ax", calls), gate: gate, warmth: warmth, clock: clock, reaper: reaper,
+        calls: calls)
+      XCTAssertNotNil(
+        gate.skipReason(now: clock.now, cooldownSeconds: 20),
+        "no recycle (budget spent or none): the replacement guest's stall arms the cooldown, so the stalls cannot loop")
+    }
+  }
+
+  func testTheBridgeIsWarmedUpAfterARecycle() async throws {
+    let calls = Calls()
+    let warmth = BridgeWarmth.warmed()
+    let reaper = BridgeReaper(
+      maxRecycles: 3,
+      recycle: {
+        calls.add("recycled")
+        return 1
+      },
+      rewarm: { calls.add("rewarm cold=\(warmth.isCold)") })
+    _ = try await read(
+      bridge: hang(calls), host: answer("ax", calls), gate: BridgeStallGate(), warmth: warmth, reaper: reaper,
+      calls: calls)
+    await reaper.current?.value
+    let order = calls.logged.filter { $0 == "recycled" || $0.hasPrefix("rewarm") }
+    XCTAssertEqual(order, ["recycled", "rewarm cold=true"], "the warm-up reads the fresh guest, after the recycle")
+  }
+
+  func testNoWarmUpWhenTheBudgetIsSpent() async throws {
+    let calls = Calls()
+    let reaper = BridgeReaper(maxRecycles: 0, recycle: { 1 }, rewarm: { calls.bump("rewarm") })
+    XCTAssertNil(reaper.recycleAfterStall(log: { _ in }))
+    XCTAssertEqual(calls.count("rewarm"), 0)
+  }
+
+  func testTheRecycleBudgetIsConfigurable() {
+    let calls = Calls()
+    let log: @Sendable (String) -> Void = { calls.add($0) }
+    XCTAssertEqual(BridgeReaper.configuredMaxRecycles([:], log: log), 3)
+    XCTAssertEqual(BridgeReaper.configuredMaxRecycles(["WARDEN_SIMD_BRIDGE_MAX_RECYCLES": "5"], log: log), 5)
+    XCTAssertEqual(BridgeReaper.configuredMaxRecycles(["WARDEN_SIMD_BRIDGE_MAX_RECYCLES": "0"], log: log), 0)
+    XCTAssertTrue(calls.logged.isEmpty, "\(calls.logged)")
+    for bad in ["x", "-1", "2.5", ""] {
+      XCTAssertEqual(BridgeReaper.configuredMaxRecycles(["WARDEN_SIMD_BRIDGE_MAX_RECYCLES": bad], log: log), 3, bad)
+    }
+    XCTAssertEqual(calls.logged.count, 4, "each invalid value is warned about: \(calls.logged)")
+    XCTAssertTrue(calls.logged.allSatisfy { $0.contains("WARDEN_SIMD_BRIDGE_MAX_RECYCLES") })
+  }
+
+  func testAZeroBudgetNeverRecycles() async throws {
+    let calls = Calls()
+    let warmth = BridgeWarmth.warmed()
+    let reaper = reaper(calls, max: 0)
+    _ = try await read(
+      bridge: hang(calls), host: answer("ax", calls), gate: BridgeStallGate(), warmth: warmth, reaper: reaper,
+      calls: calls)
+    XCTAssertNil(reaper.current)
+    XCTAssertEqual(calls.count("recycle"), 0)
+  }
+
+  func testRecyclesAreBoundedPerSessionThenReadsStayOnTheFallback() async throws {
+    let calls = Calls()
+    let warmth = BridgeWarmth.warmed()
+    let gate = BridgeStallGate()
+    let clock = Clock()
+    let reaper = reaper(calls, max: 2)
+    for _ in 0..<3 {
+      warmth.noteSuccess(generation: warmth.generation)
+      _ = try await read(
+        bridge: hang(calls), host: answer("ax", calls), gate: gate, warmth: warmth, clock: clock, reaper: reaper,
+        calls: calls)
+      await reaper.current?.value
+      clock.advance(25)
+    }
+    XCTAssertEqual(calls.count("recycle"), 2)
+    XCTAssertEqual(reaper.recycles, 2)
+    XCTAssertTrue(reaper.exhausted)
+    XCTAssertEqual(calls.logged.filter { $0.contains("recycle budget") }.count, 1, "said once: \(calls.logged)")
+  }
+
+  func testTheReaperDefaultsToAFewRecyclesPerSession() {
+    XCTAssertEqual(BridgeReaper.defaultMaxRecycles, 3)
+    XCTAssertFalse(BridgeReaper(maxRecycles: 0) { 0 }.allowsRecycle)
+  }
+
+  func testARecycleThatFoundNoGuestDoesNotSpendTheBudget() async throws {
+    let calls = Calls()
+    let reaper = BridgeReaper(maxRecycles: 1) {
+      calls.bump("recycle")
+      return 0
+    }
+    let warmth = BridgeWarmth.warmed()
+    _ = try await read(
+      bridge: hang(calls), host: answer("ax", calls), gate: BridgeStallGate(), warmth: warmth, reaper: reaper,
+      calls: calls)
+    await reaper.current?.value
+    XCTAssertEqual(reaper.recycles, 0)
+    XCTAssertTrue(reaper.allowsRecycle)
+  }
+
+  // MARK: probe back-off
+
+  func testSilentProbesBackOffExponentiallyUpToTheCapAndAnAnswerResetsIt() async {
+    let probe = BridgeProbe(deadlineMs: 20, intervalSeconds: 5)
+    XCTAssertEqual(BridgeProbe.maxIntervalSeconds, 30)
+    let silent: @Sendable () async throws -> Void = { try await Task.sleep(for: .seconds(30)) }
+    var now = 0.0
+    var starts: [Double] = []
+    while starts.count < 6 {
+      if let task = probe.start(now: now, check: silent, settled: { _, _ in }) {
+        starts.append(now)
+        _ = await task.value
+      }
+      now += 1
+    }
+    let gaps = zip(starts.dropFirst(), starts).map { $0 - $1 }
+    XCTAssertEqual(gaps, [5, 10, 20, 30, 30], "\(starts)")
+    _ = await probe.start(now: now + 30, check: {}, settled: { _, _ in })?.value
+    XCTAssertEqual(probe.intervalNow, 5, "an answer resets the back-off")
+  }
+  func testASilentProbeHoldsReadsOnAxWithoutRearmingAFullCooldown() async throws {
+    let calls = Calls()
+    let gate = BridgeStallGate()
+    let clock = Clock()
+    gate.recordStall(at: clock.now)
+    let recovery = recovery(calls, deadlineMs: 50) { try await Task.sleep(for: .seconds(30)) }
+    clock.advance(15)
+    _ = try await read(
+      bridge: answer("bridge", calls), host: answer("ax", calls), gate: gate,
+      policy: BridgeDeadline(readMs: 100, coldReadMs: 100, cooldownSeconds: 20), clock: clock, recovery: recovery,
+      calls: calls)
+    _ = await recovery.probe.current?.value
+    XCTAssertEqual(gate.lastStallAt, 1000, "a silent probe does not restart the cooldown clock")
+    clock.advance(100)
+    let reason = gate.skipReason(now: clock.now, cooldownSeconds: 20)
+    XCTAssertTrue(reason?.contains("probe") ?? false, "held on ax until a probe answers: \(reason ?? "nil")")
+    gate.recordSuccess()
+    XCTAssertNil(gate.skipReason(now: clock.now, cooldownSeconds: 20))
+  }
+
+  func testASilentProbeLeavesAColdGuestSoTheNextProbeGetsTheColdDeadline() async throws {
+    let calls = Calls()
+    let gate = BridgeStallGate()
+    let warmth = BridgeWarmth.warmed()
+    let clock = Clock()
+    gate.recordStall(at: clock.now)
+    let recovery = recovery(calls, deadlineMs: 50) { try await Task.sleep(for: .milliseconds(150)) }
+    let policy = BridgeDeadline(readMs: 100, coldReadMs: 400, cooldownSeconds: 20)
+    _ = try await read(
+      bridge: answer("bridge", calls), host: answer("ax", calls), gate: gate, warmth: warmth, policy: policy,
+      clock: clock, recovery: recovery, calls: calls)
+    let first = await recovery.probe.current?.value
+    XCTAssertEqual(first, .silent(afterMs: 50))
+    XCTAssertTrue(warmth.isCold, "the cancelled probe took its guest down; the next one starts cold")
+    clock.advance(10)
+    _ = try await read(
+      bridge: answer("bridge", calls), host: answer("ax", calls), gate: gate, warmth: warmth, policy: policy,
+      clock: clock, recovery: recovery, calls: calls)
+    let second = await recovery.probe.current?.value
+    XCTAssertEqual(second, .answered, "150 ms is inside the cold deadline")
+    XCTAssertFalse(warmth.isCold)
+  }
+
+  func testAnExplicitReadWaitsForAColdProbeOnlyUpToTheProbeDeadline() async throws {
+    let calls = Calls()
+    let gate = BridgeStallGate()
+    let clock = Clock()
+    gate.recordStall(at: clock.now)
+    let recovery = recovery(calls, deadlineMs: 100) { try await Task.sleep(for: .seconds(30)) }
+    let started = ContinuousClock.now
+    do {
+      _ = try await read(
+        requested: .axbridge, bridge: hang(calls), host: answer("ax", calls), gate: gate, warmth: BridgeWarmth(),
+        policy: BridgeDeadline(readMs: 4000, coldReadMs: 12000, cooldownSeconds: 20), clock: clock,
+        recovery: recovery, calls: calls)
+      XCTFail("expected a timeout")
+    } catch {
+      XCTAssertEqual(WireError.from(error).code, .timeout)
+    }
+    XCTAssertLessThan(ContinuousClock.now - started, .seconds(1), "not the 12 s the cold probe may take")
+    XCTAssertEqual(calls.count("bridge"), 0)
   }
 }

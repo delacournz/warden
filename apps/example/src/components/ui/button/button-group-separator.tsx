@@ -14,7 +14,7 @@ export type ButtonGroupSeparatorProps = {
  * sit under the members instead of between them — so it reads the group's
  * orientation and inverts it. That inversion is a map in `button.variants.ts`
  * rather than a `SeparatorOrientation` here, because that type lives beside a
- * React Native import and the variants file has to stay parseable by `bun test`.
+ * React Native import and the variants file has to stay free of React Native imports.
  *
  * A separator is deliberately **not** a member: it consumes no position, so the
  * buttons either side of one are still the group's first and last and keep their

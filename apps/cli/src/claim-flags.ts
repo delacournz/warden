@@ -123,6 +123,8 @@ export type ClaimFlagValues = {
 	biometrics?: boolean | undefined;
 	/** `--camera`: Android only (the `+cam` identity); iOS leaves the profile unchanged */
 	camera?: boolean | undefined;
+	/** `e2e.<suite>.golden`, already picked by the caller: `false` creates fresh iOS sims instead of golden clones */
+	golden?: boolean | undefined;
 	/** `e2e.<suite>.reclaim` / preset `reclaim` / top-level `reclaim`, already picked by the caller (`WARDEN_RECLAIM` applies below it, at release) */
 	reclaimConfig?: ReclaimMode | undefined;
 };
@@ -170,6 +172,8 @@ export type ClaimFlags = {
 	slim?: SlimLayers;
 	/** reclaim mode from config; released with `releaseDevices({ reclaim })` (absent: `WARDEN_RECLAIM`, then none) */
 	reclaim?: ReclaimMode;
+	/** iOS: new sims are fresh `simctl create`s, never golden clones (absent: golden unless `WARDEN_GOLDEN=0`) */
+	golden?: false;
 };
 
 /** Claim queue wait when `--wait` is not given. */
@@ -328,6 +332,7 @@ function withOptionalFlags(flags: ClaimFlags, values: ClaimFlagValues): ClaimFla
 	if (values.label !== undefined) flags.label = values.label;
 	if (values.headless) flags.headless = true;
 	if (values.reclaimConfig !== undefined) flags.reclaim = values.reclaimConfig;
+	if (values.golden === false) flags.golden = false;
 	const slim: SlimLayers = {};
 	if (values.slim !== undefined) slim.flag = values.slim;
 	if (values.slimConfig !== undefined) slim.config = values.slimConfig;
@@ -444,10 +449,11 @@ function ownerLimitOf(ctx: CommandContext, platform: Platform): Result<number | 
 }
 
 /** The provider options of an iOS claim (slim profile, physical, named phones); none for Android. */
-function providerOptions(request: DeviceRequest, slim: SlimProfile | false) {
+function providerOptions(request: DeviceRequest, slim: SlimProfile | false, golden: false | undefined) {
 	if (request.platform !== "ios") return {};
 	return {
 		slim,
+		...(golden === false ? { golden } : {}),
 		physical: request.physical !== undefined,
 		...(request.physical?.ids ? { namedPhysical: request.physical.ids } : {}),
 	};
@@ -530,7 +536,7 @@ export async function claimWithFlags(
 	if (!slim.success) return slim;
 	const outcome = await claimDevices({
 		store: ctx.store(),
-		provider: providerFor(request.platform, ctx, owner, providerOptions(request, slim.data)),
+		provider: providerFor(request.platform, ctx, owner, providerOptions(request, slim.data, flags.golden)),
 		...(request.platform === "ios" ? { slim: slim.data !== false } : {}),
 		owner,
 		request,

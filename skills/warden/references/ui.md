@@ -46,7 +46,7 @@ Every call heartbeats your lease. Another live session's lease: `device_foreign`
 | `--force` | drive the device while your running `warden e2e` / `batch` / `run` holds it (else exit 2 `device_busy`); it disturbs that run. Not needed for your own `warden dev` |
 | `--json` | one JSON document on stdout |
 
-Actions also take `--settle [ms]`: wait for a quiet screen (budget 3000 ms), then print what changed.
+Actions also take `--settle [ms]`: wait for a quiet screen (500 ms unchanged, budget 3000 ms), then print what changed.
 
 Every subcommand also takes `--no-record`: while a `record` is active, this call is not appended to it. `--overwrite` (record start/stop) replaces a file; `--force` is only the busy-device option.
 
@@ -104,7 +104,7 @@ Line: `@eN [role] "name" id=<testID> value="..." <states> (x,y w×h)`. States: `
 | `bench` | `[--runs 20] [--metro url]` | times the loop against speed targets (default 20 runs; cold start, settle and open capped at 3-5); `--metro` for the tree metric; stops the device's helper: unshared device only |
 | `eval` `tree` `logs` `network log` `reload` | see Devtools | dev client only (`network log` = the request log) |
 | `network set\|flap\|fault\|status\|reset` `location` `clock` | see Network and location | change the device's network / GPS; recorded on your lease, undone on release |
-| `permission` `timezone` `locale` `a11y` `battery` `memory-warning` `push` | see Device settings | permissions, timezone, locale, text size, battery, memory warning, push; recorded on your lease, undone on release |
+| `permission` `timezone` `locale` `a11y` `battery` `keyboard` `memory-warning` `push` | see Device settings | permissions, timezone, locale, text size, battery, on-screen keyboard, memory warning, push; recorded on your lease, undone on release |
 | `camera set\|status\|clear` | see Camera | feed an image or video into the app's camera; recorded on your lease, undone on release |
 
 ## Biometrics
@@ -158,7 +158,7 @@ Every change prints one line (`--json`: `result.action` is `net`, `net-flap`, `n
 - Android: `--frozen` is `E_UNSUPPORTED` (the emulator clock cannot stop). iOS: only the app launched with warden's dylib sees the clock; without it the clock applies from the next launch, or pass `--relaunch`.
 - A large offset breaks HTTPS (certificates look expired or not yet valid): `advance` warns; `clock reset` before network work.
 
-## Device settings (`permission`, `timezone`, `locale`, `a11y`, `battery`, `memory-warning`, `push`)
+## Device settings (`permission`, `timezone`, `locale`, `a11y`, `battery`, `keyboard`, `memory-warning`, `push`)
 
 Each is its own verb (like `location` / `clock`) so its flags show in `--help`. They act on your lease, record what they set and **release / gc undo it** (iOS: privacy reset, text size `large`, contrast off, status bar cleared, staged launch settings removed; Android: permissions reset, `font_scale 1.0`, bold off, timezone back to what it was, app locale cleared, battery reset). A spec sets the same through `device.permissions` / `timezone` / `locale` / `a11y` / `battery` / `memoryWarning` / `push` (`specs.md`). `--app <bundle>` names the app; default is the one `open` launched.
 
@@ -172,6 +172,7 @@ Each is its own verb (like `location` / `clock`) so its flags show in `--help`. 
 | `a11y reset` / `status` | | defaults back (TalkBack's services too) / what is recorded plus `screenReader` (`off`, `simulated` or `real`) |
 | `battery set` | `[--level 0-100] [--charging\|--no-charging]` | Android emulator: real (`dumpsys battery`, the app sees it). iOS: status bar only (`cosmetic: true`, warning) |
 | `battery reset` / `status` | | real battery back / what is recorded |
+| `keyboard` | `<software\|hardware\|toggle\|status\|reset>` | on-screen keyboard. `software` (default on every leased device) keeps it up while warden types; `hardware` hides it (input as from a keyboard). Live, no relaunch; `status` = mode + `visible`. `software` / `reset` forget the record. iOS sim: injected dylib, loaded on every launch by default; a running app launched without it gets a warning (`appliesOnLaunch`, `open --relaunch`). Android emulator: `hardware` disables every IME (originals stashed on the device and on the lease, put back by `software` and on release); the keyboard reappears at the next field focus. Covered targets are auto-handled on iOS only: scrolled clear, else the injected library resigns the first responder (never Return). On Android `hideKeyboard()` presses back. Physical iOS / Android: `E_UNSUPPORTED` |
 | `memory-warning` | `[--app b]` | Android: `am send-trim-memory RUNNING_CRITICAL` to the running app (`E_APP_UNAVAILABLE` when it is not running). iOS: `E_UNSUPPORTED` (the `lowmemory` notification never reaches a UIKit app) |
 | `push` | `<payload.json\|'{"aps":{…}}'> [--app b]` | iOS: `simctl push` (needs `aps`, 4096 bytes max). Android: `E_UNSUPPORTED` |
 
@@ -190,7 +191,7 @@ These only read: a device a live `warden e2e` / `batch` holds is reported on, no
 
 - Permissions apply before the first launch (iOS terminates a running app whose permission changes): `permission set` then `open`. iOS `camera` and `notifications` have no `simctl privacy` service and are skipped.
 - Android permissions are the ones the app's manifest declares; a name the app does not declare is skipped with a warning.
-- `--json`: `result.action` is `permission-set`, `-reset`, `-status`, `timezone-set`, `-reset`, `-status`, `locale-*`, `a11y-*`, `battery-*`, `memory-warning`, `push`.
+- `--json`: `result.action` is `permission-set`, `-reset`, `-status`, `timezone-set`, `-reset`, `-status`, `locale-*`, `a11y-*`, `battery-*`, `keyboard-set`, `-reset`, `-status`, `memory-warning`, `push`.
 
 ## Camera (`camera`)
 

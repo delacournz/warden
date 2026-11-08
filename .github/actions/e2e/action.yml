@@ -48,6 +48,9 @@ inputs:
   npm-token:
     description: Exported as NPM_TOKEN for `install-command` (private registries read it from bunfig.toml / .npmrc).
     default: ${{ github.token }}
+  github-token:
+    description: "Reads this job's start from the jobs API for the `job timing` line (needs `actions: read`). Without it the line times the action alone. Never passed to warden."
+    default: ${{ github.token }}
   headroom-gb:
     description: GB of RAM warden keeps free of simulators (`WARDEN_CAPACITY_HEADROOM_GB`). Empty means 1 on a host with 16 GB or less, warden's own default above.
     default: ""
@@ -72,6 +75,9 @@ inputs:
   cache:
     description: "`github` restores and saves the build, repack and golden caches with actions/cache. `none` leaves storing them to you: the golden is still imported from `~/warden-goldens` but never exported for the cache (run the golden's `beforeSave` from `cache-groups` when your cache missed it; collecting the `golden` artifact already archives a missing one there), and the `cache-groups` output lists every key and path to restore before this step and save after it."
     default: github
+  compiler-cache:
+    description: "On a native build cache miss (`cache: github`), install ccache (Homebrew) and restore warden's compiler cache (`~/.warden/ccache`, the newest older key when this fingerprint has none), so the cold build reuses the C/C++/Objective-C objects an older native fingerprint compiled; saved after the run. `false` skips both."
+    default: "true"
   save-cache:
     description: Save the build, repack and golden caches after a green run (true on the default branch, false on pull requests).
     default: "true"
@@ -79,7 +85,7 @@ inputs:
     description: Minutes the suite may run before the action stops it (SIGINT, then SIGKILL after 60 s), so a hung run still prints its evidence and uploads the artifact. Keep it under the job timeout.
     default: "35"
   artifacts:
-    description: "What the run leaves behind to collect: `all`, `none`, or a comma list of `report` (e2e-report.json), `batches` (~/.warden/batches: spec logs, results.jsonl, screen-at-failure.txt, metro.log), `logs` (~/.warden/logs: native build logs), `app` (app.tar of the .app / .apk builds the run used), `golden` (golden.tar of the golden simulator, exported to ~/warden-goldens first when it was built but not archived; GBs). Tarballs keep the executable bit and symlinks upload-artifact would lose. `all` is every group after a green run and `report,batches,golden` after a failed one. The `artifact-paths` output lists what was collected."
+    description: "What the run leaves behind to collect: `all`, `none`, or a comma list of `report` (e2e-report.json), `batches` (~/.warden/batches: spec logs, results.jsonl, screen-at-failure.txt, metro.log), `logs` (~/.warden/logs: native build logs, plus the device helpers' ~/.warden/simd/*.log), `app` (app.tar of the .app / .apk builds the run used), `golden` (golden.tar of the golden simulator, exported to ~/warden-goldens first when it was built but not archived; GBs). Tarballs keep the executable bit and symlinks upload-artifact would lose. `all` is every group after a green run (less `golden` when it was restored from the cache: the cache holds it) and `report,batches,logs,golden` after a failed one. `logs` is always collected, whatever this says (even `none`). The `artifact-paths` output lists what was collected."
     default: all
   upload-artifacts:
     description: "Upload each collected group as its own artifact, `<artifact-name>-<group>`. `false` only collects them: upload what you want from the `artifact-paths` output."
@@ -99,7 +105,7 @@ outputs:
     description: "`true` when the gate passed, `false` when a required spec failed or the run broke."
     value: ${{ steps.run.outputs.passed }}
   cache-groups:
-    description: "`warden ci cache --json`: `{builds, repack, golden}`, each `{kind, key, paths}` (the golden adds `afterRestore` / `beforeSave`). For caching with something other than actions/cache (`cache: none`)."
+    description: "`warden ci cache --json`: `{builds, repack, golden}`, each `{kind, key, paths}` (the golden adds `afterRestore` / `beforeSave`; `null` when the suite does not set `golden: true`). For caching with something other than actions/cache (`cache: none`)."
     value: ${{ steps.keys.outputs.cache-groups }}
   artifact-groups:
     description: Comma list of the groups collected (`report,batches,logs,app,golden`), whether or not they were uploaded.
@@ -112,6 +118,7 @@ runs:
   using: composite
   steps:
     - name: Prepare the runner
+      id: prepare
       shell: bash
       env:
         XCODE_PATH: ${{ inputs.xcode-path }}
@@ -121,6 +128,7 @@ runs:
         UPLOAD: ${{ inputs.upload-artifacts }}
       run: |
         set -euo pipefail
+        echo "started=$(date +%s)" >> "$GITHUB_OUTPUT"
         case "$CACHE" in github|none) ;; *) echo "cache must be github or none, not \"$CACHE\"" >&2; exit 1 ;; esac
         case "$UPLOAD" in true|false) ;; *) echo "upload-artifacts must be true or false, not \"$UPLOAD\"" >&2; exit 1 ;; esac
         case "$ARTIFACTS" in
@@ -220,18 +228,26 @@ runs:
       env:
         PREFIX: ${{ inputs.cache-prefix }}
         PROFILE: ${{ inputs.profile }}
+        SUITE: ${{ inputs.suite }}
         JS_INPUTS: ${{ inputs.js-inputs }}
       run: |
         set -euo pipefail
         args=(--json --prefix "$PREFIX")
         if [ -n "$PROFILE" ]; then args+=(--profile "$PROFILE"); fi
+        # A suite without `golden: true` gets `golden: null`: an empty golden-key skips every golden step below.
+        if [ -n "$SUITE" ]; then args+=(--suite "$SUITE"); fi
         while IFS= read -r line; do [ -n "$line" ] && args+=(--js-input "$line"); done <<< "$JS_INPUTS"
         groups=$(warden ci cache "${args[@]}")
-        key() { node -e 'const g=JSON.parse(process.argv[1])[process.argv[2]];process.stdout.write(g.key)' "$groups" "$1"; }
+        key() { node -e 'const g=JSON.parse(process.argv[1])[process.argv[2]];process.stdout.write(g?.key ?? "")' "$groups" "$1"; }
         {
           echo "builds=$(key builds)"
           echo "repack=$(key repack)"
           echo "golden-key=$(key golden)"
+          echo "ccache=$(key ccache)"
+          echo "ccache-dir=$(node -e 'const g=JSON.parse(process.argv[1]).ccache;process.stdout.write(g?.paths[0] ?? "")' "$groups")"
+          echo "ccache-restore<<WARDEN_CCACHE_RESTORE"
+          node -e 'const g=JSON.parse(process.argv[1]).ccache;for(const k of g?.restoreKeys ?? [])console.log(k)' "$groups"
+          echo "WARDEN_CCACHE_RESTORE"
           echo "cache-groups<<WARDEN_CACHE_GROUPS"
           echo "$groups"
           echo "WARDEN_CACHE_GROUPS"
@@ -252,6 +268,43 @@ runs:
           !~/.warden/builds/*/ios/*/simulator/repacks
         key: ${{ steps.keys.outputs.builds }}
 
+    - name: Report a native build cache miss
+      id: cache-miss
+      if: inputs.cache == 'github' && steps.builds-cache.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        KEY: ${{ steps.keys.outputs.builds }}
+      run: |
+        echo "::notice title=native build cache miss::no cached app build for $KEY: warden e2e builds it from source before the first spec (~15-20 min on a 3-core runner, less with a warm compiler cache). The key follows the native fingerprint: native dependencies, config plugins, native files."
+
+    # ccache only helps a cold native build, so it is installed and restored on a builds miss alone. Any older key
+    # helps (most pods compile the same after a native change), hence the restore-keys prefix.
+    - name: Restore the compiler cache
+      id: ccache-cache
+      if: inputs.cache == 'github' && inputs.compiler-cache == 'true' && steps.keys.outputs.ccache != '' && steps.builds-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.keys.outputs.ccache-dir }}
+        key: ${{ steps.keys.outputs.ccache }}
+        restore-keys: ${{ steps.keys.outputs.ccache-restore }}
+
+    - name: Install ccache
+      id: ccache-prep
+      if: inputs.cache == 'github' && inputs.compiler-cache == 'true' && steps.keys.outputs.ccache != '' && steps.builds-cache.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        CCACHE_DIR: ${{ steps.keys.outputs.ccache-dir }}
+      run: |
+        set -euo pipefail
+        if ! command -v ccache > /dev/null; then
+          HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK=1 brew install ccache
+        fi
+        ccache --version | head -n 1
+        # ccache compresses; 2 GB holds an Expo app's pods and keeps the repo's 10 GB of GitHub cache for the rest
+        echo "CCACHE_MAXSIZE=${CCACHE_MAXSIZE:-2G}" >> "$GITHUB_ENV"
+        mkdir -p "$CCACHE_DIR"
+        ccache --zero-stats > /dev/null
+
     - name: Restore the JS repack cache
       if: inputs.cache == 'github'
       id: repack-cache
@@ -261,7 +314,7 @@ runs:
         key: ${{ steps.keys.outputs.repack }}
 
     - name: Restore the golden simulator
-      if: inputs.cache == 'github'
+      if: inputs.cache == 'github' && steps.keys.outputs.golden-key != ''
       id: golden-cache
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
@@ -274,16 +327,17 @@ runs:
       env:
         APP_PATH: ${{ inputs.app-path }}
         WORKSPACE: ${{ github.workspace }}
+        GOLDEN_KEY: ${{ steps.keys.outputs.golden-key }}
       run: |
         set -euo pipefail
-        warden golden import ~/warden-goldens
+        if [ -n "$GOLDEN_KEY" ]; then warden golden import ~/warden-goldens; fi
         if [ -n "$APP_PATH" ]; then
           case "$APP_PATH" in /*) app="$APP_PATH" ;; *) app="$WORKSPACE/$APP_PATH" ;; esac
           warden builds import "$app" --kind simulator-base
         fi
 
     - name: Build the golden simulator
-      if: steps.golden-cache.outputs.cache-hit != 'true'
+      if: steps.keys.outputs.golden-key != '' && steps.golden-cache.outputs.cache-hit != 'true'
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       env:
@@ -322,16 +376,19 @@ runs:
         started=$(date +%s)
         warden "${args[@]}" ${extra[@]+"${extra[@]}"} &
         suite_pid=$!
+        # `|| exit 0`: the cleanup below kills this sleep first; without it the
+        # subshell carries on and reports a timeout on every passing run.
         (
-          sleep $(( SUITE_TIMEOUT * 60 ))
+          sleep $(( SUITE_TIMEOUT * 60 )) || exit 0
           echo "::error title=suite timed out::warden e2e ran longer than ${SUITE_TIMEOUT} min; stopping it"
           kill -INT "$suite_pid" 2>/dev/null
-          sleep 60
+          sleep 60 || exit 0
           kill -KILL "$suite_pid" 2>/dev/null
         ) &
         watchdog_pid=$!
         wait "$suite_pid"
         code=$?
+        ended=$(date +%s)
         pkill -P "$watchdog_pid" 2>/dev/null
         kill "$watchdog_pid" 2>/dev/null
         wait "$watchdog_pid" 2>/dev/null
@@ -339,10 +396,49 @@ runs:
           echo "report-path=$report"
           echo "exit-code=$code"
           echo "passed=$([ "$code" -eq 0 ] && echo true || echo false)"
-          echo "seconds=$(( $(date +%s) - started ))"
+          echo "seconds=$(( ended - started ))"
           echo "started=$started"
+          echo "ended=$ended"
         } >> "$GITHUB_OUTPUT"
-        echo "warden e2e exited $code after $(( $(date +%s) - started )) s"
+        echo "warden e2e exited $code after $(( ended - started )) s"
+
+    - name: Time the job
+      if: always()
+      shell: bash
+      env:
+        JOB_TIMING_TOKEN: ${{ inputs.github-token }}
+        ACTION_STARTED: ${{ steps.prepare.outputs.started }}
+        SUITE_STARTED: ${{ steps.run.outputs.started }}
+        SUITE_ENDED: ${{ steps.run.outputs.ended }}
+      run: bash "$GITHUB_ACTION_PATH/job-timing.sh"
+
+    # Collapsed, so a green run stays short. stop-commands keeps a `::` line in the build output from being read as a
+    # workflow command.
+    - name: Print the native build log
+      id: build-log
+      if: always()
+      shell: bash
+      env:
+        STARTED: ${{ steps.run.outputs.started }}
+        CCACHE_DIR: ${{ steps.keys.outputs.ccache-dir }}
+        CCACHE_USED: ${{ steps.ccache-prep.outcome }}
+      run: |
+        logs="${WARDEN_HOME:-$HOME/.warden}/logs"
+        for log in "$logs"/build-*.log; do
+          [ -f "$log" ] || continue
+          [ "$(stat -f %m "$log")" -ge "${STARTED:-0}" ] || continue
+          token="warden-$(uuidgen)"
+          echo "::group::native build log: $(basename "$log") ($(wc -l < "$log" | tr -d ' ') lines)"
+          echo "::stop-commands::$token"
+          cat "$log"
+          echo "::$token::"
+          echo "::endgroup::"
+        done
+        if [ "$CCACHE_USED" = success ] && command -v ccache > /dev/null; then
+          echo "::group::ccache stats"
+          ccache --show-stats
+          echo "::endgroup::"
+        fi
 
     - name: Print failure evidence
       if: always() && steps.run.outputs.passed != 'true'
@@ -360,6 +456,8 @@ runs:
         ARTIFACTS: ${{ inputs.artifacts }}
         PASSED: ${{ steps.run.outputs.passed }}
         STARTED: ${{ steps.run.outputs.started }}
+        GOLDEN_CACHE_HIT: ${{ steps.golden-cache.outputs.cache-hit }}
+        GOLDEN_KEY: ${{ steps.keys.outputs.golden-key }}
         PROFILE: ${{ inputs.profile }}
         REPORT: ${{ steps.run.outputs.report-path || format('{0}/{1}', github.workspace, inputs.report-path) }}
       run: bash "$GITHUB_ACTION_PATH/artifacts.sh"
@@ -411,7 +509,7 @@ runs:
 
     - name: Export the golden simulator
       id: golden-export
-      if: inputs.cache == 'github' && steps.run.outputs.passed == 'true' && inputs.save-cache == 'true' && steps.golden-cache.outputs.cache-hit != 'true'
+      if: inputs.cache == 'github' && steps.keys.outputs.golden-key != '' && steps.run.outputs.passed == 'true' && inputs.save-cache == 'true' && steps.golden-cache.outputs.cache-hit != 'true'
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       env:
@@ -436,6 +534,14 @@ runs:
       with:
         path: ~/warden-goldens
         key: ${{ steps.keys.outputs.golden-key }}
+
+    # A failed spec after a green build still compiled good objects: ccache is content-addressed, so save it anyway.
+    - name: Save the compiler cache
+      if: always() && inputs.cache == 'github' && inputs.save-cache == 'true' && steps.ccache-prep.outcome == 'success' && steps.ccache-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.keys.outputs.ccache-dir }}
+        key: ${{ steps.keys.outputs.ccache }}
 
     - name: Save the native build cache
       if: inputs.cache == 'github' && steps.run.outputs.passed == 'true' && inputs.save-cache == 'true' && steps.builds-cache.outputs.cache-hit != 'true'

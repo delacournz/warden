@@ -50,6 +50,15 @@ describe("cacheGroups", () => {
 		goldenDir: "/Users/runner/warden-goldens",
 	});
 
+	test("ccache: warden's shared compiler cache, keyed by the native fingerprint, restorable from any older one", () => {
+		expect(groups.ccache).toEqual({
+			kind: "paths",
+			key: "warden-e2e-v1-ccache-macOS-ARM64-f1b4",
+			restoreKeys: ["warden-e2e-v1-ccache-macOS-ARM64-"],
+			paths: ["/Users/runner/.warden/ccache"],
+		});
+	});
+
 	test("builds: the builds dir minus the repacks, keyed by the native fingerprint", () => {
 		expect(groups.builds).toEqual({
 			kind: "paths",

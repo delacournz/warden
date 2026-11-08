@@ -3,9 +3,11 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { canProbeFrontmost, canReadAlertOn } from "../alerts";
+import { canRecoverAxWedge } from "../ax-wedge";
 import { el, snapshotOf } from "../driver.testing";
 import type { Driver, Snapshot } from "../driver.types";
 import { fakeProxy } from "../network-proxy.testing";
+import { withReadDeadline } from "../read-deadline";
 import { HASH_FALLBACK_MIN_QUIET_MS, settleDetailOf } from "../settle";
 import { collectSpanDetail, type SpanDetail } from "../span-detail";
 import { canPasteText, canSelectAll } from "../typing";
@@ -114,7 +116,7 @@ describe("cold bridge", () => {
 				},
 			}
 		);
-		return { ...made, sleeps };
+		return { ...made, sleeps, now: () => t };
 	}
 
 	test("the first snapshot times out twice, waits for the bridge, then passes, and the span says how long", async () => {
@@ -136,7 +138,7 @@ describe("cold bridge", () => {
 		expect(sleeps).toEqual([]);
 	});
 
-	test("a bound rebind also proves the bridge", async () => {
+	test("a bound rebind does not prove the bridge: the stream's guest answered, the reader's may still be cold", async () => {
 		let t = 0;
 		const { driver, helper } = await open(
 			(request) => {
@@ -155,7 +157,45 @@ describe("cold bridge", () => {
 		await unwrapped(driver.app.launch(BUNDLE));
 		const result = await driver.snapshot();
 		expect(!result.success && result.error.code).toBe("E_TIMEOUT");
+		expect(helper.of("snapshot").length).toBeGreaterThan(1);
+	});
+
+	test("inside a poll's read deadline the cold wait ends at the deadline, not at the cold budget", async () => {
+		const { driver, helper, sleeps, now } = await coldOpen(Array(40).fill("timeout"));
+		const started = now();
+		const notes: SpanDetail = {};
+		const result = await withReadDeadline(
+			() => started + 5_000 - now(),
+			() => collectSpanDetail(notes, () => driver.snapshot())
+		);
+		expect(!result.success && result.error.code).toBe("E_TIMEOUT");
+		// one 2 s wait fits in 5 s, the 5 s one after it would not
+		expect(sleeps).toEqual([2_000]);
+		expect(helper.of("snapshot")).toHaveLength(2);
+		expect(notes.coldBridgeMs).toBe(2_000);
+	});
+
+	test("a read deadline that is already spent tries once and does not wait", async () => {
+		const { driver, helper, sleeps } = await coldOpen(Array(40).fill("timeout"));
+		const result = await withReadDeadline(
+			() => 0,
+			() => driver.snapshot()
+		);
+		expect(!result.success && result.error.code).toBe("E_TIMEOUT");
+		expect(sleeps).toEqual([]);
 		expect(helper.of("snapshot")).toHaveLength(1);
+	});
+
+	test("a read deadline longer than the cold budget changes nothing", async () => {
+		const { driver, helper, sleeps, now } = await coldOpen(["timeout", "timeout"]);
+		const started = now();
+		const result = await withReadDeadline(
+			() => started + 600_000 - now(),
+			() => driver.snapshot()
+		);
+		expect(result.success).toBe(true);
+		expect(sleeps).toEqual([2_000, 5_000]);
+		expect(helper.of("snapshot")).toHaveLength(3);
 	});
 
 	test("an error that is not the bridge being late is not retried", async () => {
@@ -572,6 +612,7 @@ describe("Driver methods over the helper", () => {
 			xcode: "26.6 (17F113)",
 			builtWith: { xcode: "27.1 (27A9275)", idb: "v1.7.7" },
 			coreSimulatorVersion: "1051.55",
+			bridgeRecycles: { count: 3, exhausted: true },
 		};
 		const { driver } = await open((request) =>
 			request.op === "health"
@@ -605,6 +646,8 @@ describe("Driver methods over the helper", () => {
 			hostXcode: "26.6 (17F113)",
 			helperXcode: "27.1 (27A9275)",
 			coreSimulator: "1051.55",
+			bridgeRecycles: 3,
+			bridgeRecyclesExhausted: true,
 		});
 	});
 
@@ -972,6 +1015,31 @@ describe("system alerts through one reader and the frontmost probe", () => {
 		frontmost = true;
 		expect(await unwrapped(driver.isFrontmost(BUNDLE))).toBe(true);
 		expect(helper.of("frontmost")[0]).toMatchObject({ bundleId: BUNDLE });
+	});
+
+	test("axWedge reads the helper's wedge check and asks it to recover", async () => {
+		const reply = {
+			restarts: 1,
+			maxRestarts: 1,
+			recovering: false,
+			last: { outcome: "restarted" as const, agoMs: 40, ms: 2300 },
+		};
+		const { driver, helper } = await open((request) => (request.op === "axWedge" ? { data: reply } : undefined));
+		if (!canRecoverAxWedge(driver)) throw new Error("the iOS driver offers the wedge check");
+		expect(await unwrapped(driver.axWedge({ recover: true }))).toEqual(reply);
+		expect(await unwrapped(driver.axWedge())).toEqual(reply);
+		expect(helper.of("axWedge").map((params) => params.recover)).toEqual([true, false]);
+	});
+
+	test("axWedge on a helper that predates it is E_UNSUPPORTED helper_outdated", async () => {
+		const { driver } = await open((request) => (request.op === "axWedge" ? unknownOp("axWedge") : undefined));
+		if (!canRecoverAxWedge(driver)) throw new Error("the iOS driver offers the wedge check");
+		const result = await driver.axWedge({ recover: true });
+		expect(result.success).toBe(false);
+		if (!result.success) {
+			expect(result.error.code).toBe("E_UNSUPPORTED");
+			expect(result.error.detail).toEqual({ reason: "helper_outdated" });
+		}
 	});
 
 	test("without the AX bridge alertOn('axbridge') reads the host reader and isFrontmost is never asked", async () => {
@@ -1467,6 +1535,48 @@ describe("screenshot", () => {
 		const result = await driver.screenshot({ path: "/out/c.png" });
 		expect(!result.success && result.error.code).toBe("E_TIMEOUT");
 		expect(joined(calls).some((line) => line.includes("simctl io"))).toBe(false);
+	});
+});
+
+describe("dismissKeyboard", () => {
+	const STATE = "/w/inject/UDID-1/state.json";
+	/** an in-memory state dir; `loaded` = an app with the dylib is running and acks every state write */
+	function stateDir(loaded: boolean) {
+		const files = new Map<string, string>();
+		if (loaded) files.set(`${STATE}.ack`, JSON.stringify({ seq: 0, pid: 4242 }));
+		const fs: InjectFs = {
+			mkdir: () => undefined,
+			writeAtomic: (path, text) => {
+				files.set(path, text);
+				if (loaded && path === STATE) {
+					files.set(`${path}.ack`, JSON.stringify({ seq: (JSON.parse(text) as { seq: number }).seq, pid: 4242 }));
+				}
+			},
+			read: (path) => files.get(path),
+			remove: (path) => void files.delete(path),
+			pidAlive: () => true,
+		};
+		return { files, fs };
+	}
+
+	test("with the dylib loaded it resigns the first responder: via resign, never Enter", async () => {
+		const dir = stateDir(true);
+		const { driver, helper, logs } = await open(() => ({ data: null }), { injectFs: dir.fs, wardenHome: "/w" });
+		const result = await driver.dismissKeyboard();
+		expect(result).toEqual({ success: true, data: { via: "resign" } });
+		expect(helper.of("key")).toHaveLength(0);
+		expect(JSON.parse(dir.files.get(STATE) ?? "{}")).toMatchObject({ dismissKeyboard: true });
+		expect(logs.some((line) => line.includes("dismissed with Enter"))).toBe(false);
+	});
+
+	test("without the dylib it presses Enter, answers via key and logs the warning", async () => {
+		const dir = stateDir(false);
+		const { driver, helper, logs } = await open(() => ({ data: null }), { injectFs: dir.fs, wardenHome: "/w" });
+		const result = await driver.dismissKeyboard();
+		expect(result).toEqual({ success: true, data: { via: "key" } });
+		expect(helper.of("key").map(({ usage }) => usage)).toEqual([KEY_USAGE.Enter]);
+		expect(dir.files.has(STATE)).toBe(false);
+		expect(logs.filter((line) => line.includes("[ios] keyboard dismissed with Enter"))).toHaveLength(1);
 	});
 });
 

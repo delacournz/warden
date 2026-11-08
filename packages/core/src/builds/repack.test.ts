@@ -298,6 +298,19 @@ describe("repackApp", () => {
 		expect(applied.count).toBe(2);
 	});
 
+	test("a cached repack signed by another key than its base is rebuilt (signer-changed)", async () => {
+		await seedBase();
+		const h = host();
+		const applied = fresh();
+		await repackApp(input(h, applied, { hermes: async () => false }));
+		const second = await repackApp(input(h, applied, { hermes: async () => false, keepsSigner: async () => false }));
+		expect(second).toMatchObject({ success: true, data: { kind: "repacked", reason: "signer-changed" } });
+		expect(applied.count).toBe(2);
+		const third = await repackApp(input(h, applied, { hermes: async () => false, keepsSigner: async () => true }));
+		expect(third).toMatchObject({ success: true, data: { kind: "reused" } });
+		expect(applied.count).toBe(2);
+	});
+
 	test("a repack without a recorded base identity (made by an older warden) is rebuilt once", async () => {
 		await seedBase();
 		const h = host();

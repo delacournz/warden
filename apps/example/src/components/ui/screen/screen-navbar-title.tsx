@@ -23,7 +23,12 @@ export function ScreenNavbarTitle({ className, children, ...props }: ScreenNavba
 	if (typeof children !== "string") return <>{children}</>;
 
 	return (
-		<Text className={screenVariants().navbarTitle({ className })} numberOfLines={1} {...props}>
+		<Text
+			accessibilityRole="header"
+			className={screenVariants().navbarTitle({ className })}
+			numberOfLines={1}
+			{...props}
+		>
 			{children}
 		</Text>
 	);

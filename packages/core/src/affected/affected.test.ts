@@ -142,6 +142,20 @@ describe("computeAffected", () => {
 		// builds two fresh fixture repos (git init + commit each): slow on a loaded CI host
 	}, 20_000);
 
+	test("suite.golden: off unless the suite turns it on (fresh simulators by default)", async () => {
+		const on = await makeSuiteRepo({ golden: true });
+		const off = await makeSuiteRepo({ golden: false });
+		const none = await makeSuiteRepo();
+		try {
+			const [a, b, c] = await Promise.all([on, off, none].map((r) => findSuite(bunExec, r.dir)));
+			expect(a?.success && a.data.golden).toBe(true);
+			expect(b?.success && b.data.golden).toBe(false);
+			expect(c?.success && c.data.golden).toBe(false);
+		} finally {
+			for (const r of [on, off, none]) rmSync(r.dir, { recursive: true, force: true });
+		}
+	}, 20_000);
+
 	test("suite.biometrics: the suite's own, else the top-level default", async () => {
 		const top = await makeSuiteRepo({}, { biometrics: true });
 		const own = await makeSuiteRepo({ biometrics: false }, { biometrics: true });

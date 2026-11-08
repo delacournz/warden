@@ -144,8 +144,7 @@ export function TabsScrollView({
 				// on top of it would be two easing curves fighting for the same pixels.
 				false
 			);
-		},
-		[scrollAlign]
+		}
 	);
 
 	const slots = tabsVariants({ isScrollable: true, size, variant });

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { join } from "node:path";
+import { CCACHE_DIR_NAME } from "@delacour/warden-core/builds/builds.defaults";
 import type { Exec } from "@delacour/warden-core/exec";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 
@@ -16,8 +17,11 @@ export const DEFAULT_JS_INPUTS: readonly string[] = [
 	"package.json",
 ];
 
-/** Directories a CI cache stores as they are. A `!` path is excluded from the one before it (`actions/cache` syntax). */
-export type PathsGroup = { kind: "paths"; key: string; paths: string[] };
+/**
+ * Directories a CI cache stores as they are. A `!` path is excluded from the one before it (`actions/cache` syntax).
+ * `restoreKeys`: prefixes to fall back to on a miss (`actions/cache` `restore-keys`), for a cache any older key helps.
+ */
+export type PathsGroup = { kind: "paths"; key: string; paths: string[]; restoreKeys?: string[] };
 
 /** A directory warden archives into and registers from: run `beforeSave` before storing it, `afterRestore` after. */
 export type ArchiveGroup = { kind: "archive"; key: string; paths: string[]; afterRestore: string; beforeSave: string };
@@ -26,9 +30,10 @@ export type CacheGroup = PathsGroup | ArchiveGroup;
 
 /**
  * What a CI job caches between runs to skip warden's slow steps: `builds` (the native simulator base), `repack` (the
- * JS bundled into it) and `golden` (the first-booted simulator new devices are cloned from).
+ * JS bundled into it), `golden` (the first-booted simulator new devices are cloned from) and `ccache` (compiled objects
+ * a cold native build reuses after a native change: restored from the newest older key, saved under the new one).
  */
-export type CacheGroups = { builds: PathsGroup; repack: PathsGroup; golden: ArchiveGroup };
+export type CacheGroups = { builds: PathsGroup; repack: PathsGroup; golden: ArchiveGroup; ccache: PathsGroup };
 
 export type CacheGroupsInput = {
 	prefix: string;
@@ -57,6 +62,12 @@ export function cacheGroups(input: CacheGroupsInput): CacheGroups {
 	return {
 		builds: { kind: "paths", key: `${prefix}-builds-${runner}-${nativeFingerprint}`, paths: [builds, `!${repacks}`] },
 		repack: { kind: "paths", key: `${prefix}-repack-${runner}-${nativeFingerprint}-${js}`, paths: [repacks] },
+		ccache: {
+			kind: "paths",
+			key: `${prefix}-ccache-${runner}-${nativeFingerprint}`,
+			restoreKeys: [`${prefix}-ccache-${runner}-`],
+			paths: [join(wardenHome, CCACHE_DIR_NAME)],
+		},
 		golden: {
 			kind: "archive",
 			key: `${prefix}-${runner}-${golden}`,

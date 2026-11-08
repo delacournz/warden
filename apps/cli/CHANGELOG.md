@@ -1,5 +1,42 @@
 # @delacour/warden
 
+## 0.14.0
+
+### Minor Changes
+
+- [#208](https://github.com/delacournz/warden/pull/208) [`a277f23`](https://github.com/delacournz/warden/commit/a277f23cfb91b85dcf4b5b60028397dc76841526) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - iOS: the first accessibility read after the helper starts, a guest is recycled or an app launches gets a 12 s bridge deadline instead of 4 s, and a stall on it no longer sends the next 20 s of reads to the host `ax` reader (which drops testIDs on static text); a second stall on the same cold guest still does
+  - iOS: `warden-simd` warms its bridge in the background at start and after each launch, and a read that arrives meanwhile waits for that read instead of starting a second slow one
+  - iOS: the driver waits 20 s for a read while the bridge is cold, so it no longer times out before the helper's own deadline
+  - New `WARDEN_SIMD_BRIDGE_COLD_DEADLINE_MS` (default 12000) sets the cold deadline; the driver's cold-read timeout follows it
+
+- [#212](https://github.com/delacournz/warden/pull/212) [`2c6c311`](https://github.com/delacournz/warden/commit/2c6c3112ef7ac33cfd18a5f59a04e19505a15202) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - On an iOS read that fell back from the bridge to host `ax`, a plain `getByTestId` whose React component has the same rect as a node on that read now resolves to that node: `text()`, `read()`, `allTexts()`, `toHaveText`, `toContainText`, `isVisible()`, `tap({ until })` and every action work as on a whole read, instead of failing `READ_DEGRADED` or `NOT_ACTIONABLE`.
+  - A component host `ax` does not show at all (a plain View) answers `text()`, `read().text`, `allTexts()`, `toHaveText` and `toContainText` from the text it renders in the React tree.
+
+### Patch Changes
+
+- [#213](https://github.com/delacournz/warden/pull/213) [`01a1675`](https://github.com/delacournz/warden/commit/01a1675c15cc3ee50ad1836a278725844a4523f0) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - iOS: a read that leaves the in-sim accessibility bridge now says why in the run's evidence: `results.jsonl` gets a `bridge` field (`fallbacks`, plus the `first` and `last` such read with their reason or error code), the `driver.snapshot` span in `trace.jsonl` carries the stall (`stallStage` `connect` / `read` / `warm-up` / `cooldown`, `stallReadMs` against `stallDeadlineMs`, `stallCold`, `stallGuestAgeMs`, `stallCooldownMs`, `stallProbes`), and `screen-at-failure.txt` notes on its second line that the tree was read on `ax` after a stall
+
+- [#207](https://github.com/delacournz/warden/pull/207) [`4f92d77`](https://github.com/delacournz/warden/commit/4f92d771ccde66585cc908099a8b0955ae48fc5c) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - A spec read that fell back from the iOS bridge to host `ax` (or came back as an empty root) no longer counts a missing node as absent: `toBeHidden`, `.not.toBeVisible`, `toHaveCount(0)`, `waitFor({ state: "hidden" | "detached" })` and `isHidden()` keep polling instead of passing vacuously.
+  - A plain `getByTestId` on such a read asks the React tree first when the app has devtools, and uses its presence and rect.
+  - New error code `READ_DEGRADED` when nothing could confirm the locator before the timeout; the message names `fellBackFrom` and the read backend.
+
+- [#211](https://github.com/delacournz/warden/pull/211) [`657fc3f`](https://github.com/delacournz/warden/commit/657fc3fcc83ca6539939bf18d4b1a9abab41f1fd) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - iOS: while the accessibility bridge is skipped after a stall, `warden-simd` checks it in the background with one cheap hit-test (1.5 s deadline, at most every 5 s) and goes back to it as soon as it answers, instead of after the full 20 s; a silent check keeps reads on `ax` so no read pays the 4 s bridge deadline again
+  - iOS: a spec look that fell back to `ax` is returned at once instead of waiting up to 4 s on a second read through a silent bridge; the next look is back on `axbridge` once the check saw it answer
+  - iOS: a read that asks for `backend: "axbridge"` during the skip waits only for the background check, then fails with `E_TIMEOUT` if the bridge is still silent
+  - iOS: a cold guest whose background warm-up stalled is used again once the check sees it answer, instead of staying on `ax` until the next launch
+
+- [#206](https://github.com/delacournz/warden/pull/206) [`b1121d2`](https://github.com/delacournz/warden/commit/b1121d2ddb129021a6988f4a22da66089e6d6a4b) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - iPhone runner: an accessibility refusal during a `snapshot` (`kAXError…`, "Failed to get matching snapshot") no longer ends the runner; the read is retried once on the phone, then answered `E_AX_UNAVAILABLE` (retryable).
+  - iPhone runner: an op that holds XCUITest past its timeout is answered `E_TIMEOUT` (`detail.stage: "deadline"`) instead of hanging the runner; until it returns, other ops answer `E_TIMEOUT` (`detail.stage: "busy"`) at once and `health` reports `state: "busy"`.
+  - iPhone and simulator helpers: an element XCUITest cannot place (a null or infinite frame) is a zero-area, not hittable element, and a non-finite number is `null` on the wire, instead of failing the whole reply.
+
+- [#214](https://github.com/delacournz/warden/pull/214) [`6c9f267`](https://github.com/delacournz/warden/commit/6c9f2673886b78d7a8f6c34dbcc1725412a898f0) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - iOS: when the accessibility bridge stalls after it had already answered, `warden-simd` ends the stuck guest so the next read starts on a fresh one with the cold first-read deadline (at most 3 times per helper, then the background check alone brings it back)
+  - iOS: the background check of a silent bridge backs off (every 5 s, doubling up to 30 s) and gets the cold deadline on a guest that is starting again, so a slow host can bring the bridge back instead of staying on `ax` for good; while it stays silent reads stay on `ax` without restarting the 20 s skip
+  - iOS: bridge stall evidence (`results.jsonl` `bridge`, the `driver.snapshot` span's `stallRecycles` / `stallRecyclesExhausted`, `screen-at-failure.txt`) names how many stalled guests the helper had recycled and whether it had any left
+
+- [#209](https://github.com/delacournz/warden/pull/209) [`fda83f9`](https://github.com/delacournz/warden/commit/fda83f9306e0a03d88602b3fd4deb0fa677d15e9) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - iOS `device.settle()` fallbacks (`via: "snapshot"` and `via: "hash"`) now wait for at least 500 ms of unchanged screen, whatever `quietMs` asks: a navigation push shows both screens at their final frames for 300-460 ms, and the old 250 ms window could settle on that mixed tree.
+- Updated dependencies []:
+  - @delacour/warden-e2e@0.14.0
+
 ## 0.13.0
 
 ### Minor Changes
