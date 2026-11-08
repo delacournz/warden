@@ -8,7 +8,7 @@ name: e2e
 # saves its own after a green run (scoped to the PR, so its next push starts warm) and can restore
 # develop's. `workflow_dispatch` on develop seeds the shared entries every PR can restore.
 #
-# Runner: the `runner` input (e.g. `namespace-profile-mac-small`), else the repo variable WARDEN_E2E_RUNNER, else
+# Runner: the `runner` input (e.g. a self-hosted Mac label), else the repo variable WARDEN_E2E_RUNNER, else
 # `xcode-27` (GitHub's macOS 27 image, public preview; `macos-26` stops at Xcode 26.6, which can't build
 # warden-simd). Checkout and caches are GitHub's own actions, so any macOS label works.
 on:
@@ -26,7 +26,7 @@ on:
   workflow_dispatch:
     inputs:
       runner:
-        description: runs-on label, e.g. namespace-profile-mac-small (empty = the repo variable WARDEN_E2E_RUNNER, else xcode-27)
+        description: runs-on label, e.g. macos-26 (empty = the repo variable WARDEN_E2E_RUNNER, else xcode-27)
         type: string
         default: ""
       count:
