@@ -56,6 +56,19 @@ describe("bridge stall diagnostics", () => {
 		).toEqual({ stage: "read", cold: false, probes: 1, recycles: 2, recyclesExhausted: false });
 	});
 
+	test("says the helper is checking for a wedged accessibility service, and how often it restarted it", async () => {
+		const wedged = { stage: "warm-up", cold: true, probes: 3, axWedge: "checking", axWedgeRestarts: 1 };
+		expect(formatBridgeStall(wedged)).toBe(
+			"stage warm-up · cold (first read) · 3 failed bridge reads in a row · both readers silent: checking for a wedged accessibility service · backboardd restarted 1 time"
+		);
+		expect(toBridgeStall({ ...wedged, later: true })).toEqual(wedged);
+		const notes: SpanDetail = {};
+		await collectSpanDetail(notes, async () => noteBridgeStall(wedged));
+		expect(notes.stallAxWedge).toBe("checking");
+		expect(notes.stallAxWedgeRestarts).toBe(1);
+		expect(bridgeStallFromSpan(notes)).toEqual(wedged);
+	});
+
 	test("a span without a stall has none", () => {
 		expect(bridgeStallFromSpan({ backend: "axbridge" })).toBeUndefined();
 		expect(bridgeStallFromSpan(undefined)).toBeUndefined();

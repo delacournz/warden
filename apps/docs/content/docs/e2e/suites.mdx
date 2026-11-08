@@ -140,7 +140,7 @@ The `[HH:MM:SS.mmm]` stamp is warden's: every line in a job log, `setup-<worker>
 
 When the run ends, every failed spec is listed with its failing tests, the first line of each error and the artifact directory. See [Debugging](/docs/e2e/debugging).
 
-As soon as each device is leased, warden starts its iOS driver helper and takes one accessibility snapshot (`warmDrivers`, on by default) while the app installs and Metro builds, so the first spec does not pay the cold start. `warmDrivers: false` or `--no-warm` turns it off; a failed warm-up (2 min limit) only warns.
+As soon as each device is leased, warden starts its iOS driver helper and takes one accessibility snapshot (`warmDrivers`, on by default) while the app installs and Metro builds, so the first spec does not pay the cold start. A sim whose accessibility service wedged on first use (it logs `Could not auto-register for pid status change`) gets backboardd restarted once and a fresh helper. `warmDrivers: false` or `--no-warm` turns it off; a failed warm-up (2 min limit) only warns.
 
 ## Don't
 

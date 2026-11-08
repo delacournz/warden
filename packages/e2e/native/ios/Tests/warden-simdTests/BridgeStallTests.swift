@@ -586,6 +586,10 @@ final class BridgeStallTests: XCTestCase {
     _ = await recovery.probe.current?.value
     XCTAssertEqual(calls.count("probe"), 0, "no second cold read on the guest while its warm-up runs")
     XCTAssertEqual(calls.count("warm"), 1)
+    // the read's join of the warm-up is its own task: give it a moment to see the answer
+    for _ in 0..<100 where gate.skipReason(now: clock.now, cooldownSeconds: 20) != nil {
+      try await Task.sleep(for: .milliseconds(10))
+    }
     XCTAssertNil(gate.skipReason(now: clock.now, cooldownSeconds: 20), "the warm-up answered: the cooldown is over")
     let next = try await read(
       bridge: answer("bridge", calls), host: answer("ax", calls), gate: gate, warmth: warmth, policy: coldPolicy,

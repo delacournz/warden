@@ -174,6 +174,22 @@ describe("artifacts.sh", () => {
 		}
 	});
 
+	test("the device helpers' logs join the logs group, their sockets left behind", () => {
+		const simd = join(home, ".warden", "simd");
+		mkdirSync(simd, { recursive: true });
+		writeFileSync(join(simd, "U1.log"), "helper log");
+		writeFileSync(join(simd, "U1.sock"), "");
+		const run = collect({ artifacts: "none", passed: true });
+		const copied = join(home, "warden-artifacts", "simd-logs");
+		expect(run.paths.logs).toEqual([join(home, ".warden", "logs"), copied]);
+		expect(readFileSync(join(copied, "U1.log"), "utf8")).toBe("helper log");
+		expect(existsSync(join(copied, "U1.sock"))).toBe(false);
+	});
+
+	test("no helper logs: the logs group is warden's logs alone", () => {
+		expect(collect({ artifacts: "none", passed: true }).paths.logs).toEqual([join(home, ".warden", "logs")]);
+	});
+
 	test("a golden built but not archived is exported, once", () => {
 		const run = collect({ artifacts: "golden", passed: true, goldenBuilt: true });
 		expect(run.stdout).toContain("exported");

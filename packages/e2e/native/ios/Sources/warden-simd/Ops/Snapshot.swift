@@ -217,7 +217,7 @@ extension Session {
       warmth: bridgeWarmth, health: bridgeHealth, recovery: bridgeRecovery(), reaper: bridgeReaper,
       now: { ProcessInfo.processInfo.systemUptime },
       log: { OpLog.shared.log(.warn, $0, op: op) }, bridgeName: self.bridge.name,
-      guestAgeSeconds: { self.quiescence.wedge.guestAge() })
+      guestAgeSeconds: { self.quiescence.wedge.guestAge() }, wedge: axWedgeRecovery)
   }
 
   /// The recovery probe's liveness check: one hit-test at the middle of the screen through the bridge, which answers
@@ -696,4 +696,12 @@ final class BundlePidMemory: @unchecked Sendable {
   }
 
   var lastLaunched: pid_t? { lock.withLock { launched?.pid } }
+
+  /// Every app was quit (backboardd restarted): no remembered pid is current.
+  func forgetAll() {
+    lock.withLock {
+      pids = [:]
+      launched = nil
+    }
+  }
 }
