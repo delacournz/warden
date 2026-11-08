@@ -211,6 +211,16 @@ export type LocalBuildDeps = {
 	git?: GitFactsCache;
 	/** the native fingerprint the git-ignored (CNG) native dir was last prebuilt at; absent = never regenerate it */
 	prebuildStamp?: PrebuildStamp;
+	/** log `still building <platform> (<elapsed>): <last output line>` every `everyMs` while the build runs; absent = silent */
+	heartbeat?: BuildHeartbeat;
+};
+
+/** A local build's progress line on a timer, for a run whose build output nobody sees (`warden e2e`, CI). */
+export type BuildHeartbeat = {
+	everyMs: number;
+	now: () => number;
+	/** start the timer; returns its stop (default `setInterval`) */
+	schedule?: (fn: () => void, ms: number) => () => void;
 };
 
 /** Where `runLocalBuild` records the native fingerprint a CNG `ios/` / `android/` was generated for. */
@@ -380,7 +390,46 @@ async function dropStaleNativeDir(deps: LocalBuildDeps, native: string): Promise
 	rmSync(nativeDir, { recursive: true, force: true });
 }
 
-/** The whole output of a failed build, kept for the errors the summary cannot show; best effort. */
+/** `setInterval`, unref'd so a stuck timer never keeps the process alive. */
+function intervalTimer(fn: () => void, ms: number): () => void {
+	const id = setInterval(fn, ms);
+	id.unref?.();
+	return () => clearInterval(id);
+}
+
+// biome-ignore lint/suspicious/noControlCharactersInRegex: strips ANSI colour codes from build output
+const ANSI = /\u001b\[[0-9;]*[A-Za-z]/g;
+const HEARTBEAT_LINE_MAX = 160;
+
+/** `125_000` → `2m 5s`; under a minute `42s`. */
+export function formatElapsed(ms: number): string {
+	const total = Math.floor(ms / 1000);
+	const minutes = Math.floor(total / 60);
+	return minutes > 0 ? `${minutes}m ${total % 60}s` : `${total}s`;
+}
+
+/**
+ * Track the build's last non-blank output line and, with `deps.heartbeat`, log how long it has run every tick. Returns
+ * the line sink for `exec`'s `onLine` (also forwarded to `deps.output`) and the timer's stop.
+ */
+function startHeartbeat(deps: LocalBuildDeps): { onLine: (line: string) => void; stop: () => void } {
+	let last: string | undefined;
+	const onLine = (line: string) => {
+		const clean = line.replace(ANSI, "").trim();
+		if (clean) last = clean.length > HEARTBEAT_LINE_MAX ? `${clean.slice(0, HEARTBEAT_LINE_MAX - 1)}…` : clean;
+		deps.output?.(line);
+	};
+	const beat = deps.heartbeat;
+	if (!beat) return { onLine, stop: () => {} };
+	const started = beat.now();
+	const stop = (beat.schedule ?? intervalTimer)(() => {
+		const elapsed = formatElapsed(beat.now() - started);
+		deps.log(`still building ${deps.platform} (${elapsed})${last ? `: ${last}` : ""}`);
+	}, beat.everyMs);
+	return { onLine, stop };
+}
+
+/** The whole output of a build (failed: for the errors the summary cannot show; green: for CI's log group); best effort. */
 function keepBuildLog(deps: LocalBuildDeps, res: ExecResult): string | undefined {
 	const path = join(
 		deps.wardenHome ?? resolveWardenHome(deps.env),
@@ -445,13 +494,20 @@ export async function runLocalBuild(deps: LocalBuildDeps): AsyncResult<LocalBuil
 	deps.log(`building ${platform} locally: ${command} (in ${project.root})`);
 	const argv = ["sh", "-c", command];
 	const caching = await cacheEnv(deps);
-	const res = await deps.exec(argv, {
-		cwd: project.root,
-		env: { ...caching, ...project.buildEnv, EXPO_NO_TELEMETRY: "1" },
-		timeoutMs: deps.timeoutMs ?? LOCAL_BUILD_TIMEOUT_MS,
-		...(deps.output ? { onLine: deps.output } : {}),
-	});
+	const progress = startHeartbeat(deps);
+	let res: ExecResult;
+	try {
+		res = await deps.exec(argv, {
+			cwd: project.root,
+			env: { ...caching, ...project.buildEnv, EXPO_NO_TELEMETRY: "1" },
+			timeoutMs: deps.timeoutMs ?? LOCAL_BUILD_TIMEOUT_MS,
+			onLine: progress.onLine,
+		});
+	} finally {
+		progress.stop();
+	}
 	if (res.exitCode !== 0) return err(`local build failed: ${describeBuildFailure(deps, argv, res)}`);
+	keepBuildLog(deps, res);
 	const after = await computeCacheKey(deps.exec, project, platform, undefined, undefined, deps.env);
 	if (!after.success) return after;
 	const moved = after.data.key !== deps.hash;

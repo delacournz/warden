@@ -152,6 +152,8 @@ export const EAS_TRIGGER_GRACE_MS = 3 * 60_000;
 
 /** Local native build timeout. */
 export const LOCAL_BUILD_TIMEOUT_MS = 60 * 60_000;
+/** How often a local build nobody watches says it is still running (`still building ios (6m 0s): …`). */
+export const BUILD_HEARTBEAT_MS = 60_000;
 /** Fingerprint command timeout. */
 export const FINGERPRINT_TIMEOUT_MS = 5 * 60_000;
 

@@ -551,6 +551,73 @@ describe("ensureApp", () => {
 		expect(phases).toEqual([{ phase: "building", platform: "ios", hash: "H" }, { phase: "ready" }]);
 	});
 
+	describe("a local build nobody watches", () => {
+		function heartbeatSetup() {
+			const root = join(dir, "app");
+			const products = join(root, "ios", "build", "Build", "Products", "Debug-iphonesimulator");
+			const timer = { tick: undefined as (() => void) | undefined, scheduled: 0 };
+			const exec: Exec = async (cmd, opts) => {
+				const joined = cmd.join(" ");
+				if (joined === "sh -c make-ios") {
+					opts?.onLine?.("› Compiling Pods/React-Core");
+					timer.tick?.();
+					fakeApp(products, "Built.app");
+					return { exitCode: 0, stdout: "", stderr: "" };
+				}
+				if (joined === "sh -c fp") return { exitCode: 0, stdout: '{"hash":"H"}', stderr: "" };
+				if (joined.startsWith("plutil -extract CFBundleIdentifier")) return BUNDLE_ID;
+				return { exitCode: 127, stdout: "", stderr: joined };
+			};
+			const project = testProject({ root, fingerprintCommand: "fp", build: { ios: "make-ios", android: "x" } });
+			const heartbeatSchedule = (fn: () => void) => {
+				timer.tick = fn;
+				timer.scheduled += 1;
+				return () => {};
+			};
+			return { exec, project, timer, heartbeatSchedule };
+		}
+
+		test("says it is a cache miss, then reports progress on a timer", async () => {
+			const s = heartbeatSetup();
+			const logs: string[] = [];
+			const res = await ensureApp(
+				input(s.exec, {
+					project: s.project,
+					deviceId: undefined,
+					build: true,
+					now: () => Date.now(),
+					log: (l) => logs.push(l),
+					heartbeatSchedule: s.heartbeatSchedule,
+				})
+			);
+			expect(res.success).toBe(true);
+			expect(s.timer.scheduled).toBe(1);
+			const miss = logs.findIndex((l) => l.startsWith("no cached ios build for H"));
+			const building = logs.findIndex((l) => l.startsWith("building ios locally"));
+			expect(miss).toBeGreaterThanOrEqual(0);
+			expect(miss).toBeLessThan(building);
+			expect(logs.some((l) => /^still building ios \(\d+s\): › Compiling Pods\/React-Core$/.test(l))).toBe(true);
+		});
+
+		test("no heartbeat when the caller streams the build output", async () => {
+			const s = heartbeatSetup();
+			const lines: string[] = [];
+			const res = await ensureApp(
+				input(s.exec, {
+					project: s.project,
+					deviceId: undefined,
+					build: true,
+					now: () => Date.now(),
+					buildOutput: (l) => lines.push(l),
+					heartbeatSchedule: s.heartbeatSchedule,
+				})
+			);
+			expect(res.success).toBe(true);
+			expect(s.timer.scheduled).toBe(0);
+			expect(lines).toEqual(["› Compiling Pods/React-Core"]);
+		});
+	});
+
 	test("a local build stamps the native fingerprint its native dir was prebuilt for", async () => {
 		const root = join(dir, "app");
 		const products = join(root, "ios", "build", "Build", "Products", "Debug-iphonesimulator");

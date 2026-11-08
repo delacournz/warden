@@ -121,12 +121,18 @@ async function cacheCmd(ctx: CommandContext, deps: CiDeps, opts: CacheOpts): Pro
 			group.kind === "archive"
 				? `\n  ${color.dim(`after restore: ${group.afterRestore}; before save: ${group.beforeSave}`)}`
 				: "";
-		return `${color.bold(name.padEnd(7))} ${group.key}\n  ${group.paths.join(" ")}${around}`;
+		const fallback =
+			group.kind === "paths" && group.restoreKeys
+				? `\n  ${color.dim(`on a miss, restore the newest of: ${group.restoreKeys.join(" ")}`)}`
+				: "";
+		return `${color.bold(name.padEnd(7))} ${group.key}\n  ${group.paths.join(" ")}${around}${fallback}`;
 	};
 	const golden = groups.golden
 		? line("golden", groups.golden)
 		: `${color.bold("golden ")} off (the suite creates fresh simulators)`;
-	ctx.out([line("builds", groups.builds), line("repack", groups.repack), golden].join("\n"));
+	ctx.out(
+		[line("builds", groups.builds), line("repack", groups.repack), golden, line("ccache", groups.ccache)].join("\n")
+	);
 	return 0;
 }
 
@@ -142,7 +148,7 @@ export function createCiCommand(deps: CiDeps = defaultCiDeps): Command {
 			cmd
 				.command("cache")
 				.description(
-					"print the CI cache groups (builds, repack, golden): each key, its paths, and the golden's import/export commands"
+					"print the CI cache groups (builds, repack, golden, ccache): each key, its paths, and the golden's import/export commands"
 				)
 				.option("--platform <platform>", "ios (default; the only one with cacheable builds and a golden)")
 				.option("--project <dir>", "project directory (default: cwd)")
