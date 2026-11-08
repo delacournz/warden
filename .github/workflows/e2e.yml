@@ -54,6 +54,8 @@ permissions:
   contents: read
   # bun install pulls @delacournz/* from GitHub Packages with the job token.
   packages: read
+  # the action's `job timing` line reads this job's start from the jobs API.
+  actions: read
 
 # One group per branch: a new push to a pull request cancels the run on its previous head.
 concurrency:
