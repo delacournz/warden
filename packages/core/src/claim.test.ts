@@ -3,7 +3,14 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
-import { CLAIM_ABORTED, type ClaimInput, claimDevices, PENDING_PREFIX, QUARANTINE_TTL_MS } from "./claim";
+import {
+	CLAIM_ABORTED,
+	type ClaimInput,
+	claimDevices,
+	PENDING_PREFIX,
+	QUARANTINE_TTL_MS,
+	WARM_QUARANTINE_PREFIX,
+} from "./claim";
 import { parseClaimError } from "./claim-errors";
 import { recordCondition } from "./conditions/conditions";
 import type { Exec, ExecResult } from "./exec";
@@ -694,6 +701,18 @@ describe("claim quarantine expiry (16-10)", () => {
 		const result = await claimDevices(input(provider, { request: request({ max: 1 }) }));
 		expect(result.success && result.data.claimed[0]?.device.id).toBe("NEW1");
 		expect(store.listDevices().find((d) => d.id === "1")?.quarantinedAt).toBe(NOW - QUARANTINE_TTL_MS + 1);
+	});
+
+	test("a warm-up quarantine (wedged accessibility service) expires after 24 h too: a reboot clears the wedge", async () => {
+		quarantined(
+			"1",
+			`${WARM_QUARANTINE_PREFIX}accessibility service wedged, recovery failed: x`,
+			NOW - QUARANTINE_TTL_MS
+		);
+		const provider = fakeProvider([sim("1", { profile: "iphone-17" })]);
+		const result = await claimDevices(input(provider, { request: request({ max: 1 }) }));
+		expect(result.success && result.data.claimed[0]?.device.id).toBe("1");
+		expect(store.listDevices().find((d) => d.id === "1")?.quarantinedAt).toBeUndefined();
 	});
 
 	test("a quarantine a person set (release --bad) never expires", async () => {

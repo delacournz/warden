@@ -21,18 +21,19 @@ permissions: {}
 # Build and publish are split so dependency code never runs next to publish
 # credentials: `build` installs/compiles with a read-only token and no registry secret;
 # `publish` holds the OIDC + release write permissions but never installs or
-# executes repo dependencies. `build` runs on Namespace like CI; `publish` stays
-# on a GitHub-hosted runner — npm trusted publishing + provenance refuse
-# self-hosted ones, which is what a Namespace profile is to GitHub.
+# executes repo dependencies. Both run on GitHub-hosted runners (free on a public
+# repo): `build` on `xcode-27` (macOS 27, Xcode 27; `macos-26` stops at Xcode 26.6,
+# which can't build warden-simd), `publish` on Linux — npm trusted publishing +
+# provenance refuse self-hosted runners.
 jobs:
   build:
-    runs-on: namespace-profile-mac-medium
+    runs-on: xcode-27
     permissions:
       contents: read
       packages: read
     steps:
       # fetch-depth 0: the ancestry check below needs origin/main, not just the tagged commit.
-      - uses: namespacelabs/nscloud-checkout-action@66f2dc6f6c42a8ac6c4e53473c4840006822831e # v9.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -58,18 +59,8 @@ jobs:
           xcodebuild -version
           swift --version
 
-      - uses: namespacelabs/nscloud-cache-action@1124a6f3ce44e5cf84cc22111530961f4d2a15f9 # v1.7.0
-        with:
-          cache: |
-            bun
-            swiftpm
-          path: ~/Library/Caches/warden-idb
-
-      # Own turbo team: a release never replays a green that a dispatched ci.yml run (which may run
-      # reviewed fork code) wrote. Still speeds up a `gh run rerun` of a failed release.
-      - uses: namespace-actions/setup-turbocache@3b82149ffb545cab670093f13bc0bad156917e18 # v0.0.4
-        with:
-          team: release
+      # No caches: a tag run can't restore another tag's, and a release never replays a turbo green or
+      # installs from a cache a dispatched ci.yml run (which may run reviewed fork code) wrote.
 
       # `@delacournz/cli-telemetry` (GitHub Packages, private) is a hard dependency of apps/cli, so the
       # install needs a read token. bunfig.toml reads NPM_TOKEN; the job token works because the package
@@ -92,9 +83,10 @@ jobs:
       - run: bun run test
 
       # The iOS driver helper (packages/e2e/native/dist), shipped in @delacour/warden-darwin-arm64 and as a release
-      # asset. The runner is arm64 (macos-latest): the helper is built for the machine it builds on.
+      # asset. The runner must be arm64: the helper is built for the machine it builds on.
       - name: Build warden-simd
         run: |
+          if [ "$(uname -m)" != arm64 ]; then echo "runner is $(uname -m): warden-simd ships as darwin-arm64" >&2; exit 1; fi
           bun run --cwd packages/e2e native:deps
           bun run --cwd packages/e2e native:build
 

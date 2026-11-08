@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { canProbeFrontmost, canReadAlertOn } from "../alerts";
+import { canRecoverAxWedge } from "../ax-wedge";
 import { el, snapshotOf } from "../driver.testing";
 import type { Driver, Snapshot } from "../driver.types";
 import { fakeProxy } from "../network-proxy.testing";
@@ -1014,6 +1015,31 @@ describe("system alerts through one reader and the frontmost probe", () => {
 		frontmost = true;
 		expect(await unwrapped(driver.isFrontmost(BUNDLE))).toBe(true);
 		expect(helper.of("frontmost")[0]).toMatchObject({ bundleId: BUNDLE });
+	});
+
+	test("axWedge reads the helper's wedge check and asks it to recover", async () => {
+		const reply = {
+			restarts: 1,
+			maxRestarts: 1,
+			recovering: false,
+			last: { outcome: "restarted" as const, agoMs: 40, ms: 2300 },
+		};
+		const { driver, helper } = await open((request) => (request.op === "axWedge" ? { data: reply } : undefined));
+		if (!canRecoverAxWedge(driver)) throw new Error("the iOS driver offers the wedge check");
+		expect(await unwrapped(driver.axWedge({ recover: true }))).toEqual(reply);
+		expect(await unwrapped(driver.axWedge())).toEqual(reply);
+		expect(helper.of("axWedge").map((params) => params.recover)).toEqual([true, false]);
+	});
+
+	test("axWedge on a helper that predates it is E_UNSUPPORTED helper_outdated", async () => {
+		const { driver } = await open((request) => (request.op === "axWedge" ? unknownOp("axWedge") : undefined));
+		if (!canRecoverAxWedge(driver)) throw new Error("the iOS driver offers the wedge check");
+		const result = await driver.axWedge({ recover: true });
+		expect(result.success).toBe(false);
+		if (!result.success) {
+			expect(result.error.code).toBe("E_UNSUPPORTED");
+			expect(result.error.detail).toEqual({ reason: "helper_outdated" });
+		}
 	});
 
 	test("without the AX bridge alertOn('axbridge') reads the host reader and isFrontmost is never asked", async () => {

@@ -185,7 +185,7 @@ Nothing affected → exit 0 without claiming. Every failed spec is named at the 
 
 Before the specs, an iOS suite warms the leased devices' driver helpers (`warmDrivers`, on by default) so the first spec does not pay the cold start. Leases are always released at the end. 
 
-A passed gate shuts down the devices warden created (or booted for the run) before releasing them (`shutdown: "always"`, the default); with `shutdown: "idle"` they stay booted for the next run and `warden gc` shuts them down once idle. A failed or interrupted run leaves them up to inspect, and a sim that was already running when leased is never touched.
+A passed gate shuts down the devices warden created (or booted for the run) before releasing them (`shutdown: "always"`, the default locally; under `CI` the default is `idle`); with `shutdown: "idle"` they stay booted for the next run and `warden gc` shuts them down once idle. A failed or interrupted run leaves them up to inspect, and a sim that was already running when leased is never touched.
 
 ### `warden ls`
 
@@ -400,7 +400,7 @@ Prints what a CI job caches between runs: `builds` (the native simulator base), 
 
 ### `warden repack <ios|android>`
 
-Bundle this worktree's JS into the cached simulator build (building that base once per native fingerprint) without installing it. `--project <dir>`, `--force` (repack even when this JS is cached), `--json` → `{ result: "reused" | "repacked" | "fallback", platform, baseHash, hash, jsKey, artifact, bundleMs }` (`fallback` carries `reason`; a `repacked` over a cached repack that could not be reused carries `reason: "base-changed"`, the simulator base was replaced since, or `"base-unrecorded"`, the repack predates base tracking). Exit 0 on a repack, 1 on an error or a fallback (Android images changed). See [App builds](/docs/sims/app-builds).
+Bundle this worktree's JS into the cached simulator build (building that base once per native fingerprint) without installing it. `--project <dir>`, `--force` (repack even when this JS is cached), `--json` → `{ result: "reused" | "repacked" | "fallback", platform, baseHash, hash, jsKey, artifact, bundleMs }` (`fallback` carries `reason`; a `repacked` over a cached repack that could not be reused carries `reason: "base-changed"`, the simulator base was replaced since, `"base-unrecorded"`, the repack predates base tracking, or `"signer-changed"`, Android: the cached repack was signed by another key than its base). Exit 0 on a repack, 1 on an error or a fallback (Android images changed). See [App builds](/docs/sims/app-builds).
 
 ### `warden builds ls | rm | prune | import`
 

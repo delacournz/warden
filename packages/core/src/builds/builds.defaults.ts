@@ -41,7 +41,17 @@ export function defaultBuildCommand(
 	if (platform === "ios") {
 		return `${IOS_NATIVE_PREPARE} && bunx expo run:ios ${configuration === "Release" ? "--configuration Release " : ""}${flags}`;
 	}
-	return `bunx expo run:android ${configuration === "Release" ? "--variant release " : ""}${flags}`;
+	return androidGradleCommand(configuration, framework);
+}
+
+/**
+ * Android build: prebuild a CNG checkout that has no `android/`, then Gradle alone. Never `expo run:android`: it has no
+ * build-only mode (its `--no-install` skips dependency install, not the app's) and installs the APK on whichever
+ * emulator is booted, warden's or not. warden installs the cached build itself.
+ */
+export function androidGradleCommand(configuration: BuildConfiguration, framework: AppFramework = "expo"): string {
+	const gradle = `cd android && ./gradlew app:assemble${configuration} -PreactNativeArchitectures=${ANDROID_HOST_ABI}`;
+	return framework === "react-native" ? gradle : `${ANDROID_NATIVE_PREPARE} && ${gradle}`;
 }
 
 /** What an iOS device build is signed with: the team (always) and, when set, the bundle id that replaces the project's. */
@@ -108,8 +118,7 @@ export function simulatorBuildCommand(platform: Platform, framework: AppFramewor
 		}
 		return `${IOS_NATIVE_PREPARE} && SKIP_BUNDLING=1 bunx expo run:ios --configuration Release --no-install --no-bundler`;
 	}
-	const gradle = `cd android && ./gradlew app:assembleRelease -PreactNativeArchitectures=${ANDROID_HOST_ABI}`;
-	return framework === "react-native" ? gradle : `${ANDROID_NATIVE_PREPARE} && ${gradle}`;
+	return androidGradleCommand("Release", framework);
 }
 
 /**

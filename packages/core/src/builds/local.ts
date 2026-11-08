@@ -24,6 +24,7 @@ import { type CacheKey, computeCacheKey } from "./fingerprint";
 import { combineKey, readFileOrUndefined } from "./js-inputs";
 import type { BuildTarget } from "./kinds";
 import { planPrebuiltRn } from "./prebuilt-rn";
+import { readProjectSigning, type SigningKeystore } from "./signing-key";
 
 const iosProducts = (configuration: BuildConfiguration, target: BuildTarget) =>
 	join("Build", "Products", `${configuration}-${target === "device" ? "iphoneos" : "iphonesimulator"}`);
@@ -264,8 +265,11 @@ async function cacheEnv(deps: LocalBuildDeps): Promise<Record<string, string>> {
 	};
 }
 
-/** What a local build produced: the artifact, and the project's key after the build when the build itself moved it (17-1). */
-export type LocalBuild = { artifact: string; postKey?: string };
+/**
+ * What a local build produced: the artifact, the project's key after the build when the build itself moved it (17-1),
+ * and (Android) the keystore the APK was signed with, so repacks can keep its signer without the prebuild output.
+ */
+export type LocalBuild = { artifact: string; postKey?: string; signing?: SigningKeystore };
 
 /** iOS: `app`'s `CFBundleIdentifier` against the project's (a UI test runner or another app is a mismatch). */
 type BundleCheck = "match" | "mismatch" | "unknown";
@@ -417,6 +421,13 @@ function describeBuildFailure(deps: LocalBuildDeps, argv: string[], res: ExecRes
 		: `${execError(argv, res)}${logPath ? ` — full log: ${logPath}` : ""}`;
 }
 
+/** The keystore an Android build was signed with (undefined elsewhere, or when none can be read). */
+function androidSigning(deps: LocalBuildDeps): SigningKeystore | undefined {
+	return deps.platform === "android"
+		? readProjectSigning(deps.project.root, deps.project.buildConfiguration)
+		: undefined;
+}
+
 /**
  * Run `build.<platform>` in the project root, locate the produced `.app`/`.apk`, and verify the
  * project's cache key (native fingerprint, plus the JS sources for a JS-aware project) still equals
@@ -462,5 +473,6 @@ export async function runLocalBuild(deps: LocalBuildDeps): AsyncResult<LocalBuil
 	if (located.kind === "up-to-date") deps.log(`build was up to date; reusing ${artifact}`);
 	if (moved)
 		deps.log(`the build created ${platform}/ (prebuild): caching under ${deps.hash}, aliased as ${after.data.key}`);
-	return ok(moved ? { artifact, postKey: after.data.key } : { artifact });
+	const signing = androidSigning(deps);
+	return ok({ artifact, ...(moved ? { postKey: after.data.key } : {}), ...(signing ? { signing } : {}) });
 }

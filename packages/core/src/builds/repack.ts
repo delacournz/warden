@@ -34,15 +34,17 @@ import { type GitContext, gitContext, readRepackMeta, writeRepackMeta } from "./
 import { computeKindKey, type KindKeys } from "./kind-key";
 import { buildLockKey, withBuildLock } from "./lock";
 import type { ApplyRepack, BundleOutput } from "./repack.types";
+import { androidKeepsSigner } from "./repack-android";
 
 /** The first bytes of Hermes bytecode (`0x1f1903c103bc1fc6` little-endian). */
 const HBC_MAGIC = Uint8Array.from([0xc6, 0x1f, 0xbc, 0x03, 0xc1, 0x03, 0x19, 0x1f]);
 
 /**
- * Why a cached repack was not reused: its simulator base was replaced since (`base-changed`), or it was made before
- * warden recorded which base it came from (`base-unrecorded`, once).
+ * Why a cached repack was not reused: its simulator base was replaced since (`base-changed`), it was made before
+ * warden recorded which base it came from (`base-unrecorded`, once), or it is signed by another key than its base so a
+ * device holding the base could not update to it (`signer-changed`, Android).
  */
-export type RepackReason = "base-changed" | "base-unrecorded";
+export type RepackReason = "base-changed" | "base-unrecorded" | "signer-changed";
 
 /** What `repackApp` produced: a cached repack (reused or just made), or why a full simulator build is needed instead. */
 export type RepackResult =
@@ -71,6 +73,8 @@ export type RepackInput = Omit<EnsureKindInput, "key" | "buildKey" | "deviceId" 
 	hermes?: (exec: Exec, platform: Platform, baseArtifact: string) => Promise<boolean>;
 	/** where scratch dirs go (default the OS temp dir) */
 	scratchRoot?: string;
+	/** is the cached repack signed by its base's key? default: Android compares the apks' certificates, iOS true */
+	keepsSigner?: (platform: Platform, baseArtifact: string, repackArtifact: string) => Promise<boolean>;
 };
 
 type Env = Record<string, string | undefined>;
@@ -267,6 +271,25 @@ async function bundleJs(step: BundleStep): AsyncResult<BundleOutput> {
 }
 
 /**
+ * Why a cached repack cannot be reused over `basePath`, if it cannot: it is valid over the exact base it was cloned
+ * from, and signed by that base's key. A pruned base is never passed here, the repack stays usable then.
+ */
+async function staleReason(
+	input: RepackInput,
+	basePath: string,
+	repackPath: string,
+	recordedBase: string | undefined
+): Promise<RepackReason | undefined> {
+	const { platform, exec } = input;
+	const current = await baseIdentity(platform, basePath);
+	if (current !== undefined && recordedBase !== current)
+		return recordedBase === undefined ? "base-unrecorded" : "base-changed";
+	const keeps =
+		input.keepsSigner ?? ((p, b, r) => (p === "android" ? androidKeepsSigner(exec, b, r) : Promise.resolve(true)));
+	return (await keeps(platform, basePath, repackPath)) ? undefined : "signer-changed";
+}
+
+/**
  * The repack of the current worktree's JS over the simulator base, no device involved: reuse the cached one, or ensure
  * the base (`ensureKindBuild`), bundle, Hermes-compile, let the platform's `ApplyRepack` write the artifact, and
  * record it. One bundle per `(project, platform, jsKey)` at a time: a concurrent run waits on the build lock and finds
@@ -308,13 +331,11 @@ export async function repackApp(input: RepackInput): AsyncResult<RepackResult> {
 		if (!hit || (input.force && hit.createdAt < startedAt)) return undefined;
 		const meta = await readRepackMeta(dirname(hit.path));
 		const base = findSimulatorBase(store, { projectKey, platform, nativeFp: repack.nativeFp });
-		// a repack is valid over the exact base it was cloned from; a pruned base cannot be compared, the repack stays usable
-		if (base && existsSync(base.path)) {
-			const current = await baseIdentity(platform, base.path);
-			if (current !== undefined && meta?.baseId !== current) {
-				reason = meta?.baseId === undefined ? "base-unrecorded" : "base-changed";
-				return undefined;
-			}
+		const stale =
+			base && existsSync(base.path) ? await staleReason(input, base.path, hit.path, meta?.baseId) : undefined;
+		if (stale) {
+			reason = stale;
+			return undefined;
 		}
 		touchBuild(store, projectKey, platform, hit.hash, input.now());
 		return {
