@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import {
 	atfSourceHash,
 	fetchArtifact,
@@ -9,6 +9,7 @@ import {
 } from "../../../native/android/scripts/build-atf";
 import { atfDevicePath, ensureAtfJar } from "./atf-device";
 import { ATF_DEX } from "./atf-dex.generated";
+import { WORKSPACE_ATF_JAR } from "./atf-jar";
 
 describe("the generated ATF module", () => {
 	test("is built from the lock, rules and entry class that are checked in", () => {
@@ -16,17 +17,15 @@ describe("the generated ATF module", () => {
 		expect<string>(ATF_DEX.sourceSha256).toBe(atfSourceHash());
 	});
 
-	test("carries a jar whose size and hash are the ones it declares, with a dex and the strings inside", () => {
-		const jar = Buffer.from(ATF_DEX.base64, "base64");
-		expect(jar.length).toBe(ATF_DEX.bytes);
-		expect(createHash("sha256").update(jar).digest("hex")).toBe(ATF_DEX.jarSha256);
+	test("the checked-in jar is a zip with a dex and the strings inside (size and hash: atf-jar.test.ts)", () => {
+		const jar = readFileSync(WORKSPACE_ATF_JAR);
 		expect(jar.subarray(0, 2).toString("latin1")).toBe("PK");
 		expect(jar.includes(Buffer.from("classes.dex"))).toBe(true);
 		expect(jar.includes(Buffer.from("resources/strings.xml"))).toBe(true);
 	});
 
-	test("stays small enough to live in the bundle", () => {
-		expect(ATF_DEX.bytes).toBeLessThan(1_000_000);
+	test("carries no bytes: the jar is a release asset, never part of the bundle", () => {
+		expect(Object.keys(ATF_DEX).sort()).toEqual(["bytes", "jarSha256", "sourceSha256", "version"]);
 	});
 });
 
@@ -81,7 +80,11 @@ describe("r8Argv", () => {
 });
 
 describe("ensureAtfJar", () => {
-	const jar = { bytes: 3, jarSha256: "abcdef0123456789", base64: "AQID" };
+	const jar = { bytes: 3, jarSha256: "abcdef0123456789" };
+	const load = async () => ({
+		success: true as const,
+		data: { bytes: new Uint8Array([1, 2, 3]), source: "cache" as const },
+	});
 	const session = (present: boolean) => ({
 		run: async () => ({
 			success: true as const,
@@ -93,13 +96,16 @@ describe("ensureAtfJar", () => {
 		expect(atfDevicePath(jar)).toBe("/data/local/tmp/warden-atf-abcdef01.jar");
 	});
 
-	test("does not push a jar that is already there", async () => {
+	test("does not load or push a jar that is already there", async () => {
 		const pushed: unknown[] = [];
 		const res = await ensureAtfJar({
 			session: session(true) as never,
 			adb: "adb",
 			serial: "s",
 			jar,
+			load: async () => {
+				throw new Error("loaded");
+			},
 			push: async (a) => {
 				pushed.push(a);
 				return { exitCode: 0, output: "" };
@@ -116,6 +122,7 @@ describe("ensureAtfJar", () => {
 			adb: "adb",
 			serial: "s",
 			jar,
+			load,
 			push: async (_a, b) => {
 				bytes = b;
 				return { exitCode: 0, output: "" };
@@ -128,18 +135,46 @@ describe("ensureAtfJar", () => {
 			adb: "adb",
 			serial: "s",
 			jar,
+			load,
 			push: async () => ({ exitCode: 1, output: "no space" }),
 		});
 		expect(bad.success).toBe(false);
 		if (!bad.success) expect(bad.error.code).toBe("E_IO");
 	});
+
+	test("a jar that cannot be loaded (offline, no cache) is E_IO and nothing is pushed", async () => {
+		let pushed = false;
+		const res = await ensureAtfJar({
+			session: session(false) as never,
+			adb: "adb",
+			serial: "s",
+			jar,
+			load: async () => ({ success: false as const, error: "GET x: offline" }),
+			push: async () => {
+				pushed = true;
+				return { exitCode: 0, output: "" };
+			},
+		});
+		expect(res.success).toBe(false);
+		if (!res.success) {
+			expect(res.error.code).toBe("E_IO");
+			expect(res.error.message).toContain("offline");
+		}
+		expect(pushed).toBe(false);
+	});
 });
 
 test("renderAtfGenerated writes the module the driver imports", () => {
-	const text = renderAtfGenerated(
-		{ version: "4.1.1", bytes: 3, jarSha256: "j", dexBytes: 1, sourceSha256: "s", minApi: 26, r8: "r", builtAt: "n" },
-		new Uint8Array([1, 2, 3])
-	);
+	const text = renderAtfGenerated({
+		version: "4.1.1",
+		bytes: 3,
+		jarSha256: "j",
+		dexBytes: 1,
+		sourceSha256: "s",
+		minApi: 26,
+		r8: "r",
+		builtAt: "n",
+	});
 	expect(text).toContain("export const ATF_DEX = {");
-	expect(text).toContain('base64: "AQID"');
+	expect(text).not.toContain("base64");
 });

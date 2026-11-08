@@ -1,26 +1,30 @@
+import type { AsyncResult } from "@delacour/warden-types/result";
 import type { DriverResult, Logger } from "../driver.types";
 import { driverErr } from "../errors";
 import type { AdbSession } from "./adb-session";
 import { ATF_DEX } from "./atf-dex.generated";
+import { type AtfJarMeta, type AtfJarSource, loadAtfJar } from "./atf-jar";
 import { bunPushDex, type PushDex, UIAD_DEVICE_DIR, uiadInstallArgv, uiadPresentCommand } from "./uiad-device";
 
 /**
  * `warden-atf.jar` (the Accessibility Test Framework, ~180 KB) goes to the device on the first audit only, named by its
- * hash like the uiad dex, so a new build is a new file and the always-pushed uiad dex stays small.
+ * hash like the uiad dex, so a new build is a new file and the always-pushed uiad dex stays small. Its bytes are
+ * loaded (`atf-jar.ts`: cache, else a release download) only when the device does not have it yet.
  */
 
-export type AtfJar = { bytes: number; jarSha256: string; base64: string };
-
-export function atfDevicePath(jar: Pick<AtfJar, "jarSha256"> = ATF_DEX): string {
+export function atfDevicePath(jar: Pick<AtfJarMeta, "jarSha256"> = ATF_DEX): string {
 	return `${UIAD_DEVICE_DIR}/warden-atf-${jar.jarSha256.slice(0, 8)}.jar`;
 }
+
+export type LoadAtfBytes = (jar: AtfJarMeta) => AsyncResult<{ bytes: Uint8Array; source: AtfJarSource }>;
 
 export type EnsureAtfDeps = {
 	session: AdbSession;
 	adb: string;
 	serial: string;
 	push?: PushDex;
-	jar?: AtfJar;
+	jar?: AtfJarMeta;
+	load?: LoadAtfBytes;
 	log?: Logger;
 };
 
@@ -30,13 +34,12 @@ export async function ensureAtfJar(deps: EnsureAtfDeps): DriverResult<string> {
 	const path = atfDevicePath(jar);
 	const present = await deps.session.run(uiadPresentCommand(path, jar.bytes));
 	if (present.success && present.data.stdout.includes("present")) return { success: true, data: path };
-	const wrote = await (deps.push ?? bunPushDex)(
-		uiadInstallArgv(deps.adb, deps.serial, path),
-		Buffer.from(jar.base64, "base64")
-	);
+	const loaded = await (deps.load ?? ((j) => loadAtfJar(j)))(jar);
+	if (!loaded.success) return driverErr("E_IO", `cannot get warden-atf: ${loaded.error}`);
+	const wrote = await (deps.push ?? bunPushDex)(uiadInstallArgv(deps.adb, deps.serial, path), loaded.data.bytes);
 	if (wrote.exitCode !== 0) {
 		return driverErr("E_IO", `cannot write warden-atf to ${deps.serial}:${path}: ${wrote.output.slice(0, 200)}`);
 	}
-	deps.log?.(`atf: wrote ${jar.bytes} B to ${path}`);
+	deps.log?.(`atf: wrote ${jar.bytes} B to ${path} (from ${loaded.data.source})`);
 	return { success: true, data: path };
 }

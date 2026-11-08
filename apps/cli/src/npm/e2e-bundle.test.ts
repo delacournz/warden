@@ -52,6 +52,15 @@ describe("bundleE2e (the real packages/e2e)", () => {
 		expect(bundled).toContain("nz.co.delacour.warden.uiad.Main");
 	}, 60_000);
 
+	test("carries no base64 zip: an inlined archive (the ATF jar) held each release in npm's review for ~16 min", async () => {
+		await bundle("9.8.7");
+		const bundled = readdirSync(out)
+			.map((file) => readFileSync(join(out, file), "utf8"))
+			.join("\n");
+		expect(bundled).not.toContain("UEsDB");
+		expect(bundled).toContain("warden-atf-");
+	}, 60_000);
+
 	test("the entries share one chunk (a single session module) and WARDEN_E2E_VERSION is the published version", async () => {
 		await bundle("9.8.7");
 		const files = readdirSync(out);

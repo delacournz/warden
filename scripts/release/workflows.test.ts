@@ -76,3 +76,28 @@ describe("pipeline wiring", () => {
 		expect(text).toContain("origin/main");
 	});
 });
+
+describe("release.yml publish order", () => {
+	type Step = { name?: string; run?: string };
+	async function publishSteps(): Promise<Step[]> {
+		const text = await Bun.file(join(WORKFLOWS, "release.yml")).text();
+		const parsed = Bun.YAML.parse(text) as { jobs: { publish: { steps: Step[] } } };
+		return parsed.jobs.publish.steps;
+	}
+
+	test("the GitHub release (with the ATF jar asset) goes up before npm, and the run waits until npm serves", async () => {
+		const names = (await publishSteps()).map((step) => step.name ?? "");
+		const release = names.indexOf("Publish GitHub release");
+		const npm = names.indexOf("Publish to npm");
+		const wait = names.indexOf("Wait until npm serves every package");
+		expect(release).toBeGreaterThanOrEqual(0);
+		expect(npm).toBeGreaterThan(release);
+		expect(wait).toBeGreaterThan(npm);
+	});
+
+	test("the wait asks the registry, not npm's metadata cache", async () => {
+		const wait = (await publishSteps()).find((step) => step.name === "Wait until npm serves every package");
+		expect(wait?.run).toContain("--prefer-online");
+		expect(wait?.run).toContain("dist/npm/warden-e2e/");
+	});
+});
