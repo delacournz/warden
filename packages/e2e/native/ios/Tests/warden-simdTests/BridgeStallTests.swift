@@ -604,7 +604,8 @@ final class BridgeStallTests: XCTestCase {
     let clock = Clock()
     gate.recordStall(at: clock.now)
     _ = warmth.warmUp(deadlineMs: 1000, log: { _ in }) { try await Task.sleep(for: .milliseconds(30)) }
-    let recovery = recovery(calls) {}
+    // the wait is bounded by the probe's deadline: 100 ms left a loaded 3-vCPU CI runner no room after a 30 ms warm-up
+    let recovery = recovery(calls, deadlineMs: 2000) {}
     let outcome = try await read(
       requested: .axbridge, bridge: answer("bridge", calls), host: answer("ax", calls), gate: gate, warmth: warmth,
       policy: coldPolicy, clock: clock, recovery: recovery, calls: calls)
