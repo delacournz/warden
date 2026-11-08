@@ -36,7 +36,7 @@ warden e2e example --specs todos,settings  # exactly these ids / globs
 
 Suite settings are defaults. A flag passed on the command line wins.
 
-**Verdict (stderr):** failed specs with their tests, then `warden e2e: tests <n> passed · <n> failed · <n> skipped`, `<k>/<n> failed tests share one error: <msg>` when 2+ do (usually the root cause, not the specs), `evidence in <batchDir>`, then `<k>/<n> spec(s) passed — gate passed|failed`.
+**Verdict (stderr):** failed specs with their tests, then `warden e2e: tests <n> passed · <n> failed · <n> skipped`, `<k>/<n> failed tests share one error: <msg>` when 2+ do (usually the root cause, not the specs), `evidence in <batchDir>`, then `<k>/<n> spec(s) passed — gate passed|failed`, then `took <total> — setup <s> · tests <t> · teardown <d>` (setup = start → first spec: plan, claim, boot, install, warm-up; tests = the spec processes' window; teardown = report + device shutdown). The `--no-tui` / batch-log test lines read `✓ <spec> › <title> (<test>s · total <since first spec>)`.
 
 **GitHub Actions** (`GITHUB_ACTIONS=true`, automatic): one `::error` per failed test on its spec file at the line it failed (`::warning` for an optional spec; a spec with no results is annotated on the file), paths relative to `GITHUB_WORKSPACE`; on stdout, on stderr with `--json` / `--json-lines`. A markdown table of failed tests is appended to `$GITHUB_STEP_SUMMARY`.
 
@@ -262,7 +262,7 @@ e2e/<w>-<seq>[-p<N>]/results.jsonl        (-pN: pass N+1 of an attempt, with pas
 e2e/<w>-<seq>[-p<N>]/<specId>/<title>-<hash6>/   trace.jsonl screenshots/ failure.png screen-at-failure.txt console.jsonl network.jsonl perf/ (with --perf)
 ```
 
-`e2e-report.json`: `{ suite, platform, base?, isolate, ok, headless, batchDir?, specs[], only?, setup?, warm? }`. iOS `warm[]`: per device `{ worker, udid, ok, error?, axRecovery?, dropped?, quarantined? }`; `axRecovery` `{ outcome: "recovered" }` (backboardd restarted), `{ outcome: "rebooted" }` (the sim rebooted) or `{ outcome: "failed", error, stage? }` (`stage`: `log`, `restart` or `reboot`) when the warm-up found the sim's accessibility service wedged (troubleshooting 119); `dropped: true` = its reads still timed out and it ran no spec, `quarantined: true` = also quarantined for 24 h with a `warm: ` reason (`warden sim unquarantine <udid>` lifts it now). Each spec has `verdict`, `attempts`, `tests[]`; a failed test carries `line` (where it failed in the spec, from the stack) when the spec is on its stack.
+`e2e-report.json`: `{ suite, platform, base?, isolate, ok, headless, batchDir?, specs[], only?, setup?, warm?, timing? }`. `timing` (ms, absent when no spec ran): `{ totalMs, setupMs, testsMs, teardownMs }`. iOS `warm[]`: per device `{ worker, udid, ok, error?, axRecovery?, dropped?, quarantined? }`; `axRecovery` `{ outcome: "recovered" }` (backboardd restarted), `{ outcome: "rebooted" }` (the sim rebooted) or `{ outcome: "failed", error, stage? }` (`stage`: `log`, `restart` or `reboot`) when the warm-up found the sim's accessibility service wedged (troubleshooting 119); `dropped: true` = its reads still timed out and it ran no spec, `quarantined: true` = also quarantined for 24 h with a `warm: ` reason (`warden sim unquarantine <udid>` lifts it now). Each spec has `verdict`, `attempts`, `tests[]`; a failed test carries `line` (where it failed in the spec, from the stack) when the spec is on its stack.
 
 iOS bridge stalls (the in-sim accessibility bridge did not answer and the read went to `ax`) show in three places:
 
