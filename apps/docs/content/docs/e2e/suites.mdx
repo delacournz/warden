@@ -131,14 +131,20 @@ Each spec process prints one line when a test starts and ends, and a pair per st
 [00:54:29.470] ■ test |ios| e2e/todos.e2e.ts › adds a todo passed 3.21s on warden-iphone-17-2
 ```
 
-The `[HH:MM:SS.mmm]` stamp is warden's: every line in a job log, `setup-<worker>.log`, `metro.log` and `serve.log` carries the local time it arrived, and spec processes get `WARDEN_LOG_TIMESTAMPS=1`. The batch log (and `--no-tui`) adds one line per finished test, and the live grid ticks specs off:
+The `[HH:MM:SS.mmm]` stamp is warden's: every line in a job log, `setup-<worker>.log`, `metro.log` and `serve.log` carries the local time it arrived, and spec processes get `WARDEN_LOG_TIMESTAMPS=1`. The batch log (and `--no-tui`) adds one line per finished test, with the test's own time and the run's total when it finished (counted from when the first spec started), and the live grid ticks specs off:
 
 ```text
-✓ todos › adds a todo (3.21s)
-✗ sign-in › a locked account shows the form alert (8.04s)
+✓ todos › adds a todo (3.21s · total 41s)
+✗ sign-in › a locked account shows the form alert (8.04s · total 1m26s)
 ```
 
-When the run ends, every failed spec is listed with its failing tests, the first line of each error and the artifact directory. See [Debugging](/docs/e2e/debugging).
+When the run ends, every failed spec is listed with its failing tests, the first line of each error and the artifact directory. See [Debugging](/docs/e2e/debugging). The last line splits the run's wall time, and `e2e-report.json` keeps the same split under `timing` (`totalMs`, `setupMs`, `testsMs`, `teardownMs`):
+
+```text
+warden e2e: took 2m52s — setup 1m24s · tests 1m26s · teardown 2s
+```
+
+Setup is everything before the first spec (plan, claim, boot, build or install, warm-up), tests is the spec processes' window, and teardown is the report and shutting devices down.
 
 As soon as each device is leased, warden starts its iOS driver helper and takes one accessibility snapshot (`warmDrivers`, on by default) while the app installs and Metro builds, so the first spec does not pay the cold start. A sim whose accessibility service wedged on first use (it logs `Could not auto-register for pid status change`) gets backboardd restarted once and a fresh helper. `warmDrivers: false` or `--no-warm` turns it off; a failed warm-up (2 min limit) only warns.
 

@@ -81,6 +81,20 @@ describe("specPoller", () => {
 		expect(r.lines[0]).toBe("✓ todos › a0 (1.25s)");
 	});
 
+	test("given the run's start, each test line carries the run's total so far", async () => {
+		const lines: string[] = [];
+		const poller = specPoller(
+			{ every: () => () => {}, readFrom: memoryReadFrom(new Map([[OUT, jsonl(result(file("todos"), "a"))]])) },
+			specs,
+			new Map([["1:0", OUT]]),
+			new Set(),
+			{ specs: () => {}, tests: (l) => lines.push(...l) },
+			{ startedAt: 0 }
+		);
+		await poller.poll();
+		expect(lines).toEqual(["✓ todos › a (1.25s · total 2s)"]);
+	});
+
 	test("a partial trailing line is not parsed or reported until its newline arrives", async () => {
 		const r = rig();
 		const first = jsonl(result(file("onboarding"), "welcome"));

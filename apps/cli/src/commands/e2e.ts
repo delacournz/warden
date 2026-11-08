@@ -56,6 +56,7 @@ import { selectPreload } from "../e2e/e2e-runtime";
 import { attemptOut, type JobPlan, jobPlan, type ShardRuns, shardRuns } from "../e2e/jobs";
 import { type LaunchPlan, specBundleId, specDevClientScheme, specLaunchArgs } from "../e2e/launch";
 import { annotations, commonFailure, githubTarget, stepSummary, testEvent, testTotals } from "../e2e/report-output";
+import { type E2eTiming, runTiming, timingLine } from "../e2e/timing";
 import { exitGate, type RunShape, type SpecVerdict, type Verdicts, verdicts } from "../e2e/verdicts";
 import { type AppFlagValues, withLeaseOptions } from "../lease-session";
 import { emit, note, reportError, success, warn } from "../output";
@@ -129,6 +130,8 @@ export type E2eReport = {
 	warm?: DeviceWarmReport[];
 	/** the run stopped before any spec: a phone's runner would not start (`device_locked`, ...) */
 	error?: { code: string; message: string; udid: string };
+	/** where the run's wall time went (ms): setup → tests → teardown; absent when no spec ran */
+	timing?: E2eTiming;
 };
 
 /** The suite's retry / passes and device request (count, profile, runtime, biometrics, camera, ports) as option values. */
@@ -448,6 +451,7 @@ function printVerdict(ctx: CommandContext, report: E2eReport): void {
 	const line = `warden e2e: ${passed}/${report.specs.length} spec(s) passed — ${report.ok ? "gate passed" : "gate failed"}`;
 	if (report.ok) success(ctx, line);
 	else reportError(ctx, "e2e", line.replace(/^warden e2e: /, ""));
+	if (report.timing) ctx.err(timingLine(report.timing));
 }
 
 /** `CI` is set to something other than empty / `0` / `false`. */
@@ -527,6 +531,7 @@ async function e2e(
 	opts: E2eOpts,
 	passed: ReadonlySet<string>
 ): Promise<number> {
+	const began = ctx.now();
 	const fail = (message: string) => {
 		reportError(ctx, "e2e", message);
 		return 1;
@@ -580,7 +585,8 @@ async function e2e(
 		attempts: runs.attempts,
 	});
 	for (const warning of result.warnings) ctx.err(ctx.ui.color.yellow(`warden e2e: ${warning}`));
-	const report = buildReport(base, headless, shape.shardOf === undefined ? "spec" : "device", session, result);
+	const isolate = shape.shardOf === undefined ? "spec" : "device";
+	const report = buildReport(base, headless, isolate, session, result, runTiming(began, session, ctx.now()));
 	await publish(ctx, deps, opts, report);
 	await publishGithub(ctx, deps, opts, report);
 	const early = earlyExit(session);
@@ -606,7 +612,8 @@ function buildReport(
 	headless: boolean,
 	isolate: E2eIsolation,
 	session: SessionResult,
-	result: Verdicts
+	result: Verdicts,
+	timing: E2eTiming | undefined
 ): E2eReport {
 	return {
 		...base,
@@ -619,6 +626,7 @@ function buildReport(
 		...(session.setups ? { setup: session.setups } : {}),
 		...(session.warm && session.warm.length > 0 ? { warm: session.warm } : {}),
 		...(session.error ? { error: session.error } : {}),
+		...(timing ? { timing } : {}),
 	};
 }
 

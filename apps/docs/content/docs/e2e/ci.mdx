@@ -149,7 +149,15 @@ Pin the action to a commit SHA or release tag. In order, it:
 1. Sets `WARDEN_TELEMETRY_DISABLED=1` and `DO_NOT_TRACK=1`, selects `xcode-path` through `DEVELOPER_DIR` when given, and lets `simctl` answer once so the first CoreSimulator call does not land inside a claim's 30 s timeout.
 2. Installs bun from npm (`npm i -g bun@<version>`) when none is on `PATH`, so it needs no third-party action; `bun-version` defaults to the root `packageManager`. Runs `install-command` (default `bun install --frozen-lockfile`) with `npm-token` as `NPM_TOKEN`.
 3. Installs the release binary of `warden-version` (checksum verified) and runs `warden doctor --fetch-helper`.
-4. Restores the three caches below, imports `app-path` when given, then runs `warden e2e` with `--report` and the inputs as flags.
+4. Restores the three caches below, imports `app-path` when given, then runs `warden e2e` with `--report` and the inputs as flags. Then it prints one line splitting the job's time up to the suite's end:
+
+   ```text
+   warden e2e: took 2m40s — setup 1m22s · tests 1m18s · teardown 0s
+   warden e2e exited 0 after 161 s
+   job timing: prep 1m46s (workflow steps 1m20s · action 26s) · warden e2e 2m41s · total 4m27s
+   ```
+
+   `workflow steps` is the job's steps before this action, `action` is its own install and cache steps, and `warden e2e` matches warden's `took` line (claim, boot, install and the specs). The job's start comes from the jobs API with `github-token`, which needs `actions: read` in the workflow's `permissions`; without it the line reads `action prep 26s · warden e2e 2m41s (job start unknown: …)`.
 5. On failure prints every `screen-at-failure.txt` into the job log (one `::group::` each), then collects the run's [artifacts](#artifacts) and uploads each group as its own artifact (`retention-days`, default 3).
 6. After a green run only, and only when `save-cache` is `true`, saves the caches. Restore and save are separate steps, so a failed run saves nothing.
 
@@ -163,6 +171,7 @@ Pin the action to a commit SHA or release tag. In order, it:
 | `warden-version` | `latest` | release tag, or `none` when warden is already on `PATH` |
 | `bun-version` | root `packageManager` | bun to install from npm when none is on `PATH`; `none` skips |
 | `install-command` | `bun install --frozen-lockfile` | empty skips; `install-working-directory` picks where it runs |
+| `github-token` | `github.token` | reads the job's start for the `job timing` line (needs `actions: read`); never passed to warden |
 | `xcode-path` | runner default | e.g. `/Applications/Xcode_27.2.app` |
 | `headroom-gb` | 1 on hosts of 16 GB or less | `WARDEN_CAPACITY_HEADROOM_GB` |
 | `report-path` | `warden-e2e-report.json` | where the report goes |

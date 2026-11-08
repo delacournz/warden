@@ -660,7 +660,7 @@ async function runGrid(
 	const screen = display(ctx, deps, args, { current: startView(rows, o.total, o.startedAt, specs) }, specs, sized);
 	const ended = new Set<string>();
 	const sink = o.onTest ? { specs: screen.specs, tests: screen.tests, finished: o.onTest } : screen;
-	const poller = specs ? specPoller(deps, specs, o.resultFiles, ended, sink) : undefined;
+	const poller = specs ? specPoller(deps, specs, o.resultFiles, ended, sink, { startedAt: o.startedAt }) : undefined;
 	const shown = new Set(o.ready);
 	try {
 		const summary = await runPools(pending, {
@@ -1024,6 +1024,9 @@ export type SessionResult = {
 	warm?: DeviceWarmReport[] | undefined;
 	/** why the run stopped before any job: a phone whose runner would not start (`device_locked`, ...) */
 	error?: { code: string; message: string; udid: string };
+	/** epoch ms the jobs started / ended (the grid's window); absent when the run stopped before any job */
+	testsStartedAt?: number;
+	testsEndedAt?: number;
 };
 
 /** One device's driver warm-up as the report keeps it (`e2e-report.json` `warm`). */
@@ -2208,6 +2211,8 @@ async function supervise(
 			devices,
 			setups,
 			warm: warmReport(run.warm, devices, dropped),
+			testsStartedAt: startedAt,
+			testsEndedAt: endedAt,
 		};
 	} catch (error) {
 		return fail(error instanceof Error ? error.message : String(error));
