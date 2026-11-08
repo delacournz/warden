@@ -74,7 +74,11 @@ const escapeProperty = (s: string): string => escapeData(s).replace(/:/g, "%3A")
 const repoPath = (file: string, root: string): string =>
 	root !== "" && isAbsolute(file) && !relative(root, file).startsWith("..") ? relative(root, file) : file;
 
-function command(level: "error" | "warning", props: { file: string; line?: number; title: string }, message: string) {
+function command(
+	level: "error" | "warning" | "notice",
+	props: { file: string; line?: number; title: string },
+	message: string
+) {
 	const parts = [
 		`file=${escapeProperty(props.file)}`,
 		...(props.line !== undefined ? [`line=${props.line}`] : []),
@@ -83,13 +87,31 @@ function command(level: "error" | "warning", props: { file: string; line?: numbe
 	return `::${level} ${parts.join(",")}::${escapeData(message)}`;
 }
 
+/** Specs that passed, but only on a retry: `failures` holds what the earlier attempts met. */
+const passedOnRetry = (spec: SpecVerdict): boolean => spec.verdict === "passed" && (spec.failures?.length ?? 0) > 0;
+
 /**
  * GitHub annotations: one per failed test, on its spec file at the line it failed (`TestVerdict.line`),
  * and one per failed spec that reported no tests (it crashed or never started). A required spec is an
- * `error`, an optional one a `warning`.
+ * `error`, an optional one a `warning`. A spec that passed on a retry gets a `notice` per test an
+ * earlier attempt failed, so a flake is visible on a green run.
  */
 export function annotations(report: E2eReport, root: string): string[] {
-	return report.specs.filter((s) => s.verdict === "failed").flatMap((spec) => specAnnotations(spec, root));
+	return [
+		...report.specs.filter((s) => s.verdict === "failed").flatMap((spec) => specAnnotations(spec, root)),
+		...report.specs.filter(passedOnRetry).flatMap((spec) => retryAnnotations(spec, root)),
+	];
+}
+
+function retryAnnotations(spec: SpecVerdict, root: string): string[] {
+	const file = repoPath(spec.file, root);
+	return (spec.failures ?? []).flatMap((f) =>
+		(f.tests ?? []).filter(failing).map((t) => {
+			const title = `${[spec.id, ...t.title].join(" › ")} passed on attempt ${spec.attempts}`;
+			const props = { file, ...(t.line !== undefined ? { line: t.line } : {}), title };
+			return command("notice", props, `attempt ${f.attempt}: ${t.error ?? t.status}`);
+		})
+	);
 }
 
 function specAnnotations(spec: SpecVerdict, root: string): string[] {
@@ -122,7 +144,22 @@ function rows(spec: SpecVerdict): string[] {
 	return [`| ⚠️ | ${name} | ${why} | | ${spec.log ? `log \`${spec.log}\`` : ""} |`];
 }
 
-/** Markdown for `$GITHUB_STEP_SUMMARY`: the gate, totals, the shared failure, then a row per failed test. */
+/** A row per test an earlier attempt failed (one row with the log when the attempt wrote no results). */
+function retriedRows(spec: SpecVerdict): string[] {
+	const name = cell(`${spec.id}${spec.required ? "" : " (optional)"}`);
+	return (spec.failures ?? []).flatMap((f) => {
+		const when = `${f.attempt} of ${spec.attempts}`;
+		const failed = (f.tests ?? []).filter(failing);
+		if (failed.length === 0)
+			return [`| 🔁 | ${name} | (no test results) | ${when} | ${f.log ? `log \`${f.log}\`` : ""} |`];
+		return failed.map((t) => `| 🔁 | ${name} | ${cell(t.title.join(" › "))} | ${when} | ${cell(firstLine(t.error))} |`);
+	});
+}
+
+/**
+ * Markdown for `$GITHUB_STEP_SUMMARY`: the gate, totals, the shared failure, a row per failed test,
+ * then the specs that passed only on a retry with what their earlier attempts met.
+ */
 export function stepSummary(report: E2eReport): string {
 	const totals = testTotals(report);
 	const gate = report.ok ? "✅" : "❌";
@@ -135,6 +172,16 @@ export function stepSummary(report: E2eReport): string {
 	if (common) lines.push("", `> ${common.count}/${common.of} failed tests share: \`${cell(common.message)}\``);
 	const bad = report.specs.filter((s) => s.verdict !== "passed");
 	if (bad.length > 0) lines.push("", "| | Spec | Test | Time | Error |", "|---|---|---|---|---|", ...bad.flatMap(rows));
+	const retried = report.specs.filter(passedOnRetry);
+	if (retried.length > 0)
+		lines.push(
+			"",
+			`${retried.length} spec(s) passed on a retry:`,
+			"",
+			"| | Spec | Test | Attempt | Error |",
+			"|---|---|---|---|---|",
+			...retried.flatMap(retriedRows)
+		);
 	if (report.batchDir) lines.push("", `Batch dir: \`${report.batchDir}\``);
 	return `${lines.join("\n")}\n`;
 }

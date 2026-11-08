@@ -38,7 +38,7 @@ Suite settings are defaults. A flag passed on the command line wins.
 
 **Verdict (stderr):** failed specs with their tests, then `warden e2e: tests <n> passed · <n> failed · <n> skipped`, `<k>/<n> failed tests share one error: <msg>` when 2+ do (usually the root cause, not the specs), `evidence in <batchDir>`, then `<k>/<n> spec(s) passed — gate passed|failed`.
 
-**GitHub Actions** (`GITHUB_ACTIONS=true`, automatic): one `::error` per failed test on its spec file at the line it failed (`::warning` for an optional spec; a spec with no results is annotated on the file), paths relative to `GITHUB_WORKSPACE`; on stdout, on stderr with `--json` / `--json-lines`. A markdown table of failed tests is appended to `$GITHUB_STEP_SUMMARY`.
+**GitHub Actions** (`GITHUB_ACTIONS=true`, automatic): one `::error` per failed test on its spec file at the line it failed (`::warning` for an optional spec; a spec with no results is annotated on the file), paths relative to `GITHUB_WORKSPACE`; on stdout, on stderr with `--json` / `--json-lines`. A spec that passed only on a retry gets one `::notice` per test an earlier attempt failed. A markdown table of failed tests is appended to `$GITHUB_STEP_SUMMARY`, then a table of the specs that passed on a retry with what their earlier attempts met.
 
 **Exit codes:** `0` every required spec passed (or nothing affected, or dry-run). `1` the gate failed or an error. `130` interrupted.
 
@@ -127,7 +127,7 @@ Paths and globs are relative to `warden.config.ts`. Unknown keys are errors.
 | `shutdown` | `always` | `always`: shut down warden's devices (and close their windows) after a passed gate; ephemeral iOS sims are then deleted. `idle`: leave them booted for the next run (`warden gc` reaps idle ones). A failed run always leaves them up |
 | `jobTimeoutMs` | `600000` | per spec: a process past this for each spec it runs is killed and counts as failed |
 | `passes` | `1` | consecutive green runs needed per spec. `isolate: device` with `passes > 1` is an error |
-| `retry` | `0` | re-run a failed job on the same device. Under `isolate: device` a retry reruns only the specs that did not pass |
+| `retry` | `0` | re-run a failed job on the same device. Under `isolate: device` a retry reruns only the specs that did not pass. What a retried spec met before it passed is kept (`failures[]` in `e2e-report.json`, a dim line in the terminal, a `::notice` on GitHub) |
 | `perf` | none | `{ budgets: { startupColdMs, jankPct, maxCommitMs, p95CpuPct, peakMemoryMb } }` ceilings (lower is better) for `device.perf.stop()`; each key replaces the top-level `perf.budgets` one |
 
 Removed: `warmRunners` (use `warmDrivers`).
@@ -262,7 +262,7 @@ e2e/<w>-<seq>[-p<N>]/results.jsonl        (-pN: pass N+1 of an attempt, with pas
 e2e/<w>-<seq>[-p<N>]/<specId>/<title>-<hash6>/   trace.jsonl screenshots/ failure.png screen-at-failure.txt console.jsonl network.jsonl perf/ (with --perf)
 ```
 
-`e2e-report.json`: `{ suite, platform, base?, isolate, ok, headless, batchDir?, specs[], only?, setup? }`. Each spec has `verdict`, `attempts`, `tests[]`; a failed test carries `line` (where it failed in the spec, from the stack) when the spec is on its stack.
+`e2e-report.json`: `{ suite, platform, base?, isolate, ok, headless, batchDir?, specs[], only?, setup? }`. Each spec has `verdict`, `attempts`, `tests[]` (the last attempt's); a failed test carries `line` (where it failed in the spec, from the stack) when the spec is on its stack, and `bridge` when iOS reads left the accessibility bridge. A spec that was retried also has `failures[]`: each earlier failed attempt's `attempt`, `device`, `log`, `screenshot` and failed `tests[]`, and the terminal prints one dim `passed on attempt N — attempt M …` line per such attempt, so a flake is visible on a green run.
 
 iOS bridge stalls (the in-sim accessibility bridge did not answer and the read went to `ax`) show in three places:
 

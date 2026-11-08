@@ -23,6 +23,21 @@ export type TestVerdict = {
 	perf?: string;
 	/** the test failed because a perf metric was over its budget (`error` lists metric, value, budget and the report) */
 	kind?: "perf_budget";
+	/** iOS reads that left the accessibility bridge during the test (`results.jsonl` `bridge`: how many, the first and the last) */
+	bridge?: TestResult["bridge"];
+};
+
+/** One attempt that failed a spec before its last attempt, as `e2e-report.json` carries it under `failures`. */
+export type AttemptFailure = {
+	/** 1-based, in the order the spec's attempts ran */
+	attempt: number;
+	device: { udid: string; name: string };
+	/** the spec process output of that attempt */
+	log?: string;
+	/** the runner's `failure.png` of the spec's failed test in that attempt, else the device as the attempt left it */
+	screenshot?: string;
+	/** the failed or timed-out tests of that attempt (absent when it wrote no results: its exit code failed the spec) */
+	tests?: TestVerdict[];
 };
 
 /** One spec's outcome in `e2e-report.json`. */
@@ -42,6 +57,11 @@ export type SpecVerdict = SelectedSpec & {
 	 * `failure.png` of the failed test when it took one, else the device as the attempt left it.
 	 */
 	screenshot?: string;
+	/**
+	 * The attempts before the last that failed the spec, oldest first: what a spec that passed on a
+	 * retry met before it passed, or the earlier failures of one that kept failing.
+	 */
+	failures?: AttemptFailure[];
 };
 
 /** How the batch jobs map back to specs: the legs that ran, and in a `single` run the shard job each spec is in. */
@@ -70,6 +90,12 @@ export type Verdicts = {
 	only: string[];
 };
 
+/** The device an attempt ran on, as the session names it. */
+function attemptDevice(session: SessionResult, attempt: JobResult): { udid: string; name: string } {
+	const name = session.devices?.find((d) => d.worker === attempt.worker)?.name ?? attempt.udid;
+	return { udid: attempt.udid, name };
+}
+
 /**
  * device / log / screenshot of a spec's failed attempts (the last one's device and log; the latest
  * screenshot there is, per attempt the runner's own `failure.png` of this spec before the batch shot).
@@ -86,11 +112,36 @@ function lastFailure(
 		.reverse()
 		.find((path) => path !== undefined);
 	const log = session.logs?.get(attemptKey(last));
-	const name = session.devices?.find((d) => d.worker === last.worker)?.name ?? last.udid;
 	return {
-		device: { udid: last.udid, name },
+		device: attemptDevice(session, last),
 		...(log !== undefined ? { log } : {}),
 		...(screenshot !== undefined ? { screenshot } : {}),
+	};
+}
+
+const failedVerdict = (t: TestVerdict): boolean => t.status === "failed" || t.status === "timed-out";
+
+/** One failed attempt of `spec` before its last: its device, log, shot and failed tests. */
+async function attemptFailure(
+	run: Run,
+	job: string,
+	spec: SelectedSpec,
+	ran: readonly JobResult[],
+	attempt: JobResult,
+	runnerShot: string | undefined
+): Promise<AttemptFailure> {
+	const { session } = run;
+	const judged = (await judgeAttempt(run, job, attempt)).get(spec.id);
+	const key = attemptKey(attempt);
+	const log = session.logs?.get(key);
+	const screenshot = runnerShot ?? session.screenshots?.get(key);
+	const tests = judged && !judged.fellBack ? (judged.tests ?? []).filter(failedVerdict) : undefined;
+	return {
+		attempt: ran.indexOf(attempt) + 1,
+		device: attemptDevice(session, attempt),
+		...(log !== undefined ? { log } : {}),
+		...(screenshot !== undefined ? { screenshot } : {}),
+		...(tests !== undefined ? { tests } : {}),
 	};
 }
 
@@ -106,6 +157,7 @@ const testVerdict = (t: TestResult): TestVerdict => ({
 	...(t.error ? { error: t.error.message } : {}),
 	...withLine(specLine(t.error?.stack, t.file)),
 	...(t.error?.code === "PERF_BUDGET" ? { kind: "perf_budget" as const } : {}),
+	...(t.bridge ? { bridge: t.bridge } : {}),
 	...(t.artifacts ? { artifacts: t.artifacts.dir } : {}),
 	...(t.artifacts?.files.includes(PERF_REPORT_FILE) ? { perf: join(t.artifacts.dir, PERF_ARTIFACT_DIR) } : {}),
 });
@@ -281,11 +333,15 @@ async function specVerdict(run: Run, spec: SelectedSpec, leg: string | undefined
 	if (!last) return { ...base, verdict: "not-run" };
 	const judged = (await judgeAttempt(run, job, last)).get(spec.id);
 	const { failedRuns, runnerShots } = await failedAttempts(run, job, spec, ran);
+	const failures: AttemptFailure[] = [];
+	for (const r of failedRuns)
+		if (r !== last) failures.push(await attemptFailure(run, job, spec, ran, r, runnerShots.get(r)));
 	return {
 		...base,
 		verdict: judged?.verdict ?? "failed",
 		...(judged?.tests && !judged.fellBack ? { tests: judged.tests } : {}),
 		...lastFailure(session, failedRuns, runnerShots),
+		...(failures.length > 0 ? { failures } : {}),
 	};
 }
 
