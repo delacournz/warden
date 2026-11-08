@@ -11,7 +11,7 @@ function collect(value: string, previous: string[]): string[] {
 const APP_HELP = "the app's bundle id / package (default: the app `open` launched)";
 
 /**
- * Device settings a test starts from: `warden ui permission | timezone | locale | a11y | battery | memory-warning |
+ * Device settings a test starts from: `warden ui permission | timezone | locale | a11y | battery | keyboard | memory-warning |
  * push`. Each is its own verb (like `location` and `clock`) so `--help` shows its own flags; they share the lease's
  * condition store, so release undoes them. One call from `commands/ui.ts`; `settings.ts` is imported by the one that runs.
  */
@@ -115,6 +115,17 @@ export function registerSettingsCommands(
 	).action(async (action, opts) => {
 		const { uiBattery } = await import("./settings");
 		done(await uiBattery(ctx, deps, action, opts));
+	});
+	withUiOptions(
+		cmd
+			.command("keyboard")
+			.description(
+				"on-screen keyboard: software (shows, default) | hardware (hidden, input as from a keyboard) | toggle | status | reset"
+			)
+			.argument("<action>", "software | hardware | toggle | status | reset")
+	).action(async (action, opts) => {
+		const { uiKeyboard } = await import("./settings");
+		done(await uiKeyboard(ctx, deps, action, opts));
 	});
 	withUiOptions(
 		cmd

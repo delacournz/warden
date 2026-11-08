@@ -1,12 +1,5 @@
 import { type ReactElement, type ReactNode, useMemo, useState } from "react";
-import {
-	Image,
-	type ImageErrorEventData,
-	type ImageProps,
-	type ImageSourcePropType,
-	type NativeSyntheticEvent,
-	View,
-} from "react-native";
+import { Image, type ImageErrorEvent, type ImageProps, type ImageSourcePropType, View } from "react-native";
 import { IconPeople } from "@/lib/icons/central";
 import { cn } from "@/lib/cn";
 import { Icon } from "@/components/ui/icon";
@@ -21,6 +14,7 @@ import {
 } from "./avatar.utils";
 import {
 	AVATAR_FOREGROUND_TOKEN,
+	AVATAR_SIZE_POINTS,
 	type AvatarColor,
 	type AvatarSize,
 	type AvatarVariant,
@@ -45,8 +39,12 @@ export type AvatarProps = Omit<PressableProps, "asChild" | "busy" | "children" |
 	/** Default `md`, or the enclosing group's size. */
 	size?: AvatarSize;
 	isDisabled?: boolean;
-	/** Passed to the `Image`. `onError` still fires, after the fallback has taken over. */
-	imageProps?: Omit<ImageProps, "source">;
+	/**
+	 * Passed to the `Image`. `onError` still fires, after the fallback has taken
+	 * over. `src` and `srcSet` are left out: `Image` prefers them to `source`, and
+	 * `source` is what the retry key is built from.
+	 */
+	imageProps?: Omit<ImageProps, "source" | "src" | "srcSet">;
 	/** Overlays — an `Avatar.Badge`. */
 	children?: ReactNode;
 };
@@ -79,22 +77,26 @@ function AvatarRoot({
 	);
 
 	// Remembered by key, not by object: an inline `source={{ uri }}` is a new
-	// object every render, and a new URI has to retry on its own.
-	const sourceKey = resolveAvatarSourceKey(source);
+	// object every render, and a new URI has to retry on its own. The edge is in
+	// the key because a list of resolutions picks its entry by the face's size.
+	const sourceKey = resolveAvatarSourceKey(source, { edge: AVATAR_SIZE_POINTS[size] });
 	const [failedKey, setFailedKey] = useState<string | null>(null);
 	const showsImage = resolveAvatarShowsImage({ sourceKey, failedKey });
 	const slots = avatarVariants({ size, variant, color, isDisabled, hasImage: showsImage });
 
 	const initials = fallback?.trim() || resolveAvatarInitials(name);
-	const label = resolveAvatarAccessibilityLabel({ accessibilityLabel, name, fallback });
+	const isInteractive = resolveAvatarInteractive({ onPress, onLongPress });
+	const label = resolveAvatarAccessibilityLabel({ accessibilityLabel, name, fallback, isInteractive });
 
-	const onImageError = (event: NativeSyntheticEvent<ImageErrorEventData>) => {
+	const onImageError = (event: ImageErrorEvent) => {
 		setFailedKey(sourceKey);
 		imageProps?.onError?.(event);
 	};
 
 	// The fallback is always painted and the image goes over it, so the circle is
-	// never empty while a picture loads or after it fails.
+	// never empty while a picture loads or after it fails. The image is keyed by
+	// its source, so a new source mounts a new image: a late error from the old
+	// request cannot mark the new one as failed.
 	const face = (
 		<View className={slots.face()}>
 			{initials ? (
@@ -106,6 +108,7 @@ function AvatarRoot({
 			)}
 			{showsImage && source !== undefined ? (
 				<Image
+					key={sourceKey}
 					accessibilityIgnoresInvertColors
 					{...imageProps}
 					className={cn(slots.image(), imageProps?.className)}
@@ -116,7 +119,7 @@ function AvatarRoot({
 		</View>
 	);
 
-	if (!resolveAvatarInteractive({ onPress, onLongPress })) {
+	if (!isInteractive) {
 		return (
 			<AvatarProvider value={context}>
 				<View
@@ -165,7 +168,7 @@ function AvatarRoot({
  * is tried again. With no `fallback` and no `name` the fallback is a person glyph.
  *
  * `name` is what a screen reader reads, and its initials — first and last word,
- * `Mary Jane Watson` → `MW` — are the default fallback. `fallback` overrides the
+ * `Anahera Rose Tui` → `AT` — are the default fallback. `fallback` overrides the
  * drawn text only.
  *
  * `variant` and `color` paint the fallback surface, on the same six colours a
@@ -180,10 +183,10 @@ function AvatarRoot({
  * corner, outside the clipped circle so it is never cut in half.
  *
  * @example
- * <Avatar name="Kate Austen" source={{ uri: user.avatarUrl }} />
+ * <Avatar name="Aria Whitlock" source={{ uri: user.avatarUrl }} />
  *
  * @example
- * <Avatar accessibilityLabel="Kate Austen, online" name="Kate Austen">
+ * <Avatar accessibilityLabel="Aria Whitlock, online" name="Aria Whitlock">
  *   <Avatar.Badge placement="bottom-right" />
  * </Avatar>
  *

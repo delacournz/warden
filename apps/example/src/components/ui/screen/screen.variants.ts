@@ -11,7 +11,7 @@ export type ScreenPlacement = (typeof SCREEN_PLACEMENTS)[number];
  *
  * Structurally `Edge` from react-native-safe-area-context, restated here so
  * this module keeps its promise of importing nothing — the whole reason it is
- * reachable from `bun test`.
+ * unit-testable.
  */
 export const SCREEN_EDGES = ["top", "right", "bottom", "left"] as const;
 
@@ -39,8 +39,8 @@ export type ScreenEdge = (typeof SCREEN_EDGES)[number];
  * navbar's own box, and the safe-area band has to be painted too or the status
  * bar shows content scrolling underneath it.
  *
- * Free of React Native imports so it stays unit-testable — `bun test` cannot
- * parse React Native's Flow-typed source. See AGENTS.md.
+ * Free of React Native imports so it stays unit-testable — it must not
+ * pull in React Native's Flow-typed source. See AGENTS.md.
  */
 export const screenVariants = tv({
 	slots: {
@@ -179,7 +179,7 @@ export const SCREEN_BORDER_FADE_DISTANCE = 20;
  * a rubber-banded overscroll reports a negative offset, which would otherwise
  * drive the opacity below zero.
  *
- * Pure, so the whole ramp is reachable from `bun test`. Written out rather than
+ * Pure, so the whole ramp is unit-testable. Written out rather than
  * calling Reanimated's `interpolate` so this module keeps its promise of
  * importing nothing. See AGENTS.md.
  */
@@ -208,7 +208,7 @@ export function resolveNavbarBorderOpacity(scrollY: number, fadeOnScroll: boolea
  * treated as "draw it": before any scroll a screen tall enough to scroll does
  * have content below, and a screen too short to scroll never contradicts it.
  *
- * Pure, so the whole ramp is reachable from `bun test`. See AGENTS.md.
+ * Pure, so the whole ramp is unit-testable. See AGENTS.md.
  */
 export function resolveFooterBorderOpacity(state: {
 	/** Live scroll offset. */
@@ -257,7 +257,7 @@ export type ScreenEdgePadding = {
  * is that a caller's className belongs on a different box entirely — see
  * `screen-header.tsx`.
  *
- * Pure, so the whole matrix is reachable from `bun test`. See AGENTS.md.
+ * Pure, so the whole matrix is unit-testable. See AGENTS.md.
  */
 export function resolveScreenEdgePadding(
 	edges: readonly ScreenEdge[] | undefined,
@@ -378,7 +378,7 @@ export type ScreenScrollInsetMode = (typeof SCREEN_SCROLL_INSET_MODES)[number];
  * With no footer mounted the reserve is the bare safe-area band, which fades out
  * as the keyboard covers it — the inset is meaningless behind a keyboard.
  *
- * Pure, so the whole matrix is reachable from `bun test`. See AGENTS.md.
+ * Pure, so the whole matrix is unit-testable. See AGENTS.md.
  */
 export function resolveScrollBottomInset(state: {
 	mode: ScreenScrollInsetMode;
@@ -429,7 +429,7 @@ export function resolveScrollBottomInset(state: {
  *
  * A `static` navbar contributes nothing: it already took its space in the flow.
  *
- * Pure, so the whole matrix is reachable from `bun test`. See AGENTS.md.
+ * Pure, so the whole matrix is unit-testable. See AGENTS.md.
  */
 export function resolveScrollTopInset(state: {
 	navbarHeight: number;
@@ -448,7 +448,7 @@ export function resolveScrollTopInset(state: {
  * screen with no navbar still clears the notch. A `static` navbar or footer
  * contributes nothing: it already took its space in the flow.
  *
- * Pure, so the whole matrix is reachable from `bun test`. See AGENTS.md.
+ * Pure, so the whole matrix is unit-testable. See AGENTS.md.
  */
 export function resolveScreenViewPadding(state: {
 	navbarHeight: number;

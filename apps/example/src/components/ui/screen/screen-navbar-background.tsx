@@ -31,10 +31,7 @@ export const ScreenNavbarBackground = memo(function ScreenNavbarBackground({
 }: ScreenNavbarBackgroundProps): ReactElement {
 	const { scrollY } = useScreenPart("Screen.Navbar");
 
-	const borderStyle = useAnimatedStyle(
-		() => ({ opacity: resolveNavbarBorderOpacity(scrollY.value, fadeOnScroll) }),
-		[fadeOnScroll]
-	);
+	const borderStyle = useAnimatedStyle(() => ({ opacity: resolveNavbarBorderOpacity(scrollY.value, fadeOnScroll) }));
 
 	return (
 		<View className={screenVariants().navbarBackground({ className })} pointerEvents="none">

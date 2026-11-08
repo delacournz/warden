@@ -97,6 +97,7 @@ describe("warden ci cache", () => {
 		const text = c.stdout.join("\n");
 		expect(text).toContain("builds");
 		expect(text).toContain("warden-e2e-v1-builds-macOS-ARM64-f1b4");
+		expect(text).toContain("warden-e2e-v1-ccache-macOS-ARM64-f1b4");
 		expect(text).toContain("golden");
 	});
 

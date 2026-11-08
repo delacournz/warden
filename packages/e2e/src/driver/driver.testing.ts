@@ -1,11 +1,13 @@
-import type {
-	CameraCondition,
-	ClockCondition,
-	HostFault,
-	LocationCondition,
-	NetworkCondition,
-	PermissionName,
-	PermissionState,
+import {
+	type CameraCondition,
+	type ClockCondition,
+	DEFAULT_KEYBOARD_MODE,
+	type HostFault,
+	type KeyboardMode,
+	type LocationCondition,
+	type NetworkCondition,
+	type PermissionName,
+	type PermissionState,
 } from "@delacour/warden-core/conditions/conditions.types";
 import type { Result } from "@delacour/warden-types/result";
 import type { ScreenReaderState } from "../a11y/a11y.types";
@@ -22,6 +24,7 @@ import type {
 	BiometricOp,
 	CameraState,
 	ClockState,
+	DismissKeyboardResult,
 	Driver,
 	DriverCapabilities,
 	DriverError,
@@ -30,6 +33,8 @@ import type {
 	GestureOptions,
 	HardwareButton,
 	HealthInfo,
+	KeyboardResult,
+	KeyboardState,
 	KeyName,
 	LaunchOptions,
 	LocaleState,
@@ -54,6 +59,7 @@ import type {
 import type { ActsOnElements, ScrollDirection } from "./element-actions";
 import { driverError } from "./errors";
 import { planGesture } from "./gesture-geometry";
+import { keyboardVisible } from "./keyboard-state";
 import type { AuditsNatively, NativeAuditOptions, NativeAuditResult } from "./native-audit";
 import { faultNotes } from "./network-proxy";
 import type { DrivesScreenReader, SpokenRead } from "./screen-reader";
@@ -234,6 +240,9 @@ export type DriverCall =
 	| { method: "locale"; tag: string | null; opts?: SettingOptions }
 	| { method: "a11y"; op: A11yOp | null }
 	| { method: "battery"; op: BatteryOp | null }
+	| { method: "keyboard"; mode: KeyboardMode }
+	| { method: "keyboardState" }
+	| { method: "dismissKeyboard" }
 	| { method: "memoryWarning"; opts?: SettingOptions }
 	| { method: "push"; payload: PushPayload; opts?: SettingOptions }
 	| { method: "biometrics"; op: BiometricOp }
@@ -445,6 +454,7 @@ export function fakeDriver(options: FakeDriverOptions): FakeDriver {
 	const wallNow = options.wallNow ?? Date.now;
 	let net: NetworkState = { online: true, condition: { kind: "online" }, needsProxy: [] };
 	let enrolled = false;
+	let keyboardMode: KeyboardMode = DEFAULT_KEYBOARD_MODE;
 	const running = new Set<string>();
 	const installed = new Set<string>();
 
@@ -694,6 +704,25 @@ export function fakeDriver(options: FakeDriverOptions): FakeDriver {
 					cosmetic: false,
 				})
 			);
+		},
+		async keyboard(mode) {
+			return run({ method: "keyboard", mode }, (): KeyboardResult => {
+				keyboardMode = mode;
+				return { mode };
+			});
+		},
+		async keyboardState() {
+			return run(
+				{ method: "keyboardState" },
+				(): KeyboardState => ({ mode: keyboardMode, visible: keyboardVisible(currentScreen()) })
+			);
+		},
+		async dismissKeyboard() {
+			if (platform === "android") {
+				const pressed = await run({ method: "pressButton", button: "back" }, () => undefined);
+				return pressed.success ? { success: true, data: { via: "back" } } : pressed;
+			}
+			return run({ method: "dismissKeyboard" }, (): DismissKeyboardResult => ({ via: "resign" }));
 		},
 		async camera(op, opts) {
 			return run({ method: "camera", op, ...(opts ? { opts } : {}) }, (): CameraState => ({ feeds: op ?? {} }));

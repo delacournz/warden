@@ -109,6 +109,10 @@ describe("frozen clock", () => {
 
 describe("a11y read request", () => {
 	test("is one-shot: only present when asked, and survives the round trip", () => {
+		expect(JSON.parse(encodeInjectState({ seq: 4 }))).not.toHaveProperty("dismissKeyboard");
+		const dismiss = encodeInjectState({ seq: 5, dismissKeyboard: true });
+		expect(JSON.parse(dismiss)).toMatchObject({ seq: 5, dismissKeyboard: true });
+		expect(parseInjectState(dismiss)).not.toHaveProperty("dismissKeyboard");
 		expect(JSON.parse(encodeInjectState({ seq: 4 }))).not.toHaveProperty("a11yRead");
 		const text = encodeInjectState({ seq: 6, a11yRead: true });
 		expect(JSON.parse(text)).toMatchObject({ seq: 6, a11yRead: true });
@@ -313,6 +317,64 @@ describe("camera", () => {
 		writeFileSync(path, encodeInjectState({ seq: 5, camera: feeds }));
 		expect(neutralizeInjectState(path)).toBeUndefined();
 		expect(parseInjectState(readFileSync(path, "utf8"))?.camera).toEqual({});
+		rmSync(dir, { recursive: true, force: true });
+	});
+});
+
+describe("keyboard", () => {
+	test("the state carries the mode and round-trips it; no key without one", () => {
+		expect(parseInjectState(encodeInjectState({ seq: 1, keyboard: "hardware" }))?.keyboard).toBe("hardware");
+		expect(JSON.parse(encodeInjectState({ seq: 1 }))).not.toHaveProperty("keyboard");
+		expect(parseInjectState('{"seq":1,"keyboard":"both"}')?.keyboard).toBeUndefined();
+	});
+
+	test("the launch env names the initial mode only when given", () => {
+		const base = { dylib: "/d.dylib", statePath: "/s/state.json" };
+		expect(injectLaunchEnv({ ...base, keyboard: "software" }).WARDEN_KEYBOARD).toBe("software");
+		expect(injectLaunchEnv({ ...base, keyboard: "hardware" }).WARDEN_KEYBOARD).toBe("hardware");
+		expect(injectLaunchEnv(base)).not.toHaveProperty("WARDEN_KEYBOARD");
+	});
+
+	test("the keyboard mode is a reason to inject", () => {
+		expect(shouldInject({ networkActive: false, clockActive: false, keyboardActive: true, requested: false })).toBe(
+			true
+		);
+	});
+
+	test("a write that names no mode keeps the one on disk (network, clock and a11y writes are whole states)", () => {
+		const mem = memoryFs(new Set());
+		const ch = createInjectChannel({ statePath: "/s/state.json", fs: mem.fs, now: () => 1_000, sleep: async () => {} });
+		ch.write({ keyboard: "hardware" });
+		ch.write({ offline: true });
+		expect(ch.current().keyboard).toBe("hardware");
+		expect(ch.current().offline).toBe(true);
+		ch.write({ keyboard: "software" });
+		expect(ch.current().keyboard).toBe("software");
+	});
+
+	test("reset forgets the app but keeps the mode for the next launch", () => {
+		const mem = memoryFs(new Set([77]));
+		const ch = createInjectChannel({ statePath: "/s/state.json", fs: mem.fs, now: () => 1_000, sleep: async () => {} });
+		ch.write({ keyboard: "hardware", offline: true });
+		mem.files.set("/s/state.json.ack", '{"seq":1,"pid":77}');
+		ch.reset();
+		expect(mem.files.has("/s/state.json.ack")).toBe(false);
+		expect(ch.current().keyboard).toBe("hardware");
+		expect(ch.current().offline).toBe(false);
+	});
+
+	test("core's release reset keeps the mode for other areas and puts software back for the keyboard area", () => {
+		const dir = mkdtempSync(join(tmpdir(), "warden-inject-kbd-"));
+		const path = join(dir, "state.json");
+		writeFileSync(path, encodeInjectState({ seq: 5, offline: true, keyboard: "hardware" }));
+		expect(neutralizeInjectState(path, "network")).toBeUndefined();
+		expect(parseInjectState(readFileSync(path, "utf8"))).toMatchObject({
+			seq: 6,
+			offline: false,
+			keyboard: "hardware",
+		});
+		expect(neutralizeInjectState(path, "keyboard")).toBeUndefined();
+		expect(parseInjectState(readFileSync(path, "utf8"))).toMatchObject({ seq: 7, keyboard: "software" });
 		rmSync(dir, { recursive: true, force: true });
 	});
 });

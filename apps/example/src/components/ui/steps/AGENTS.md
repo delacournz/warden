@@ -21,7 +21,6 @@ internal and drawn by the items themselves.
 | `steps-connector.tsx` | One half of the line between two steps — internal |
 | `steps.context.tsx` | The stepper's and the step's contexts, with their hooks |
 | `steps.variants.ts` | Pure `tv()` slots + every resolver, no RN imports |
-| `steps.variants.test.ts` | |
 
 ## Design
 
@@ -73,8 +72,8 @@ internal and drawn by the items themselves.
   outside the count — the usual cause is one-based indices.
 - **A vertical title is padded down to sit level with its circle** — by half the
   circle's edge less the title's line height. It is the one number derived from
-  another, and `steps.variants.test.ts` recomputes it from the slot classes, so a
-  retuned circle or title step fails the suite instead of drifting half a line.
+  another, so it is recomputed from the slot classes and a
+  retuned circle or title step cannot drift half a line.
 
 ## Interaction
 

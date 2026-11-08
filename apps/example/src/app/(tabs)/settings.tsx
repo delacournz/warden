@@ -110,6 +110,20 @@ export default function Settings() {
 						<ListGroup.ItemSuffix />
 					</ListGroup.Item>
 					<ListGroup.Item
+						accessibilityLabel="Keyboard sheet"
+						accessible
+						onPress={() => router.push("/keyboard-sheet")}
+						testID="settings-keyboard-sheet"
+					>
+						<ListGroup.ItemPrefix>
+							<Icon icon={IconBell} />
+						</ListGroup.ItemPrefix>
+						<ListGroup.ItemContent>
+							<ListGroup.ItemTitle>Keyboard sheet</ListGroup.ItemTitle>
+						</ListGroup.ItemContent>
+						<ListGroup.ItemSuffix />
+					</ListGroup.Item>
+					<ListGroup.Item
 						accessibilityLabel="Accessibility"
 						accessible
 						onPress={() => router.push("/a11y")}

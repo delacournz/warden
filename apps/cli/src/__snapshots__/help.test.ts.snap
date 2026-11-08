@@ -2043,15 +2043,15 @@ Options:
   -h, --help      display help for command
 
 Commands:
-  cache           print the CI cache groups (builds, repack, golden): each key,
-                  its paths, and the golden's import/export commands
+  cache           print the CI cache groups (builds, repack, golden, ccache):
+                  each key, its paths, and the golden's import/export commands
   help [command]  display help for command
 
 $ warden ci cache --help
 Usage: warden ci cache [options]
 
-print the CI cache groups (builds, repack, golden): each key, its paths, and the
-golden's import/export commands
+print the CI cache groups (builds, repack, golden, ccache): each key, its paths,
+and the golden's import/export commands
 
 Options:
   --platform <platform>  ios (default; the only one with cacheable builds and a
@@ -2163,6 +2163,9 @@ Commands:
   battery <action>                battery: set [--level] [--charging] | reset |
                                   status (Android emulator real; iOS status bar
                                   only)
+  keyboard <action>               on-screen keyboard: software (shows, default)
+                                  | hardware (hidden, input as from a keyboard)
+                                  | toggle | status | reset
   memory-warning                  send the running app a memory warning (Android
                                   only: iOS has no mechanism that works)
   push <payload>                  deliver a push notification to the app (iOS
@@ -4098,6 +4101,35 @@ Options:
   --level <percent>      0-100
   --charging             plugged in and charging
   --no-charging          on battery
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui keyboard --help
+Usage: warden ui keyboard [options] <action>
+
+on-screen keyboard: software (shows, default) | hardware (hidden, input as from
+a keyboard) | toggle | status | reset
+
+Arguments:
+  action                 software | hardware | toggle | status | reset
+
+Options:
   --udid <udid>          device udid (iOS) / serial (Android)
   --serial <serial>      Android serial
   --lease <id>           use the device behind this lease id

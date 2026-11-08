@@ -1,6 +1,11 @@
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import type { CameraCondition, CameraFeed } from "@delacour/warden-core/conditions/conditions.types";
+import {
+	type CameraCondition,
+	type CameraFeed,
+	KEYBOARD_MODES,
+	type KeyboardMode,
+} from "@delacour/warden-core/conditions/conditions.types";
 import { injectStatePath as coreInjectStatePath } from "@delacour/warden-core/conditions/inject-state";
 import type { Result } from "@delacour/warden-types/result";
 import type { DriverError } from "../driver.types";
@@ -32,6 +37,17 @@ export type InjectState = {
 	/** one-shot request (A11Y-1): walk the accessibility tree and write `<state>.a11y` before acknowledging this `seq` */
 	a11yRead?: boolean;
 	camera?: CameraCondition;
+	/**
+	 * The on-screen keyboard (KBD-2): `software` keeps it up while warden types, `hardware` lets iOS minimise it. Unlike
+	 * the other fields a message that leaves it out keeps what the file had (see `createInjectChannel`), so a network or
+	 * a11y write never undoes it.
+	 */
+	keyboard?: KeyboardMode;
+	/**
+	 * one-shot request: resign the first responder (the keyboard goes away without a Return that could submit the form)
+	 * before acknowledging this `seq`. Written, never read back, so a later write cannot repeat it.
+	 */
+	dismissKeyboard?: boolean;
 };
 
 /** What the dylib answers in `<state>.ack` once it applied `seq` (`bundleId`: the app it loaded into; `camera`: launched with `WARDEN_CAMERA=1`). */
@@ -45,11 +61,17 @@ export function encodeInjectState(state: InjectState): string {
 		...(state.clockFrozenMs === undefined ? {} : { clockFrozenMs: Math.trunc(state.clockFrozenMs) }),
 		...(state.a11yRead ? { a11yRead: true } : {}),
 		...(state.camera === undefined ? {} : { camera: state.camera }),
+		...(state.keyboard === undefined ? {} : { keyboard: state.keyboard }),
+		...(state.dismissKeyboard ? { dismissKeyboard: true } : {}),
 	});
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function parseKeyboard(value: unknown): KeyboardMode | undefined {
+	return KEYBOARD_MODES.find((mode) => mode === value);
 }
 
 function parseFeed(value: unknown): CameraFeed | undefined {
@@ -78,6 +100,7 @@ export function parseInjectState(text: string): InjectState | undefined {
 			...(typeof data.clockFrozenMs === "number" ? { clockFrozenMs: data.clockFrozenMs } : {}),
 			...(data.a11yRead === true ? { a11yRead: true } : {}),
 			...("camera" in data ? { camera: parseCamera(data.camera) } : {}),
+			...(parseKeyboard(data.keyboard) ? { keyboard: parseKeyboard(data.keyboard) } : {}),
 		};
 	} catch {
 		return undefined;
@@ -123,6 +146,8 @@ export function injectLaunchEnv(input: {
 	clockFrozenMs?: number;
 	/** fake the capture stack from the state file's `camera` feeds (`WARDEN_CAMERA=1`) */
 	camera?: boolean;
+	/** the keyboard mode the app starts in (`WARDEN_KEYBOARD`); the state file's `keyboard` overrides it live */
+	keyboard?: KeyboardMode;
 	debug?: boolean;
 }): Record<string, string> {
 	return {
@@ -132,6 +157,7 @@ export function injectLaunchEnv(input: {
 		...(input.clockOffsetMs ? { WARDEN_CLOCK_OFFSET_MS: String(Math.trunc(input.clockOffsetMs)) } : {}),
 		...(input.clockFrozenMs === undefined ? {} : { WARDEN_CLOCK_FROZEN_MS: String(Math.trunc(input.clockFrozenMs)) }),
 		...(input.camera ? { WARDEN_CAMERA: "1" } : {}),
+		...(input.keyboard ? { WARDEN_KEYBOARD: input.keyboard } : {}),
 		...(input.debug ? { WARDEN_INJECT_DEBUG: "1" } : {}),
 	};
 }
@@ -147,10 +173,18 @@ export function shouldInject(input: {
 	clockActive: boolean;
 	/** the lease has a camera feed: the dylib must be loaded at launch to fake the capture stack */
 	cameraActive?: boolean;
+	/** the lease's keyboard mode is `software` (the default): the dylib keeps the on-screen keyboard up while warden types */
+	keyboardActive?: boolean;
 	/** the caller asked for injection (`LaunchOptions.inject`, a suite that declares `conditions.network`) */
 	requested: boolean;
 }): boolean {
-	return input.networkActive || input.clockActive || input.cameraActive === true || input.requested;
+	return (
+		input.networkActive ||
+		input.clockActive ||
+		input.cameraActive === true ||
+		input.keyboardActive === true ||
+		input.requested
+	);
 }
 
 export type LocateInjectInput = {
@@ -259,7 +293,7 @@ export type InjectChannel = {
 	attached(): InjectAck | undefined;
 	/** Wait until the app acknowledged `seq`; `false` on timeout. */
 	acked(seq: number, timeoutMs: number): Promise<boolean>;
-	/** Forget the state and ack of a previous app (before a launch). */
+	/** Forget the state and ack of a previous app (before a launch); the keyboard mode is the lease's, so it stays. */
 	reset(): void;
 };
 
@@ -290,7 +324,13 @@ export function createInjectChannel(input: {
 		current: readState,
 		write(next) {
 			fs.mkdir(dirname(statePath));
-			const state: InjectState = { ...next, seq: Math.max(readState().seq + 1, Math.trunc(now())) };
+			const previous = readState();
+			const keyboard = next.keyboard ?? previous.keyboard;
+			const state: InjectState = {
+				...next,
+				...(keyboard === undefined ? {} : { keyboard }),
+				seq: Math.max(previous.seq + 1, Math.trunc(now())),
+			};
 			fs.writeAtomic(statePath, encodeInjectState(state));
 			return state;
 		},
@@ -305,9 +345,14 @@ export function createInjectChannel(input: {
 			}
 		},
 		reset() {
+			const keyboard = readState().keyboard;
 			fs.remove(ackPath);
 			fs.remove(statePath);
 			fs.remove(injectEventsPath(statePath));
+			if (keyboard !== undefined) {
+				fs.mkdir(dirname(statePath));
+				fs.writeAtomic(statePath, encodeInjectState({ seq: 0, keyboard }));
+			}
 		},
 	};
 }

@@ -318,6 +318,11 @@ export function createIosDeviceDriver(
 		biometrics: async () =>
 			unsupported("biometrics", "Face ID / Touch ID cannot be simulated on a real sensor; use a simulator"),
 		...physicalConditionOps(`physical iPhone ${udid}`),
+		dismissKeyboard: async () => {
+			const pressed = await sendVoid("key", params({ usage: KEY_USAGE.Enter }));
+			return pressed.success ? { success: true, data: { via: "key" } } : pressed;
+		},
+		keyboardState: async () => unsupported("the keyboard mode", "the injected library runs in simulator apps only"),
 		typeText: (text) => sendVoid("typeText", { text }, deviceTypeTextBudgetMs(text)),
 		key: (key, modifiers) => sendVoid("key", params({ usage: KEY_USAGE[key], modifiers: modifiers && [...modifiers] })),
 		pressButton,

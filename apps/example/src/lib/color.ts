@@ -27,8 +27,8 @@ const LEGACY_PREFIX = "--color-";
  * caller wrote before this package took shadcn's names, and left alone it would
  * miss silently on every render.
  *
- * Pure, and separate from `useThemeColor` so it is reachable from `bun test` —
- * the hook imports `uniwind`, which Bun's transpiler cannot parse. See AGENTS.md.
+ * Pure, and separate from `useThemeColor` so it is unit-testable —
+ * the hook imports `uniwind`, whose source a bare JS runtime cannot parse. See AGENTS.md.
  */
 export function themeVariableName(token: string): string {
 	if (token.startsWith(LEGACY_PREFIX)) return `--${token.slice(LEGACY_PREFIX.length)}`;
@@ -74,6 +74,46 @@ export function transparentOf(color: string | undefined): string | undefined {
 
 	const channels = RGB.exec(color);
 	if (channels) return `rgba(${channels[1]?.trim()}, ${channels[2]?.trim()}, ${channels[3]?.trim()}, 0)`;
+
+	return undefined;
+}
+
+/**
+ * The same colour at a given alpha, for a wash that has to stop short of solid.
+ *
+ * The companion to `transparentOf`, and it takes the same two notations for the
+ * same reason: hex and `rgb[a]()` can be taken apart without a parser, anything
+ * else cannot, so anything else is `undefined` and a caller should decline to
+ * draw rather than guess. An alpha the colour already carries is replaced, not
+ * multiplied — the argument is the alpha the caller wants to see.
+ *
+ * `alpha` is clamped to 0..1.
+ */
+export function withAlpha(color: string | undefined, alpha: number): string | undefined {
+	if (!color) return undefined;
+	const clamped = alpha < 0 ? 0 : alpha > 1 ? 1 : alpha;
+
+	if (HEX.test(color)) {
+		const digits = color.slice(1);
+		const rgb =
+			digits.length <= 4
+				? digits
+						.slice(0, 3)
+						.split("")
+						.map((digit) => digit + digit)
+						.join("")
+				: digits.slice(0, 6);
+		const suffix = Math.round(clamped * 255)
+			.toString(16)
+			.padStart(2, "0");
+
+		return `#${rgb}${suffix}`;
+	}
+
+	const channels = RGB.exec(color);
+	if (channels) {
+		return `rgba(${channels[1]?.trim()}, ${channels[2]?.trim()}, ${channels[3]?.trim()}, ${clamped})`;
+	}
 
 	return undefined;
 }

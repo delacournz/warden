@@ -12,7 +12,6 @@ A multiline text field, sized in rows. One component, no parts: it renders an
 | `index.ts` | → `@/components/ui/textarea` |
 | `textarea.tsx` | `Textarea` |
 | `textarea.variants.ts` | Pure `tv()` slots, the line metrics and the height and count resolvers, no RN imports |
-| `textarea.variants.test.ts` | |
 
 ## Design
 
@@ -33,8 +32,8 @@ A multiline text field, sized in rows. One component, no parts: it renders an
   a small three-row field and a large one are both three rows.
 - **Every number the height counts is pinned to the class that draws it.** The
   line height is set by a `leading-*` class in `textareaVariants`' `field` slot,
-  and the padding is `Input`'s multiline `py-*`. `textarea.variants.test.ts`
-  resolves both classes and fails if either disagrees with its number — a
+  and the padding is `Input`'s multiline `py-*`. Both classes are resolved and must
+  agree with the number — a
   retune of `Input`'s padding would otherwise mis-size every textarea by a few
   points, silently, with the last line clipped at the bottom edge.
 - **A paragraph gets paragraph leading.** `Input` sets `leading-tight` because
@@ -80,7 +79,13 @@ A multiline text field, sized in rows. One component, no parts: it renders an
   in a [`Field`](../field/AGENTS.md) the way an `Input` does — the reason
   `Input` ships no label part holds here too. `apps/playground`'s
   `/textarea` gallery ends with a composed form showing the trade at a call site.
-- **Not for `Input.Group` or `Button.Group`.** An inner `Input` would read
-  either context and take its box or its corner, but a decorated or joined
-  paragraph is not a control this library draws, and the height math assumes
-  the box is the field's own.
+- **Inside `Input.Group` it is the group's field.** It reads the group context
+  like an `Input`: the group owns the box, the size and the state axes, and
+  `resolveTextareaHeightStyle({ isGrouped: true })` counts only the lines,
+  because the group draws the padding and border around every section at once.
+  `Input.Group.Block` stacks a toolbar or a footer in the same box — a message
+  composer is one border and one focus ring. **Not for `Button.Group`**: a
+  joined paragraph is not a control this library draws.
+
+- **Takes `Input`'s `etched` variant** — the box is `Input`'s, so the third `INPUT_VARIANTS` value
+  reaches the textarea unchanged.

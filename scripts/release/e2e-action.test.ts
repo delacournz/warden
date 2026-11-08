@@ -265,6 +265,45 @@ describe("action.yml artifacts", () => {
 		expect(collectStep.env?.GOLDEN_CACHE_HIT).toBe(`\${{ steps.golden-cache.outputs.cache-hit }}`);
 	});
 
+	test("a native build cache miss says so, installs ccache and restores the compiler cache from any older key", () => {
+		const steps = action.runs.steps;
+		const at = (id: string) => steps.findIndex((s) => s.id === id);
+		const prep = steps[at("ccache-prep")] as Step & { run?: string };
+		expect(at("builds-cache")).toBeLessThan(at("ccache-cache"));
+		expect(prep.if).toContain("steps.builds-cache.outputs.cache-hit != 'true'");
+		expect(prep.if).toContain("inputs.compiler-cache == 'true'");
+		expect(steps[at("ccache-cache")]?.if).toBe(prep.if);
+		expect(prep.run).toContain("brew install ccache");
+		expect(prep.run).toContain("ccache --zero-stats");
+		const notice = steps[at("cache-miss")] as Step & { run?: string };
+		expect(notice.if).toContain("steps.builds-cache.outputs.cache-hit != 'true'");
+		expect(notice.if).not.toContain("compiler-cache");
+		expect(notice.run).toContain("::notice title=native build cache miss::");
+		expect(at("cache-miss")).toBeLessThan(at("run"));
+		const restore = steps[at("ccache-cache")];
+		expect(restore?.uses).toStartWith("actions/cache/restore@");
+		expect(restore?.with?.key).toBe(`\${{ steps.keys.outputs.ccache }}`);
+		expect(restore?.with?.["restore-keys"]).toBe(`\${{ steps.keys.outputs.ccache-restore }}`);
+		expect(at("ccache-cache")).toBeLessThan(at("ccache-prep"));
+		expect(at("ccache-prep")).toBeLessThan(at("run"));
+		expect(action.inputs["compiler-cache"]?.default).toBe("true");
+	});
+
+	test("the native build log is printed folded, its workflow commands disarmed; the compiler cache is saved", () => {
+		const steps = action.runs.steps;
+		const at = (id: string) => steps.findIndex((s) => s.id === id);
+		const print = steps[at("build-log")] as Step & { run?: string };
+		expect(at("build-log")).toBeGreaterThan(at("run"));
+		expect(print.if).toContain("always()");
+		expect(print.run).toContain("::group::");
+		expect(print.run).toContain("::stop-commands::");
+		expect(print.run).toContain("ccache --show-stats");
+		const save = steps.find((s) => s.uses?.startsWith("actions/cache/save@") && s.with?.key?.includes("ccache"));
+		expect(save?.if).toContain("always()");
+		expect(save?.if).toContain("steps.ccache-cache.outputs.cache-hit != 'true'");
+		expect(save?.if).toContain("inputs.save-cache == 'true'");
+	});
+
 	test("the cache export reuses the golden the collection archived", () => {
 		const steps = action.runs.steps;
 		const exportIndex = steps.findIndex((s) => s.id === "golden-export");

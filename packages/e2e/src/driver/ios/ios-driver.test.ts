@@ -1538,6 +1538,48 @@ describe("screenshot", () => {
 	});
 });
 
+describe("dismissKeyboard", () => {
+	const STATE = "/w/inject/UDID-1/state.json";
+	/** an in-memory state dir; `loaded` = an app with the dylib is running and acks every state write */
+	function stateDir(loaded: boolean) {
+		const files = new Map<string, string>();
+		if (loaded) files.set(`${STATE}.ack`, JSON.stringify({ seq: 0, pid: 4242 }));
+		const fs: InjectFs = {
+			mkdir: () => undefined,
+			writeAtomic: (path, text) => {
+				files.set(path, text);
+				if (loaded && path === STATE) {
+					files.set(`${path}.ack`, JSON.stringify({ seq: (JSON.parse(text) as { seq: number }).seq, pid: 4242 }));
+				}
+			},
+			read: (path) => files.get(path),
+			remove: (path) => void files.delete(path),
+			pidAlive: () => true,
+		};
+		return { files, fs };
+	}
+
+	test("with the dylib loaded it resigns the first responder: via resign, never Enter", async () => {
+		const dir = stateDir(true);
+		const { driver, helper, logs } = await open(() => ({ data: null }), { injectFs: dir.fs, wardenHome: "/w" });
+		const result = await driver.dismissKeyboard();
+		expect(result).toEqual({ success: true, data: { via: "resign" } });
+		expect(helper.of("key")).toHaveLength(0);
+		expect(JSON.parse(dir.files.get(STATE) ?? "{}")).toMatchObject({ dismissKeyboard: true });
+		expect(logs.some((line) => line.includes("dismissed with Enter"))).toBe(false);
+	});
+
+	test("without the dylib it presses Enter, answers via key and logs the warning", async () => {
+		const dir = stateDir(false);
+		const { driver, helper, logs } = await open(() => ({ data: null }), { injectFs: dir.fs, wardenHome: "/w" });
+		const result = await driver.dismissKeyboard();
+		expect(result).toEqual({ success: true, data: { via: "key" } });
+		expect(helper.of("key").map(({ usage }) => usage)).toEqual([KEY_USAGE.Enter]);
+		expect(dir.files.has(STATE)).toBe(false);
+		expect(logs.filter((line) => line.includes("[ios] keyboard dismissed with Enter"))).toHaveLength(1);
+	});
+});
+
 describe("network conditions", () => {
 	/** an in-memory state dir whose app "acks" every state write */
 	function stateDir() {
