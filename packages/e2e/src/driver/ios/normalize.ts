@@ -93,7 +93,8 @@ export function toSnapshot(data: SnapshotData, takenAt: number): Snapshot {
 		truncated: data.truncated,
 	};
 	if (data.modal) snapshot.modal = data.modal;
-	if (data.fallback?.from === "axbridge") snapshot.fellBackFrom = "axbridge";
+	// a bridge read by pid (frontmost unresolved) also carries a `fallback`, but the bridge answered: the read is whole
+	if (data.fallback?.from === "axbridge" && data.backend !== "axbridge") snapshot.fellBackFrom = "axbridge";
 	if (data.fallback?.stall) snapshot.bridgeStall = toBridgeStall(data.fallback.stall);
 	return snapshot;
 }
