@@ -34,6 +34,7 @@
 		"demo:fixture": "bun scripts/demo/fixture.ts",
 		"nuke": "rm -rf node_modules ./apps/**/node_modules ./packages/**/node_modules && bun install --no-cache -f",
 		"bench": "bun packages/e2e-bench/src/cli.ts",
+		"bench:agent": "bun packages/agent-bench/src/cli.ts",
 		"signoff": "bun scripts/signoff/signoff.ts"
 	},
 	"workspaces": [
