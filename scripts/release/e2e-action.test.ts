@@ -265,7 +265,7 @@ describe("action.yml artifacts", () => {
 		expect(collectStep.env?.GOLDEN_CACHE_HIT).toBe(`\${{ steps.golden-cache.outputs.cache-hit }}`);
 	});
 
-	test("a native build cache miss says so, installs ccache and restores the compiler cache from any older key", () => {
+	test("a native build cache miss says so, installs ccache and restores the newest compiler cache by prefix", () => {
 		const steps = action.runs.steps;
 		const at = (id: string) => steps.findIndex((s) => s.id === id);
 		const prep = steps[at("ccache-prep")] as Step & { run?: string };
@@ -273,7 +273,13 @@ describe("action.yml artifacts", () => {
 		expect(prep.if).toContain("steps.builds-cache.outputs.cache-hit != 'true'");
 		expect(prep.if).toContain("inputs.compiler-cache == 'true'");
 		expect(steps[at("ccache-cache")]?.if).toBe(prep.if);
-		expect(prep.run).toContain("brew install ccache");
+		// a pinned, checksum-verified release binary first; Homebrew only when that download fails
+		expect(prep.run).toMatch(/version=\d+\.\d+\.\d+\n/);
+		expect(prep.run).toMatch(/sha256=[0-9a-f]{64}\n/);
+		expect(prep.run).toContain("shasum -a 256 -c -");
+		expect(prep.run).toContain("https://github.com/ccache/ccache/releases/download/");
+		expect(prep.run?.indexOf("shasum")).toBeLessThan(prep.run?.indexOf("install -m 0755") ?? -1);
+		expect(prep.run?.indexOf("curl")).toBeLessThan(prep.run?.indexOf("brew install ccache") ?? -1);
 		expect(prep.run).toContain("ccache --zero-stats");
 		const notice = steps[at("cache-miss")] as Step & { run?: string };
 		expect(notice.if).toContain("steps.builds-cache.outputs.cache-hit != 'true'");
@@ -282,7 +288,10 @@ describe("action.yml artifacts", () => {
 		expect(at("cache-miss")).toBeLessThan(at("run"));
 		const restore = steps[at("ccache-cache")];
 		expect(restore?.uses).toStartWith("actions/cache/restore@");
-		expect(restore?.with?.key).toBe(`\${{ steps.keys.outputs.ccache }}`);
+		// a per-run key never hits exactly, so restore-keys pick the newest save: an empty save cannot pin the cache
+		expect(restore?.with?.key).toBe(
+			`\${{ steps.keys.outputs.ccache }}-\${{ github.run_id }}-\${{ github.run_attempt }}`
+		);
 		expect(restore?.with?.["restore-keys"]).toBe(`\${{ steps.keys.outputs.ccache-restore }}`);
 		expect(at("ccache-cache")).toBeLessThan(at("ccache-prep"));
 		expect(at("ccache-prep")).toBeLessThan(at("run"));
@@ -300,8 +309,13 @@ describe("action.yml artifacts", () => {
 		expect(print.run).toContain("ccache --show-stats");
 		const save = steps.find((s) => s.uses?.startsWith("actions/cache/save@") && s.with?.key?.includes("ccache"));
 		expect(save?.if).toContain("always()");
-		expect(save?.if).toContain("steps.ccache-cache.outputs.cache-hit != 'true'");
 		expect(save?.if).toContain("inputs.save-cache == 'true'");
+		// saved under the restore step's per-run key, and only when the build stored objects
+		expect(save?.with?.key).toBe(steps[at("ccache-cache")]?.with?.key);
+		expect(save?.if).toContain("steps.build-log.outputs.ccache-writes != '0'");
+		expect(save?.if).toContain("steps.build-log.outputs.ccache-writes != ''");
+		expect(print.run).toContain('$1 == "local_storage_write"');
+		expect(print.run).toContain("ccache-writes=");
 	});
 
 	test("the cache export reuses the golden the collection archived", () => {
