@@ -91,6 +91,7 @@ const AFFECTED = {
 		"framework/runner": { entries: ["src/app/welcome.tsx"] },
 		"framework/device": { entries: ["src/app/welcome.tsx"] },
 		"app/gestures": { entries: ["src/app/welcome.tsx", "src/app/gestures.tsx", "src/modules/gestures"] },
+		"app/landscape": { entries: ["src/app/welcome.tsx", "src/app/landscape.tsx", "app.config.ts"] },
 		"app/keyboard": { entries: ["src/app/welcome.tsx", "src/app/keyboard-sheet.tsx", "src/modules/keyboard"] },
 		"conditions/network": {
 			entries: [...CONDITIONS, "src/app/network.tsx", "src/modules/network", "src/modules/showcase"],

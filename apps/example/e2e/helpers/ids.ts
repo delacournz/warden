@@ -128,6 +128,17 @@ export const ids = {
 		reset: "gestures-reset",
 		back: "gestures-back",
 	},
+	landscape: {
+		screen: "landscape-screen",
+		back: "landscape-back",
+		topLeft: "landscape-top-left",
+		topRight: "landscape-top-right",
+		bottomLeft: "landscape-bottom-left",
+		bottomRight: "landscape-bottom-right",
+		last: "landscape-last",
+		presses: "landscape-presses",
+		layout: "landscape-layout",
+	},
 	conditions: {
 		screen: "conditions-screen",
 		back: "conditions-back",
