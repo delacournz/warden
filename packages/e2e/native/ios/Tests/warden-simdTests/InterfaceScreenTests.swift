@@ -67,3 +67,38 @@ final class InterfaceScreenTests: XCTestCase {
     XCTAssertLessThan(norm, 1)
   }
 }
+
+/// A hit-test answers one element, no root: a point or frame past the portrait width can only be a landscape
+/// interface; otherwise the last snapshot's verdict holds.
+final class HitInterfaceScreenTests: XCTestCase {
+  private let portrait: (width: Double, height: Double, scale: Double) = (402, 874, 3)
+
+  private func size(point: CGPoint, frame: Rect, remembered: Bool?) -> (Double, Double) {
+    let s = Session.interfaceScreen(portrait, hitAt: point, frame: frame, rememberedLandscape: remembered)
+    return (s.width, s.height)
+  }
+
+  func testAPointPastThePortraitWidthIsLandscape() {
+    let s = size(point: CGPoint(x: 811, y: 82), frame: Rect(x: 768, y: 64, width: 86, height: 36), remembered: nil)
+    XCTAssertEqual(s.0, 874)
+    XCTAssertEqual(s.1, 402)
+  }
+
+  func testAFramePastThePortraitWidthIsLandscape() {
+    let s = size(point: CGPoint(x: 380, y: 82), frame: Rect(x: 360, y: 64, width: 120, height: 36), remembered: false)
+    XCTAssertEqual(s.0, 874)
+  }
+
+  func testInsideThePortraitWidthFollowsTheLastSnapshot() {
+    let frame = Rect(x: 20, y: 64, width: 77, height: 36)
+    XCTAssertEqual(size(point: CGPoint(x: 58, y: 82), frame: frame, remembered: true).0, 874)
+    XCTAssertEqual(size(point: CGPoint(x: 58, y: 82), frame: frame, remembered: false).0, 402)
+    XCTAssertEqual(size(point: CGPoint(x: 58, y: 82), frame: frame, remembered: nil).0, 402)
+  }
+
+  /// Below the turned height is portrait-only space, whatever the last snapshot said.
+  func testAPointBelowTheTurnedHeightIsPortrait() {
+    let s = size(point: CGPoint(x: 200, y: 700), frame: Rect(x: 20, y: 680, width: 362, height: 52), remembered: true)
+    XCTAssertEqual(s.0, 402)
+  }
+}
