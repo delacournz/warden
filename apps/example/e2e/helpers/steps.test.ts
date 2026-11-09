@@ -4,7 +4,7 @@ import { el, type FakeDriver, fakeDriver, snapshotOf } from "@delacour/warden-e2
 import { createScreen } from "@delacour/warden-e2e/screen/screen";
 import { staticDriver, testHost } from "@delacour/warden-e2e/screen/screen.testing";
 import { ids } from "./ids";
-import { expectTodosAfterSignIn, launch, nextStep, openDeepLink, revealAbove, SPEC_OPTIONS, signOut } from "./steps";
+import { expectTodosAfterSignIn, launch, nextStep, openDeepLink, SPEC_OPTIONS, signOut } from "./steps";
 
 const OPTIONS = { windowMs: 40, pollMs: 5 };
 
@@ -205,53 +205,5 @@ describe("signOut", () => {
 		const { screen, taps } = tabs(2);
 		await signOut(screen);
 		expect(taps()).toBe(2);
-	});
-});
-
-describe("revealAbove", () => {
-	const FOOTER = { x: 20, y: 693, width: 362, height: 52 };
-
-	/** A row at `top` that each swipe moves by the swipe's own distance (a drag with no fling), under a fixed footer. */
-	function list(top: number) {
-		let y = top;
-		const driver = fakeDriver({
-			screens: () =>
-				snapshotOf([
-					el("button", { id: "row", label: "Row", frame: { x: 21, y, width: 360, height: 56 } }),
-					el("button", { id: "footer", label: "Sign out", frame: FOOTER }),
-				]),
-			onCall: (call) => {
-				if (call.method === "swipe") y += call.to.y - call.from.y;
-				return undefined;
-			},
-		});
-		const screen = createScreen(testHost(driver));
-		return { driver, screen, top: () => y };
-	}
-
-	test("does nothing when the row is already clear of the footer", async () => {
-		const { driver, screen } = list(400);
-		await revealAbove(screen, screen.getByTestId("row"), screen.getByTestId("footer"));
-		expect(driver.callsOf("swipe")).toHaveLength(0);
-	});
-
-	test("drags a row the footer covers up until its bottom edge is above the footer", async () => {
-		const { driver, screen, top } = list(686);
-		await revealAbove(screen, screen.getByTestId("row"), screen.getByTestId("footer"));
-		expect(driver.callsOf("swipe").length).toBeGreaterThan(0);
-		expect(top() + 56).toBeLessThanOrEqual(FOOTER.y);
-	});
-
-	test("gives up after 4 drags on a list that does not move", async () => {
-		const driver = fakeDriver({
-			screens: () =>
-				snapshotOf([
-					el("button", { id: "row", label: "Row", frame: { x: 21, y: 686, width: 360, height: 56 } }),
-					el("button", { id: "footer", label: "Sign out", frame: FOOTER }),
-				]),
-		});
-		const screen = createScreen(testHost(driver));
-		await revealAbove(screen, screen.getByTestId("row"), screen.getByTestId("footer"));
-		expect(driver.callsOf("swipe")).toHaveLength(4);
 	});
 });

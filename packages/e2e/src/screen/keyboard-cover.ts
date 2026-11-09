@@ -26,7 +26,8 @@ export type Cover = {
 
 const SCROLL_ROLES: ReadonlySet<string> = new Set(["scrollview", "list"]);
 
-function scrollContainer(entry: NodeEntry): NodeEntry | undefined {
+/** The nearest scroll view or list holding `entry`. */
+export function scrollContainer(entry: NodeEntry): NodeEntry | undefined {
 	for (let node = entry.parent; node !== undefined; node = node.parent) {
 		if (SCROLL_ROLES.has(node.element.role)) return node;
 	}

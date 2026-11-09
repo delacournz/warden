@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, test } from "@delacour/warden-e2e";
 import { ids } from "../helpers/ids";
-import { openSettingsTab, openTodosTab, revealAbove, SPEC_OPTIONS, signedIn, signOut } from "../helpers/steps";
+import { openSettingsTab, openTodosTab, SPEC_OPTIONS, signedIn, signOut } from "../helpers/steps";
 
 test.use(SPEC_OPTIONS);
 
@@ -59,15 +59,14 @@ describe.serial("settings", () => {
 
 	/**
 	 * Settings stays in the tree under a pushed screen, so "Settings is visible" says nothing about the Back press: the
-	 * pushed screen leaving does. The sticky Sign out footer floats over the last rows, so a row is first dragged clear of
-	 * it (`revealAbove`): the tree would call a covered row visible and the tap would sign out.
+	 * pushed screen leaving does. The sticky Sign out footer floats over the last rows: `scrollTo` and `tap` keep a row
+	 * clear of it, so the tap never signs out.
 	 */
 	for (const { name, row, screen: target, back } of ROWS) {
 		test(`${name} opens and Back returns to Settings`, async ({ screen }) => {
 			const pushed = screen.getByTestId(target);
 			const entry = screen.getByTestId(row);
 			await entry.scrollTo();
-			await revealAbove(screen, entry, screen.getByTestId(ids.settings.signOut));
 			await entry.tap({ until: pushed });
 			await expect(pushed).toBeVisible();
 			await screen.getByTestId(back).tap({ until: async () => !(await pushed.isVisible()) });

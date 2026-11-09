@@ -297,6 +297,20 @@ describe("tap({ until }) watches the screen between presses", () => {
 		expect(host.clock.elapsed()).toBeLessThan(4000);
 	});
 
+	test("a tap with until right after another input waits for a still screen before it aims", async () => {
+		const { driver, screen } = setup(1);
+		await screen.getByTestId("title").tap();
+		await screen.getByTestId("next").tap({ until: screen.getByText("Plan") });
+		const methods = driver.calls.map((call) => call.method).filter((m) => m === "tap" || m === "settle");
+		expect(methods).toEqual(["tap", "settle", "tap"]);
+	});
+
+	test("a tap with until long after the last input does not wait", async () => {
+		const { driver, screen } = setup(1);
+		await screen.getByTestId("next").tap({ until: screen.getByText("Plan") });
+		expect(driver.callsOf("settle")).toHaveLength(0);
+	});
+
 	test("a press that takes its target away landed, even when nothing new shows", async () => {
 		let pressed = false;
 		const driver = fakeDriver({
