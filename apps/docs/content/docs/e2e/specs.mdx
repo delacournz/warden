@@ -180,6 +180,8 @@ export const test = base.extend<{ email: string }>({
 
 | Call | |
 |---|---|
+| `os`, `isIOS`, `isAndroid` | the platform under test, `"ios"` or `"android"` (like React Native's `Platform.OS`), for a step only one platform needs: `if (device.isAndroid) await device.back();`. To run a whole test on one platform use `platforms: ["ios"]` |
+| `select({ ios, android })` | the value for the platform under test, like React Native's `Platform.select`: `screen.getByText(device.select({ ios: "Done", android: "OK" }))`. Give both platforms, or a `default` for the one left out |
 | `alert("accept" \| "dismiss" \| { button })` | answers the system alert on top; resolves `false` when there is none |
 | `openLink(url, { accept?, until?, waitMs? })` | opens a URL from outside the app; on iOS answers the "Open in …?" sheet and returns once the link is handled (below) |
 | `home()`, `back()` | home button; Android back key (`INVALID_ARGUMENT` on iOS) |

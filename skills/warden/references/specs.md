@@ -68,6 +68,8 @@ Never import subpaths (`/device`, `/screen/*`, `/env`). Only `.` and `./preload`
 
 | Member | Does |
 |---|---|
+| `os` / `isIOS` / `isAndroid` | the platform under test (`"ios"` \| `"android"`, like RN `Platform.OS`), read from the driver; branch a flow: `if (device.isAndroid) await device.back()`. Whole test on one platform: `platforms: ["ios"]` |
+| `select({ ios, android } \| { ios?, android?, default })` | the value for the platform under test, like RN `Platform.select`: `screen.getByText(device.select({ ios: "Done", android: "OK" }))`; both platforms or a `default` (type error otherwise); a platform key wins over `default` even when `undefined` |
 | `alert("accept" \| "dismiss" \| { button })` | answer the system alert on top; `false` when none; `ACTION_FAILED` for a missing named button |
 | `openLink(url, { accept?, until?, waitMs? })` | open a URL from outside the app; presses "Open" on the iOS sheet (up to 3 times) and returns once the sheet is gone, or after ~1.4 s when none shows and the app is in front (later links with that scheme return as soon as the app is in front); `until: locator` returns when it is visible; `waitMs` (default 8000) caps the wait, no error |
 | `home()` / `back()` | home key / Android back (iOS throws) |
