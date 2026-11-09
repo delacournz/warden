@@ -41,7 +41,8 @@ describe("toHaveKeyboard", () => {
 
 	test("polls until the keyboard shows", async () => {
 		let n = 0;
-		const t = target(() => ++n >= 3);
+		// a timeout far past 3 polls: on a loaded runner two 100 ms sleeps overran a 200 ms window
+		const t = target(() => ++n >= 3, 5000);
 		await new DeviceAssertions(t, { negate: false }).toHaveKeyboard();
 		expect(t.polls).toBe(3);
 	});
@@ -58,7 +59,7 @@ describe("toHaveKeyboard", () => {
 	test(".not waits for the keyboard to go and fails if it stays", async () => {
 		let n = 0;
 		await new DeviceAssertions(
-			target(() => ++n < 3),
+			target(() => ++n < 3, 5000),
 			{ negate: true }
 		).toHaveKeyboard();
 		const error = await failure(
