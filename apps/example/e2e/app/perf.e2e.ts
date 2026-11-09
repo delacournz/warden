@@ -1,7 +1,7 @@
 import { expect, test } from "@delacour/warden-e2e";
 import { ENV_NAMES } from "@delacour/warden-e2e/env";
-import { ids } from "./helpers/ids";
-import { SPEC_OPTIONS, signedIn } from "./helpers/steps";
+import { ids } from "../helpers/ids";
+import { SPEC_OPTIONS, signedIn } from "../helpers/steps";
 
 test.use(SPEC_OPTIONS);
 

@@ -266,6 +266,51 @@ describe("tap({ until }) watches the screen between presses", () => {
 		expect(host.clock.elapsed()).toBeLessThan(4000);
 	});
 
+	test("nodes that only slide (a pop animation ending) are not a reaction: a press dropped mid-slide is sent again", async () => {
+		const holder: { now?: () => number } = {};
+		const pressTimes: number[] = [];
+		let opened = false;
+		const driver = fakeDriver({
+			screens: () => {
+				if (opened) return snapshotOf([el("text", { id: "detail-title", label: "Detail" })]);
+				const x = Math.max(0, 400 - (holder.now?.() ?? 0));
+				return snapshotOf([
+					el("text", { id: "todos-title", label: "Todos", frame: { x: x + 20, y: 80, width: 200, height: 30 } }),
+					el("button", { id: "row", label: "Row", frame: { x: x + 20, y: 300, width: 360, height: 70 } }),
+				]);
+			},
+			onCall: (call) => {
+				if (call.method === "tap") {
+					const now = holder.now?.() ?? 0;
+					pressTimes.push(now);
+					if (now >= 400) opened = true;
+				}
+				return undefined;
+			},
+		});
+		const host = testHost(driver, { cache: true });
+		holder.now = host.clock.now;
+		const screen = createScreen(host);
+		await screen.getByTestId("row").tap({ until: screen.getByTestId("detail-title") });
+		expect(pressTimes).toHaveLength(2);
+		expect(pressTimes[0]).toBeLessThan(400);
+		expect(host.clock.elapsed()).toBeLessThan(4000);
+	});
+
+	test("a tap with until right after another input waits for a still screen before it aims", async () => {
+		const { driver, screen } = setup(1);
+		await screen.getByTestId("title").tap();
+		await screen.getByTestId("next").tap({ until: screen.getByText("Plan") });
+		const methods = driver.calls.map((call) => call.method).filter((m) => m === "tap" || m === "settle");
+		expect(methods).toEqual(["tap", "settle", "tap"]);
+	});
+
+	test("a tap with until long after the last input does not wait", async () => {
+		const { driver, screen } = setup(1);
+		await screen.getByTestId("next").tap({ until: screen.getByText("Plan") });
+		expect(driver.callsOf("settle")).toHaveLength(0);
+	});
+
 	test("a press that takes its target away landed, even when nothing new shows", async () => {
 		let pressed = false;
 		const driver = fakeDriver({

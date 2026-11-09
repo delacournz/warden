@@ -171,6 +171,20 @@ describe("toSnapshot fallback", () => {
 		);
 	});
 
+	test("a bridge read by pid after an unresolved frontmost is whole, not a fallback", () => {
+		const reason = "frontmost unresolved: x; read pid 42 (launched)";
+		const snapshot = toSnapshot(
+			{
+				...data,
+				backend: "axbridge",
+				fallback: { from: "axbridge", to: "ax", reason },
+				target: { pid: 42, source: "launched" },
+			},
+			0
+		);
+		expect(snapshot).not.toHaveProperty("fellBackFrom");
+	});
+
 	test("a plain read is not", () => {
 		expect(toSnapshot(data, 0).fellBackFrom).toBeUndefined();
 		expect(toSnapshot({ ...data, backend: "axbridge" }, 0)).not.toHaveProperty("fellBackFrom");

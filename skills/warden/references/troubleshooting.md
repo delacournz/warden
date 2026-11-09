@@ -158,7 +158,7 @@ Other codes:
 
 | Code | Meaning |
 |---|---|
-| `E2eError` codes | `LOCATOR_NOT_FOUND` `LOCATOR_AMBIGUOUS` `INVALID_LOCATOR` `ACTION_FAILED` `TIMEOUT` `NOT_ACTIONABLE` `INVALID_ARGUMENT` `SESSION` `DRIVER` `ASSERTION` `PERF_BUDGET` (a `device.perf.stop()` budget breach; `warden e2e --perf` lists it under the test) `RUN_FAILED` (`run()` command exited non-zero or could not start; message has the exit code and stderr tail; `check: false` to inspect instead) `READ_DEGRADED` (a degraded read could not confirm the locator either way; row 118) |
+| `E2eError` codes | `LOCATOR_NOT_FOUND` `LOCATOR_AMBIGUOUS` `INVALID_LOCATOR` `ACTION_FAILED` `TIMEOUT` `NOT_ACTIONABLE` `INVALID_ARGUMENT` `SESSION` `DRIVER` `ASSERTION` `PERF_BUDGET` (a `device.perf.stop()` budget breach; `warden e2e --perf` lists it under the test) `RUN_FAILED` (`run()` command exited non-zero or could not start; message has the exit code and stderr tail; `check: false` to inspect instead) `READ_DEGRADED` (a degraded read could not confirm the locator either way; row 118) `SKIPPED` (a `describe.serial` test not run because an earlier test in the group failed: fix that one; or `skipped: <reason>` for a test skipped when collected: `test.skip`, `skipIf`, `platforms`, `requires`) |
 | `no driver factory configured` | `bun test` run without `--preload @delacour/warden-e2e/preload` (and no preload in `bunfig.toml`) |
 | `warden e2e` exit | 0 ok, 1 a required spec failed, 2 an iPhone's runner would not start (`device_locked`; no spec ran, `e2e-report.json` has `error`), 130 interrupted |
 | `warden affected --strict` | exit 3 when a changed file reaches no spec |

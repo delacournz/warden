@@ -90,7 +90,7 @@ warden golden key --profile iphone-17 --runtime 27.0
 ```bash
 warden e2e example --all             # every spec
 warden e2e example-dev               # only the specs this branch touches
-warden e2e example-dev --specs todos,settings
+warden e2e example-dev --specs app/todos,app/settings
 warden e2e mobile --base origin/main --count 2 --report e2e-report.json
 warden e2e --dry-run --files src/modules/chat/api.ts
 ```

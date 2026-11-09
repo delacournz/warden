@@ -359,6 +359,26 @@ describe("skip", () => {
 		expect(run.exitCode).toBe(0);
 		expect(run.log).toEqual(["skipIf false ran", "ios only ran"]);
 	});
+
+	test("every skipped test gets a skipped results line saying why", async () => {
+		const run = await runSpec("skip");
+		const skipped = run.results.filter((r) => r.status === "skipped");
+		expect(skipped.map((r) => [r.title.join(" > "), r.error?.code])).toEqual([
+			["skipped", "SKIPPED"],
+			["skipIf true", "SKIPPED"],
+			["option skip", "SKIPPED"],
+			["android only", "SKIPPED"],
+		]);
+		expect(byTitle(run, "android only").error?.message).toBe("skipped: runs on android only, this device is ios");
+		expect(byTitle(run, "skipIf true").error?.message).toBe("skipped: test.skipIf(true)");
+		expect(run.stdout).toContain("android only");
+	});
+
+	test("a test a device lacks a capability for is skipped with the capability named", async () => {
+		const phone = await runSpec("requires", { WARDEN_DEVICE_KIND: "physical" });
+		expect(byTitle(phone, "needs pinch").status).toBe("skipped");
+		expect(byTitle(phone, "needs pinch").error?.message).toBe("skipped: needs pinch, which this device lacks");
+	});
 });
 
 describe("requires", () => {
@@ -460,6 +480,12 @@ describe("conditions", () => {
 		expect(events.some((e) => e.area === "network" && e.value.kind === "offline")).toBe(true);
 	});
 
+	test("a describe.serial chain applies the baseline once, before its launch, never to its running app", async () => {
+		const run = await runSpec("conditions-serial", { WARDEN_CONDITIONS: '{"network":"3g"}' });
+		expect(run.exitCode).toBe(0);
+		expect(run.log).toEqual(["beforeAll nets=3g launches=1", "first nets=3g", "second nets=3g,offline,3g launches=1"]);
+	});
+
 	test("without conditions the launch is plain and an untouched test makes no condition call", async () => {
 		const run = await runSpec("conditions");
 		expect(run.exitCode).toBe(0);
@@ -558,5 +584,90 @@ if [ "$2" = "stop" ]; then echo '{"ok":true,"command":"perf stop","result":{"ses
 		expect(failed.status).toBe("failed");
 		expect(failed.error?.code).toBe("PERF_BUDGET");
 		expect(failed.error?.message).toContain("jankPct: 12 > budget 5");
+	});
+});
+
+describe("describe.serial", () => {
+	test("opens the app once before the group's hooks, never between its tests, and skips the rest after a failure", async () => {
+		const run = await runSpec("serial");
+		expect(run.exitCode).toBe(1);
+		expect(run.log).toEqual([
+			"beforeAll launches=1",
+			"first launches=1",
+			"second",
+			"afterAll launches=1",
+			"outside launches=2",
+		]);
+		expect(run.results.map((r) => [r.title.join(" > "), r.status])).toEqual([
+			["sign-in group > first", "passed"],
+			["sign-in group > second fails", "failed"],
+			["sign-in group > third", "skipped"],
+			["sign-in group > nested > fourth", "skipped"],
+			["outside the group", "passed"],
+		]);
+		const third = byTitle(run, "third");
+		expect(third.error?.code).toBe("SKIPPED");
+		expect(third.error?.message).toContain("sign-in group > second fails");
+		expect(run.stdout).toContain("serial › hook launch passed");
+	});
+
+	test("a scope whose tests are all skipped runs no launch, beforeAll or afterAll", async () => {
+		const run = await runSpec("serial-skipped");
+		expect(run.exitCode).toBe(0);
+		expect(run.log).toEqual(["kept beforeAll launches=1", "runs ran"]);
+		expect(run.stdout).not.toContain("all skipped › hook launch");
+	});
+
+	test('`launch: "none"` on the group leaves the app alone', async () => {
+		const run = await runSpec("serial-none");
+		expect(run.exitCode).toBe(0);
+		expect(run.log).toEqual(["first launches=0", "second launches=0"]);
+	});
+
+	test("a test with retry inside a serial group is rejected when collected", async () => {
+		const run = await runSpec("serial-retry");
+		expect(run.exitCode).not.toBe(0);
+		expect(run.stdout + run.stderr).toContain("INVALID_ARGUMENT");
+		expect(run.stdout + run.stderr).toContain("retry");
+	});
+});
+
+describe("beforeAll / afterAll", () => {
+	test("a failing beforeAll records its own failed line with steps, a screenshot and the screen", async () => {
+		const run = await runSpec("hook-fail");
+		expect(run.exitCode).toBe(1);
+		expect(run.log).toEqual(["fine beforeAll", "runs ran"]);
+		const broken = run.results.find((r) => r.title.join(" > ") === "broken sign-in > beforeAll");
+		expect(broken).toMatchObject({ status: "failed", error: { message: "sign-in broke" } });
+		expect(broken?.artifacts?.files).toEqual(
+			expect.arrayContaining(["failure.png", "screen-at-failure.txt", "trace.jsonl"])
+		);
+		const steps = readTrace(readFileSync(join(broken?.artifacts?.dir ?? "", "trace.jsonl"), "utf8"));
+		expect(steps.some((e) => e.type === "step-end" && e.kind === "hook" && e.label === "beforeAll")).toBe(true);
+		expect(run.results.find((r) => r.title.join(" > ") === "hung sign-in > beforeAll")?.status).toBe("timed-out");
+		expect(byTitle(run, "runs").status).toBe("passed");
+		expect(run.results.some((r) => r.title.join(" > ") === "fine > beforeAll")).toBe(false);
+	});
+
+	test("fixtures kept from a beforeAll fail with SESSION inside a test", async () => {
+		const run = await runSpec("hook-stash");
+		expect(run.exitCode).toBe(1);
+		const used = byTitle(run, "uses the beforeAll screen");
+		expect(used.error?.code).toBe("SESSION");
+		expect(used.error?.message).toContain("beforeAll finished");
+	});
+});
+
+describe("describe bodies", () => {
+	test("a body that takes fixtures is rejected with a pointer to beforeAll", async () => {
+		const run = await runSpec("describe-args");
+		expect(run.exitCode).not.toBe(0);
+		expect(run.stdout + run.stderr).toContain("beforeAll");
+	});
+
+	test("an async body is rejected", async () => {
+		const run = await runSpec("describe-async");
+		expect(run.exitCode).not.toBe(0);
+		expect(run.stdout + run.stderr).toContain("async");
 	});
 });

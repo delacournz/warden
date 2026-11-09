@@ -126,6 +126,29 @@ export async function signedIn(app: Pick<App, "open">, screen: Screen, email = "
 	await expectTodosAfterSignIn(screen);
 }
 
+/**
+ * Opens the Settings tab from anywhere in the tabs and waits for the account card. The first tab press after sign-in
+ * can be dropped while the todos screen is still settling, so it re-sends (`tap({ until })`).
+ */
+export async function openSettingsTab(screen: Screen): Promise<void> {
+	await screen.getByTestId(ids.tabs.settings).tap({ until: screen.getByTestId(ids.settings.email) });
+	await expect(screen.getByTestId(ids.settings.screen)).toBeVisible();
+}
+
+/** Opens the Todos tab from anywhere in the tabs and waits for the list. */
+export async function openTodosTab(screen: Screen): Promise<void> {
+	await screen.getByTestId(ids.tabs.todos).tap({ until: screen.getByTestId(ids.todos.input) });
+}
+
+/** From the tabs: Settings, Sign out, and the welcome screen again (the session is in memory, so nothing remains). */
+export async function signOut(screen: Screen): Promise<void> {
+	await openSettingsTab(screen);
+	const button = screen.getByTestId(ids.settings.signOut);
+	await button.scrollTo();
+	await button.tap({ until: screen.getByTestId(ids.welcome.screen) });
+	await expect(screen.getByTestId(ids.welcome.screen)).toBeVisible();
+}
+
 /** Fresh launch, then the accessibility showcase through its deep link; `bad` adds the known failures. */
 export async function openA11y(
 	app: Pick<App, "open">,

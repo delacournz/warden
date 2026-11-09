@@ -52,7 +52,10 @@ export type Scope = {
 	use: UseOptions;
 	readonly beforeEach: Hook[];
 	readonly afterEach: Hook[];
-	/** accepted for API parity: bun runs a file's tests serially unless `--concurrent` */
+	/**
+	 * `describe.serial`: the group's tests are one chain on one app launch (opened once, before the group's
+	 * `beforeAll`), and a failed test skips the rest of the chain. See {@link chainOf}.
+	 */
 	readonly serial: boolean;
 };
 
@@ -88,11 +91,11 @@ export function createScope(title: string, serial: boolean): Scope {
 	return newScope([...parent.title, title], parent, serial);
 }
 
-/** Runs `body` (bun's `describe` callback) with `scope` current. */
-export function runInScope(scope: Scope, body: () => void): void {
+/** Runs `body` (bun's `describe` callback) with `scope` current; returns what it returned (a promise is a mistake). */
+export function runInScope(scope: Scope, body: () => unknown): unknown {
 	stack.push(scope);
 	try {
-		body();
+		return body();
 	} finally {
 		stack.pop();
 	}
@@ -103,6 +106,11 @@ export function scopeChain(scope: Scope): Scope[] {
 	const chain: Scope[] = [];
 	for (let s: Scope | undefined = scope; s !== undefined; s = s.parent) chain.unshift(s);
 	return chain;
+}
+
+/** The outermost `describe.serial` scope `scope` sits in (itself included): its chain. `undefined` outside one. */
+export function chainOf(scope: Scope): Scope | undefined {
+	return scopeChain(scope).find((s) => s.serial);
 }
 
 /** `beforeEach`: outermost first. `afterEach`: innermost first. Hooks owned by another fixture set are left out. */

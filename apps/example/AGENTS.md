@@ -71,7 +71,9 @@ A demo app for dogfooding warden end to end: Expo SDK 57 + Expo Router + Uniwind
 
 Specs are `bun test` specs driven by `@delacour/warden-e2e`; `warden e2e` leases the sims, installs the build and runs them.
 
-- Specs are `e2e/*.e2e.ts`; helpers are in `e2e/helpers` (`ids.ts` mirrors the testIDs).
+- Specs are `e2e/**/*.e2e.ts`, by area: `e2e/app/` (the app's journeys), `e2e/conditions/` (network, location, clock), `e2e/framework/` (checks of the spec API itself: queries, matchers, actions, runner, device), and `a11y` / `biometrics` / `camera` at the root. A spec's id is its path under `e2e/` without `.e2e.ts` (`app/todos`). Helpers are in `e2e/helpers` (`ids.ts` mirrors the testIDs).
+- Happy paths are `describe.serial` journeys: one launch in `beforeAll`, one check per test, each test leaving the screen the next one names; after a failure the rest are `skipped`. A test whose point is a fresh launch (a relaunch signs out, a cold start offline, a denied permission) stays a plain `test`. A hook's condition changes are not put back by the runner, so `afterAll` undoes them.
+- A press right after a Back can land while the pop is still sliding and be dropped: use `tap({ until })` for it, which treats nodes that only moved as no reaction and presses again. Rows under the sticky Sign out footer need nothing extra: `scrollTo` and `tap` keep clear of covers.
 - Use `test` and `expect` from `@delacour/warden-e2e`: `test("…", async ({ app, device, screen }) => …)`. Specs are deterministic: queries (`screen.getByTestId/ByText/ByRole/…`), actions (`tap`, `fill`, `press`, `swipe`) and polling assertions (`expect(locator).toBeVisible/toHaveText/toBeChecked/toHaveCount/…`, 5 s default, `{ timeout }` to override). There is no `agent.*`.
 - Every spec file starts with `test.use(SPEC_OPTIONS)` (`e2e/helpers/steps.ts`: `launch: "none"`, `systemAlerts: "dismiss"`). The spec opens the app fresh itself, so specs start signed out on the welcome screen: start one with `launch` / `openSignIn` / `signedIn`, which call `app.open({ wait: "quiet" })` (in front and still) and wait for the first screen. `systemAlerts: "dismiss"` clears a system prompt left over from a previous run wherever a read, tap or assertion meets one. After submitting sign-in, `expectTodosAfterSignIn` waits for the todos screen.
 - The first Next press on the welcome screen goes through `nextStep` (`tap({ until })` on the step title): the button is in the AX tree before it takes touches (replace animation into `/welcome`, RNGH handler attaches after mount) and a HID tap has no ack, so a dropped press is re-sent (4 s a press, two re-sends). Same family as the first tab and row presses after sign-in: `tap({ until: <the screen it opens> })`.
@@ -82,16 +84,16 @@ Specs are `bun test` specs driven by `@delacour/warden-e2e`; `warden e2e` leases
   - suite `example`: 2 sims, install (skipped when the sim already has this build; no uninstall, state is in-memory), slim, and the spec → screen `entries` that `warden affected` uses. `--dev` runs the same suite on the dev client: warden starts and verifies its own Metro (the suite's `metro`, which also sets `--initialUrl` and turns the Expo dev menu off), and one spec process per device runs its share of the specs (the default `isolate: "device"`). `metro` applies only with `--dev`;
   - `spec.bundleId` is the app the specs drive (`app.open()` launches it with `WARDEN_LAUNCH_ARGS`).
 
-The accessibility spec (`a11y.e2e.ts`) runs in the `a11y` suite (`warden e2e a11y`), not `example`: its `a11y` key launches iOS with the injected library. Android drives real TalkBack for the `next` / `activate` test.
+The accessibility spec (`a11y`) runs in the `a11y` suite (`warden e2e a11y`), not `example`: its `a11y` key launches iOS with the injected library. Android drives real TalkBack for the `next` / `activate` test.
 
-The network / location / clock specs (`network-*`, `location-*`, `clock-*`) run in the `conditions` suite (`warden e2e conditions`), not `example`: it declares `conditions.network: "online"`, so on iOS every launch carries the network dylib and a spec can change network or clock mid-test. `warden e2e conditions` needs the dylib built (`packages/e2e/native/dist/libwarden-inject.dylib`).
+The network / location / clock specs (`conditions/*`) run in the `conditions` suite (`warden e2e conditions`), not `example`: it declares `conditions.network: "online"`, so on iOS every launch carries the network dylib and a spec can change network or clock mid-test. `warden e2e conditions` needs the dylib built (`packages/e2e/native/dist/libwarden-inject.dylib`).
 
 ```bash
 bun run e2e --all                    # warden e2e example (this checkout's warden); drop --all for the specs this branch needs
 bun run e2e:dev -- --all             # warden e2e example --dev: dev client + warden's Metro
 bun run e2e:affected -- --explain    # which specs this branch needs
-bun run e2e:spec todos               # one spec
-WARDEN_UDID=<udid> WARDEN_BUNDLE_ID=nz.co.delacour.warden.example bun test --preload @delacour/warden-e2e/preload e2e/todos.e2e.ts   # by hand, on an installed build
+bun run e2e:spec app/todos           # one spec
+WARDEN_UDID=<udid> WARDEN_BUNDLE_ID=nz.co.delacour.warden.example bun test --preload @delacour/warden-e2e/preload e2e/app/todos.e2e.ts   # by hand, on an installed build
 ```
 
 Never start Metro or export device env vars for a suite: `warden e2e <suite>` does both. By hand, the build must already be installed on the sim (`WARDEN_UDID`); add `WARDEN_PLATFORM=android` for an emulator and `WARDEN_METRO_URL` for a dev client.

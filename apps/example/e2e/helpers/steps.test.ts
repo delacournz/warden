@@ -4,7 +4,7 @@ import { el, type FakeDriver, fakeDriver, snapshotOf } from "@delacour/warden-e2
 import { createScreen } from "@delacour/warden-e2e/screen/screen";
 import { staticDriver, testHost } from "@delacour/warden-e2e/screen/screen.testing";
 import { ids } from "./ids";
-import { expectTodosAfterSignIn, launch, nextStep, openDeepLink, SPEC_OPTIONS } from "./steps";
+import { expectTodosAfterSignIn, launch, nextStep, openDeepLink, SPEC_OPTIONS, signOut } from "./steps";
 
 const OPTIONS = { windowMs: 40, pollMs: 5 };
 
@@ -154,5 +154,56 @@ describe("openDeepLink", () => {
 		const { device, opens, screen } = linking(99);
 		await openDeepLink(device, screen, "warden-example://todo/1", ids.detail.title);
 		expect(opens).toHaveLength(3);
+	});
+});
+
+describe("signOut", () => {
+	const TAB = { x: 300, y: 800, width: 80, height: 40 };
+	const SIGN_OUT = { x: 24, y: 600, width: 300, height: 44 };
+
+	/** Tabs → Settings (on a tap of the tab) → welcome (on the `landingSignOut`-th tap of Sign out). */
+	function tabs(landingSignOut: number) {
+		let at: "todos" | "settings" | "welcome" = "todos";
+		let signOutTaps = 0;
+		const inside = (point: { x: number; y: number }, r: typeof TAB) =>
+			point.x >= r.x && point.x <= r.x + r.width && point.y >= r.y && point.y <= r.y + r.height;
+		const press = (point: { x: number; y: number }): void => {
+			if (at === "welcome") return;
+			if (inside(point, TAB)) at = "settings";
+			else if (at === "settings" && inside(point, SIGN_OUT)) {
+				signOutTaps += 1;
+				if (signOutTaps >= landingSignOut) at = "welcome";
+			}
+		};
+		const driver = fakeDriver({
+			screens: () => {
+				if (at === "welcome") return snapshotOf([el("other", { id: ids.welcome.screen })]);
+				const tab = el("button", { id: ids.tabs.settings, label: "Settings", frame: TAB });
+				if (at === "todos") return snapshotOf([el("other", { id: ids.todos.screen }), tab]);
+				return snapshotOf([
+					el("other", { id: ids.settings.screen }),
+					el("text", { id: ids.settings.email, label: "ada@example.com" }),
+					el("button", { id: ids.settings.signOut, label: "Sign out", frame: SIGN_OUT }),
+					tab,
+				]);
+			},
+			onCall: (call) => {
+				if (call.method === "tap") press(call.point);
+				return undefined;
+			},
+		});
+		return { driver, screen: createScreen(testHost(driver, { cache: true })), taps: () => signOutTaps };
+	}
+
+	test("opens Settings, presses Sign out and waits for the welcome screen", async () => {
+		const { screen, taps } = tabs(1);
+		await signOut(screen);
+		expect(taps()).toBe(1);
+	});
+
+	test("re-sends a dropped Sign out press", async () => {
+		const { screen, taps } = tabs(2);
+		await signOut(screen);
+		expect(taps()).toBe(2);
 	});
 });

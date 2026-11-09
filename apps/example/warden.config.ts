@@ -27,6 +27,22 @@ const SPEC = { bundleId: BUNDLE_ID } satisfies WardenE2eSpec;
 /** Every spec drives these screens before its own (fresh launch → welcome → sign-in). */
 const SIGNED_IN = ["src/app/welcome.tsx", "src/app/sign-in.tsx"];
 
+/** The Conditions screen behind its deep link (no sign-in gate). */
+const CONDITIONS = ["src/app/welcome.tsx", "src/app/conditions.tsx", "src/modules/conditions"];
+
+/** The screens a Settings row pushes (`app/settings` opens each one and goes Back). */
+const SETTINGS_ROWS = [
+	"gestures",
+	"conditions",
+	"keyboard-sheet",
+	"a11y",
+	"camera",
+	"biometrics",
+	"network",
+	"location",
+	"clock",
+];
+
 /**
  * `ios/` is generated (CNG) and `expo run:ios --no-install` skips CocoaPods, so a fresh worktree
  * needs the native project and its pods before the build.
@@ -54,36 +70,42 @@ const AFFECTED = {
 	],
 	ignore: ["**/*.test.ts", "**/*.md", "warden.config.ts", "biome.jsonc", "tsconfig.json"],
 	specs: {
-		onboarding: { entries: ["src/app/welcome.tsx"] },
-		"sign-in": { entries: SIGNED_IN },
-		todos: { entries: [...SIGNED_IN, "src/app/(tabs)/todos.tsx"] },
-		"todo-detail": { entries: [...SIGNED_IN, "src/app/(tabs)/todos.tsx", "src/app/todo/[id].tsx"] },
-		settings: { entries: [...SIGNED_IN, "src/app/(tabs)/settings.tsx"] },
-		devtools: { entries: ["src/app/welcome.tsx"] },
-		perf: { entries: [...SIGNED_IN, "src/app/(tabs)/todos.tsx"] },
-		gestures: { entries: ["src/app/welcome.tsx", "src/app/gestures.tsx", "src/modules/gestures"] },
-		"network-offline": { entries: ["src/app/welcome.tsx", "src/app/conditions.tsx", "src/modules/conditions"] },
-		"network-slow": { entries: ["src/app/welcome.tsx", "src/app/conditions.tsx", "src/modules/conditions"] },
-		"network-flaky": { entries: ["src/app/welcome.tsx", "src/app/conditions.tsx", "src/modules/conditions"] },
-		"network-fault": { entries: ["src/app/welcome.tsx", "src/app/conditions.tsx", "src/modules/conditions"] },
-		"location-route": { entries: ["src/app/welcome.tsx", "src/app/conditions.tsx", "src/modules/conditions"] },
-		"location-denied": { entries: ["src/app/welcome.tsx", "src/app/conditions.tsx", "src/modules/conditions"] },
-		"clock-trial": { entries: ["src/app/welcome.tsx", "src/app/conditions.tsx", "src/modules/conditions"] },
+		"app/onboarding": { entries: ["src/app/welcome.tsx", "src/app/sign-in.tsx"] },
+		"app/auth": { entries: [...SIGNED_IN, "src/app/(tabs)/settings.tsx", "src/modules/session"] },
+		"app/todos": {
+			entries: [...SIGNED_IN, "src/app/(tabs)/todos.tsx", "src/app/todo/[id].tsx", "src/modules/todos"],
+		},
+		"app/settings": {
+			entries: [
+				...SIGNED_IN,
+				"src/app/(tabs)/settings.tsx",
+				"src/app/(tabs)/todos.tsx",
+				...SETTINGS_ROWS.map((route) => `src/app/${route}.tsx`),
+			],
+		},
+		"app/devtools": { entries: ["src/app/welcome.tsx"] },
+		"app/perf": { entries: [...SIGNED_IN, "src/app/(tabs)/todos.tsx"] },
+		"framework/queries": { entries: [...SIGNED_IN, "src/app/(tabs)/todos.tsx"] },
+		"framework/matchers": { entries: [...SIGNED_IN, "src/app/(tabs)/todos.tsx"] },
+		"framework/actions": { entries: [...SIGNED_IN, "src/app/(tabs)/todos.tsx", "src/app/(tabs)/settings.tsx"] },
+		"framework/runner": { entries: ["src/app/welcome.tsx"] },
+		"framework/device": { entries: ["src/app/welcome.tsx"] },
+		"app/gestures": { entries: ["src/app/welcome.tsx", "src/app/gestures.tsx", "src/modules/gestures"] },
+		"app/keyboard": { entries: ["src/app/welcome.tsx", "src/app/keyboard-sheet.tsx", "src/modules/keyboard"] },
+		"conditions/network": {
+			entries: [...CONDITIONS, "src/app/network.tsx", "src/modules/network", "src/modules/showcase"],
+		},
+		"conditions/location": {
+			entries: [...CONDITIONS, "src/app/location.tsx", "src/modules/location", "src/modules/showcase"],
+		},
+		"conditions/clock": {
+			entries: [...CONDITIONS, "src/app/clock.tsx", "src/modules/clock", "src/modules/showcase"],
+		},
 		biometrics: {
 			entries: ["src/app/welcome.tsx", "src/app/biometrics.tsx", "src/modules/biometrics", "src/modules/showcase"],
 		},
-		"network-showcase": {
-			entries: ["src/app/welcome.tsx", "src/app/network.tsx", "src/modules/network", "src/modules/showcase"],
-		},
-		"location-showcase": {
-			entries: ["src/app/welcome.tsx", "src/app/location.tsx", "src/modules/location", "src/modules/showcase"],
-		},
-		"clock-showcase": {
-			entries: ["src/app/welcome.tsx", "src/app/clock.tsx", "src/modules/clock", "src/modules/showcase"],
-		},
 		a11y: { entries: ["src/app/welcome.tsx", "src/app/a11y.tsx", "src/modules/a11y"] },
 		camera: { entries: ["src/app/welcome.tsx", "src/app/camera.tsx", "src/modules/camera"] },
-		"keyboard-sheet": { entries: ["src/app/welcome.tsx", "src/app/keyboard-sheet.tsx", "src/modules/keyboard"] },
 	},
 } satisfies Partial<WardenE2eSuite>;
 
@@ -112,7 +134,7 @@ const bench = {
 } satisfies WardenVariant;
 
 /** Spec ids of the device-conditions specs: they run in the `conditions` suite, not in `example`. */
-const CONDITION_SPECS = "{network-*,location-*,clock-*}";
+const CONDITION_SPECS = "conditions/**";
 
 /**
  * What the `example` and `conditions` suites share. The `conditions` suite declares `conditions.network: "online"`,
@@ -140,7 +162,7 @@ const EXAMPLE_SUITE = {
  * ```bash
  * warden e2e example                 # specs this branch needs, 2 sims (--all: every spec)
  * warden e2e example --dev --all     # same specs on the dev client + warden's Metro
- * warden e2e example --specs perf --perf  # profile every attempt too (reports under each attempt's perf/)
+ * warden e2e example --specs app/perf --perf  # profile every attempt too (reports under each attempt's perf/)
  * warden e2e conditions              # network / location / clock specs (iOS app launched with the network dylib)
  * warden e2e a11y                  # the accessibility spec (iOS launched with the a11y library)
  * warden e2e biometrics --all        # the biometrics spec alone, on +bio devices (the example suite excludes it)

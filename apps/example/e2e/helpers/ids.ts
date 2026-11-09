@@ -14,6 +14,7 @@ export const ids = {
 		emailError: "sign-in-email-error",
 		passwordError: "sign-in-password-error",
 		formError: "sign-in-error",
+		back: "sign-in-back",
 	},
 	todos: {
 		screen: "todos-screen",
@@ -47,6 +48,9 @@ export const ids = {
 		location: "settings-location",
 		clock: "settings-clock",
 		camera: "settings-camera",
+		conditions: "settings-conditions",
+		keyboardSheet: "settings-keyboard-sheet",
+		a11y: "settings-a11y",
 	},
 	camera: {
 		screen: "camera-screen",
@@ -126,6 +130,7 @@ export const ids = {
 	},
 	conditions: {
 		screen: "conditions-screen",
+		back: "conditions-back",
 		offlineBanner: "conditions-offline-banner",
 		connected: "conditions-net-connected",
 		reachable: "conditions-net-reachable",

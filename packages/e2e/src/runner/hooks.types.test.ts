@@ -1,5 +1,5 @@
 import { test as bunTest, expect } from "bun:test";
-import { test } from "./test";
+import { afterAll, beforeAll, describe, test } from "./test";
 
 const extended = test.extend<{ account: string }>({
 	account: async (_base, use) => {
@@ -25,6 +25,21 @@ function typeChecks(): void {
 		// @ts-expect-error `account` only exists on tests made with `test.extend`
 		void fixtures.account;
 	});
+	describe.serial("group", () => {
+		beforeAll(async ({ app, screen, platform }) => {
+			await app.open();
+			await screen.getByText("Sign in").tap();
+			const target: "ios" | "android" = platform;
+			void target;
+		});
+		afterAll((fixtures) => {
+			// @ts-expect-error beforeAll/afterAll get the base fixtures, never the `test.extend` ones
+			void fixtures.account;
+		});
+	});
+	describe("options", { serial: true }, () => undefined);
+	// @ts-expect-error a describe body gets no fixtures: it runs while tests are collected
+	describe("fixtures", ({ app }: { app: unknown }) => void app);
 	extended.beforeEach(({ account }) => {
 		// @ts-expect-error `account` is a string
 		const wrong: number = account;

@@ -1,4 +1,4 @@
-import { type App, type Device, expect, type Screen, test } from "@delacour/warden-e2e";
+import { type App, beforeAll, type Device, describe, expect, type Screen, test } from "@delacour/warden-e2e";
 import { ids } from "./helpers/ids";
 import { openCamera, SPEC_OPTIONS } from "./helpers/steps";
 
@@ -23,34 +23,41 @@ async function openWithCamera(
 }
 
 /**
- * The simulated camera behind a real expo-camera preview. The `camera` suite feeds `qr-hello.png` to the back camera
- * before the first launch (and claims Android emulators with `--camera`).
+ * The simulated camera behind a real expo-camera preview, on one launch. The `camera` suite feeds `qr-hello.png` to
+ * the back camera before the first launch (and claims Android emulators with `--camera`); a feed a test sets is
+ * taken off when it ends, back to the suite's.
  */
-test("the suite's feed reaches the preview, its QR decodes and a photo is taken from it", async ({
-	app,
-	device,
-	screen,
-	platform,
-}) => {
-	await openWithCamera(app, device, screen, platform);
-	await expect(screen.getByTestId(ids.camera.qr)).toHaveText("hello", { timeout: 10_000 });
+describe.serial("camera", () => {
+	beforeAll(async ({ app, device, screen, platform }) => {
+		await openWithCamera(app, device, screen, platform);
+	});
 
-	await screen.getByTestId(ids.camera.shoot).tap();
-	await expect(screen.getByTestId(ids.camera.photo)).not.toHaveText("none", { timeout: 10_000 });
-	await expect(screen.getByTestId(ids.camera.error)).toHaveText("none");
-});
+	test("the suite's feed reaches the back camera and its QR decodes", async ({ screen }) => {
+		await expect(screen.getByTestId(ids.camera.facing)).toHaveText("back");
+		await expect(screen.getByTestId(ids.camera.qr)).toHaveText("hello", { timeout: 10_000 });
+	});
 
-/**
- * A feed set mid-test: on iOS it swaps live, on Android it shows on the next camera open, so the spec flips to the
- * front camera (a fresh open on both) and expects the new code there.
- */
-test("a new feed set mid-test shows on the next camera", async ({ app, device, screen, platform }) => {
-	await openWithCamera(app, device, screen, platform);
-	await expect(screen.getByTestId(ids.camera.qr)).toHaveText("hello", { timeout: 10_000 });
+	test("a photo is taken from the feed", async ({ screen }) => {
+		await screen.getByTestId(ids.camera.shoot).tap();
+		await expect(screen.getByTestId(ids.camera.photo)).not.toHaveText("none", { timeout: 10_000 });
+		await expect(screen.getByTestId(ids.camera.error)).toHaveText("none");
+	});
 
-	await device.camera.set("fixtures/camera/qr-world.png", { facing: "both" });
-	await screen.getByTestId(ids.camera.flip).tap();
-	await expect(screen.getByTestId(ids.camera.facing)).toHaveText("front");
-	await expect(screen.getByTestId(ids.camera.qr)).toHaveText("world", { timeout: 10_000 });
-	expect((await device.camera.status()).feeds.front?.path).toContain("front-");
+	/**
+	 * A feed set mid-test: on iOS it swaps live, on Android it shows on the next camera open, so the test flips to the
+	 * front camera (a fresh open on both) and expects the new code there.
+	 */
+	test("a new feed set mid-test shows on the next camera", async ({ device, screen }) => {
+		await device.camera.set("fixtures/camera/qr-world.png", { facing: "both" });
+		await screen.getByTestId(ids.camera.flip).tap();
+		await expect(screen.getByTestId(ids.camera.facing)).toHaveText("front");
+		await expect(screen.getByTestId(ids.camera.qr)).toHaveText("world", { timeout: 10_000 });
+		expect((await device.camera.status()).feeds.front?.path).toContain("front-");
+	});
+
+	test("flipping back after the test's feed came off shows the suite's feed again", async ({ screen }) => {
+		await screen.getByTestId(ids.camera.flip).tap();
+		await expect(screen.getByTestId(ids.camera.facing)).toHaveText("back");
+		await expect(screen.getByTestId(ids.camera.qr)).toHaveText("hello", { timeout: 10_000 });
+	});
 });

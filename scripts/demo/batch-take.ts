@@ -4,7 +4,7 @@
  * has booted (neither `warden e2e` nor `batch` has a per-device hook for that). The overrides are cleared and the
  * label is released (its simulators shut down) in `finally`. Then composes the record dir into `apps/docs/public/demos/<feature>/<clip>.*`.
  *
- *   bun run demo:batch e2e/parallel --suite example --specs devtools,gestures --count 2 [--record-only|--compose-only]
+ *   bun run demo:batch e2e/parallel --suite example --specs app/devtools,app/gestures --count 2 [--record-only|--compose-only]
  */
 import { mkdir, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";

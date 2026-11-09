@@ -2,7 +2,7 @@ import type { Driver, Element, KeyName, Modifier, Point, Rect, Snapshot } from "
 import { canActOnElements } from "../driver/element-actions";
 import { canDetectAlerts, canObserve, OBSERVATION_MAX_AGE_MS } from "../driver/observation-cache";
 import { elementKey } from "../driver/settle";
-import { typeText } from "../driver/typing";
+import { pressKeys, typeText } from "../driver/typing";
 import { E2eError } from "../errors";
 import {
 	assertDegrees,
@@ -39,6 +39,7 @@ import {
 } from "./field";
 import { COVER_SCROLL_SWIPE, coverOf, dismissKeyboard, scrollPath } from "./keyboard-cover";
 import type { NodeEntry } from "./nodes";
+import { clearTapPoint, describeBlocker, REVEAL_SWIPE, revealPath, type TapPointResult } from "./occlusion";
 import type { PollStep } from "./poll";
 import {
 	type RoleOptions,
@@ -113,6 +114,11 @@ const SCROLL_SETTLE = { quietMs: 150, timeoutMs: 1000 };
 
 /** Swipes one tap spends scrolling a target out from under the keyboard. */
 const MAX_COVER_SCROLLS = 3;
+/** How often a target covered by something that cannot be scrolled away is looked at again. */
+const COVER_RECHECK_MS = 100;
+/** A `tap({ until })` this soon after another input first waits for a still screen (`stillBeforeAim`). */
+const RECENT_INPUT_MS = 1500;
+const AIM_SETTLE = { quietMs: 250, timeoutMs: 1500 };
 /**
  * How long `isVisible()` / `isHidden()` / `count()` look again at a degraded read before `READ_DEGRADED` (capped by the
  * action timeout): long enough for a stalled bridge's background probe or the React tree to settle it, short enough
@@ -723,6 +729,38 @@ export class Locator {
 	}
 
 	/**
+	 * Where a press reaches the match itself (`occlusion.ts`): its tap point, or the part of it no later control covers
+	 * (a sticky footer, a tab bar). A match wholly covered inside a scroll container is dragged clear (at most
+	 * `MAX_COVER_SCROLLS` drags, each looked at fresh); one that cannot be is looked at again until `timeoutMs` (a cover
+	 * may go away) and then fails `NOT_ACTIONABLE` naming the cover, instead of pressing the cover.
+	 */
+	private async aimClear(
+		found: Actionable,
+		spec: ActionSpec,
+		timeoutMs: number
+	): Promise<{ found: Actionable; point: Point }> {
+		const deadline = this.rt.clock.now() + timeoutMs;
+		let current = found;
+		for (let scrolls = 0; ; ) {
+			const result = clearTapPoint(current.entry, current.observed.index);
+			if (result.kind === "clear") return { found: current, point: result.point };
+			const path = scrolls < MAX_COVER_SCROLLS ? revealPath(current.entry, result, current.observed.index) : undefined;
+			if (path !== undefined) {
+				scrolls += 1;
+				this.rt.drive("scrollIntoView", await current.observed.driver.swipe(path.from, path.to, REVEAL_SWIPE));
+				await current.observed.driver.settle(SCROLL_SETTLE);
+			} else if (this.rt.clock.now() >= deadline) {
+				throw new E2eError(
+					"NOT_ACTIONABLE",
+					`${this} is ${describeBlocker(result)}, which would take the touch; scroll it clear or wait for the cover to go`,
+					this.rt.excerpt(current.observed.snapshot)
+				);
+			} else await this.pause(COVER_RECHECK_MS);
+			current = await this.actionable(spec, Math.max(1, deadline - this.rt.clock.now()));
+		}
+	}
+
+	/**
 	 * Taps the one visible, enabled match. With `until` it is also the retrying tap: the press on a tab bar or a list row
 	 * right after a navigation is sometimes dropped with nothing on screen to tell, so it checks that `until` shows
 	 * within `windowMs` and presses again, up to `retries` more times.
@@ -734,6 +772,7 @@ export class Locator {
 		return this.act(
 			"tap",
 			async () => {
+				if (retry !== undefined) await this.stillBeforeAim();
 				let before = await this.tapOnce(options);
 				if (retry === undefined) return;
 				for (let resent = 0; resent < retry.retries; resent += 1) {
@@ -745,6 +784,19 @@ export class Locator {
 			},
 			suffix
 		);
+	}
+
+	/**
+	 * Before the first press of a `tap({ until })` that comes right after another input (`RECENT_INPUT_MS`), waits for
+	 * the screen to go still (`driver.settle`). The press is judged against the screen it aimed from: one aimed mid
+	 * transition (the screen a Back returns to, still sliding in and gaining nodes) sees the transition's own changes as
+	 * the press landing, and a press that was dropped is never sent again. A still screen costs one quiet settle.
+	 */
+	private async stillBeforeAim(): Promise<void> {
+		const driver = await this.rt.host.driver();
+		const since = canObserve(driver) ? driver.previous?.().sinceInputMs : undefined;
+		if (since === undefined || since >= RECENT_INPUT_MS) return;
+		await driver.settle(AIM_SETTLE);
 	}
 
 	/**
@@ -760,9 +812,12 @@ export class Locator {
 		const look =
 			(options.until === undefined ? await this.aimFromKept(spec, options.position) : undefined) ??
 			(await this.actionable(spec, timeoutMs, true));
-		const found = "entry" in look ? await this.clearOfKeyboard(look, spec, options.position, timeoutMs) : look;
+		const cleared = "entry" in look ? await this.clearOfKeyboard(look, spec, options.position, timeoutMs) : look;
+		const aim = "entry" in cleared && !withPosition ? await this.aimClear(cleared, spec, timeoutMs) : undefined;
+		const found = aim?.found ?? cleared;
 		const point =
-			"react" in found ? reactTapPoint(found.react, options.position) : tapPointOf(found.entry, options.position);
+			aim?.point ??
+			("react" in found ? reactTapPoint(found.react, options.position) : tapPointOf(found.entry, options.position));
 		const { driver } = found.observed;
 		// a screen reader changes what a touch means, so a resolved element is pressed through its accessibility action
 		const aimed: AimedFrom = {
@@ -790,8 +845,9 @@ export class Locator {
 	private async arrivedWithin(plan: RetryPlan, aimed: AimedFrom): Promise<TapOutcome> {
 		const { until } = plan;
 		const watch: PressWatch = {
-			before: new Set(aimed.snapshot.flat.map(elementKey)),
-			target: aimed.target === undefined ? undefined : elementKey(aimed.target),
+			identities: new Set(aimed.snapshot.flat.map(identityKey)),
+			frames: new Set(aimed.snapshot.flat.map(elementKey)),
+			target: aimed.target === undefined ? undefined : identityKey(aimed.target),
 			started: this.rt.clock.now(),
 			changed: false,
 			unchanged: 0,
@@ -824,8 +880,13 @@ export class Locator {
 			return { done: false, state: undefined };
 		}
 		if (await until.shownIn(observation.observed)) return { done: true, value: "arrived" };
-		if (!reacted(observation.observed.snapshot, watch)) watch.unchanged += 1;
-		else {
+		const seen = reaction(observation.observed.snapshot, watch);
+		if (seen === "none") watch.unchanged += 1;
+		else if (seen === "motion") {
+			// still moving: no sign either way; count unchanged checks from where it stops
+			watch.frames = new Set(observation.observed.snapshot.flat.map(elementKey));
+			watch.unchanged = 0;
+		} else {
 			watch.changed = true;
 			watch.unchanged = 0;
 		}
@@ -841,14 +902,10 @@ export class Locator {
 		return this.act("longPress", async () => {
 			const spec = { enabled: true, tapPointOnScreen: true };
 			const timeoutMs = options.timeout ?? this.rt.actionTimeout();
-			const { entry, observed } = await this.clearOfKeyboard(
-				await this.actionable(spec, timeoutMs),
-				spec,
-				undefined,
-				timeoutMs
-			);
+			const cleared = await this.clearOfKeyboard(await this.actionable(spec, timeoutMs), spec, undefined, timeoutMs);
+			const { found, point } = await this.aimClear(cleared, spec, timeoutMs);
 			const opts = options.durationMs === undefined ? undefined : { durationMs: options.durationMs };
-			this.rt.drive("longPress", await observed.driver.longPress(tapPointOf(entry), opts));
+			this.rt.drive("longPress", await found.observed.driver.longPress(point, opts));
 		});
 	}
 
@@ -908,18 +965,13 @@ export class Locator {
 		return this.act("clear", async () => {
 			const budget = this.rt.budget(options.timeout);
 			let target = await this.actionable({ enabled: true, tapPointOnScreen: false }, budget.remaining());
+			const before = rawValue(target.entry);
 			for (let attempt = 1; ; attempt += 1) {
 				await this.focusAndClear(target, clearMethodFor(attempt));
 				if (target.entry.secure) return;
-				const outcome = await this.confirm(target, "", budget);
+				const outcome = await this.confirm(target, "", budget, before);
 				if (outcome.ok) return;
-				if (attempt === 2) {
-					throw new E2eError(
-						"ACTION_FAILED",
-						`${this}: clear did not empty the field: it holds ${JSON.stringify(outcome.held)}`,
-						outcome.screen
-					);
-				}
+				if (attempt === 2) return this.lastClearCheck(target, budget, before, outcome);
 				target = await this.actionable({ enabled: true, tapPointOnScreen: false }, budget.remaining());
 			}
 		});
@@ -1080,6 +1132,35 @@ export class Locator {
 		);
 	}
 
+	/** After the counted pass: passes a field that is empty behind its placeholder, else fails with what it holds. */
+	private async lastClearCheck(
+		target: Actionable,
+		budget: { remaining(): number },
+		before: string,
+		outcome: { held: string; screen: string | undefined }
+	): Promise<void> {
+		if (outcome.held === before && (await this.emptyBehindPlaceholder(target, budget))) return;
+		throw new E2eError(
+			"ACTION_FAILED",
+			`${this}: clear did not empty the field: it holds ${JSON.stringify(outcome.held)}`,
+			outcome.screen
+		);
+	}
+
+	/**
+	 * Whether a field that still shows what it showed before two clears is empty behind a placeholder: iOS reports
+	 * `placeholder: null` for React Native inputs and shows the placeholder as the value, so an empty field reads as if
+	 * it held that text, and deleting changes nothing. One probe key settles it: an empty field then holds just the
+	 * probe, a field with text holds more. The probe is deleted either way.
+	 */
+	private async emptyBehindPlaceholder(target: Actionable, budget: { remaining(): number }): Promise<boolean> {
+		const { driver } = target.observed;
+		this.rt.drive("clear", await typeText(driver, this.pause, CLEAR_PROBE));
+		const probed = await this.confirm(target, CLEAR_PROBE, budget);
+		this.rt.drive("clear", await pressKeys(driver, this.pause, "Backspace", 1));
+		return probed.ok;
+	}
+
 	/** Sleeps on the runtime's clock (a fake one in tests), ending early when the attempt aborts. */
 	private readonly pause = (ms: number): Promise<void> => this.rt.clock.sleep(ms, this.rt.host.signal);
 
@@ -1091,14 +1172,15 @@ export class Locator {
 	private async confirm(
 		{ entry, observed }: Actionable,
 		text: string,
-		budget: { remaining(): number }
+		budget: { remaining(): number },
+		clearedFrom?: string
 	): Promise<{ ok: true } | { ok: false; held: string; screen: string | undefined }> {
 		const span = Math.max(budget.remaining(), CONFIRM_FLOOR_MS);
 		let lastSeen: Observed["snapshot"] | undefined;
 		// a field not known as secure when the fill started (an empty one on a read without its secure trait) can read
 		// back masked: its bullets are counted against the typed text
 		const readValue = (found: NodeEntry): string => {
-			if (text === "") return fieldValue(found);
+			if (text === "") return clearedValue(fieldValue(found), clearedFrom);
 			return found.secure ? maskedReading(found, text) : rawValue(found);
 		};
 		const outcome = await confirmFieldValue<never>({
@@ -1199,9 +1281,11 @@ type AimedFrom = { snapshot: Snapshot; target: Element | undefined };
 
 /** What the checks after one press have seen of the screen. */
 type PressWatch = {
-	/** `elementKey` of every node of the snapshot the press aimed from */
-	before: ReadonlySet<string>;
-	/** `elementKey` of the element pressed */
+	/** `identityKey` of every node of the snapshot the press aimed from */
+	identities: ReadonlySet<string>;
+	/** `elementKey` (frames included) of every node of the last look that moved, first the aimed-from snapshot */
+	frames: ReadonlySet<string>;
+	/** `identityKey` of the element pressed */
 	target: string | undefined;
 	started: number;
 	/** some check saw the screen react: the press landed */
@@ -1210,20 +1294,30 @@ type PressWatch = {
 	unchanged: number;
 };
 
+/** A node without its frame: role, identifier, label and value. */
+function identityKey(element: Element): string {
+	return JSON.stringify([element.role, element.identifier ?? null, element.label ?? null, element.value ?? null]);
+}
+
 /**
- * Whether `snapshot` shows a reaction to the press `watch` follows: a node the aimed-from screen did not have (a new
- * element, or one whose label, value or frame changed), or the pressed element gone. Nodes that only left are not one:
- * right after a navigation the screen it left and a keyboard going down stay in the tree until the transition ends,
- * a transition that also drops presses, and their leaving looked like a landed press that was never sent again.
+ * What `snapshot` shows of the press `watch` follows. `identity`: a node the aimed-from screen did not have (a new
+ * element, or one whose label or value changed), or the pressed element gone: the press landed. `motion`: the same
+ * nodes, only moved since the last look: no sign either way (right after a Back, the screen it returns to is still
+ * sliding in, a transition that drops presses; counting its frames as a reaction kept a dropped press from being sent
+ * again). `none`: nothing changed. Nodes that only left are not a reaction either: right after a navigation the screen
+ * it left and a keyboard going down stay in the tree until the transition ends.
  */
-function reacted(snapshot: Snapshot, watch: PressWatch): boolean {
+function reaction(snapshot: Snapshot, watch: PressWatch): "identity" | "motion" | "none" {
 	const now = new Set<string>();
+	let moved = false;
 	for (const element of snapshot.flat) {
-		const key = elementKey(element);
-		if (!watch.before.has(key)) return true;
-		now.add(key);
+		const identity = identityKey(element);
+		if (!watch.identities.has(identity)) return "identity";
+		now.add(identity);
+		if (!watch.frames.has(elementKey(element))) moved = true;
 	}
-	return watch.target !== undefined && !now.has(watch.target);
+	if (watch.target !== undefined && !now.has(watch.target)) return "identity";
+	return moved ? "motion" : "none";
 }
 
 function wholeNumber(name: string, value: number, atLeast: number): void {
@@ -1282,6 +1376,9 @@ function viaFor(attempt: number, via: FillVia): FillVia {
 }
 
 /** The first attempt empties a field the quick way; a retry means that did not work, so it presses one Backspace per character. */
+/** The key `clear` types to tell an empty field showing its placeholder from one holding that text: caseless, so autocapitalisation leaves it alone. */
+const CLEAR_PROBE = "1";
+
 function clearMethodFor(attempt: number): ClearMethod {
 	return attempt === 1 ? "auto" : "counted";
 }
@@ -1292,6 +1389,24 @@ function fillMismatch(text: string, secure: boolean, held: string, firstHeld: st
 	const expected = secure ? `${graphemes(text)} characters (secure)` : JSON.stringify(text);
 	const earlier = firstHeld === undefined ? "" : ` (first attempt held ${JSON.stringify(firstHeld)})`;
 	return `fill did not take: expected ${expected} but the field holds ${JSON.stringify(held)}${earlier}`;
+}
+
+/**
+ * What a cleared field holds, given what it held before the clear. Deleting only removes characters, so text left
+ * behind is a subsequence of what was there. A value that is not one is a placeholder the element does not name (iOS
+ * reports `placeholder: null` for React Native inputs and shows the placeholder as the value): the field is empty.
+ */
+export function clearedValue(value: string, before: string | undefined): string {
+	if (value === "" || before === undefined) return value;
+	return isSubsequence(value, before) ? value : "";
+}
+
+function isSubsequence(part: string, whole: string): boolean {
+	let at = 0;
+	for (const char of whole) {
+		if (at < part.length && part.startsWith(char, at)) at += char.length;
+	}
+	return at === part.length;
 }
 
 function rawValue(entry: NodeEntry): string {
@@ -1344,13 +1459,44 @@ function scrollGaveUp(
 	absent: boolean,
 	effort: string,
 	observed: Observed,
-	waitedMs: number
+	waitedMs: number,
+	aim?: ReturnType<typeof clearTapPoint>
 ): E2eError {
 	const read = absent ? degradedRead(observed.snapshot) : undefined;
 	if (read !== undefined) return target.degradedFailure(read, waitedMs, observed.snapshot);
 	const screen = target.runtime.excerpt(observed.snapshot);
 	if (absent) return new E2eError("LOCATOR_NOT_FOUND", `${target} was not found after ${effort}`, screen);
+	if (aim?.kind === "covered") {
+		return new E2eError("NOT_ACTIONABLE", `${target} is still ${describeBlocker(aim)} after ${effort}`, screen);
+	}
 	return new E2eError("NOT_ACTIONABLE", `${target} is still not on screen after ${effort}`, screen);
+}
+
+/** Where `entry` can be tapped, when it is on screen at all. */
+function aimOnScreen(entry: NodeEntry | undefined, observed: Observed): TapPointResult | undefined {
+	return entry !== undefined && isOnScreenEntry(entry, observed) ? clearTapPoint(entry, observed.index) : undefined;
+}
+
+/**
+ * One step of `scrollUntilVisible`: a target on screen but under a sticky footer or header, or cut by its list's
+ * edge, is dragged clear rather than a whole page further; anything else is one scroll in `direction`.
+ */
+async function scrollToward(
+	rt: Runtime,
+	observed: Observed,
+	entry: NodeEntry | undefined,
+	aim: TapPointResult | undefined,
+	direction: NonNullable<ScrollOptions["direction"]>,
+	momentum: ScrollOptions["momentum"]
+): Promise<void> {
+	const reveal =
+		entry !== undefined && aim?.kind === "covered"
+			? revealPath(entry, aim, observed.index, { screenWhenUnknown: true })
+			: undefined;
+	if (reveal !== undefined) {
+		rt.drive("scrollUntilVisible", await observed.driver.swipe(reveal.from, reveal.to, REVEAL_SWIPE));
+	} else await scrollOnce(rt, observed, direction, momentum);
+	await observed.driver.settle(SCROLL_SETTLE);
 }
 
 /** One scroll step toward `scrollUntilVisible`'s target: the driver's own element scroll when it has one, else a swipe. */
@@ -1384,13 +1530,13 @@ export async function scrollUntilVisible(rt: Runtime, target: Locator, options: 
 			const entries = resolve(target.expr, observed.index);
 			if (entries.length > 1) pickOne(rt, target.expr, entries, observed);
 			const [entry] = entries;
-			if (isOnScreenEntry(entry, observed)) return;
+			const aim = aimOnScreen(entry, observed);
+			if (aim?.kind === "clear") return;
 			if (swipes >= maxSwipes || budget.remaining() <= 0) {
 				const effort = `${swipes} swipes ${direction}`;
-				throw scrollGaveUp(target, entry === undefined, effort, observed, budget.total);
+				throw scrollGaveUp(target, entry === undefined, effort, observed, budget.total, aim);
 			}
-			await scrollOnce(rt, observed, direction, options.momentum);
-			await observed.driver.settle(SCROLL_SETTLE);
+			await scrollToward(rt, observed, entry, aim, direction, options.momentum);
 		}
 	});
 }
