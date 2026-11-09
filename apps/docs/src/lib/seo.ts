@@ -19,7 +19,7 @@ export type HeadLink =
 	| { rel: "alternate"; type: "text/markdown" | "text/plain"; href: string; title?: string };
 
 /** What a simulator page's search result title says after a short page name. */
-const simulatorSuffix = "iOS & Android simulators for AI agents";
+const simulatorSuffix = "AI agent toolkit for React Native";
 
 /** What an e2e page's search result title says after a short page name. */
 const e2eSuffix = "React Native & Expo E2E testing";
@@ -31,7 +31,7 @@ const e2eSection = "e2e";
 const maxTitleLength = 60;
 
 /**
- * `CI — warden: iOS & Android simulators for AI agents` when it fits in 60 characters, else `<title> — warden`.
+ * `CI — warden: AI agent toolkit for React Native` when it fits in 60 characters, else `<title> — warden`.
  * Pages under `e2e` carry the React Native E2E suffix instead, the query their pages answer.
  */
 export function docsTitle(title: string, slugs: readonly string[] = []): string {
@@ -43,11 +43,11 @@ export function docsTitle(title: string, slugs: readonly string[] = []): string 
 /** The site's tagline, for any page without a title of its own. */
 export const tagline = "every agent gets its own simulator";
 
-/** The landing page's `<title>`: leads with the query it answers, within 60 characters. */
+/** The landing page's `<title>`: what warden is (an AI agent toolkit) and the query it answers, within 60 characters. */
 export const landingTitle = `${appName} — AI agent toolkit for React Native simulators & E2E`;
 
 /** The docs root's `<title>`. */
-export const docsRootTitle = `${appName} docs — React Native E2E testing for AI agents`;
+export const docsRootTitle = `${appName} docs — AI agent toolkit for React Native E2E`;
 
 /** The preferred URL for `path` on the production host, so every host and the `.md` twins consolidate to it. */
 export function canonicalLink(path: string): HeadLink {
@@ -232,6 +232,7 @@ const plain = (text: string) => text.replace(/`/g, "");
 
 /** What search engines index the landing page under: the queries it answers. */
 const softwareKeywords = [
+	"AI agent toolkit",
 	"React Native E2E testing",
 	"Expo E2E testing",
 	"React Native end-to-end testing",
@@ -248,6 +249,8 @@ const softwareFeatures = [
 	"End-to-end tests written as TypeScript specs",
 	"Parallel iOS simulators and Android emulators, one per agent",
 	"Device, port and app build leasing per worktree",
+	"Agents read the component tree, Metro logs and network requests of a running app",
+	"Performance profiling on simulators and emulators",
 	"Runs only the E2E tests a change affects",
 	"Lets AI coding agents drive the app and keep what they checked as tests",
 ];

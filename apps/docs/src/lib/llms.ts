@@ -7,7 +7,7 @@ import { githubUrl, siteUrl } from "./shared";
  */
 const HEADER = `# warden
 
-> Every agent gets its own simulator. warden is a CLI (npm \`@delacour/warden\`) and a TypeScript e2e framework (npm \`@delacour/warden-e2e\`) that leases iOS simulators, Android emulators, ports and app builds across every worktree on one Mac, so parallel coding agents build, run, drive and test a React Native, Expo or native app without colliding.
+> An AI agent toolkit to drive, debug, profile and test React Native, Expo and native iOS and Android apps. Every agent gets its own simulator: warden is a CLI (npm \`@delacour/warden\`) and a TypeScript e2e framework (npm \`@delacour/warden-e2e\`) that leases iOS simulators, Android emulators, ports and app builds across every worktree on one Mac, so parallel coding agents never collide.
 
 ## Start here (agents)
 

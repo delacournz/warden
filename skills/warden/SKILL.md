@@ -1,6 +1,6 @@
 ---
 name: warden
-description: Machine-wide leasing of iOS simulators, Android emulators, ports and app builds, plus warden's own e2e stack. Use before booting, choosing or touching any simulator/emulator, picking a dev-server port, installing a dev build, driving an app by hand (warden ui), writing or running *.e2e.ts specs (@delacour/warden-e2e), editing warden.config.ts e2e suites, or reading e2e evidence. argent, agent-device and tester.army e2e are retired.
+description: AI agent toolkit for iOS simulators and Android emulators. Machine-wide leasing of devices, ports and app builds, driving, debugging and profiling apps (warden ui, warden perf), plus warden's own e2e stack. Use before booting, choosing or touching any simulator/emulator, picking a dev-server port, installing a dev build, driving an app by hand (warden ui), writing or running *.e2e.ts specs (@delacour/warden-e2e), editing warden.config.ts e2e suites, or reading e2e evidence.
 ---
 
 # warden

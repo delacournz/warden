@@ -154,6 +154,7 @@ describe("the numbers it quotes", () => {
 
 describe("what it ranks for", () => {
 	test("the lede names React Native or Expo and E2E tests", () => {
+		expect(LANDING.HERO.lede).toMatch(/^An AI agent toolkit/);
 		expect(LANDING.HERO.lede).toMatch(/React Native/);
 		expect(LANDING.HERO.lede).toMatch(/Expo/);
 		expect(LANDING.HERO.lede).toMatch(/E2E tests/);
