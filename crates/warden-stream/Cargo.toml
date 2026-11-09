@@ -1,0 +1,36 @@
+[package]
+name = "warden-stream"
+description = "Publishes a device's live H.264 over WebRTC, signalled as NDJSON on stdio"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "warden-stream"
+path = "src/main.rs"
+
+[dependencies]
+# The same webrtc-rs / rtc versions as apps/viewer, so the two ends share one stack.
+webrtc = "0.21"
+rtc = "0.21"
+bytes = "1.12.1"
+async-trait = "0.1.92"
+log = { version = "0.4", features = ["std"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "io-std", "time", "sync", "macros", "fs"] }
+warden-rtc = { path = "../warden-rtc" }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
+
+# SRTP and the packetizer optimized in dev and test builds too: unoptimized, they fall behind 60 fps.
+[profile.dev.package."*"]
+opt-level = 3
+
+[dev-dependencies]
+tokio = { version = "1", features = ["test-util", "process"] }

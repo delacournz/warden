@@ -93,14 +93,15 @@ jobs:
       - run: bun run check
       - run: bun run test
 
-  # Paths filter for the native and viewer jobs: does this commit touch packages/e2e/native/**, or apps/viewer/** / crates/warden-rtc/**
-  # against develop?
+  # Paths filter for the native, viewer and stream jobs: does this commit touch packages/e2e/native/**, apps/viewer/** /
+  # crates/warden-rtc/**, or crates/warden-stream/** / crates/warden-rtc/** against develop?
   native-changes:
     needs: validate
     runs-on: namespace-profile-linux-medium
     outputs:
       native: ${{ steps.paths.outputs.native }}
       viewer: ${{ steps.paths.outputs.viewer }}
+      stream: ${{ steps.paths.outputs.stream }}
     steps:
       - id: paths
         env:
@@ -108,7 +109,7 @@ jobs:
           SHA: ${{ inputs.signoff-sha }}
         run: |
           # An unreadable compare runs native rather than skipping it.
-          files=$(gh api "repos/$GITHUB_REPOSITORY/compare/develop...$SHA" --jq '.files[].filename' 2>/dev/null || printf 'packages/e2e/native/\napps/viewer/\ncrates/warden-rtc/\n')
+          files=$(gh api "repos/$GITHUB_REPOSITORY/compare/develop...$SHA" --jq '.files[].filename' 2>/dev/null || printf 'packages/e2e/native/\napps/viewer/\ncrates/warden-rtc/\ncrates/warden-stream/\n')
           if echo "$files" | grep -q '^packages/e2e/native/'; then
             echo "native=true" >> "$GITHUB_OUTPUT"
           else
@@ -119,6 +120,11 @@ jobs:
             echo "viewer=true" >> "$GITHUB_OUTPUT"
           else
             echo "viewer=false" >> "$GITHUB_OUTPUT"
+          fi
+          if echo "$files" | grep -E '^crates/(warden-stream|warden-rtc)/' | grep -qv '\.md$'; then
+            echo "stream=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "stream=false" >> "$GITHUB_OUTPUT"
           fi
 
   # warden-simd (Swift, links idb's library package): deps + build + swift test. macOS-only, so it has its own job.
@@ -200,12 +206,37 @@ jobs:
       - run: bun run --cwd apps/viewer build:frontend
       - run: bun run --cwd apps/viewer test:rust
 
+  # The warden-stream publisher's Rust tests (crates/warden-stream) and the RTP crate it shares (crates/warden-rtc),
+  # loopback WebRTC included. Path-gated, never a required context, like viewer.
+  stream:
+    needs: native-changes
+    if: needs.native-changes.outputs.stream == 'true'
+    runs-on: namespace-profile-mac-small
+    steps:
+      - uses: namespacelabs/nscloud-checkout-action@66f2dc6f6c42a8ac6c4e53473c4840006822831e # v9.0.1
+        with:
+          ref: ${{ inputs.signoff-sha }}
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # v1 (stable toolchain)
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@2201cc584a476d1b508be977bbe4b7d1c7a52e9c # v2.9.3
+        with:
+          workspaces: |
+            crates/warden-stream -> target
+            crates/warden-rtc -> target
+
+      - run: cargo test --manifest-path crates/warden-rtc/Cargo.toml
+      - run: cargo test --manifest-path crates/warden-stream/Cargo.toml
+
   # Writes the statuses, sub-contexts first and the required `signoff` umbrella last, only when every
   # applicable check passed. Skipped jobs count as passing for `needs`, so results are checked explicitly.
   # A failed or cancelled check settles the pending `signoff` as failure, so the PR never shows a run
   # that is still "in progress" after it ended.
   signoff:
-    needs: [pending, checks, native-changes, native, viewer]
+    needs: [pending, checks, native-changes, native, viewer, stream]
     if: always()
     runs-on: namespace-profile-linux-medium
     permissions:
@@ -217,6 +248,7 @@ jobs:
           CHECKS: ${{ needs.checks.result }}
           NATIVE: ${{ needs.native.result }}
           VIEWER: ${{ needs.viewer.result }}
+          STREAM: ${{ needs.stream.result }}
           NATIVE_CHANGES: ${{ needs.native-changes.result }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
@@ -233,6 +265,8 @@ jobs:
 
           # viewer is skipped when the commit does not touch apps/viewer/**.
           if [ "$VIEWER" != "success" ] && [ "$VIEWER" != "skipped" ]; then fail "viewer $VIEWER"; fi
+          # stream is skipped when the commit does not touch crates/warden-stream/** or crates/warden-rtc/**.
+          if [ "$STREAM" != "success" ] && [ "$STREAM" != "skipped" ]; then fail "stream $STREAM"; fi
 
           post() {
             gh api "repos/$GITHUB_REPOSITORY/statuses/$SHA" -f state=success -f "context=$1" \
@@ -246,5 +280,8 @@ jobs:
           fi
           if [ "$VIEWER" = "success" ]; then
             post signoff/viewer
+          fi
+          if [ "$STREAM" = "success" ]; then
+            post signoff/stream
           fi
           post signoff
