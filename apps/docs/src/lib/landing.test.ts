@@ -152,6 +152,37 @@ describe("the numbers it quotes", () => {
 	}
 });
 
+describe("what it ranks for", () => {
+	test("the lede names React Native or Expo and E2E tests", () => {
+		expect(LANDING.HERO.lede).toMatch(/React Native/);
+		expect(LANDING.HERO.lede).toMatch(/Expo/);
+		expect(LANDING.HERO.lede).toMatch(/E2E tests/);
+	});
+
+	test("a section title names React Native E2E tests", () => {
+		expect(LANDING.FIRST_PROMPT.title).toMatch(/React Native E2E test/);
+	});
+
+	test("the FAQ answers the questions people search", () => {
+		const questions = FAQS.map((faq) => faq.q);
+		expect(questions).toEqual(
+			expect.arrayContaining([
+				"How do I write end-to-end tests for a React Native app?",
+				"Does warden work with Expo?",
+				"How is warden different from Detox or Maestro?",
+				"Can an AI coding agent write and run my E2E tests?",
+			])
+		);
+	});
+
+	test("the Detox and Maestro answer is factual, with no figures or put-downs", () => {
+		const answer = FAQS.find((faq) => /Detox/.test(faq.q))?.a ?? "";
+		expect(answer).toMatch(/Detox/);
+		expect(answer).toMatch(/Maestro/);
+		expect(answer).not.toMatch(/\d+\s?(x|×|%|s\b|ms)|faster|slower|better|worse|best|worst/i);
+	});
+});
+
 describe("what it never says", () => {
 	test("names no other tool the copy was modelled on", () => {
 		expect(EVERYTHING).not.toMatch(/simlock|callstack|agent-device/i);

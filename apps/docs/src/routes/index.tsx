@@ -29,15 +29,17 @@ import {
 	WHAT_YOU_GET,
 } from "@/lib/landing.data";
 import { baseOptions } from "@/lib/layout.shared";
-import { canonicalLink, landingJsonLd, tagline } from "@/lib/seo";
-import { appName, githubUrl, metaDescription, privacyRoute } from "@/lib/shared";
+import { canonicalLink, landingJsonLd, landingTitle } from "@/lib/seo";
+import { githubUrl, metaDescription, privacyRoute } from "@/lib/shared";
 
 export const Route = createFileRoute("/")({
 	component: Home,
 	head: () => ({
 		meta: [
-			{ title: `${appName} — ${tagline}` },
+			{ title: landingTitle },
 			{ name: "description", content: metaDescription },
+			{ property: "og:title", content: landingTitle },
+			{ name: "twitter:title", content: landingTitle },
 			{ property: "og:url", content: canonicalLink("/").href },
 		],
 		links: [canonicalLink("/")],

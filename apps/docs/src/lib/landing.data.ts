@@ -49,7 +49,7 @@ export type Faq = { q: string; a: string; proof?: Proof };
 
 export const HERO = {
 	pill: "open source · MIT · iOS + Android",
-	lede: "Your coding agents drive your app on iOS simulators, Android emulators and real phones, and keep what they checked as e2e tests. Devices, ports and builds are leased per worktree, so parallel agents never collide.",
+	lede: "Your coding agents drive your React Native or Expo app on iOS simulators, Android emulators and real phones, and keep what they checked as E2E tests. Devices, ports and builds are leased per worktree, so parallel agents never collide.",
 	installNote: "Installs the CLI and the skill for every agent it finds.",
 } as const;
 
@@ -252,7 +252,7 @@ export const ON_THE_DEVICE = {
 		},
 		{
 			label: "Run the suite",
-			title: "The suite on every device at once",
+			title: "Your E2E suite on every device at once",
 			points: [
 				"warden e2e leases N simulators and installs the build",
 				"One bun test per device, the specs shared between them",
@@ -393,7 +393,7 @@ export const SAFE_BY_DEFAULT = {
 } as const;
 
 export const FIRST_PROMPT = {
-	title: "Productive from the first prompt.",
+	title: "Your first React Native E2E test, from one prompt.",
 	lede: "Paste this into Claude Code, Codex, Cursor or any agent in your app's directory. The warden skill tells it the rest.",
 	prompt: `Install warden (npm i -g @delacour/warden && warden install) and set this Expo app up with warden init.
 Run the app from this worktree with warden dev, then drive it with warden ui and check the home screen renders.
@@ -456,6 +456,25 @@ export const FAQ = {
 		{
 			q: "What is warden?",
 			a: "One open-source CLI that leases iOS simulators, Android emulators and phones to coding agents, drives the app on them, and runs e2e specs across many of them at once. Devices, Metro ports and app builds are leased per worktree, so agents in parallel never collide.",
+		},
+		{
+			q: "How do I write end-to-end tests for a React Native app?",
+			a: "An E2E test in warden is a TypeScript `*.e2e.ts` spec written with `@delacour/warden-e2e`: `test` and `expect` over `bun test`. Mark the views a flow touches with `testID` and `accessible`, find them with `screen.getByTestId(...)`, and assert on what is on screen. `warden init` scaffolds the first spec; `warden e2e` leases simulators, installs your build and runs the specs on all of them at once.",
+			proof: { source: "apps/cli/src/commands/init.ts" },
+		},
+		{
+			q: "Does warden work with Expo?",
+			a: "Yes, Expo is the main target. `warden init` sets an Expo app up, `warden dev` runs its dev client per worktree, and `warden e2e` installs a build cached by the app's Expo fingerprint and runs your specs on leased iOS simulators or Android emulators. A bare React Native app works with `warden dev` and `warden ui`; `warden e2e` is Expo-only.",
+			proof: { source: "apps/cli/src/commands/e2e.ts" },
+		},
+		{
+			q: "How is warden different from Detox or Maestro?",
+			a: "Detox is a gray-box framework: it synchronises with the app from inside it, and the app needs a native test build configured for it. Maestro runs YAML flows from its own CLI. A warden spec is TypeScript that drives the installed app from outside, through the simulator's accessibility tree, with no test library in the app. warden also leases the devices, ports and builds, so many agents or CI jobs can run specs on one Mac at once.",
+		},
+		{
+			q: "Can an AI coding agent write and run my E2E tests?",
+			a: "Yes, that is what warden is for. `warden install` adds the warden skill to Claude Code, Codex, Cursor and other agents. The agent claims its own simulator, drives your app with `warden ui`, and `warden ui record` writes the session as a `*.e2e.ts` spec and runs it once. `warden e2e` then runs the spec on every device.",
+			proof: { source: "apps/cli/src/commands/ui.ts" },
 		},
 		{
 			q: "Does warden sandbox my agents?",
