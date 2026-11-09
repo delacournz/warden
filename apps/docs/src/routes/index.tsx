@@ -151,7 +151,7 @@ function Home(): ReactElement {
 						<p className="text-ink-2 text-sm">{HERO.installNote}</p>
 					</div>
 					<div className="flex flex-wrap justify-center gap-2">
-						<PrimaryLink to="quickstart">Get started</PrimaryLink>
+						<PrimaryLink to="getting-started/quickstart">Get started</PrimaryLink>
 						<SecondaryAnchor href="#demo">Watch the demo</SecondaryAnchor>
 					</div>
 				</section>
@@ -289,7 +289,7 @@ function Home(): ReactElement {
 						<div className="flex w-full max-w-xl flex-col items-center gap-4">
 							<InstallCommand className="w-full items-center text-start" setup />
 							<div className="flex flex-wrap justify-center gap-2">
-								<PrimaryLink to="quickstart">Read the quickstart</PrimaryLink>
+								<PrimaryLink to="getting-started/quickstart">Read the quickstart</PrimaryLink>
 								<SecondaryLink to="reference/cli">CLI reference</SecondaryLink>
 							</div>
 						</div>
@@ -302,7 +302,7 @@ function Home(): ReactElement {
 						<WardenIcon size={18} />
 						warden
 					</span>
-					<Link className="hover:text-ink" params={{ _splat: "" }} to="/docs/$">
+					<Link className="hover:text-ink" params={{ _splat: "getting-started" }} to="/docs/$">
 						docs
 					</Link>
 					<Link className="hover:text-ink" params={{ _splat: "reference/cli" }} to="/docs/$">

@@ -2,21 +2,15 @@ import { redirect } from "@tanstack/react-router";
 import { createCsrfMiddleware, createMiddleware, createStart } from "@tanstack/react-start";
 import { isMarkdownPreferred } from "fumadocs-core/negotiation";
 import { reportAgentFetch } from "@/lib/analytics/server";
-import { trailingSlashTarget } from "@/lib/redirects";
-import { docsRoute, encodeMarkdownUrl } from "@/lib/shared";
+import { markdownTwinTarget, trailingSlashTarget } from "@/lib/redirects";
+import { docsRoute } from "@/lib/shared";
 
 /** An agent asking for `Accept: text/markdown` on a docs URL is redirected to that page's `.md` twin. */
 const llmMiddleware = createMiddleware().server(({ next, request }) => {
 	const url = new URL(request.url);
 
 	if (url.pathname.startsWith(docsRoute) && !url.pathname.endsWith(".md") && isMarkdownPreferred(request)) {
-		const slugs = url.pathname
-			.slice(docsRoute.length)
-			.split("/")
-			.filter((v) => v.length > 0);
-		url.pathname = encodeMarkdownUrl(slugs);
-
-		throw redirect({ href: url.href, headers: { Vary: "Accept" } });
+		throw redirect({ href: markdownTwinTarget(url), headers: { Vary: "Accept" } });
 	}
 
 	return next();

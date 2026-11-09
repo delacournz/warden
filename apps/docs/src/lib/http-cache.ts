@@ -1,3 +1,5 @@
+import { siteUrl } from "./shared";
+
 /** Edge-cacheable page policy: browsers revalidate, Railway's edge may serve a shared copy for 5 min then stale for a day. */
 const pageCache = "public, max-age=0, s-maxage=300, stale-while-revalidate=86400";
 
@@ -26,7 +28,7 @@ const securityHeaders = {
 export const routeRules = {
 	"/**": { headers: securityHeaders },
 	"/": { headers: { "Cache-Control": pageCache } },
-	"/docs/**": { headers: { "Cache-Control": pageCache } },
+	"/docs/**": { headers: { "Cache-Control": pageCache, Vary: "Accept" } },
 	"/privacy": { headers: { "Cache-Control": pageCache } },
 	"/llms.txt": { headers: { "Cache-Control": pageCache, "X-Robots-Tag": "noindex" } },
 	"/llms-full.txt": { headers: { "Cache-Control": pageCache, "X-Robots-Tag": "noindex" } },
@@ -37,6 +39,15 @@ export const routeRules = {
 	"/og/**": { headers: { "Cache-Control": staticCache } },
 	"/favicon.svg": { headers: { "Cache-Control": staticCache } },
 } as const;
+
+/**
+ * `noindex` for every host but production: staging (and a local server) serve the same pages, and a crawler that
+ * finds them should not weigh them against warden.co.nz. Railway's proxy hands the app an `http://` URL on the
+ * public hostname, so only the hostname counts.
+ */
+export function hostRobotsTag(request: Request): "noindex" | undefined {
+	return new URL(request.url).hostname === new URL(siteUrl).hostname ? undefined : "noindex";
+}
 
 const compressible = /^(text\/|application\/(json|xml|javascript)|image\/svg\+xml)/i;
 const minBytes = 1024;
