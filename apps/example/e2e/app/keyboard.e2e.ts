@@ -20,6 +20,15 @@ async function openAndType(screen: Screen, note = "Buy milk"): Promise<void> {
 	await screen.getByTestId(ids.keyboardSheet.input).fill(note);
 }
 
+/**
+ * Presses Save until the sheet closes. After a keyboard change the footer is still sliding, and a press on a moving
+ * button can be dropped, so a press that closed nothing is sent again.
+ */
+async function saveNote(screen: Screen): Promise<void> {
+	const save = screen.getByTestId(ids.keyboardSheet.save);
+	await save.tap({ until: async () => !(await save.isVisible()) });
+}
+
 /** The keyboard sheet on one launch: the second test reopens the sheet the first one saved and closed. */
 describe.serial("keyboard sheet", () => {
 	beforeAll(async ({ app, device, screen }) => {
@@ -36,7 +45,7 @@ describe.serial("keyboard sheet", () => {
 		await expect(device).toHaveKeyboard();
 		await expect(screen.getByTestId(ids.keyboardSheet.save)).toBeVisible();
 
-		await screen.getByTestId(ids.keyboardSheet.save).tap();
+		await saveNote(screen);
 		await expect(screen.getByTestId(ids.keyboardSheet.saved)).toHaveText("Buy milk");
 		await expect(screen.getByTestId(ids.keyboardSheet.save)).toBeHidden();
 	});
@@ -46,15 +55,17 @@ describe.serial("keyboard sheet", () => {
 		async ({ device, screen }) => {
 			await openAndType(screen, "Buy bread");
 			await expect(device).toHaveKeyboard();
+			await device.settle();
 			const lifted = await screen.getByTestId(ids.keyboardSheet.save).boundingBox();
 
 			await device.keyboard("hardware");
 			await expect(device).not.toHaveKeyboard();
 			await expect(screen.getByTestId(ids.keyboardSheet.save)).toBeVisible();
+			await device.settle();
 			const settled = await screen.getByTestId(ids.keyboardSheet.save).boundingBox();
 			expect(settled.y - lifted.y).toBeGreaterThan(MIN_LIFT);
 
-			await screen.getByTestId(ids.keyboardSheet.save).tap();
+			await saveNote(screen);
 			await expect(screen.getByTestId(ids.keyboardSheet.saved)).toHaveText("Buy bread");
 
 			await device.keyboard("software");

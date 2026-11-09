@@ -85,6 +85,11 @@ const AFFECTED = {
 		},
 		"app/devtools": { entries: ["src/app/welcome.tsx"] },
 		"app/perf": { entries: [...SIGNED_IN, "src/app/(tabs)/todos.tsx"] },
+		"framework/queries": { entries: [...SIGNED_IN, "src/app/(tabs)/todos.tsx"] },
+		"framework/matchers": { entries: [...SIGNED_IN, "src/app/(tabs)/todos.tsx"] },
+		"framework/actions": { entries: [...SIGNED_IN, "src/app/(tabs)/todos.tsx", "src/app/(tabs)/settings.tsx"] },
+		"framework/runner": { entries: ["src/app/welcome.tsx"] },
+		"framework/device": { entries: ["src/app/welcome.tsx"] },
 		"app/gestures": { entries: ["src/app/welcome.tsx", "src/app/gestures.tsx", "src/modules/gestures"] },
 		"app/keyboard": { entries: ["src/app/welcome.tsx", "src/app/keyboard-sheet.tsx", "src/modules/keyboard"] },
 		"conditions/network": {
