@@ -2,14 +2,14 @@ export const appName = "warden";
 
 /** One sentence, served as the social card body and the long-form identity in JSON-LD. */
 export const appDescription =
-	"Every agent gets its own simulator: warden leases iOS simulators, Android emulators, ports and app builds across every worktree on your Mac, so parallel coding agents build, run and test your app without colliding.";
+	"warden runs React Native and Expo end-to-end tests on parallel iOS simulators and Android emulators. Every agent gets its own simulator: warden leases devices, ports and app builds across every worktree on your Mac, so AI coding agents build, run and test your app without colliding.";
 
 /**
  * The search-result snippet: 120-160 characters so Google shows it whole. Named for the queries
- * warden answers (iOS simulator, Android emulator, AI coding agents, e2e testing).
+ * warden answers (React Native and Expo E2E testing, iOS simulator, Android emulator, AI coding agents).
  */
 export const metaDescription =
-	"warden gives every AI coding agent its own iOS simulator or Android emulator, with leased ports and cached builds, so parallel agents run and e2e test your app.";
+	"React Native and Expo E2E testing for AI coding agents: parallel iOS simulators and Android emulators, one per agent, so end-to-end tests never collide.";
 
 export const docsRoute = "/docs";
 

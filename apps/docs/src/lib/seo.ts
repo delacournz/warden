@@ -18,20 +18,36 @@ export type HeadLink =
 	| { rel: "canonical"; href: string }
 	| { rel: "alternate"; type: "text/markdown" | "text/plain"; href: string; title?: string };
 
-/** What every search result title says after a short page name. */
-const titleSuffix = "iOS & Android simulators for AI agents";
+/** What a simulator page's search result title says after a short page name. */
+const simulatorSuffix = "iOS & Android simulators for AI agents";
+
+/** What an e2e page's search result title says after a short page name. */
+const e2eSuffix = "React Native & Expo E2E testing";
+
+/** The docs section whose pages are about writing and running e2e tests. */
+const e2eSection = "e2e";
 
 /** Google shows about 60 characters of a title. */
 const maxTitleLength = 60;
 
-/** `CI — warden: iOS & Android simulators for AI agents` when it fits in 60 characters, else `<title> — warden`. */
-export function docsTitle(title: string): string {
-	const long = `${title} — ${appName}: ${titleSuffix}`;
+/**
+ * `CI — warden: iOS & Android simulators for AI agents` when it fits in 60 characters, else `<title> — warden`.
+ * Pages under `e2e` carry the React Native E2E suffix instead, the query their pages answer.
+ */
+export function docsTitle(title: string, slugs: readonly string[] = []): string {
+	const suffix = slugs[0] === e2eSection ? e2eSuffix : simulatorSuffix;
+	const long = `${title} — ${appName}: ${suffix}`;
 	return long.length <= maxTitleLength ? long : `${title} — ${appName}`;
 }
 
-/** The site's tagline, after the name in the landing and docs-root titles. */
+/** The site's tagline, for any page without a title of its own. */
 export const tagline = "every agent gets its own simulator";
+
+/** The landing page's `<title>`: leads with the query it answers, within 60 characters. */
+export const landingTitle = `${appName} — AI agent toolkit for React Native simulators & E2E`;
+
+/** The docs root's `<title>`. */
+export const docsRootTitle = `${appName} docs — React Native E2E testing for AI agents`;
 
 /** The preferred URL for `path` on the production host, so every host and the `.md` twins consolidate to it. */
 export function canonicalLink(path: string): HeadLink {
@@ -77,7 +93,7 @@ export function docsHead({
 	meta: HeadMeta[];
 	links: HeadLink[];
 } {
-	const pageTitle = slugs.length === 0 ? `${appName} docs — ${tagline}` : docsTitle(title);
+	const pageTitle = slugs.length === 0 ? docsRootTitle : docsTitle(title, slugs);
 	const body = description || metaDescription;
 	const path = [docsRoute, ...slugs].join("/");
 
@@ -120,6 +136,8 @@ type SoftwareApplicationJsonLd = {
 	downloadUrl?: string;
 	softwareRequirements?: string;
 	keywords?: string;
+	applicationSubCategory?: string;
+	featureList?: string[];
 	publisher?: { "@id": string };
 };
 
@@ -212,6 +230,28 @@ type FaqPageNode = {
 /** Markdown code ticks read as noise in a plain-text answer. */
 const plain = (text: string) => text.replace(/`/g, "");
 
+/** What search engines index the landing page under: the queries it answers. */
+const softwareKeywords = [
+	"React Native E2E testing",
+	"Expo E2E testing",
+	"React Native end-to-end testing",
+	"iOS simulator",
+	"Android emulator",
+	"AI coding agents",
+	"parallel testing",
+];
+
+/** What warden does, each line a claim the docs back. */
+const softwareFeatures = [
+	"React Native E2E testing",
+	"Expo E2E testing",
+	"End-to-end tests written as TypeScript specs",
+	"Parallel iOS simulators and Android emulators, one per agent",
+	"Device, port and app build leasing per worktree",
+	"Runs only the E2E tests a change affects",
+	"Lets AI coding agents drive the app and keep what they checked as tests",
+];
+
 /** schema.org for the landing page: what warden is, and the FAQ the page shows. */
 export function landingJsonLd(faq: readonly { q: string; a: string }[]): {
 	"@context": "https://schema.org";
@@ -225,7 +265,9 @@ export function landingJsonLd(faq: readonly { q: string; a: string }[]): {
 				...app,
 				downloadUrl: "https://www.npmjs.com/package/@delacour/warden",
 				softwareRequirements: "macOS with Xcode for iOS simulators; Android SDK for emulators",
-				keywords: "iOS simulator, Android emulator, AI coding agents, React Native e2e testing, Expo, parallel testing",
+				applicationSubCategory: "Testing",
+				keywords: softwareKeywords.join(", "),
+				featureList: softwareFeatures,
 				publisher: { "@id": organizationId },
 			},
 			{
