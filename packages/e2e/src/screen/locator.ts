@@ -790,8 +790,9 @@ export class Locator {
 	private async arrivedWithin(plan: RetryPlan, aimed: AimedFrom): Promise<TapOutcome> {
 		const { until } = plan;
 		const watch: PressWatch = {
-			before: new Set(aimed.snapshot.flat.map(elementKey)),
-			target: aimed.target === undefined ? undefined : elementKey(aimed.target),
+			identities: new Set(aimed.snapshot.flat.map(identityKey)),
+			frames: new Set(aimed.snapshot.flat.map(elementKey)),
+			target: aimed.target === undefined ? undefined : identityKey(aimed.target),
 			started: this.rt.clock.now(),
 			changed: false,
 			unchanged: 0,
@@ -824,8 +825,13 @@ export class Locator {
 			return { done: false, state: undefined };
 		}
 		if (await until.shownIn(observation.observed)) return { done: true, value: "arrived" };
-		if (!reacted(observation.observed.snapshot, watch)) watch.unchanged += 1;
-		else {
+		const seen = reaction(observation.observed.snapshot, watch);
+		if (seen === "none") watch.unchanged += 1;
+		else if (seen === "motion") {
+			// still moving: no sign either way; count unchanged checks from where it stops
+			watch.frames = new Set(observation.observed.snapshot.flat.map(elementKey));
+			watch.unchanged = 0;
+		} else {
 			watch.changed = true;
 			watch.unchanged = 0;
 		}
@@ -1224,9 +1230,11 @@ type AimedFrom = { snapshot: Snapshot; target: Element | undefined };
 
 /** What the checks after one press have seen of the screen. */
 type PressWatch = {
-	/** `elementKey` of every node of the snapshot the press aimed from */
-	before: ReadonlySet<string>;
-	/** `elementKey` of the element pressed */
+	/** `identityKey` of every node of the snapshot the press aimed from */
+	identities: ReadonlySet<string>;
+	/** `elementKey` (frames included) of every node of the last look that moved, first the aimed-from snapshot */
+	frames: ReadonlySet<string>;
+	/** `identityKey` of the element pressed */
 	target: string | undefined;
 	started: number;
 	/** some check saw the screen react: the press landed */
@@ -1235,20 +1243,30 @@ type PressWatch = {
 	unchanged: number;
 };
 
+/** A node without its frame: role, identifier, label and value. */
+function identityKey(element: Element): string {
+	return JSON.stringify([element.role, element.identifier ?? null, element.label ?? null, element.value ?? null]);
+}
+
 /**
- * Whether `snapshot` shows a reaction to the press `watch` follows: a node the aimed-from screen did not have (a new
- * element, or one whose label, value or frame changed), or the pressed element gone. Nodes that only left are not one:
- * right after a navigation the screen it left and a keyboard going down stay in the tree until the transition ends,
- * a transition that also drops presses, and their leaving looked like a landed press that was never sent again.
+ * What `snapshot` shows of the press `watch` follows. `identity`: a node the aimed-from screen did not have (a new
+ * element, or one whose label or value changed), or the pressed element gone: the press landed. `motion`: the same
+ * nodes, only moved since the last look: no sign either way (right after a Back, the screen it returns to is still
+ * sliding in, a transition that drops presses; counting its frames as a reaction kept a dropped press from being sent
+ * again). `none`: nothing changed. Nodes that only left are not a reaction either: right after a navigation the screen
+ * it left and a keyboard going down stay in the tree until the transition ends.
  */
-function reacted(snapshot: Snapshot, watch: PressWatch): boolean {
+function reaction(snapshot: Snapshot, watch: PressWatch): "identity" | "motion" | "none" {
 	const now = new Set<string>();
+	let moved = false;
 	for (const element of snapshot.flat) {
-		const key = elementKey(element);
-		if (!watch.before.has(key)) return true;
-		now.add(key);
+		const identity = identityKey(element);
+		if (!watch.identities.has(identity)) return "identity";
+		now.add(identity);
+		if (!watch.frames.has(elementKey(element))) moved = true;
 	}
-	return watch.target !== undefined && !now.has(watch.target);
+	if (watch.target !== undefined && !now.has(watch.target)) return "identity";
+	return moved ? "motion" : "none";
 }
 
 function wholeNumber(name: string, value: number, atLeast: number): void {

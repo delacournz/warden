@@ -60,11 +60,10 @@ describe.serial("settings", () => {
 	/**
 	 * Settings stays in the tree under a pushed screen, so "Settings is visible" says nothing about the Back press: the
 	 * pushed screen leaving does. The sticky Sign out footer floats over the last rows, so a row is first dragged clear of
-	 * it (`revealAbove`): the tree would call a covered row visible and the tap would sign out. A row test ends on a still Settings screen, because a press that lands while the
-	 * pop is still sliding is dropped, and the moving frames look to `tap({ until })` like a reaction to it.
+	 * it (`revealAbove`): the tree would call a covered row visible and the tap would sign out.
 	 */
 	for (const { name, row, screen: target, back } of ROWS) {
-		test(`${name} opens and Back returns to Settings`, async ({ device, screen }) => {
+		test(`${name} opens and Back returns to Settings`, async ({ screen }) => {
 			const pushed = screen.getByTestId(target);
 			const entry = screen.getByTestId(row);
 			await entry.scrollTo();
@@ -73,7 +72,6 @@ describe.serial("settings", () => {
 			await expect(pushed).toBeVisible();
 			await screen.getByTestId(back).tap({ until: async () => !(await pushed.isVisible()) });
 			await expect(pushed).toBeHidden();
-			await device.settle();
 			await expect(screen.getByTestId(ids.settings.screen)).toBeVisible();
 		});
 	}

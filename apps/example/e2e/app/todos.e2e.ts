@@ -83,11 +83,10 @@ describe.serial("todos journey", () => {
 		await expect(screen.getByTestId(ids.detail.status)).toHaveText("Active");
 	});
 
-	test("Back shows the list with the change", async ({ device, screen }) => {
+	test("Back shows the list with the change", async ({ screen }) => {
 		const detail = screen.getByTestId(ids.detail.title);
 		await screen.getByTestId(ids.detail.back).tap({ until: async () => !(await detail.isVisible()) });
 		await expect(detail).toBeHidden();
-		await device.settle();
 		await expect(screen.getByTestId(ids.todos.check("welcome"))).toBeChecked({ checked: false });
 		await expect(screen.getByTestId(ids.todos.remaining)).toHaveText("1 left");
 	});
