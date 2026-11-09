@@ -1,6 +1,6 @@
 ---
 title: Accessibility settings
-description: Raise the text size, turn on bold text, contrast, reduce motion or a screen reader, and check the layout still holds.
+description: Raise the text size, turn on bold text, contrast, reduce motion or a screen reader on a leased simulator or emulator with warden ui, and which settings each platform takes.
 icon: Accessibility
 ---
 
@@ -8,37 +8,7 @@ icon: Accessibility
 
 `warden ui a11y audit --rule role-in-name` flags the bad variant's “Submit button”, `warden ui a11y audit --no-native` passes the good screen, and `warden ui a11y set --text-size accessibility-large --bold` grows the text.
 
-`device.a11y` changes the system accessibility settings the app renders with, so a spec can check that a screen still fits at the largest text size or takes its reduced-motion path.
-
-```ts
-await device.a11y({ textSize: "accessibility-large", boldText: true, reduceMotion: true });
-await app.open();
-await device.a11y(null); // defaults back
-```
-
-| Option / flag | iOS | Android |
-|---|---|---|
-| `textSize` / `--text-size` | a category (`extra-small` … `accessibility-extra-extra-extra-large`) or a scale, live | a scale, clamped to 0.5-2 |
-| `boldText` / `--bold` | live | `font_weight_adjustment` |
-| `contrast` / `--contrast increased\|normal` | live | skipped |
-| `reduceMotion` / `--reduce-motion` | live | `transition_animation_scale`; off by default, `true` zeroes it |
-| `--reduce-transparency`, `--button-shapes`, `--differentiate-without-color`, `--on-off-labels` | live | skipped |
-| `--high-contrast-text`, `--color-inversion` | skipped | live |
-| `screenReader` / `--screen-reader` | a simulated flag | real TalkBack |
-
-It returns `{ applied, skipped, notes }`. An option the platform cannot set is reported `skipped`; a call where every option is skipped throws `E_UNSUPPORTED`. Physical devices refuse every setting.
-
-Auditing screens, reading order, announcements and driving TalkBack are in [Accessibility testing](/docs/e2e/accessibility).
-
-## In a suite
-
-```ts title="warden.config.ts"
-conditions: { a11y: { textSize: "accessibility-large", reduceMotion: true } },
-```
-
-The suite key takes `textSize`, `boldText`, `contrast` and `reduceMotion`.
-
-## By hand
+`warden ui a11y set` changes the system accessibility settings the app renders with, so you can see whether a screen still fits at the largest text size or takes its reduced-motion path.
 
 ```bash
 warden ui a11y set --text-size accessibility-large --bold --reduce-motion
@@ -47,4 +17,18 @@ warden ui a11y status
 warden ui a11y reset
 ```
 
-Release puts every setting back, including TalkBack's accessibility services and master switch, exactly as the device had them.
+Release puts every setting back, including TalkBack's accessibility services and master switch, exactly as the device had them. From a spec or a suite: [Accessibility settings in E2E tests](/docs/e2e/conditions/accessibility). Auditing screens, reading order, announcements and driving TalkBack are in [Accessibility testing](/docs/e2e/accessibility).
+
+## Per platform
+
+| Flag / spec option | iOS | Android |
+|---|---|---|
+| `--text-size` / `textSize` | a category (`extra-small` … `accessibility-extra-extra-extra-large`) or a scale, live | a scale, clamped to 0.5-2 |
+| `--bold` / `boldText` | live | `font_weight_adjustment` |
+| `--contrast increased\|normal` / `contrast` | live | skipped |
+| `--reduce-motion` / `reduceMotion` | live | `transition_animation_scale`; off by default, `true` zeroes it |
+| `--reduce-transparency`, `--button-shapes`, `--differentiate-without-color`, `--on-off-labels` | live | skipped |
+| `--high-contrast-text`, `--color-inversion` | skipped | live |
+| `--screen-reader` / `screenReader` | a simulated flag | real TalkBack |
+
+An option the platform cannot set is reported `skipped`; a call where every option is skipped fails `E_UNSUPPORTED`. Physical devices refuse every setting.

@@ -1,0 +1,47 @@
+---
+title: Biometrics
+description: Test Face ID, Touch ID and Android fingerprint unlocks against the real system prompt from a spec - enroll, match, fail, and the biometrics config key.
+icon: FingerprintPattern
+---
+
+A spec controls the simulator's biometric sensor, so the real `LAContext` / `BiometricPrompt` flow runs, with no app-side bypass.
+
+```ts
+import { expect, test } from "@delacour/warden-e2e";
+
+test("unlocks with a matching face", async ({ app, device, screen }) => {
+	await device.biometrics.enroll();
+	await app.open();
+	await screen.getByTestId("unlock").tap();
+	await device.alert("accept");
+	await device.biometrics.match();
+	await expect(screen.getByText("Unlocked")).toBeVisible();
+});
+```
+
+| Member | Does |
+|---|---|
+| `device.biometrics.status()` | `{ enrolled, modality }` without changing anything |
+| `enroll()` / `unenroll()` | iOS only |
+| `match()` / `fail()` | present a matching / non-matching face or finger to the pending prompt. `fail()` does not end the prompt: iOS shows a "Face Not Recognized" alert (Try Face ID Again / Cancel) and Android BiometricPrompt shows "Not recognized"; the app only hears back (`user_cancel`) when the prompt is cancelled (`device.alert({ button: "Cancel" })` on iOS). A presentation sent just as the sheet appears can be dropped, so send it again when nothing changed |
+
+Each returns `BiometricState`: `{ enrolled: boolean; modality: "face" | "fingerprint" }`. Android `enroll` / `unenroll` throw `ACTION_FAILED` (driver `E_UNSUPPORTED`).
+
+## Enrolled devices: `biometrics: true`
+
+```ts
+export default defineConfig({
+	biometrics: true,
+	e2e: { login: { biometrics: false } },
+});
+```
+
+`biometrics` sits at the top level, on an `e2e.<suite>` and on a `batches.<preset>` (default `false`; the suite or preset beats the top level). `--biometrics` on `e2e` and `batch` turns it on for one run. Such devices get the profile `<profile>+bio`: their own pool and golden, never mixed with plain devices. How each platform enrolls them: [Biometrics on a simulator](/docs/sims/conditions/biometrics#enrolled-devices).
+
+## Practice
+
+- Enroll before the app is installed or launched: a new enrollment invalidates keys bound to the current biometry set.
+- The first prompt per iOS app shows "Allow X to use Face ID?": answer it with `device.alert("accept")` before `match()`.
+- Never add an app-side bypass; the point is to run the real prompt.
+
+Errors and fixes are in [Debugging](/docs/e2e/debugging). By hand with `warden ui biometrics`: [Biometrics on a simulator](/docs/sims/conditions/biometrics).

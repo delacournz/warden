@@ -1,6 +1,6 @@
 ---
 title: Keyboard
-description: Show or hide the on-screen keyboard on a simulator or emulator, to test sheets and footers that ride the keyboard.
+description: Show or hide the on-screen keyboard on a leased simulator or emulator with warden ui, and how each platform switches it.
 icon: Keyboard
 ---
 
@@ -11,44 +11,9 @@ Two modes:
 | `software` | the on-screen keyboard always shows, although warden types with hardware key events (the default) |
 | `hardware` | the on-screen keyboard stays hidden, as with a connected keyboard |
 
-Every warden-leased simulator and emulator starts on `software`, and release puts it back. Switch live to watch a bottom sheet or a sticky footer ride the keyboard up and down.
+Every warden-leased simulator and emulator starts on `software`, and release puts it back. Switch live to watch a bottom sheet or a sticky footer ride the keyboard up and down. From a spec or a suite: [Keyboard in E2E tests](/docs/e2e/conditions/keyboard).
 
 With the software keyboard up, a tap on a target the keyboard covers first scrolls it into view (inside a scroll container) or dismisses the keyboard (the injected library resigns the first responder; it never presses Return, which could submit a form), then taps. This is iOS only: an Android snapshot carries the app's window, not the keyboard, so there is no frame to test against (use `device.hideKeyboard()`).
-
-## In a spec
-
-```ts
-import { expect, test } from "@delacour/warden-e2e";
-
-test("the footer stays above the keyboard", async ({ app, device, screen }) => {
-	await app.open();
-	await screen.getByTestId("open-sheet").tap();
-	await screen.getByTestId("sheet-input").fill("buy milk");
-	await expect(device).toHaveKeyboard();
-	await expect(screen.getByTestId("sheet-save")).toBeVisible();
-
-	await device.keyboard("hardware");
-	await expect(device).not.toHaveKeyboard();
-});
-```
-
-| Member | Does |
-|---|---|
-| `device.keyboard("software" \| "hardware" \| "toggle")` | sets the mode live; `toggle` flips the mode this spec has in place |
-| `device.keyboardVisible()` | whether a keyboard is up now |
-| `expect(device).toHaveKeyboard({ timeout? })` | polls until a keyboard is up; `.not` until it is gone |
-
-`device.hideKeyboard()` dismisses a keyboard that is up: iOS resigns the first responder through the injected library (never Return, so no form is submitted; an app running without the library falls back to Enter), Android presses back.
-
-The mode goes back to the suite's `conditions.keyboard` (else `software`) when the test ends.
-
-## In a suite
-
-```ts title="warden.config.ts"
-conditions: { keyboard: "hardware" },
-```
-
-Applied at the start of each spec and put back when it ends. Values: `"software"` or `"hardware"`.
 
 ## By hand
 
@@ -60,6 +25,7 @@ warden ui keyboard reset
 ```
 
 With `--json` the answer is `result.mode` (and `result.visible` for `status`). When the running iOS app was launched without warden's library, `software` / `hardware` answer `appliesOnLaunch: true` with a warning: relaunch it with `warden ui open <bundle> --relaunch`. `software` and `reset` drop the record on your lease; `hardware` is put back on release.
+
 ## Per platform
 
 | | iOS simulator | Android emulator | Physical device |

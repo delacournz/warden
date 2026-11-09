@@ -10,6 +10,7 @@
 		"specs",
 		"author-specs",
 		"accessibility",
+		"conditions",
 		"---Run suites---",
 		"suites",
 		"affected",

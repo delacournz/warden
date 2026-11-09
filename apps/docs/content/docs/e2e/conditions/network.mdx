@@ -1,0 +1,80 @@
+---
+title: Network
+description: Test the app offline, on 3G, on a flapping link or with one host failing, from a spec or a suite.
+icon: Wifi
+---
+
+`device.network` shapes what the app's own requests see: offline, a preset speed, a flapping link or one host that fails. The rest of the Mac's traffic is untouched, and the network is back to the suite's baseline when the test ends.
+
+```ts title="e2e/network-offline.e2e.ts"
+import { expect, test } from "@delacour/warden-e2e";
+
+test("cold start offline shows the banner, going online recovers the fetch", async ({ app, device, screen }) => {
+  await device.network.set("offline"); // before the app opens: a cold start offline
+  await app.open();
+  await expect(screen.getByTestId("conditions-offline-banner")).toBeVisible({ timeout: 15_000 });
+
+  await device.network.set("online");
+  await expect(screen.getByTestId("conditions-offline-banner")).toBeHidden({ timeout: 15_000 });
+});
+```
+
+## Set a condition
+
+`device.network.set(condition)` takes `"online"`, `"offline"`, a preset (`edge`, `3g`, `4g`, `lte`, `wifi`, `slow`, `lossy`: [values](/docs/sims/conditions/network#presets)) or `{ kind: "custom", latencyMs?, jitterMs?, downKbps?, upKbps?, lossPct? }`.
+
+```ts
+await device.network.set("3g");
+await device.network.during("offline", async () => {
+  // the previous condition is back afterwards, also when this throws
+});
+await device.network.reset(); // back to the suite's conditions.network (online without one)
+```
+
+| Member | Does |
+|---|---|
+| `set(c, { relaunch? })` | change the network. A running flap stops first |
+| `during(c, fn)` | run `fn` under `c`, then restore |
+| `flap({ up, down, jitterPct?, seed?, base? })` | alternate `base` (default online) and offline until `stop()` or the end of the test; returns `{ stop(), done, status() }` |
+| `fault(rule \| rules)` | per-host faults; `[]` clears |
+| `status()` | `{ condition, faults, flapping }` |
+| `reset()` | stop the flap, clear faults, back to the baseline |
+
+On iOS a condition reaches only an app launched with warden's network dylib: declare `conditions.network` for the suite, or pass `{ relaunch: true }`. A running app without it fails `E_NETWORK_RELAUNCH` ([how it reaches the app](/docs/sims/conditions/network#how-it-reaches-the-app)).
+
+## Flapping
+
+```ts
+const flap = await device.network.flap({ up: "1s", down: "1s" });
+// ... exercise the retry path ...
+await flap.stop();
+```
+
+A fixed `seed` replays the same sequence. A flap and faults do not combine: reset one before setting the other.
+
+## Faults
+
+A fault applies to every request whose host matches a glob.
+
+```ts
+await device.network.fault({ match: "api.example.com", action: { kind: "reset" } });
+```
+
+Actions: `{ kind: "status", code }`, `{ kind: "reset" }`, `{ kind: "delay", ms }`, `{ kind: "blackhole" }`.
+
+HTTPS requests are tunnelled without being opened, so a `status` fault cannot answer one: an `https://` request matching it is reset, and `fault()` returns a note saying so. Use `reset` (or `delay` / `blackhole`) for HTTPS hosts and `status` for plain HTTP.
+
+## In a suite
+
+```ts title="warden.config.ts"
+conditions: { network: "online" },
+```
+
+`network` takes `"online"`, `"offline"`, a preset or `{ latencyMs, jitterMs, downKbps, upKbps, lossPct }`. Every spec starts from it, and `reset()` returns to it. On iOS, declaring it launches every app with the dylib.
+
+## Practice
+
+- Shaping applies to new traffic through the proxy, and an open connection keeps its cost: after warming a connection, a 3g request pays one round trip (the preset's latency), not the three or four of a cold connection. Assert an ordering with a margin, not an absolute number.
+- Set `offline` before `app.open()` to test a cold start offline.
+
+Platform details, limitations and `warden ui network`: [Network on a simulator](/docs/sims/conditions/network).

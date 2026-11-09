@@ -1,0 +1,19 @@
+---
+title: Push and memory warnings
+description: Test notification handling and low-memory paths by delivering a push payload on iOS, or a critical memory trim on Android, from a spec.
+icon: BellRing
+---
+
+Two one-off events rather than states: nothing is held on the device afterwards.
+
+```ts
+await device.push({ aps: { alert: { title: "Order shipped" } } });
+await device.memoryWarning();
+```
+
+| Member | iOS simulator | Android emulator |
+|---|---|---|
+| `push(payload, { bundleId? })` | delivers the payload to the app (`simctl push`, needs `aps`, 4096 bytes max) | `E_UNSUPPORTED` |
+| `memoryWarning({ bundleId? })` | `E_UNSUPPORTED`: the `lowmemory` notification never reaches a UIKit app | `am send-trim-memory RUNNING_CRITICAL` to the running app |
+
+By hand with `warden ui push` and `warden ui memory-warning`: [Push and memory warnings on a simulator](/docs/sims/conditions/events).
