@@ -182,7 +182,7 @@ describe("docsTitle", () => {
 
 describe("the landing and docs-root titles", () => {
 	test("lead with React Native E2E testing within 60 characters", () => {
-		expect(landingTitle).toBe("warden — React Native E2E testing on iOS & Android");
+		expect(landingTitle).toBe("warden — AI agent toolkit for React Native simulators & E2E");
 		expect(landingTitle.length).toBeLessThanOrEqual(60);
 		expect(docsRootTitle.startsWith("warden docs — React Native E2E testing")).toBe(true);
 		expect(docsRootTitle.length).toBeLessThanOrEqual(60);

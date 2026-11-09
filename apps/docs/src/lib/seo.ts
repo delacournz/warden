@@ -44,7 +44,7 @@ export function docsTitle(title: string, slugs: readonly string[] = []): string 
 export const tagline = "every agent gets its own simulator";
 
 /** The landing page's `<title>`: leads with the query it answers, within 60 characters. */
-export const landingTitle = `${appName} — React Native E2E testing on iOS & Android`;
+export const landingTitle = `${appName} — AI agent toolkit for React Native simulators & E2E`;
 
 /** The docs root's `<title>`. */
 export const docsRootTitle = `${appName} docs — React Native E2E testing for AI agents`;
