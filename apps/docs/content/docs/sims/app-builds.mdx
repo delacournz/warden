@@ -42,7 +42,7 @@ When a native build can't be avoided, warden local builds get compiler caches th
 | iOS (Xcode 26+) | compilation caching (`COMPILATION_CACHE_ENABLE_CACHING=YES`) | content-addressed |
 | Android | Gradle build cache (`-Dorg.gradle.caching=true`) | relocatable task outputs in `~/.gradle` |
 
-ccache only runs when the Podfile enables it: set `ios.ccacheEnabled: true` with `expo-build-properties` (written to `ios/Podfile.properties.json` as `apple.ccacheEnabled`) and `brew install ccache`. `warden doctor` checks both, and warns when React Native is built from source (`ios.buildReactNativeFromSource`) instead of using the prebuilt core. `warden builds prune` also runs `ccache --cleanup`.
+ccache needs `brew install ccache` before `pod install`. warden's builds turn it on with `USE_CCACHE=1`, which Expo's and React Native's Podfiles read, and export `CCACHE_BINARY`: React Native's compiler wrapper runs `$CCACHE_BINARY clang`, and the Xcode build setting CocoaPods writes for it never reaches the compiler, so without it every compile skips ccache. A plain `expo run:ios` outside warden needs `ios.ccacheEnabled: true` with `expo-build-properties` (written to `ios/Podfile.properties.json` as `apple.ccacheEnabled`) and `CCACHE_BINARY=$(which ccache)` in its env. `warden doctor` checks the Podfile property, and warns when React Native is built from source (`ios.buildReactNativeFromSource`) instead of using the prebuilt core. `warden builds prune` also runs `ccache --cleanup`.
 
 ### Prebuilt React Native (iOS)
 

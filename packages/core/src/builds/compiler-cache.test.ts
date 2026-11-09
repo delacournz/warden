@@ -33,6 +33,18 @@ describe("compilerCacheEnv", () => {
 		expect(compilerCacheEnv({ ...base, platform: "ios", gitTop: undefined }).CCACHE_BASEDIR).toBeUndefined();
 	});
 
+	test("iOS: CCACHE_BINARY as a real env var, so React Native's ccache-clang.sh wrapper finds ccache", () => {
+		// RN writes CCACHE_BINARY as an Xcode build setting, which never reaches the compiler's env: the wrapper then
+		// runs plain clang and the cache stays empty
+		expect(compilerCacheEnv({ ...base, platform: "ios", ccacheBinary: "/opt/homebrew/bin/ccache" }).CCACHE_BINARY).toBe(
+			"/opt/homebrew/bin/ccache"
+		);
+		expect(compilerCacheEnv({ ...base, platform: "ios" }).CCACHE_BINARY).toBeUndefined();
+		expect(
+			compilerCacheEnv({ ...base, platform: "android", ccacheBinary: "/opt/homebrew/bin/ccache" }).CCACHE_BINARY
+		).toBeUndefined();
+	});
+
 	test("Android: appends to existing GRADLE_OPTS", () => {
 		expect(compilerCacheEnv({ ...base, platform: "android" })).toEqual({ GRADLE_OPTS: "-Dorg.gradle.caching=true" });
 		expect(compilerCacheEnv({ ...base, platform: "android", baseEnv: { GRADLE_OPTS: "-Xmx2g" } })).toEqual({

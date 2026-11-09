@@ -262,6 +262,8 @@ async function cacheEnv(deps: LocalBuildDeps): Promise<Record<string, string>> {
 	const { platform } = deps;
 	const gitTop = platform === "ios" ? await gitToplevel(deps) : undefined;
 	const xcode = platform === "ios" ? await readXcode(deps.exec, deps.env) : undefined;
+	const ccacheBinary =
+		platform === "ios" ? deps.env.CCACHE_BINARY || (await probe(deps, ["which", "ccache"])) : undefined;
 	return {
 		...prebuilt,
 		...compilerCacheEnv({
@@ -269,6 +271,7 @@ async function cacheEnv(deps: LocalBuildDeps): Promise<Record<string, string>> {
 			wardenHome: deps.wardenHome ?? resolveWardenHome(deps.env),
 			gitTop: gitTop || undefined,
 			xcodeMajor: xcode?.success ? xcode.data.major : undefined,
+			ccacheBinary: ccacheBinary || undefined,
 			enabled: true,
 			baseEnv: deps.env,
 		}),

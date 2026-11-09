@@ -517,6 +517,7 @@ describe("runLocalBuild compiler cache env", () => {
 				gitCalls.push(joined);
 				return { exitCode: 0, stdout: `${root}\n${root}/.git\nrefs/heads/main\n`, stderr: "" };
 			}
+			if (joined === "which ccache") return { exitCode: 0, stdout: "/opt/homebrew/bin/ccache\n", stderr: "" };
 			if (joined === "xcode-select -p") return { exitCode: 0, stdout: "/X/Xcode.app/Contents/Developer\n", stderr: "" };
 			if (joined.startsWith("plutil -extract CFBundleShortVersionString"))
 				return { exitCode: 0, stdout: "26.0\n", stderr: "" };
@@ -573,8 +574,40 @@ describe("runLocalBuild compiler cache env", () => {
 			CCACHE_DIR: "/w/ccache",
 			CCACHE_BASEDIR: s.root,
 			COMPILATION_CACHE_ENABLE_CACHING: "YES",
+			CCACHE_BINARY: "/opt/homebrew/bin/ccache",
 			EXPO_NO_TELEMETRY: "1",
 		});
+	});
+
+	test("no ccache on PATH → no CCACHE_BINARY, the build still runs", async () => {
+		const s = iosSetup();
+		const exec: Exec = async (cmd, opts) =>
+			cmd.join(" ") === "which ccache" ? { exitCode: 1, stdout: "", stderr: "" } : s.exec(cmd, opts);
+		await runLocalBuild({
+			...common,
+			exec,
+			project: s.project,
+			platform: "ios",
+			hash: "h1",
+			env: { HOME: dir },
+			wardenHome: "/w",
+		});
+		expect(s.envs[0]?.USE_CCACHE).toBe("1");
+		expect(s.envs[0]?.CCACHE_BINARY).toBeUndefined();
+	});
+
+	test("a caller's own CCACHE_BINARY wins over the PATH lookup", async () => {
+		const s = iosSetup();
+		await runLocalBuild({
+			...common,
+			exec: s.exec,
+			project: s.project,
+			platform: "ios",
+			hash: "h1",
+			env: { HOME: dir, CCACHE_BINARY: "/custom/ccache" },
+			wardenHome: "/w",
+		});
+		expect(s.envs[0]?.CCACHE_BINARY).toBe("/custom/ccache");
 	});
 
 	test("the ccache base dir is the git facts' toplevel: one rev-parse, shared through the git cache", async () => {
