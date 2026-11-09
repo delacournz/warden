@@ -4563,16 +4563,19 @@ Usage: warden init [options]
 set an Expo app up for warden dev / warden e2e (warden.config.ts, a first spec)
 
 Options:
-  --project <dir>   the Expo app's directory (default: cwd)
-  --bundle-id <id>  bundle id / package for an app that has none yet (written to
-                    app.json)
-  --force           overwrite files that already exist
-  --dry-run         print what would be written, write nothing
-  --json            machine-readable output
-  -h, --help        display help for command
+  --project <dir>        the Expo app's directory (default: cwd)
+  --bundle-id <id>       bundle id / package for an app that has none yet
+                         (written to app.json)
+  --platform <platform>  platform of the e2e suite: ios or android (default:
+                         ios)
+  --force                overwrite files that already exist
+  --dry-run              print what would be written, write nothing
+  --json                 machine-readable output
+  -h, --help             display help for command
 
 Example:
-  warden init --bundle-id com.example.app"
+  warden init --bundle-id com.example.app
+  warden init --platform android"
 `;
 
 exports[`help output warden completion --help (and nested subcommands) 1`] = `
