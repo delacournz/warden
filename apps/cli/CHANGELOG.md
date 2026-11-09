@@ -1,5 +1,50 @@
 # @delacour/warden
 
+## 0.16.0
+
+### Minor Changes
+
+- [#246](https://github.com/delacournz/warden/pull/246) [`6ce64a2`](https://github.com/delacournz/warden/commit/6ce64a206bf1bc8110ffdf26b7cb7c456c221f87) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - `@delacour/warden-e2e` no longer carries the Android Accessibility Test Framework jar inline: the first Android `device.a11yAudit()` / `warden ui a11y audit` downloads it (~180 KB, sha256-checked) from the version's GitHub release and caches it in `~/.warden/atf/`. New releases go live on npm in minutes instead of waiting ~16 minutes in npm's automated review.
+  - New `WARDEN_ATF_JAR=<path>` points the audit at a local copy of the jar for hosts that cannot reach GitHub. Without it, an unreachable download skips the ATF engine with a warning; warden's own audit rules still run.
+
+- [#249](https://github.com/delacournz/warden/pull/249) [`0df88e1`](https://github.com/delacournz/warden/commit/0df88e1e71099aaa34a3323595b9c1cc1c997c17) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - Specs: `device.os` (`"ios"` | `"android"`), `device.isIOS` and `device.isAndroid` name the platform under test, like React Native's `Platform.OS`, so a step only one platform needs can sit behind an `if` (and helpers that only get `device` can branch too)
+
+- [#249](https://github.com/delacournz/warden/pull/249) [`0df88e1`](https://github.com/delacournz/warden/commit/0df88e1e71099aaa34a3323595b9c1cc1c997c17) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - Specs: `device.select({ ios, android })` returns the value for the platform under test, like React Native's `Platform.select` (give both platforms or a `default`), so a label or testID that differs per platform stays one line: `screen.getByText(device.select({ ios: "Done", android: "OK" }))`
+
+- [#245](https://github.com/delacournz/warden/pull/245) [`489e700`](https://github.com/delacournz/warden/commit/489e700625cd6ee509ac0bb0a6be7896e56f2a31) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - `warden e2e`, `warden repack` and `app ensure --kind simulator` no longer wait for a fresh simulator base build before bundling: iOS runs the JS bundle alongside the native build, then Hermes-compiles and repacks once the base is ready
+  - Android: a simulator base built in the same run already embeds the worktree's JS, so its apk becomes the repack with no second bundle or re-sign; `warden repack --json` and `--json` kind facts report `fromBase: true`, and the log reads `simulator repack <jsKey> built from the base build's bundle`
+
+- [#219](https://github.com/delacournz/warden/pull/219) [`6cafe3d`](https://github.com/delacournz/warden/commit/6cafe3d32b0df0e56ec9da40e84b46bdee473310) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - New `describe.serial(title, body)` (also `describe(title, { serial: true }, body)`, which used to do nothing): the group's tests share one app launch, opened once before the group's `beforeAll`, and once a test fails the rest are recorded as `skipped` with the new error code `SKIPPED`. `retry` on a test inside such a group is `INVALID_ARGUMENT`
+  - In a `describe.serial` group the suite's `conditions` baseline is applied once, before the group's launch and `beforeAll`, instead of before every test: re-applied to the running app it restarted a live camera feed, which then stopped decoding QR codes
+  - `beforeAll` / `afterAll` now run with the scope's timeout, report their steps, and on failure write `failure.png`, `screen-at-failure.txt` and a `failed` or `timed-out` line in `results.jsonl` titled with the describe titles and the hook name. Before, a failed `beforeAll` left no result and no evidence for its group
+  - Fixtures a `beforeAll` / `afterAll` keeps past its end now fail with `SESSION` inside a test instead of acting outside any test
+  - A `describe` body that takes arguments or is `async` is now `INVALID_ARGUMENT`: describe bodies run at collection and get no fixtures
+
+### Patch Changes
+
+- [#258](https://github.com/delacournz/warden/pull/258) [`dc45d6d`](https://github.com/delacournz/warden/commit/dc45d6d7350af8714404c27d521e70b5e036216d) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - The npm description and the `warden` skill now introduce warden as an AI agent toolkit: every agent gets its own simulator to drive, debug, profile and E2E test the app.
+
+- [#219](https://github.com/delacournz/warden/pull/219) [`6cafe3d`](https://github.com/delacournz/warden/commit/6cafe3d32b0df0e56ec9da40e84b46bdee473310) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - An iOS read the bridge answered by the app's pid (when the frontmost app cannot be resolved) is no longer treated as a degraded read: absence checks on it are conclusive again, and `READ_DEGRADED` no longer says it "fell back from axbridge to axbridge"
+
+- [#257](https://github.com/delacournz/warden/pull/257) [`29dc6d4`](https://github.com/delacournz/warden/commit/29dc6d420c786dff3325f78d640b1b6a9b0d0c81) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - iOS local builds (`warden builds`, `warden e2e`, `warden dev`) now actually use ccache: warden exports `CCACHE_BINARY` (the `ccache` on `PATH`, or your own `CCACHE_BINARY`), which React Native's compiler wrapper needs. Before, every compile skipped ccache and `~/.warden/ccache` stayed empty.
+  - `warden ci cache --json` prints `ccache: null` when the project sets `build.cache: false`, so the e2e action no longer installs, restores or saves a compiler cache the build never uses.
+
+- [#219](https://github.com/delacournz/warden/pull/219) [`6cafe3d`](https://github.com/delacournz/warden/commit/6cafe3d32b0df0e56ec9da40e84b46bdee473310) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - `locator.clear()` no longer fails with `ACTION_FAILED` on an iOS React Native text field that has a placeholder: an emptied field reads back as its placeholder there, and `clear()` now counts a value that deleting could not have left (not made of the cleared text's characters, in order) as empty, and a field that was already empty is told apart from one holding its placeholder's text by typing one key (deleted again)
+
+- [#219](https://github.com/delacournz/warden/pull/219) [`6cafe3d`](https://github.com/delacournz/warden/commit/6cafe3d32b0df0e56ec9da40e84b46bdee473310) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - `tap()`, `longPress()` and `scrollTo()` no longer press a control drawn over the target: a sticky footer (with its padded bar), a tab bar or a floating button later in the tree, or the header over a row scrolled past the top of its list. The press goes to the part of the target nothing covers, a wholly covered target in a scroll view is dragged clear first, and one that cannot be fails `NOT_ACTIONABLE` naming the cover.
+  - `scrollTo()` keeps scrolling until the target is clear of covers, dragging it just past a footer or header instead of a whole page.
+  - `tap({ until })` right after another input waits for the screen to settle before aiming, so it no longer taps where a sliding screen had the element.
+
+- [#253](https://github.com/delacournz/warden/pull/253) [`6915044`](https://github.com/delacournz/warden/commit/6915044f231cc3d98fcebd232ac3456b6854e580) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - `warden builds import --kind simulator-base` no longer warns about a missing `application-identifier` on an ad-hoc signed simulator build (`CODE_SIGN_IDENTITY=-`). Such a build signs with no entitlements and links them into the executable's `__TEXT,__entitlements` section, which is what the simulator reads; the check now reads that section too (`otool`), so `applicationIdentifier` in `--json` is `true` for it.
+
+- [#219](https://github.com/delacournz/warden/pull/219) [`6cafe3d`](https://github.com/delacournz/warden/commit/6cafe3d32b0df0e56ec9da40e84b46bdee473310) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - Tests skipped when collected (`test.skip`, `test.skipIf(true)`, `platforms` that leave out the device's platform, `requires` the device lacks) now get a `skipped` line in `results.jsonl` with code `SKIPPED` and the reason, so `warden e2e` counts them in its skipped total instead of reporting `0 skipped`
+
+- [#219](https://github.com/delacournz/warden/pull/219) [`6cafe3d`](https://github.com/delacournz/warden/commit/6cafe3d32b0df0e56ec9da40e84b46bdee473310) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - A `describe` (or spec file) whose tests are all skipped when collected no longer runs its `beforeAll` / `afterAll` hooks, and a `describe.serial` group in that state no longer opens the app
+
+- [#219](https://github.com/delacournz/warden/pull/219) [`6cafe3d`](https://github.com/delacournz/warden/commit/6cafe3d32b0df0e56ec9da40e84b46bdee473310) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - `tap({ until })` no longer takes elements that only moved (the screen a Back returns to, still sliding in) for a reaction to the tap: a tap dropped during the transition is now sent again instead of being waited out
+- Updated dependencies []:
+  - @delacour/warden-e2e@0.16.0
+
 ## 0.15.0
 
 ### Minor Changes
