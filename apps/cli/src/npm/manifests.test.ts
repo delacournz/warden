@@ -161,6 +161,20 @@ describe("npm keywords", () => {
 		for (const keyword of ["e2e-testing", "react-native", "expo", "ios-simulator", "android-emulator"]) {
 			expect(E2E_KEYWORDS).toContain(keyword);
 		}
+		const discovery = [
+			"react-native-testing",
+			"e2e",
+			"end-to-end-testing",
+			"expo-testing",
+			"mobile-testing",
+			"test-automation",
+			"detox-alternative",
+			"maestro-alternative",
+		];
+		for (const keyword of discovery) {
+			expect(CLI_KEYWORDS).toContain(keyword);
+			expect(E2E_KEYWORDS).toContain(keyword);
+		}
 		expect(new Set(CLI_KEYWORDS).size).toBe(CLI_KEYWORDS.length);
 		expect(new Set(E2E_KEYWORDS).size).toBe(E2E_KEYWORDS.length);
 	});
