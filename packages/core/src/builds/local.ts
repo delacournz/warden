@@ -15,8 +15,9 @@ import { type GitFactsCache, readGitFacts } from "../git-facts";
 import { wardenHome as resolveWardenHome } from "../store";
 import type { Platform } from "../types";
 import { readXcode } from "../xcode";
+import { formatBuildIssues, readBuildIssues } from "../xcresult";
 import type { BuildConfiguration } from "./builds.defaults";
-import { LOCAL_BUILD_TIMEOUT_MS, PROBE_TIMEOUT_MS } from "./builds.defaults";
+import { IOS_DEVICE_RESULT_BUNDLE, LOCAL_BUILD_TIMEOUT_MS, PROBE_TIMEOUT_MS } from "./builds.defaults";
 import { compilerCacheEnv } from "./compiler-cache";
 import type { Project } from "./config";
 import { formatBuildFailure, parseBuildDiagnostics } from "./diagnostics";
@@ -457,13 +458,41 @@ function expoBuildLog(root: string): string {
 	}
 }
 
+/** The device build's result bundle (`iosDeviceBuildCommand`), when this build wrote it: one older than the build is stale. */
+function freshResultBundle(root: string, startedAt: number): string | undefined {
+	const path = join(root, "ios", IOS_DEVICE_RESULT_BUNDLE);
+	try {
+		return statSync(path).mtimeMs >= startedAt - 2_000 ? path : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/** `N errors: file:line: msg … — result bundle: path`, from the result bundle this build wrote; undefined without one. */
+async function resultBundleFailure(deps: LocalBuildDeps, startedAt: number): Promise<string | undefined> {
+	const bundle = freshResultBundle(deps.project.root, startedAt);
+	if (bundle === undefined) return undefined;
+	const issues = await readBuildIssues(bundle, deps.exec);
+	const summary = issues === null ? undefined : formatBuildIssues(issues);
+	return summary === undefined ? undefined : `${summary} — result bundle: ${bundle}`;
+}
+
 /**
- * Why the build command failed. iOS: the compiler/linker errors with file:line:col (parsed from the output, or
- * expo's raw `xcodebuild.log`) and where the full log is kept; otherwise the last lines, as before.
+ * Why the build command failed. iOS: the compiler/linker errors with file:line (from the result bundle a device build
+ * writes, else parsed from the output or expo's raw `xcodebuild.log`) and where the full log is kept; otherwise the
+ * last lines, as before.
  */
-function describeBuildFailure(deps: LocalBuildDeps, argv: string[], res: ExecResult): string {
+async function describeBuildFailure(
+	deps: LocalBuildDeps,
+	argv: string[],
+	res: ExecResult,
+	startedAt: number
+): Promise<string> {
 	const logPath = keepBuildLog(deps, res);
 	if (deps.platform !== "ios") return `${execError(argv, res)}${logPath ? ` — full log: ${logPath}` : ""}`;
+	const fromBundle = await resultBundleFailure(deps, startedAt);
+	if (fromBundle !== undefined)
+		return `exited ${res.exitCode}, ${fromBundle}${logPath ? ` — full log: ${logPath}` : ""}`;
 	const output = `${res.stdout}\n${res.stderr}`;
 	let diagnostics = parseBuildDiagnostics(output);
 	if (diagnostics.length === 0) diagnostics = parseBuildDiagnostics(expoBuildLog(deps.project.root));
@@ -499,6 +528,7 @@ export async function runLocalBuild(deps: LocalBuildDeps): AsyncResult<LocalBuil
 	const caching = await cacheEnv(deps);
 	const progress = startHeartbeat(deps);
 	let res: ExecResult;
+	const startedAt = Date.now();
 	try {
 		res = await deps.exec(argv, {
 			cwd: project.root,
@@ -509,7 +539,7 @@ export async function runLocalBuild(deps: LocalBuildDeps): AsyncResult<LocalBuil
 	} finally {
 		progress.stop();
 	}
-	if (res.exitCode !== 0) return err(`local build failed: ${describeBuildFailure(deps, argv, res)}`);
+	if (res.exitCode !== 0) return err(`local build failed: ${await describeBuildFailure(deps, argv, res, startedAt)}`);
 	keepBuildLog(deps, res);
 	const after = await computeCacheKey(deps.exec, project, platform, undefined, undefined, deps.env);
 	if (!after.success) return after;

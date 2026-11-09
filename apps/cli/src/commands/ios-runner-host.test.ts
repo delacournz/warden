@@ -102,6 +102,30 @@ describe("warden __ios-runner-host", () => {
 		expect(existsSync(`${socket}.build.json`)).toBe(false);
 	});
 
+	test("serves with a result bundle under the runner cache's results/, one tag per phone", async () => {
+		const port = await tcpRunner();
+		const c0 = testContext([]);
+		const derivedData = join(c0.cwd, "cache", "dd");
+		c0.cleanup();
+		const { c, procs, done } = run({
+			build: {
+				ensure: async () => ({
+					success: true,
+					data: { xctestrun: "/c/x.xctestrun", derivedData, bundleId: "nz.example.runner" },
+				}),
+			},
+			script: (p) => p.emit(`WARDEN_RUNNER_READY {"event":"ready","port":${port}}`),
+		});
+		await waitFor(() => c.stdout[0]);
+		const cmd = procs[0]?.cmd ?? [];
+		const bundle = cmd[cmd.indexOf("-resultBundlePath") + 1] ?? "";
+		expect(cmd).toContain("-resultBundlePath");
+		expect(bundle.startsWith(join(c0.cwd, "cache", "results", `serve-${UDID}-`))).toBe(true);
+		expect(bundle.endsWith(".xcresult")).toBe(true);
+		procs[0]?.exit(0);
+		expect(await done).toBe(0);
+	});
+
 	test("a build failure leaves no identity behind", async () => {
 		const failing: RunnerBuildPort = {
 			ensure: async () => ({ success: false, error: { code: "E_NO_TEAM", message: "no signing team" } }),

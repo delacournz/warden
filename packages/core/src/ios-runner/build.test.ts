@@ -33,7 +33,9 @@ afterEach(() => {
 type XcodebuildBehaviour = (opts: ExecOptions, argv: readonly string[]) => Promise<ExecResult>;
 
 /** Everything the build touches, faked: Xcode's version probes, `security`, and `xcodebuild` (writes products). */
-function fakeTools(over: { xcodebuild?: XcodebuildBehaviour; identities?: string; certs?: string } = {}) {
+function fakeTools(
+	over: { xcodebuild?: XcodebuildBehaviour; identities?: string; certs?: string; buildResults?: string } = {}
+) {
 	const calls: string[][] = [];
 	const success: XcodebuildBehaviour = async (_opts, argv) => {
 		const dd = argv[argv.indexOf("-derivedDataPath") + 1] ?? "";
@@ -60,6 +62,10 @@ function fakeTools(over: { xcodebuild?: XcodebuildBehaviour; identities?: string
 				return text(`<key>ExpirationDate</key><date>${new Date(clock + 7 * DAY).toISOString()}</date>`);
 			case "xcodebuild":
 				return (over.xcodebuild ?? success)(opts, cmd);
+			case "xcrun":
+				return over.buildResults === undefined
+					? { exitCode: 1, stdout: "", stderr: "no result bundle" }
+					: text(over.buildResults);
 			default:
 				return { exitCode: 127, stdout: "", stderr: `unexpected ${cmd.join(" ")}` };
 		}
@@ -254,6 +260,43 @@ describe("ensureRunnerBuild", () => {
 		const error = await failure(ensureRunnerBuild(input(tools)));
 		expect(error.code).toBe("build_failed");
 		expect(error.code === "build_failed" && error.output).toContain("symbol(s) not found");
+	});
+
+	test("every build writes a result bundle under the cache's results/", async () => {
+		const tools = fakeTools();
+		await ensureRunnerBuild(input(tools));
+		const argv = tools.builds()[0] ?? [];
+		const bundle = argv[argv.indexOf("-resultBundlePath") + 1] ?? "";
+		expect(argv).toContain("-resultBundlePath");
+		expect(basename(bundle)).toBe(`build-${clock}.xcresult`);
+		expect(dirname(bundle)).toBe(join(dirname(argv[argv.indexOf("-derivedDataPath") + 1] ?? ""), "results"));
+	});
+
+	test("an unknown failure names the first errors with file:line from the result bundle", async () => {
+		const buildResults = readFileSync(
+			join(import.meta.dir, "..", "__fixtures__", "xcresult", "build-results.failed.json"),
+			"utf8"
+		);
+		const tools = fakeTools({
+			xcodebuild: async () => ({ exitCode: 65, stdout: "** TEST BUILD FAILED **", stderr: "" }),
+			buildResults,
+		});
+		const error = await failure(ensureRunnerBuild(input(tools)));
+		expect(error.code).toBe("build_failed");
+		expect(error.message).toContain(
+			"1 error: /Users/dev/Demo/Sources/Demo/Demo.swift:1: Cannot convert return expression of type 'String' to return type 'Int'"
+		);
+		const xcrun = tools.calls.find((c) => c[0] === "xcrun") ?? [];
+		expect(error.code === "build_failed" && error.resultBundle).toBe(xcrun[xcrun.indexOf("--path") + 1]);
+	});
+
+	test("an unreadable result bundle falls back to the output tail, still naming the bundle", async () => {
+		const tools = fakeTools({
+			xcodebuild: async () => ({ exitCode: 65, stdout: "line1\nld: symbol(s) not found", stderr: "" }),
+		});
+		const error = await failure(ensureRunnerBuild(input(tools)));
+		expect(error.code === "build_failed" && error.output).toContain("symbol(s) not found");
+		expect(error.code === "build_failed" && error.resultBundle).toEndWith(".xcresult");
 	});
 
 	test("a phone that stays locked past the grace period stops the build with device_locked", async () => {

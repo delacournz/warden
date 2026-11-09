@@ -1,3 +1,4 @@
+import { describeTestFailures, prepareResultBundle, resultsDirFor } from "@delacour/warden-core/xcresult";
 import { ok, type Result } from "@delacour/warden-types/result";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
@@ -19,6 +20,18 @@ export type IosRunnerHostDeps = {
 	pollMs?: number;
 	signal?: AbortSignal;
 };
+
+/**
+ * A fresh result bundle per `xcodebuild` launch under the runner cache's `results/` (`serve-<udid>-<ms>.xcresult`, the
+ * last 3 kept); undefined when the directory cannot be written, so the runner still starts without one.
+ */
+function serveBundle(derivedData: string, udid: string): string | undefined {
+	try {
+		return prepareResultBundle(resultsDirFor(derivedData), `serve-${udid}`);
+	} catch {
+		return undefined;
+	}
+}
 
 type HostOptionValues = { udid?: string; socket?: string; idleTimeout?: string };
 
@@ -88,7 +101,14 @@ async function host(ctx: CommandContext, deps: IosRunnerHostDeps, opts: HostOpti
 		now: () => Date.now(),
 	};
 	const after = deps.after ?? defaultAfter;
-	const sessionDeps: SessionDeps = { spawn: deps.spawn ?? defaultSpawn, route, after, log: (line) => ctx.err(line) };
+	const sessionDeps: SessionDeps = {
+		spawn: deps.spawn ?? defaultSpawn,
+		route,
+		after,
+		log: (line) => ctx.err(line),
+		resultBundle: () => serveBundle(built.data.derivedData, udid),
+		readFailures: (bundle) => describeTestFailures(bundle, ctx.exec),
+	};
 	const runnerIdle = idle.data === 0 ? 0 : Math.round(idle.data / 1000) + RUNNER_IDLE_MARGIN_SECONDS;
 	const started = await startSession(sessionDeps, { udid, artifacts: built.data, runnerIdleSeconds: runnerIdle });
 	if (!started.success) return die(faultCode(started.error), started.error.message);
