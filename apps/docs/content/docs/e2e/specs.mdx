@@ -35,7 +35,7 @@ test("add a todo", async ({ device, screen }) => {
 | `platforms` | run only on these platforms, e.g. `["ios"]` |
 | `retry` | extra attempts after a failure; only the last attempt is reported |
 
-`test.skip`, `test.only`, `test.skipIf(condition)` and `test.todo(title)` work as in `bun:test` (a `test.todo` fails when bun runs with `--todo`). A test without a body throws `INVALID_ARGUMENT`.
+`test.skip`, `test.only`, `test.skipIf(condition)` and `test.todo(title)` work as in `bun:test` (a `test.todo` fails when bun runs with `--todo`). A test skipped when collected (`test.skip`, `skipIf(true)`, `platforms` without this device's platform, `requires` it lacks) gets a `skipped` line in `results.jsonl` with code `SKIPPED` and the reason (`skipped: runs on android only, this device is ios`), so `warden e2e` counts it. A test without a body throws `INVALID_ARGUMENT`.
 
 
 ## Find elements

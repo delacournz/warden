@@ -533,11 +533,20 @@ async function runCleanup<F extends object>(
  * (code `SKIPPED`), the `■` line, then the error, so bun does not count a test that never ran as passed.
  */
 export function skipInChain(session: Session, test: ResultRef, cause: readonly string[]): never {
-	const { env } = session;
 	const error = new E2eError(
 		"SKIPPED",
 		`not run: "${cause.join(" > ")}" failed earlier in this describe.serial group, which shares one app state`
 	);
+	recordSkipped(session, test, error);
+	throw error;
+}
+
+/**
+ * Writes the `skipped` results line (and console line) for a test that does not run: one a `describe.serial` failure
+ * stopped, or one skipped when collected (`test.skip`, `skipIf`, `platforms`, `requires`), which bun never calls.
+ */
+export function recordSkipped(session: Session, test: ResultRef, error: E2eError): void {
+	const { env } = session;
 	const startedAt = Date.now();
 	const result: TestResult = {
 		file: test.file,
@@ -551,7 +560,6 @@ export function skipInChain(session: Session, test: ResultRef, cause: readonly s
 	};
 	session.log(formatConsoleLine({ type: "test-end", result }, { clock: !env.logTimestamps }) ?? "");
 	session.results.append(result);
-	throw error;
 }
 
 /** What `runHookAttempt` runs: a `beforeAll` / `afterAll` hook, or a serial chain's one `app.open()`. */

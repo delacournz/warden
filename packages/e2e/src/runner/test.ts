@@ -3,8 +3,16 @@ import { conditionsOf } from "../conditions/device-conditions";
 import type { Platform } from "../driver/driver.types";
 import { missingRequirements, type Requirement } from "../driver/requirements";
 import { E2eError } from "../errors";
-import { getSession } from "../session";
-import { type FixtureEntry, type FixtureSetup, runAttempt, runHookAttempt, runnerTiming, skipInChain } from "./attempt";
+import { getSession, peekSession } from "../session";
+import {
+	type FixtureEntry,
+	type FixtureSetup,
+	recordSkipped,
+	runAttempt,
+	runHookAttempt,
+	runnerTiming,
+	skipInChain,
+} from "./attempt";
 import { callerFile } from "./callsite";
 import { type BaseFixtures, SYSTEM_ALERTS } from "./fixtures.types";
 import {
@@ -74,13 +82,30 @@ export type TestApi<F extends object> = TestCallable<F> & {
 	extend<Extra extends object>(defs: FixtureDefs<F, Extra>): TestApi<F & Extra>;
 };
 
-type Mode = "run" | "skip" | "only";
+type Mode = "run" | "skip" | "skipIf" | "only";
 
 /** Scopes (and their ancestors) that already hold a registered test: bun fixed those tests' timeouts then. */
 const registered = new WeakSet<Scope>();
 
 function markRegistered(scope: Scope): void {
 	for (let s: Scope | undefined = scope; s !== undefined; s = s.parent) registered.add(s);
+}
+
+/** Why a test is skipped when collected, or undefined when it runs. */
+function skipReasonOf(
+	mode: Mode,
+	options: TestOptions,
+	defaults: ReturnType<typeof registrationDefaults>
+): string | undefined {
+	if (mode === "skip" || options.skip === true) return "test.skip";
+	if (mode === "skipIf") return "test.skipIf(true)";
+	const { platform, deviceKind } = defaults;
+	if (options.platforms !== undefined && platform !== undefined && !options.platforms.includes(platform)) {
+		return `runs on ${options.platforms.join(", ")} only, this device is ${platform}`;
+	}
+	const missing = missingRequirements({ platform, deviceKind }, options.requires);
+	if (missing.length > 0) return `needs ${missing.join(", ")}, which this device lacks`;
+	return undefined;
 }
 
 function registerTest<F extends object>(
@@ -110,12 +135,7 @@ function registerTest<F extends object>(
 		);
 	}
 
-	const wrongPlatform =
-		options.platforms !== undefined &&
-		defaults.platform !== undefined &&
-		!options.platforms.includes(defaults.platform);
-	const lacking =
-		missingRequirements({ platform: defaults.platform, deviceKind: defaults.deviceKind }, options.requires).length > 0;
+	const skipReason = skipReasonOf(mode, options, defaults);
 	const only = mode === "only" || options.only === true;
 	if (only) markOnly();
 
@@ -146,8 +166,13 @@ function registerTest<F extends object>(
 	};
 	const bunOptions = { timeout: bunTimeoutMs, retry };
 
-	if (mode === "skip" || options.skip === true || wrongPlatform || lacking) bunTest.skip(title, run, bunOptions);
-	else if (only) bunTest.only(title, run, bunOptions);
+	if (skipReason !== undefined) {
+		bunTest.skip(title, run, bunOptions);
+		const session = peekSession();
+		if (session !== undefined) {
+			recordSkipped(session, { file, title: path, only }, new E2eError("SKIPPED", `skipped: ${skipReason}`));
+		}
+	} else if (only) bunTest.only(title, run, bunOptions);
 	else bunTest(title, run, bunOptions);
 }
 
@@ -187,7 +212,7 @@ function makeTest<F extends object>(fixtures: readonly FixtureEntry[]): TestApi<
 			});
 		},
 		skipIf(condition: boolean): TestCallable<F> {
-			return makeCallable<F>(fixtures, condition ? "skip" : "run");
+			return makeCallable<F>(fixtures, condition ? "skipIf" : "run");
 		},
 		beforeEach(hook: (fixtures: F) => void | Promise<void>): void {
 			currentScope().beforeEach.push(ownHook(eraseHook(hook), fixtures));

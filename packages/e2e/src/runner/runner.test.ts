@@ -359,6 +359,26 @@ describe("skip", () => {
 		expect(run.exitCode).toBe(0);
 		expect(run.log).toEqual(["skipIf false ran", "ios only ran"]);
 	});
+
+	test("every skipped test gets a skipped results line saying why", async () => {
+		const run = await runSpec("skip");
+		const skipped = run.results.filter((r) => r.status === "skipped");
+		expect(skipped.map((r) => [r.title.join(" > "), r.error?.code])).toEqual([
+			["skipped", "SKIPPED"],
+			["skipIf true", "SKIPPED"],
+			["option skip", "SKIPPED"],
+			["android only", "SKIPPED"],
+		]);
+		expect(byTitle(run, "android only").error?.message).toBe("skipped: runs on android only, this device is ios");
+		expect(byTitle(run, "skipIf true").error?.message).toBe("skipped: test.skipIf(true)");
+		expect(run.stdout).toContain("android only");
+	});
+
+	test("a test a device lacks a capability for is skipped with the capability named", async () => {
+		const phone = await runSpec("requires", { WARDEN_DEVICE_KIND: "physical" });
+		expect(byTitle(phone, "needs pinch").status).toBe("skipped");
+		expect(byTitle(phone, "needs pinch").error?.message).toBe("skipped: needs pinch, which this device lacks");
+	});
 });
 
 describe("requires", () => {
