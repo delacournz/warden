@@ -1,10 +1,14 @@
 ---
-title: Add E2E tests to an existing React Native app
-description: Add end-to-end tests to an existing React Native or Expo app with warden. Paste one prompt into your coding agent, or follow the steps to write, run and gate a first spec.
+title: Add E2E tests to an existing Expo app
+description: Add end-to-end tests to an existing Expo (React Native) app with warden. Paste one prompt into your coding agent, or follow the steps to write, run and gate a first spec.
 icon: FlaskConical
 ---
 
-warden is a React Native and Expo end-to-end testing framework for coding agents. Specs are TypeScript files (`*.e2e.ts`) that drive your app on a real iOS simulator or Android emulator; `warden e2e` leases the devices, installs your app and runs the specs on all of them at once.
+warden is an end-to-end testing framework for Expo (React Native) apps, for coding agents. Specs are TypeScript files (`*.e2e.ts`) that drive your app on a real iOS simulator or Android emulator; `warden e2e` leases the devices, installs your app and runs the specs on all of them at once.
+
+<Callout type="warn">
+`warden e2e` needs an Expo app: the Expo SDK, including a prebuilt or dev-client Expo project. A bare React Native app (only `react-native` in `package.json`) cannot run `warden e2e` today. It can use [`warden dev`](/docs/sims/dev) (Metro and the app on a leased simulator) and [`warden ui`](/docs/sims/ui) (drive the app by hand).
+</Callout>
 
 ## Paste this into your coding agent
 
@@ -12,22 +16,23 @@ Works in Claude Code, Codex, Cursor and any agent that can run shell commands.
 
 <CopyBlock
   label="prompt"
-  text={`Add end-to-end tests to this React Native / Expo app with warden.
-1. If warden is missing: install it with bunx @delacour/warden install if bun is installed (check with command -v bun), otherwise npx @delacour/warden install. Show me the diff before you approve it. If warden is not found afterwards, add ~/.local/bin to PATH. Then run warden doctor and fix what it reports.
-2. Run warden skill show and read it, including the specs and suites references. Follow its rules.
-3. Run warden init (add --bundle-id <id> if the app has none) and install every package it names.
-4. Add @delacour/warden-e2e as a dev dependency, at the version warden --version prints.
-5. Pick the app's main user flow. Add testID and accessible to every element the flow touches.
-6. Write e2e/<flow>.e2e.ts with test and expect from @delacour/warden-e2e: open the app, act with screen.getByTestId(...), assert with expect(...).toBeVisible().
-7. Check the suite in warden.config.ts names this app's project and specsDir.
-8. Run warden e2e --count 2. If a spec fails, read screen-at-failure.txt and e2e-report.json in the batch dir and fix the cause, never weaken an assertion.
-9. Add a CI job that runs warden e2e on a macOS runner (https://warden.co.nz/docs/e2e/ci).
+  text={`Add end-to-end tests to this Expo app with warden.
+1. Read package.json. If it has no expo dependency (a bare React Native app), stop here and tell me: warden e2e needs an Expo app, and a bare React Native app can use warden dev and warden ui today (https://warden.co.nz/docs/sims/dev). Do not continue.
+2. If warden is missing: install it with bunx @delacour/warden install if bun is installed (check with command -v bun), otherwise npx @delacour/warden install. Show me the diff before you approve it. If warden is not found afterwards, add ~/.local/bin to PATH. Then run warden doctor and fix what it reports.
+3. Run warden skill show and read it, including the specs and suites references. Follow its rules.
+4. Run warden init (add --bundle-id <id> if the app has none) and install every package it names.
+5. Add @delacour/warden-e2e as a dev dependency, at the version warden --version prints.
+6. Pick the app's main user flow. Add testID and accessible to every element the flow touches.
+7. Write e2e/<flow>.e2e.ts with test and expect from @delacour/warden-e2e: open the app, act with screen.getByTestId(...), assert with expect(...).toBeVisible().
+8. Check the suite in warden.config.ts names this app's project and specsDir.
+9. Run warden e2e --count 2. If a spec fails, read screen-at-failure.txt and e2e-report.json in the batch dir and fix the cause, never weaken an assertion.
+10. Add a CI job that runs warden e2e on a macOS runner (https://warden.co.nz/docs/e2e/ci).
 Report the spec you wrote, the testIDs you added and the result.`}
 />
 
 ## Or do it by hand
 
-You need warden installed ([Installation](/docs/getting-started/installation)), and an Expo or React Native app on macOS with Xcode and an iOS runtime (Android needs the Android SDK).
+You need warden installed ([Installation](/docs/getting-started/installation)), and an Expo app on macOS with Xcode and an iOS runtime (Android needs the Android SDK).
 
 <Steps>
 <Step>

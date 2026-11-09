@@ -50,8 +50,8 @@ describe("llmsIndex", () => {
 		expect(quote).toContain("AI coding agents");
 	});
 
-	test("has a task section with the exact steps to add E2E tests to a React Native app", () => {
-		const task = out.split("## Task: add E2E tests to a React Native or Expo app")[1]?.split("\n## ")[0] ?? "";
+	test("has a task section with the exact steps to add E2E tests to an Expo app", () => {
+		const task = out.split("## Task: add E2E tests to an Expo (React Native) app")[1]?.split("\n## ")[0] ?? "";
 		for (const text of [
 			"warden install",
 			"warden doctor",
@@ -64,6 +64,11 @@ describe("llmsIndex", () => {
 			"warden e2e",
 			"/docs/e2e/add-to-existing-app",
 			"/docs/e2e/ci",
+			"`warden e2e` needs an Expo app",
+			"bare React Native",
+			"warden dev",
+			"warden ui",
+			"/docs/sims/dev",
 		]) {
 			expect(task).toContain(text);
 		}
@@ -90,8 +95,16 @@ describe("add-to-existing-app page", () => {
 		const raw = readFileSync(page, "utf8");
 		const title = raw.match(/^title: (.+)$/m)?.[1] ?? "";
 		const description = raw.match(/^description: (.+)$/m)?.[1] ?? "";
-		expect(title).toContain("React Native");
+		expect(title).toContain("Expo");
 		for (const text of ["React Native", "Expo", "end-to-end tests"]) expect(description).toContain(text);
+	});
+
+	test("says warden e2e needs an Expo app and points bare React Native apps to warden dev / ui", () => {
+		const raw = readFileSync(page, "utf8");
+		expect(raw).toContain("`warden e2e` needs an Expo app");
+		expect(raw).toContain("bare React Native");
+		expect(raw).toContain("/docs/sims/dev");
+		expect(raw).toContain("/docs/sims/ui");
 	});
 
 	test("is listed in the e2e section's meta", () => {

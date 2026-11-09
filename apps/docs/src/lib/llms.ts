@@ -7,11 +7,13 @@ import { githubUrl, siteUrl } from "./shared";
  */
 const HEADER = `# warden
 
-> warden is a React Native and Expo end-to-end (E2E) testing framework and simulator manager for AI coding agents. Agents write \`*.e2e.ts\` specs in TypeScript (npm \`@delacour/warden-e2e\`), and the \`warden\` CLI (npm \`@delacour/warden\`) runs them in parallel on iOS simulators and Android emulators it leases, so every agent and worktree on one Mac gets its own device, port and app build without colliding.
+> warden is an end-to-end (E2E) testing framework and simulator manager for Expo (React Native) apps, built for AI coding agents. Agents write \`*.e2e.ts\` specs in TypeScript (npm \`@delacour/warden-e2e\`), and the \`warden\` CLI (npm \`@delacour/warden\`) runs them in parallel on iOS simulators and Android emulators it leases, so every agent and worktree on one Mac gets its own device, port and app build without colliding. \`warden e2e\` needs an Expo app; a bare React Native app can use \`warden dev\` and \`warden ui\` today.
 
-## Task: add E2E tests to a React Native or Expo app
+## Task: add E2E tests to an Expo (React Native) app
 
-Run these in the app's repo. Full page with a copy-paste prompt: ${siteUrl}/docs/e2e/add-to-existing-app.md
+\`warden e2e\` needs an Expo app (Expo SDK, including a prebuilt / dev-client Expo project). Check \`package.json\` for an \`expo\` dependency first. A bare React Native app (only \`react-native\`) cannot run \`warden e2e\` yet: stop and tell the user, and offer \`warden dev\` (Metro + the app on a leased simulator) and \`warden ui\` (drive the app by hand): ${siteUrl}/docs/sims/dev.md and ${siteUrl}/docs/sims/ui.md
+
+Run these in the Expo app's repo. Full page with a copy-paste prompt: ${siteUrl}/docs/e2e/add-to-existing-app.md
 
 1. Install and wire the agent: \`bunx @delacour/warden install\` (or \`npx @delacour/warden install\`), then \`warden doctor\`.
 2. Read the rules: \`warden skill show\`.
