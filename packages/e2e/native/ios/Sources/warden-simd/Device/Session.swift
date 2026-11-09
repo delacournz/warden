@@ -253,6 +253,15 @@ extension WireError {
     if let error = error as? SimulatorApplicationLaunchError { return from(launch: error) }
     if let error = error as? SimulatorLaunchCtlError { return from(launchCtl: error) }
     if let error = error as? SimulatorLifecycleError { return from(lifecycle: error) }
+    if let display = error as? SimulatorDisplayError {
+      // a read during a rotation: the display settles within the rotation animation, so the caller looks again
+      switch display {
+      case .changed, .transitioning:
+        return WireError(.internal, display.localizedDescription, retryable: true, detail: ["reason": "display_changing"])
+      default:
+        return WireError(.internal, display.localizedDescription)
+      }
+    }
     if error is SimulatorHIDError {
       return WireError(.hid, error.localizedDescription, detail: ["kind": "SimulatorHIDError"])
     }

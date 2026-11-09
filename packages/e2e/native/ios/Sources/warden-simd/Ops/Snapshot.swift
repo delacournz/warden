@@ -257,6 +257,21 @@ extension Session {
       maxNodes: maxNodes)
   }
 
+  /// The screen as the app's interface draws it. `screen` is the portrait-up size; an app turned with the device
+  /// reports landscape frames (874×402 on a 402×874 iPhone), so its root decides: a root wider than tall that spans
+  /// most of the turned width swaps the axes. A portrait-locked app on a turned device keeps its portrait root, and so
+  /// the portrait size. Without one the size is left as it is.
+  static func interfaceScreen(
+    _ screen: (width: Double, height: Double, scale: Double), roots: [AccessibilityDocumentElement]
+  ) -> (width: Double, height: Double, scale: Double) {
+    guard screen.width > 0, screen.height > screen.width else { return screen }
+    let turned = roots.contains { root in
+      let frame = ElementBuilder.rect(ElementBuilder.flat(root.frame))
+      return frame.width > frame.height && frame.width >= screen.height * 0.9
+    }
+    return turned ? (screen.height, screen.width, screen.scale) : screen
+  }
+
   static func screenJSON(_ size: (width: Double, height: Double, scale: Double)) -> JSON {
     ["width": .double(size.width), "height": .double(size.height), "scale": .double(size.scale)]
   }
@@ -371,6 +386,7 @@ extension Session {
     document: AccessibilityDocument, backend: AXBackend, screen: (width: Double, height: Double, scale: Double),
     interactiveOnly: Bool, maxDepth: Int? = nil, maxNodes: Int? = nil
   ) -> [String: JSON] {
+    let screen = interfaceScreen(screen, roots: document.elements)
     let built = ElementBuilder.build(
       document.elements,
       options: buildOptions(
@@ -581,7 +597,8 @@ extension Session {
     document: AccessibilityDocument, backend: AXBackend, screen: (width: Double, height: Double, scale: Double)
   ) -> JSON? {
     let built = ElementBuilder.build(
-      document.elements, options: buildOptions(screen: screen, document: document.screen))
+      document.elements,
+      options: buildOptions(screen: interfaceScreen(screen, roots: document.elements), document: document.screen))
     let alert =
       topmostModal(in: built.elements, modalType: document.modal?.elementType)
       ?? (backend == .ax ? hostAlertRoot(in: built.elements) : nil)
