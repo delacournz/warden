@@ -25,9 +25,9 @@ function devtoolsOf(device: Device): NonNullable<Device["devtools"]> {
  * reload back to the first screen (last, since it resets the app).
  */
 describe.serial("devtools", () => {
-	/** bun still runs a group's `beforeAll` when every test in it is skipped: no launch on a Release run. */
+	/** Skipped with the group on a Release run, where every test in it is skipped. */
 	beforeAll(async ({ app, screen }) => {
-		if (onDevClient) await launch(app, screen);
+		await launch(app, screen);
 	});
 
 	devtoolsTest("evaluate runs JS in the app", async ({ device }) => {

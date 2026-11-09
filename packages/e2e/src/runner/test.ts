@@ -91,6 +91,17 @@ function markRegistered(scope: Scope): void {
 	for (let s: Scope | undefined = scope; s !== undefined; s = s.parent) registered.add(s);
 }
 
+/**
+ * Scopes (and their ancestors) holding a test that is not skipped when collected. A scope without one runs none of
+ * its `beforeAll` / `afterAll` hooks or its chain's launch: bun would run them anyway, opening the app for nothing.
+ * Read when the hooks run, after the whole file is collected.
+ */
+const runnable = new WeakSet<Scope>();
+
+function markRunnable(scope: Scope): void {
+	for (let s: Scope | undefined = scope; s !== undefined; s = s.parent) runnable.add(s);
+}
+
 /** Why a test is skipped when collected, or undefined when it runs. */
 function skipReasonOf(
 	mode: Mode,
@@ -136,6 +147,7 @@ function registerTest<F extends object>(
 	}
 
 	const skipReason = skipReasonOf(mode, options, defaults);
+	if (skipReason === undefined) markRunnable(scope);
 	const only = mode === "only" || options.only === true;
 	if (only) markOnly();
 
@@ -288,8 +300,9 @@ function registerDescribe(title: string, options: DescribeOptions, body: Describ
 	bunDescribe(title, () => {
 		// the chain's one launch, registered before the body's hooks so it runs before its beforeAll
 		if (scope.serial && chainOf(scope) === scope) {
-			bunBeforeAll(() =>
-				runHookAttempt(getSession(), {
+			bunBeforeAll(async () => {
+				if (!runnable.has(scope)) return;
+				await runHookAttempt(getSession(), {
 					file,
 					title: [...scope.title, "launch"],
 					scope,
@@ -300,8 +313,8 @@ function registerDescribe(title: string, options: DescribeOptions, body: Describ
 						if (conditions?.declared === true) await conditions.applyBaseline();
 						if (resolveUse(scope, registrationDefaults()).launch === "fresh") await app.open();
 					},
-				})
-			);
+				});
+			});
 		}
 		const returned: unknown = runInScope(scope, body);
 		if (returned instanceof Promise) {
@@ -338,7 +351,10 @@ function registerAll(kind: "beforeAll" | "afterAll", hook: Hook): void {
 	const scope = currentScope();
 	const file = callerFile();
 	const register = kind === "beforeAll" ? bunBeforeAll : bunAfterAll;
-	register(() => runHookAttempt(getSession(), { file, title: [...scope.title, kind], scope, kind, run: hook }));
+	register(async () => {
+		if (!runnable.has(scope)) return;
+		await runHookAttempt(getSession(), { file, title: [...scope.title, kind], scope, kind, run: hook });
+	});
 }
 
 /**

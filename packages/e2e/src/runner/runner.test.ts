@@ -611,6 +611,13 @@ describe("describe.serial", () => {
 		expect(run.stdout).toContain("serial › hook launch passed");
 	});
 
+	test("a scope whose tests are all skipped runs no launch, beforeAll or afterAll", async () => {
+		const run = await runSpec("serial-skipped");
+		expect(run.exitCode).toBe(0);
+		expect(run.log).toEqual(["kept beforeAll launches=1", "runs ran"]);
+		expect(run.stdout).not.toContain("all skipped › hook launch");
+	});
+
 	test('`launch: "none"` on the group leaves the app alone', async () => {
 		const run = await runSpec("serial-none");
 		expect(run.exitCode).toBe(0);
