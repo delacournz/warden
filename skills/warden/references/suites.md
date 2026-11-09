@@ -10,7 +10,7 @@ Selects the specs a change needs, leases devices, runs one `bun test` per spec (
 warden e2e example --dry-run --explain     # what would run and why, nothing leased
 warden e2e example                         # the specs this branch needs
 warden e2e example --all                   # every spec
-warden e2e example --specs todos,settings  # exactly these ids / globs
+warden e2e example --specs app/todos,app/settings  # exactly these ids / globs (`app/**` too)
 ```
 
 | Flag | Meaning |

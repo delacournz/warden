@@ -14,7 +14,7 @@ icon: Bug
 When a spec fails, read the evidence in this order: the run's stdout, `screen-at-failure.txt`, `failure.png`, `trace.jsonl`, then the logs. A missing element is fixed in the component, not with retries.
 
 ```bash
-warden e2e example-dev --specs sign-in --json | jq '.specs[] | select(.verdict != "passed")'
+warden e2e example-dev --specs app/auth --json | jq '.specs[] | select(.verdict != "passed")'
 ```
 
 ## Batch directory

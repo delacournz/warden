@@ -115,7 +115,7 @@ All real commands; every reel shows only what ran. One clip at a time, release b
 
 | Clip | Pipeline | Command |
 |---|---|---|
-| `e2e/parallel` | `batch-take.ts`: `warden e2e <suite> --count N --record --headless` into `<work>/rec`, styling each leased sim dark + 9:41 as it boots, then `compose.ts --height 1080` | `bun run demo:batch e2e/parallel --suite example --specs devtools,gestures,onboarding,sign-in,todo-detail --count 2` (`--record-only` / `--compose-only`; header shows spec count; counter reads `N/total shards done` when specs differ from jobs) |
+| `e2e/parallel` | `batch-take.ts`: `warden e2e <suite> --count N --record --headless` into `<work>/rec`, styling each leased sim dark + 9:41 as it boots, then `compose.ts --height 1080` | `bun run demo:batch e2e/parallel --suite example --specs app/devtools,app/gestures,app/onboarding,app/auth,app/todos --count 2` (`--record-only` / `--compose-only`; header shows spec count; counter reads `N/total shards done` when specs differ from jobs) |
 | `dev/worktrees` | `LanesDemoDefinition`: one `recordDev` per lane concurrently, a shell strip (`warden ls`) below | `bun run demo:lanes dev/worktrees` (`lanes.ts`, `lanes-frame.py`, `lanes-demo.ts`; lanes share one clock via `DevTake.startedAtS`) |
 | `golden/clone` | `DevDemoDefinition.script`: a shell script runs in the PTY instead of `warden dev` | `bun run demo:dev golden/clone` |
 | `debug/failure` | `script` + `rawVideo` | `bun run demo:dev debug/failure --sheet` |

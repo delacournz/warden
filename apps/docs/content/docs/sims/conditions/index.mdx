@@ -128,7 +128,7 @@ e2e: {
 A suite's key replaces the top-level one for that area. A bad value fails config load. On iOS, declaring `network` or `clock` launches the app with the dylib, which is why the example runs its condition specs in a separate `conditions` suite: the other specs keep a plain launch.
 
 ```bash
-warden e2e conditions --specs network-offline,network-slow,location-route,clock-trial
+warden e2e conditions --specs conditions/network,conditions/location,conditions/clock
 ```
 
 The camera feed is the suite's own `camera` key, not a `conditions` key ([Camera](/docs/sims/conditions/camera#in-a-suite)). Biometrics is not one either: enrolled devices come from `biometrics: true` ([Biometrics](/docs/sims/conditions/biometrics#enrolled-devices-biometrics-true)).

@@ -162,7 +162,7 @@ const EXAMPLE_SUITE = {
  * ```bash
  * warden e2e example                 # specs this branch needs, 2 sims (--all: every spec)
  * warden e2e example --dev --all     # same specs on the dev client + warden's Metro
- * warden e2e example --specs perf --perf  # profile every attempt too (reports under each attempt's perf/)
+ * warden e2e example --specs app/perf --perf  # profile every attempt too (reports under each attempt's perf/)
  * warden e2e conditions              # network / location / clock specs (iOS app launched with the network dylib)
  * warden e2e a11y                  # the accessibility spec (iOS launched with the a11y library)
  * warden e2e biometrics --all        # the biometrics spec alone, on +bio devices (the example suite excludes it)

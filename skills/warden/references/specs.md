@@ -270,38 +270,44 @@ Accessibility matchers (`a11y.md`): on a locator `toHaveAccessibleName(t)`, `toH
 - `expect.soft(locator)` records the failure and the test fails when its body ends.
 - Failures are `E2eError` with a `code`: `LOCATOR_NOT_FOUND LOCATOR_AMBIGUOUS INVALID_LOCATOR ACTION_FAILED TIMEOUT NOT_ACTIONABLE INVALID_ARGUMENT SESSION DRIVER ASSERTION PERF_BUDGET RUN_FAILED READ_DEGRADED SKIPPED`. `E2eError` also carries `screen` (AX tree text at the failure, when known) and `matches` (count for `LOCATOR_AMBIGUOUS`).
 
-## Example spec (`apps/example/e2e/todos.e2e.ts`)
+## Example spec (`apps/example/e2e/app/todos.e2e.ts`)
+
+A happy path as one `describe.serial` journey: one launch, one check per test, each test leaving the list the next one names.
 
 ```ts
-import { expect, test } from "@delacour/warden-e2e";
-import { signedIn } from "./helpers/steps";
-import { ids } from "./helpers/ids";
+import { beforeAll, describe, expect, test } from "@delacour/warden-e2e";
+import { ids } from "../helpers/ids";
+import { SPEC_OPTIONS, signedIn } from "../helpers/steps";
 
-test("add, complete and filter todos", async ({ device, screen }) => {
-	await signedIn(device, screen);
-	const remaining = screen.getByTestId(ids.todos.remaining);
+test.use(SPEC_OPTIONS);
 
-	await screen.getByTestId(ids.todos.input).fill("Write e2e specs");
-	await screen.getByTestId(ids.todos.add).tap();
-	await expect(screen.getByTestId(ids.todos.title("todo-1"))).toHaveText("Write e2e specs");
-	await expect(remaining).toHaveText("2 left");
+describe.serial("todos journey", () => {
+	beforeAll(async ({ app, screen }) => {
+		await signedIn(app, screen);
+	});
 
-	await screen.getByTestId(ids.todos.check("todo-1")).tap();
-	await expect(screen.getByTestId(ids.todos.check("todo-1"))).toBeChecked();
-	await expect(remaining).toHaveText("1 left");
+	test("adding appends the todo as active", async ({ screen }) => {
+		await screen.getByTestId(ids.todos.input).fill("Write e2e specs");
+		await screen.getByTestId(ids.todos.add).tap();
+		await expect(screen.getByTestId(ids.todos.title("todo-1"))).toHaveText("Write e2e specs");
+		await expect(screen.getByTestId(ids.todos.remaining)).toHaveText("2 left");
+	});
 
-	await screen.getByTestId(ids.todos.filter("active")).tap();
-	await expect(screen.getByTestId(ids.todos.row("welcome"))).toBeVisible();
-	await expect(screen.getByTestId(ids.todos.row("todo-1"))).toBeHidden();
+	test("checking a todo counts it done", async ({ screen }) => {
+		await screen.getByTestId(ids.todos.check("todo-1")).tap();
+		await expect(screen.getByTestId(ids.todos.check("todo-1"))).toBeChecked();
+		await expect(screen.getByTestId(ids.todos.remaining)).toHaveText("1 left");
+	});
 
-	await screen.getByTestId(ids.todos.check("welcome")).tap();
-	await expect(screen.getByTestId(ids.todos.empty)).toBeVisible();
-
-	await screen.getByTestId(ids.todos.filter("done")).tap();
-	await expect(screen.getByTestId(ids.todos.row("todo-1"))).toBeVisible();
-	await expect(remaining).toHaveText("0 left");
+	test("the Active filter hides done todos", async ({ screen }) => {
+		await screen.getByTestId(ids.todos.filter("active")).tap();
+		await expect(screen.getByTestId(ids.todos.row("welcome"))).toBeVisible();
+		await expect(screen.getByTestId(ids.todos.row("todo-1"))).toBeHidden();
+	});
 });
 ```
+
+A test whose point is a fresh launch (a relaunch signs out, a denied permission set before launch) stays a plain `test`. `apps/example/e2e/framework/` checks the spec API itself (queries, matchers, actions, runner, device).
 
 ## Helper patterns (`apps/example/e2e/helpers/steps.ts`)
 
