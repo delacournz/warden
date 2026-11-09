@@ -170,3 +170,11 @@ describe("traceDevice platform fields", () => {
 		expect(spans()).toEqual([]);
 	});
 });
+
+describe("traceDevice select", () => {
+	test("select passes through without a span", () => {
+		const { device, spans } = setup("android");
+		expect(device.select({ ios: "a", android: "b" })).toBe("b");
+		expect(spans()).toEqual([]);
+	});
+});

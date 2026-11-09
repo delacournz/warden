@@ -18,6 +18,7 @@ export function traceDevice(device: Device, span: SpanRunner | undefined): Devic
 		os: device.os,
 		isIOS: device.isIOS,
 		isAndroid: device.isAndroid,
+		select: (options) => device.select(options),
 		a11yAudit: (options) => span("device.a11yAudit", () => device.a11yAudit(options)),
 		announcements: (options) => span("device.announcements", () => device.announcements(options)),
 		screenReader: {

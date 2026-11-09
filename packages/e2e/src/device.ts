@@ -119,6 +119,18 @@ export type DeviceBiometrics = {
 	fail(): Promise<BiometricState>;
 };
 
+/**
+ * Values per platform for `device.select`: both `ios` and `android`, or a `default` for whichever is left out.
+ * A platform key wins over `default` even when its value is `undefined`.
+ */
+export type PlatformSelect<T> = { ios: T; android: T; default?: T } | { ios?: T; android?: T; default: T };
+
+/** The value of `options` for `platform`: its own key when present, else `default`. */
+export function selectForPlatform<T>(platform: Platform, options: PlatformSelect<T>): T {
+	if (Object.hasOwn(options, platform)) return options[platform] as T;
+	return options.default as T;
+}
+
 export type Device = DeviceA11y & {
 	/**
 	 * The platform under test (`"ios"` | `"android"`), like React Native's `Platform.OS`. Branch a flow on it:
@@ -129,6 +141,11 @@ export type Device = DeviceA11y & {
 	readonly isIOS: boolean;
 	/** `device.os === "android"`. */
 	readonly isAndroid: boolean;
+	/**
+	 * The value for the platform under test, like React Native's `Platform.select`:
+	 * `screen.getByText(device.select({ ios: "Done", android: "OK" }))`. Give both platforms, or a `default`.
+	 */
+	select<T>(options: PlatformSelect<T>): T;
 	/**
 	 * Answers the system alert / sheet on top. `accept` presses the first present of OK, Allow, Open,
 	 * Continue, Yes, Done, Allow While Using App, Allow Once (else the last button); `dismiss` the first
@@ -403,6 +420,7 @@ export function createDevice({
 		os: driver.platform,
 		isIOS: driver.platform === "ios",
 		isAndroid: driver.platform === "android",
+		select: (options) => selectForPlatform(driver.platform, options),
 		a11yAudit: a11y.a11yAudit,
 		screenReader: a11y.screenReader,
 		announcements: a11y.announcements,

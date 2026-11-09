@@ -33,7 +33,7 @@ export type {
 	RouteOptions,
 	TimelineStepInput,
 } from "./conditions/device-conditions";
-export type { BiometricState, DeviceBiometrics } from "./device";
+export type { BiometricState, DeviceBiometrics, PlatformSelect } from "./device";
 export type {
 	A11yAnnouncement,
 	A11yAnnouncements,

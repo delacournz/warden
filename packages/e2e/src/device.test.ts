@@ -1227,3 +1227,26 @@ describe("device.os / isIOS / isAndroid", () => {
 		expect(device.os).toBe("android");
 	});
 });
+
+describe("device.select", () => {
+	test("picks the current platform's value", () => {
+		expect(setup({ platform: "ios" }).device.select({ ios: "Done", android: "OK" })).toBe("Done");
+		expect(setup({ platform: "android" }).device.select({ ios: "Done", android: "OK" })).toBe("OK");
+	});
+
+	test("falls back to default when the platform has no key", () => {
+		expect(setup({ platform: "android" }).device.select({ ios: 1, default: 2 })).toBe(2);
+		expect(setup({ platform: "ios" }).device.select({ ios: 1, default: 2 })).toBe(1);
+	});
+
+	test("one platform with no default does not compile", () => {
+		const { device } = setup({ platform: "android" });
+		// @ts-expect-error: android missing and no default
+		expect(device.select({ ios: "a" })).toBeUndefined();
+	});
+
+	test("a platform key set to undefined wins over default", () => {
+		const { device } = setup({ platform: "ios" });
+		expect(device.select<string | undefined>({ ios: undefined, default: "x" })).toBeUndefined();
+	});
+});
