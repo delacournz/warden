@@ -665,6 +665,18 @@ describe("type, clear and press", () => {
 		expect(driver.callsOf("selectAll")).toHaveLength(1);
 	});
 
+	test("clear on an already-empty field that reads as its unnamed placeholder probes one key and passes", async () => {
+		const { driver, state } = fieldFixture({
+			value: "",
+			selectAll: true,
+			placeholder: "What needs doing?",
+			placeholderMeta: false,
+		});
+		await setup(driver).screen.getByTestId("field").clear();
+		expect(state.value).toBe("");
+		expect(driver.callsOf("typeText").map((call) => call.text)).toEqual(["1"]);
+	});
+
 	test("clear still fails on leftover text that deleting could have left", async () => {
 		const stuck = fieldFixture({ value: "ab", dropKeys: 100, placeholder: "Type here", placeholderMeta: false });
 		const error = await failure(setup(stuck.driver).screen.getByTestId("field").clear());

@@ -2,7 +2,7 @@ import type { Driver, Element, KeyName, Modifier, Point, Rect, Snapshot } from "
 import { canActOnElements } from "../driver/element-actions";
 import { canDetectAlerts, canObserve, OBSERVATION_MAX_AGE_MS } from "../driver/observation-cache";
 import { elementKey } from "../driver/settle";
-import { typeText } from "../driver/typing";
+import { pressKeys, typeText } from "../driver/typing";
 import { E2eError } from "../errors";
 import {
 	assertDegrees,
@@ -914,13 +914,7 @@ export class Locator {
 				if (target.entry.secure) return;
 				const outcome = await this.confirm(target, "", budget, before);
 				if (outcome.ok) return;
-				if (attempt === 2) {
-					throw new E2eError(
-						"ACTION_FAILED",
-						`${this}: clear did not empty the field: it holds ${JSON.stringify(outcome.held)}`,
-						outcome.screen
-					);
-				}
+				if (attempt === 2) return this.lastClearCheck(target, budget, before, outcome);
 				target = await this.actionable({ enabled: true, tapPointOnScreen: false }, budget.remaining());
 			}
 		});
@@ -1079,6 +1073,35 @@ export class Locator {
 			"clear",
 			await focusAndClear(observed.driver, this.pause, focusPoint(entry.element.frame), entry, method)
 		);
+	}
+
+	/** After the counted pass: passes a field that is empty behind its placeholder, else fails with what it holds. */
+	private async lastClearCheck(
+		target: Actionable,
+		budget: { remaining(): number },
+		before: string,
+		outcome: { held: string; screen: string | undefined }
+	): Promise<void> {
+		if (outcome.held === before && (await this.emptyBehindPlaceholder(target, budget))) return;
+		throw new E2eError(
+			"ACTION_FAILED",
+			`${this}: clear did not empty the field: it holds ${JSON.stringify(outcome.held)}`,
+			outcome.screen
+		);
+	}
+
+	/**
+	 * Whether a field that still shows what it showed before two clears is empty behind a placeholder: iOS reports
+	 * `placeholder: null` for React Native inputs and shows the placeholder as the value, so an empty field reads as if
+	 * it held that text, and deleting changes nothing. One probe key settles it: an empty field then holds just the
+	 * probe, a field with text holds more. The probe is deleted either way.
+	 */
+	private async emptyBehindPlaceholder(target: Actionable, budget: { remaining(): number }): Promise<boolean> {
+		const { driver } = target.observed;
+		this.rt.drive("clear", await typeText(driver, this.pause, CLEAR_PROBE));
+		const probed = await this.confirm(target, CLEAR_PROBE, budget);
+		this.rt.drive("clear", await pressKeys(driver, this.pause, "Backspace", 1));
+		return probed.ok;
 	}
 
 	/** Sleeps on the runtime's clock (a fake one in tests), ending early when the attempt aborts. */
@@ -1284,6 +1307,9 @@ function viaFor(attempt: number, via: FillVia): FillVia {
 }
 
 /** The first attempt empties a field the quick way; a retry means that did not work, so it presses one Backspace per character. */
+/** The key `clear` types to tell an empty field showing its placeholder from one holding that text: caseless, so autocapitalisation leaves it alone. */
+const CLEAR_PROBE = "1";
+
 function clearMethodFor(attempt: number): ClearMethod {
 	return attempt === 1 ? "auto" : "counted";
 }

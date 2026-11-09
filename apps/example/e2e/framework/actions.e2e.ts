@@ -47,6 +47,13 @@ describe.serial("framework: actions", () => {
 		await expect(screen.getByTestId(ids.todos.add)).toBeDisabled();
 	});
 
+	test("clear on a field that is already empty (it reads as its placeholder) passes and leaves it empty", async ({
+		screen,
+	}) => {
+		await screen.getByTestId(ids.todos.input).clear();
+		await expect(screen.getByTestId(ids.todos.add)).toBeDisabled();
+	});
+
 	test("hideKeyboard puts the keyboard away", async ({ device, screen }) => {
 		await screen.getByTestId(ids.todos.input).tap();
 		await expect(device).toHaveKeyboard();
