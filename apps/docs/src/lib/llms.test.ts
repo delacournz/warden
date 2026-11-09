@@ -42,6 +42,33 @@ describe("llmsIndex", () => {
 		}
 	});
 
+	test("opens by naming warden a React Native / Expo E2E testing framework for AI coding agents", () => {
+		const quote = out.split("\n")[2] ?? "";
+		expect(quote).toContain("React Native");
+		expect(quote).toContain("Expo");
+		expect(quote).toContain("end-to-end (E2E) testing framework");
+		expect(quote).toContain("AI coding agents");
+	});
+
+	test("has a task section with the exact steps to add E2E tests to a React Native app", () => {
+		const task = out.split("## Task: add E2E tests to a React Native or Expo app")[1]?.split("\n## ")[0] ?? "";
+		for (const text of [
+			"warden install",
+			"warden doctor",
+			"warden skill show",
+			"warden init",
+			"bun add -d @delacour/warden-e2e@",
+			"*.e2e.ts",
+			"testID",
+			"warden.config.ts",
+			"warden e2e",
+			"/docs/e2e/add-to-existing-app",
+			"/docs/e2e/ci",
+		]) {
+			expect(task).toContain(text);
+		}
+	});
+
 	test("keeps the page index once, under a Docs heading, without its own H1", () => {
 		expect(out).toContain("## Docs\n\n- Getting Started: Install warden");
 		expect(out.match(/^# warden$/gm)).toHaveLength(1);
@@ -53,6 +80,23 @@ describe("llmsIndex", () => {
 		expect(out).toContain("## Links");
 		expect(out).toContain("https://github.com/delacournz/warden");
 		expect(out).toContain("https://www.npmjs.com/package/@delacour/warden-e2e");
+	});
+});
+
+describe("add-to-existing-app page", () => {
+	const page = join(CONTENT, "e2e", "add-to-existing-app.mdx");
+
+	test("is titled and described for the React Native E2E search", () => {
+		const raw = readFileSync(page, "utf8");
+		const title = raw.match(/^title: (.+)$/m)?.[1] ?? "";
+		const description = raw.match(/^description: (.+)$/m)?.[1] ?? "";
+		expect(title).toContain("React Native");
+		for (const text of ["React Native", "Expo", "end-to-end tests"]) expect(description).toContain(text);
+	});
+
+	test("is listed in the e2e section's meta", () => {
+		const meta: { pages: string[] } = JSON.parse(readFileSync(join(CONTENT, "e2e", "meta.json"), "utf8"));
+		expect(meta.pages).toContain("add-to-existing-app");
 	});
 });
 

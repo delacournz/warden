@@ -5,6 +5,7 @@
 	"root": true,
 	"pages": [
 		"index",
+		"add-to-existing-app",
 		"how-it-works",
 		"---Write specs---",
 		"specs",

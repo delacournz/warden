@@ -1,0 +1,154 @@
+---
+title: Add E2E tests to an existing React Native app
+description: Add end-to-end tests to an existing React Native or Expo app with warden. Paste one prompt into your coding agent, or follow the steps to write, run and gate a first spec.
+icon: FlaskConical
+---
+
+warden is a React Native and Expo end-to-end testing framework for coding agents. Specs are TypeScript files (`*.e2e.ts`) that drive your app on a real iOS simulator or Android emulator; `warden e2e` leases the devices, installs your app and runs the specs on all of them at once.
+
+## Paste this into your coding agent
+
+Works in Claude Code, Codex, Cursor and any agent that can run shell commands.
+
+<CopyBlock
+  label="prompt"
+  text={`Add end-to-end tests to this React Native / Expo app with warden.
+1. If warden is missing: install it with bunx @delacour/warden install if bun is installed (check with command -v bun), otherwise npx @delacour/warden install. Show me the diff before you approve it. If warden is not found afterwards, add ~/.local/bin to PATH. Then run warden doctor and fix what it reports.
+2. Run warden skill show and read it, including the specs and suites references. Follow its rules.
+3. Run warden init (add --bundle-id <id> if the app has none) and install every package it names.
+4. Add @delacour/warden-e2e as a dev dependency, at the version warden --version prints.
+5. Pick the app's main user flow. Add testID and accessible to every element the flow touches.
+6. Write e2e/<flow>.e2e.ts with test and expect from @delacour/warden-e2e: open the app, act with screen.getByTestId(...), assert with expect(...).toBeVisible().
+7. Check the suite in warden.config.ts names this app's project and specsDir.
+8. Run warden e2e --count 2. If a spec fails, read screen-at-failure.txt and e2e-report.json in the batch dir and fix the cause, never weaken an assertion.
+9. Add a CI job that runs warden e2e on a macOS runner (https://warden.co.nz/docs/e2e/ci).
+Report the spec you wrote, the testIDs you added and the result.`}
+/>
+
+## Or do it by hand
+
+You need warden installed ([Installation](/docs/getting-started/installation)), and an Expo or React Native app on macOS with Xcode and an iOS runtime (Android needs the Android SDK).
+
+<Steps>
+<Step>
+### Install warden and the agent skill
+
+```bash
+bunx @delacour/warden install    # or: npx @delacour/warden install
+warden doctor
+```
+
+`install` puts the warden skill and hooks into every detected agent so it knows how to claim and release devices. See [Set up your agent](/docs/getting-started/agent-setup).
+</Step>
+<Step>
+### Scaffold the config and a smoke spec
+
+```bash
+warden init --bundle-id com.example.app
+```
+
+`--bundle-id` is only needed when the app has none. `init` writes `warden.config.ts` and `e2e/smoke.e2e.ts` and prints install commands for anything missing, such as `expo-dev-client`. Existing files are kept.
+</Step>
+<Step>
+### Add the spec package
+
+```bash
+bun add -d @delacour/warden-e2e@<warden version>
+```
+
+Use the version `warden --version` prints: the spec preload refuses any other.
+</Step>
+<Step>
+### Add testIDs
+
+Specs read the accessibility tree. A `testID` is only exposed when the native view is `accessible`.
+
+```tsx title="src/todo-list.tsx"
+<TextInput testID="todo-input" accessible value={draft} onChangeText={setDraft} />
+<Pressable testID="todo-add" accessible onPress={add}>
+	<Text>Add</Text>
+</Pressable>
+<Text testID="todos-remaining" accessible>{`${remaining} left`}</Text>
+```
+</Step>
+<Step>
+### Write a spec
+
+```ts title="e2e/todos.e2e.ts"
+import { expect, test } from "@delacour/warden-e2e";
+
+test.use({ launch: "none", systemAlerts: "dismiss" });
+
+test("adding a todo updates the count", async ({ app, screen }) => {
+	await app.open({ wait: { until: screen.getByTestId("todo-input") } });
+
+	await screen.getByTestId("todo-input").fill("Write e2e specs");
+	await screen.getByTestId("todo-add").tap();
+
+	await expect(screen.getByText("Write e2e specs")).toBeVisible();
+	await expect(screen.getByTestId("todos-remaining")).toHaveText("1 left");
+});
+```
+
+Prefer `getByTestId` over text: a text selector breaks when the copy changes. Full API: [Write specs](/docs/e2e/specs).
+</Step>
+<Step>
+### Declare the suite
+
+```ts title="warden.config.ts"
+export default {
+	projects: [{ name: "my-app", bundleId: { ios: "com.example.app" } }],
+	e2e: {
+		"my-app": {
+			project: "my-app",
+			specsDir: "e2e",
+			platform: "ios",
+			isolate: "device",
+			count: 2,
+			app: true,
+		},
+	},
+};
+```
+
+`app: true` installs a Release build without a JS bundle, built once per native fingerprint, with your JS repacked into it. Every key: [Suites](/docs/e2e/suites).
+</Step>
+<Step>
+### Run it
+
+```bash
+warden e2e my-app              # the suite's own count
+warden e2e my-app --count 3    # three simulators
+```
+
+The first run of a native fingerprint builds the app (minutes); later runs reuse the cache. When a spec fails, read `screen-at-failure.txt` in the batch dir first: a query that found nothing is an element that is missing or not `accessible`. See [Debugging](/docs/e2e/debugging).
+</Step>
+<Step>
+### Run it in CI
+
+```yaml title=".github/workflows/e2e.yml"
+jobs:
+  e2e:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install
+      - uses: delacournz/warden/.github/actions/install-warden@main
+      - run: warden e2e my-app --base origin/main --count 2 --report e2e-report.json
+```
+
+`--base` runs only the specs a change can break ([Affected](/docs/e2e/affected)). More: [CI](/docs/e2e/ci).
+</Step>
+</Steps>
+
+## Next
+
+<Cards>
+<Card title="Get started" href="/docs/e2e" description="The same path with every file explained." />
+<Card title="Write specs" href="/docs/e2e/specs" description="Locators, actions, matchers, app and device." />
+<Card title="Author specs by recording" href="/docs/e2e/author-specs" description="Let your agent drive the app and write the spec." />
+<Card title="Suites" href="/docs/e2e/suites" description="Devices, Metro, timeouts and passes." />
+<Card title="CI" href="/docs/e2e/ci" description="Run suites in your pipeline." />
+</Cards>
