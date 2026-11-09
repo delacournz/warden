@@ -9,6 +9,7 @@ import {
 	healthDataSchema,
 	launchDataSchema,
 	mapWireError,
+	orientationDataSchema,
 	parseLine,
 	protocolVersion,
 	rebindDataSchema,
@@ -112,6 +113,12 @@ describe("mapWireError", () => {
 });
 
 describe("data schemas", () => {
+	test("orientation data keeps whether the screen settled after a rotation", () => {
+		const parsed = orientationDataSchema.parse({ orientation: "landscapeLeft", source: "device", settled: true });
+		expect(parsed.settled).toBe(true);
+		expect(orientationDataSchema.parse({ orientation: "portrait" }).settled).toBeUndefined();
+	});
+
 	test("snapshot data accepts a normalized element tree", () => {
 		const snap = snapshotOf([el("window", { children: [el("button", { id: "go", label: "Go" })] })]);
 		const parsed = snapshotDataSchema.safeParse({

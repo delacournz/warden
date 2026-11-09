@@ -14,14 +14,13 @@ const CORNERS = [
 ] as const;
 
 /**
- * Turns the device, waits for the app to draw landscape and for the rotation animation to end (a touch sent while it
- * runs is dropped, even at the right point), then taps each corner by testID. A touch sent on the wrong
+ * Turns the device (`device.orientation` answers once the rotation animation is over: a touch sent while it runs is
+ * dropped, even at the right point), waits for the app to draw landscape, then taps each corner by testID. A touch sent on the wrong
  * axes lands on another corner or on nothing, so each corner is checked by name, and the count proves no tap was lost.
  */
 async function tapEveryCorner(device: Device, screen: Screen, orientation: Turned): Promise<void> {
 	expect(await device.orientation(orientation)).toBe(orientation);
 	await expect(screen.getByTestId(ids.landscape.layout)).toHaveText("landscape", { timeout: 10_000 });
-	await device.settle({ quietMs: 300, timeout: 5_000 });
 	for (const [index, corner] of CORNERS.entries()) {
 		await screen.getByTestId(corner.testId).tap();
 		await expect(screen.getByTestId(ids.landscape.last)).toHaveText(corner.name);

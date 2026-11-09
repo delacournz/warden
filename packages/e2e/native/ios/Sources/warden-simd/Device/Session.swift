@@ -96,6 +96,7 @@ final class Session: @unchecked Sendable {
   /// The pid each bundle id last resolved to, for `frontmost`.
   let bundlePids = BundlePidMemory()
   let orientationMemory = OrientationMemory()
+  let interfaceMemory = InterfaceMemory()
 
   init(
     udid: String, simulator: Simulator, hid: SimulatorHIDSession, hidTransport: String, axDefault: String,

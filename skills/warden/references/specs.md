@@ -75,7 +75,7 @@ Never import subpaths (`/device`, `/screen/*`, `/env`). Only `.` and `./preload`
 | `alert("accept" \| "dismiss" \| { button })` | answer the system alert on top; `false` when none; `ACTION_FAILED` for a missing named button |
 | `openLink(url, { accept?, until?, waitMs? })` | open a URL from outside the app; presses "Open" on the iOS sheet (up to 3 times) and returns once the sheet is gone, or after ~1.4 s when none shows and the app is in front (later links with that scheme return as soon as the app is in front); `until: locator` returns when it is visible; `waitMs` (default 8000) caps the wait, no error |
 | `home()` / `back()` | home key / Android back (iOS throws) |
-| `orientation(set?)` | `"portrait" \| "portraitUpsideDown" \| "landscapeLeft" \| "landscapeRight"`; returns current |
+| `orientation(set?)` | `"portrait" \| "portraitUpsideDown" \| "landscapeLeft" \| "landscapeRight"`; returns current. iOS: a set returns once the rotation animation is over (~0.7 s), so the next tap lands |
 | `appearance(set?)` | `"light" \| "dark"`; returns current |
 | `biometrics.status()` / `enroll()` / `unenroll()` / `match()` / `fail()` | simulated Face ID / Touch ID / fingerprint; each returns `{ enrolled, modality: "face" \| "fingerprint" }` after the op (type `BiometricState`). `match` / `fail` answer the pending prompt. Android `enroll` / `unenroll` and any physical device throw `ACTION_FAILED` (driver `E_UNSUPPORTED`) |
 | `clipboard()` / `setClipboard(text)` | read / write |
