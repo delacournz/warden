@@ -31,6 +31,8 @@ export type CiDeps = {
 	 * config that does not pick one answers true, so the golden group stays.
 	 */
 	suiteGolden: (ctx: CommandContext, dir: string, suite: string | undefined) => AsyncResult<boolean>;
+	/** Does the project found from `dir` build with warden's compiler caches (`build.cache` is not `false`)? */
+	compilerCache: (ctx: CommandContext, dir: string) => AsyncResult<boolean>;
 };
 
 const defaultCiDeps: CiDeps = {
@@ -47,6 +49,10 @@ const defaultCiDeps: CiDeps = {
 			memo: { store: ctx.store(), now: ctx.now() },
 		});
 		return fps.success ? ok(fps.data.nativeFp) : fps;
+	},
+	async compilerCache(ctx, dir) {
+		const project = await projectContextFor(ctx, { start: dir });
+		return project.success ? ok(project.data.project.compilerCache !== false) : project;
 	},
 	async suiteGolden(ctx, dir, suite) {
 		const { findSuite } = await import("@delacour/warden-core/affected/affected");
@@ -90,12 +96,15 @@ async function cacheCmd(ctx: CommandContext, deps: CiDeps, opts: CacheOpts): Pro
 		if (!native.success) return native;
 		const js = await jsInputsHash(sctx.exec, dir, opts.jsInput ?? DEFAULT_JS_INPUTS);
 		if (!js.success) return js;
+		const ccache = await deps.compilerCache(sctx, dir);
+		if (!ccache.success) return ccache;
+		const base = { native: native.data, js: js.data, ccache: ccache.data };
 		const enabled = await deps.suiteGolden(sctx, dir, opts.suite);
 		if (!enabled.success) return enabled;
-		if (!enabled.data) return ok({ native: native.data, js: js.data, golden: undefined });
+		if (!enabled.data) return ok({ ...base, golden: undefined });
 		const golden = await deps.goldenName(sctx, opts.profile);
 		if (!golden.success) return golden;
-		return ok({ native: native.data, js: js.data, golden: golden.data });
+		return ok({ ...base, golden: golden.data });
 	});
 	if (!facts.success) return fail(ctx, facts.error);
 	const home = ctx.env.HOME ?? homedir();
@@ -110,7 +119,12 @@ async function cacheCmd(ctx: CommandContext, deps: CiDeps, opts: CacheOpts): Pro
 		...(opts.profile !== undefined ? { profile: opts.profile } : {}),
 	});
 	// a suite without golden: no group, so a CI job neither restores, builds nor saves one
-	const groups = { ...all, golden: facts.data.golden === undefined ? null : all.golden };
+	// `build.cache: false`: the build never calls ccache, so a CI job neither installs, restores nor saves it
+	const groups = {
+		...all,
+		golden: facts.data.golden === undefined ? null : all.golden,
+		ccache: facts.data.ccache ? all.ccache : null,
+	};
 	if (opts.json) {
 		ctx.out(JSON.stringify(groups, null, 2));
 		return 0;
@@ -130,9 +144,8 @@ async function cacheCmd(ctx: CommandContext, deps: CiDeps, opts: CacheOpts): Pro
 	const golden = groups.golden
 		? line("golden", groups.golden)
 		: `${color.bold("golden ")} off (the suite creates fresh simulators)`;
-	ctx.out(
-		[line("builds", groups.builds), line("repack", groups.repack), golden, line("ccache", groups.ccache)].join("\n")
-	);
+	const ccache = groups.ccache ? line("ccache", groups.ccache) : `${color.bold("ccache ")} off (build.cache: false)`;
+	ctx.out([line("builds", groups.builds), line("repack", groups.repack), golden, ccache].join("\n"));
 	return 0;
 }
 

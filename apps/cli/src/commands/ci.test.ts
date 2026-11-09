@@ -29,6 +29,7 @@ function deps(seen: Seen, over: Partial<CiDeps> = {}): CiDeps {
 			seen.profile = profile;
 			return ok("warden-golden-iphone-17-645b28cbef-r2");
 		},
+		compilerCache: async () => ok(true),
 		...over,
 	};
 }
@@ -99,6 +100,18 @@ describe("warden ci cache", () => {
 		expect(text).toContain("warden-e2e-v1-builds-macOS-ARM64-f1b4");
 		expect(text).toContain("warden-e2e-v1-ccache-macOS-ARM64-f1b4");
 		expect(text).toContain("golden");
+	});
+
+	test("a project with the compiler cache off prints ccache: null, so CI never installs, restores or saves it", async () => {
+		const c = setup(["cache", "--json"]);
+		expect(await createCiCommand(deps({}, { compilerCache: async () => ok(false) })).run(c)).toBe(0);
+		const out = JSON.parse(c.stdout.join("\n"));
+		expect(out.ccache).toBeNull();
+		expect(out.builds.key).toBe("warden-e2e-v1-builds-macOS-ARM64-f1b4");
+
+		const t = setup(["cache"]);
+		expect(await createCiCommand(deps({}, { compilerCache: async () => ok(false) })).run(t)).toBe(0);
+		expect(t.stdout.join("\n")).toContain("off (build.cache: false)");
 	});
 
 	test("--suite: a suite without golden prints golden: null and never keys a golden", async () => {
