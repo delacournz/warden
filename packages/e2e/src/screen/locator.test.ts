@@ -653,6 +653,24 @@ describe("type, clear and press", () => {
 		expect(error.message).toContain('clear did not empty the field: it holds "ab"');
 	});
 
+	test("clear accepts a placeholder the element does not name (React Native on iOS) as empty", async () => {
+		const { driver, state } = fieldFixture({
+			value: "To be cleared",
+			selectAll: true,
+			placeholder: "What needs doing?",
+			placeholderMeta: false,
+		});
+		await setup(driver).screen.getByTestId("field").clear();
+		expect(state.value).toBe("");
+		expect(driver.callsOf("selectAll")).toHaveLength(1);
+	});
+
+	test("clear still fails on leftover text that deleting could have left", async () => {
+		const stuck = fieldFixture({ value: "ab", dropKeys: 100, placeholder: "Type here", placeholderMeta: false });
+		const error = await failure(setup(stuck.driver).screen.getByTestId("field").clear());
+		expect(error.message).toContain('clear did not empty the field: it holds "ab"');
+	});
+
 	test("type sends the whole string unpaced and does not verify", async () => {
 		const { driver, state } = fieldFixture({ focused: true });
 		const { host, screen } = setup(driver);

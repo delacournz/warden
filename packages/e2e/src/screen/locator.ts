@@ -908,10 +908,11 @@ export class Locator {
 		return this.act("clear", async () => {
 			const budget = this.rt.budget(options.timeout);
 			let target = await this.actionable({ enabled: true, tapPointOnScreen: false }, budget.remaining());
+			const before = rawValue(target.entry);
 			for (let attempt = 1; ; attempt += 1) {
 				await this.focusAndClear(target, clearMethodFor(attempt));
 				if (target.entry.secure) return;
-				const outcome = await this.confirm(target, "", budget);
+				const outcome = await this.confirm(target, "", budget, before);
 				if (outcome.ok) return;
 				if (attempt === 2) {
 					throw new E2eError(
@@ -1091,14 +1092,15 @@ export class Locator {
 	private async confirm(
 		{ entry, observed }: Actionable,
 		text: string,
-		budget: { remaining(): number }
+		budget: { remaining(): number },
+		clearedFrom?: string
 	): Promise<{ ok: true } | { ok: false; held: string; screen: string | undefined }> {
 		const span = Math.max(budget.remaining(), CONFIRM_FLOOR_MS);
 		let lastSeen: Observed["snapshot"] | undefined;
 		// a field not known as secure when the fill started (an empty one on a read without its secure trait) can read
 		// back masked: its bullets are counted against the typed text
 		const readValue = (found: NodeEntry): string => {
-			if (text === "") return fieldValue(found);
+			if (text === "") return clearedValue(fieldValue(found), clearedFrom);
 			return found.secure ? maskedReading(found, text) : rawValue(found);
 		};
 		const outcome = await confirmFieldValue<never>({
@@ -1292,6 +1294,24 @@ function fillMismatch(text: string, secure: boolean, held: string, firstHeld: st
 	const expected = secure ? `${graphemes(text)} characters (secure)` : JSON.stringify(text);
 	const earlier = firstHeld === undefined ? "" : ` (first attempt held ${JSON.stringify(firstHeld)})`;
 	return `fill did not take: expected ${expected} but the field holds ${JSON.stringify(held)}${earlier}`;
+}
+
+/**
+ * What a cleared field holds, given what it held before the clear. Deleting only removes characters, so text left
+ * behind is a subsequence of what was there. A value that is not one is a placeholder the element does not name (iOS
+ * reports `placeholder: null` for React Native inputs and shows the placeholder as the value): the field is empty.
+ */
+export function clearedValue(value: string, before: string | undefined): string {
+	if (value === "" || before === undefined) return value;
+	return isSubsequence(value, before) ? value : "";
+}
+
+function isSubsequence(part: string, whole: string): boolean {
+	let at = 0;
+	for (const char of whole) {
+		if (at < part.length && part.startsWith(char, at)) at += char.length;
+	}
+	return at === part.length;
 }
 
 function rawValue(entry: NodeEntry): string {
