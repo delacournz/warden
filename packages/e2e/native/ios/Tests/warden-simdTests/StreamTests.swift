@@ -4,6 +4,7 @@ import VideoToolbox
 import XCTest
 
 @testable import warden_simd
+import WardenStream
 
 final class AUFramingTests: XCTestCase {
   func testHeaderIsLengthFlagsPtsBigEndian() {

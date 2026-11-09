@@ -85,13 +85,26 @@ export type AppOp = (typeof APP_OPS)[number];
 export const CONTROL_OPS = ["ping", "shutdown"] as const;
 export type ControlOp = (typeof CONTROL_OPS)[number];
 
-export type RemoteOp = DriverOp | OptionalOp | `app.${AppOp}` | ControlOp;
+/**
+ * The device's live video (plan WDN-STRM): the same op names and reply shapes as the iOS helper (`warden-simd`
+ * `stream.*`), so a stream publisher drives either platform with one `request(op, params)`. A host offers them only
+ * with a stream service (`ready.stream`); they run beside the driver ops, never queued behind a slow one.
+ */
+export const STREAM_OPS = ["stream.start", "stream.keyframe", "stream.stats", "stream.stop"] as const;
+export type StreamOp = (typeof STREAM_OPS)[number];
+
+export function isStreamOp(op: string): op is StreamOp {
+	return (STREAM_OPS as readonly string[]).includes(op);
+}
+
+export type RemoteOp = DriverOp | OptionalOp | `app.${AppOp}` | ControlOp | StreamOp;
 
 const REMOTE_OPS: ReadonlySet<string> = new Set<string>([
 	...DRIVER_OPS,
 	...OPTIONAL_OPS,
 	...APP_OPS.map((op) => `app.${op}`),
 	...CONTROL_OPS,
+	...STREAM_OPS,
 ]);
 
 export function isRemoteOp(op: string): op is RemoteOp {
@@ -120,6 +133,8 @@ export const readyEventSchema = z.object({
 	capabilities: capabilitiesSchema,
 	optional: z.array(z.enum(OPTIONAL_OPS)),
 	alertIn: z.literal("android").optional(),
+	/** the host answers `stream.*` */
+	stream: z.literal(true).optional(),
 });
 export type ReadyEvent = z.infer<typeof readyEventSchema>;
 
