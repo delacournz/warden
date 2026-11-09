@@ -292,7 +292,7 @@ Build the `.app` with ad-hoc signing and pass it in. `CODE_SIGNING_ALLOWED=NO` l
           app-path: ios/build/dd/Build/Products/Release-iphonesimulator/App.app
 ```
 
-`warden builds import` prints a warning when the `.app` has no `application-identifier` entitlement (`codesign -d --entitlements :- App.app` shows it).
+`warden builds import` prints a warning when the `.app` has no `application-identifier` entitlement. An ad-hoc simulator build signs with no entitlements and links them into the executable instead: `otool -X -s __TEXT __entitlements App.app/App` shows them, `codesign -d --entitlements :- App.app` shows an empty list. warden reads both.
 
 ### Troubleshooting
 
