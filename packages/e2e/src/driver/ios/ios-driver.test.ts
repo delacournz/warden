@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { canProbeFrontmost, canReadAlertOn } from "../alerts";
 import { el, snapshotOf } from "../driver.testing";
 import type { Driver, Snapshot } from "../driver.types";
+import { canLiveTouch } from "../live-touch";
 import { fakeProxy } from "../network-proxy.testing";
 import { settleDetailOf } from "../settle";
 import { collectSpanDetail, type SpanDetail } from "../span-detail";
@@ -1833,5 +1834,58 @@ describe("socket that does not answer (20-1)", () => {
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}
+	});
+});
+
+describe("live touch", () => {
+	test("offers the LiveTouch capability", async () => {
+		const { driver } = await open(() => ({ data: { down: 1 } }));
+		expect(canLiveTouch(driver)).toBe(true);
+	});
+
+	test("each call is one touch.* request with a short timeout", async () => {
+		const { driver, helper } = await open(() => ({ data: { down: 1 } }));
+		if (!canLiveTouch(driver)) throw new Error("no live touch");
+		await unwrapped(driver.touchDown({ x: 10, y: 20 }));
+		await unwrapped(driver.touchMove({ x: 11, y: 30 }, 1));
+		await unwrapped(driver.touchUp({ x: 12, y: 40 }, 1));
+		await unwrapped(driver.touchUp());
+		await unwrapped(driver.touchCancel());
+		const ops = helper.requests.filter((r) => r.op.startsWith("touch."));
+		expect(ops.map(({ op, x, y, pointer }) => ({ op, x, y, pointer }))).toEqual([
+			{ op: "touch.down", x: 10, y: 20, pointer: 0 },
+			{ op: "touch.move", x: 11, y: 30, pointer: 1 },
+			{ op: "touch.up", x: 12, y: 40, pointer: 1 },
+			{ op: "touch.up", x: undefined, y: undefined, pointer: 0 },
+			{ op: "touch.cancel", x: undefined, y: undefined, pointer: undefined },
+		]);
+		for (const request of ops) expect(request.timeoutMs ?? 0).toBeLessThanOrEqual(5_000);
+	});
+
+	test("a helper that predates the ops is helper_outdated, then nothing more is sent", async () => {
+		const { driver, helper } = await open((request) =>
+			request.op.startsWith("touch.") ? unknownOp(request.op) : { data: null }
+		);
+		if (!canLiveTouch(driver)) throw new Error("no live touch");
+		const first = await driver.touchDown({ x: 1, y: 1 });
+		expect(!first.success && first.error).toMatchObject({
+			code: "E_UNSUPPORTED",
+			detail: { reason: "helper_outdated" },
+		});
+		const second = await driver.touchMove({ x: 1, y: 2 });
+		expect(!second.success && second.error.code).toBe("E_UNSUPPORTED");
+		expect(helper.requests.filter((r) => r.op.startsWith("touch."))).toHaveLength(1);
+	});
+
+	test("a state error (move without down) passes through", async () => {
+		const { driver } = await open((request) =>
+			request.op === "touch.move"
+				? { error: { code: "E_BAD_REQUEST", message: "pointer 0 is not down (touch.down first)" } }
+				: { data: { down: 0 } }
+		);
+		if (!canLiveTouch(driver)) throw new Error("no live touch");
+		const result = await driver.touchMove({ x: 1, y: 1 });
+		expect(!result.success && result.error.code).toBe("E_BAD_REQUEST");
+		await unwrapped(driver.touchDown({ x: 1, y: 1 }));
 	});
 });

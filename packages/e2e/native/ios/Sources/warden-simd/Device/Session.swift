@@ -80,6 +80,8 @@ final class Session: @unchecked Sendable {
   let orientationMemory = OrientationMemory()
   /// `stream.*`: the live H.264 stream of the display, if one is running.
   let streams = StreamHolder()
+  /// `touch.*`: the fingers a live viewer holds down.
+  let liveTouch = LiveTouchHolder()
 
   init(
     udid: String, simulator: Simulator, hid: SimulatorHIDSession, hidTransport: String, axDefault: String,
@@ -160,6 +162,7 @@ final class Session: @unchecked Sendable {
 
   func close() async {
     _ = streams.stop()
+    await liveTouch.close()
     await quiescence.stop()
     await hid.close()
   }

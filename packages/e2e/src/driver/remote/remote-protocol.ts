@@ -13,7 +13,7 @@ import type { DriverCapabilities, DriverError, Element, Snapshot } from "../driv
  */
 export const REMOTE_PROTOCOL = 1;
 
-/** Optional capabilities a served driver may offer next to the frozen `Driver` (`driver/typing.ts`, `driver/alerts.ts`, `driver/a11y-read.ts`, `driver/a11y-events.ts`, `driver/native-audit.ts`, `driver/screen-reader.ts`, `driver/element-actions.ts`). */
+/** Optional capabilities a served driver may offer next to the frozen `Driver` (`driver/typing.ts`, `driver/alerts.ts`, `driver/a11y-read.ts`, `driver/a11y-events.ts`, `driver/native-audit.ts`, `driver/screen-reader.ts`, `driver/element-actions.ts`, `driver/live-touch.ts`). */
 export const OPTIONAL_OPS = [
 	"pressKeyRepeat",
 	"selectAll",
@@ -31,6 +31,10 @@ export const OPTIONAL_OPS = [
 	"screenReaderSpoken",
 	"pressElement",
 	"scrollElement",
+	"touchDown",
+	"touchMove",
+	"touchUp",
+	"touchCancel",
 ] as const;
 export type OptionalOp = (typeof OPTIONAL_OPS)[number];
 
