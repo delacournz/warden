@@ -27,6 +27,19 @@ const SPEC = { bundleId: BUNDLE_ID } satisfies WardenE2eSpec;
 /** Every spec drives these screens before its own (fresh launch → welcome → sign-in). */
 const SIGNED_IN = ["src/app/welcome.tsx", "src/app/sign-in.tsx"];
 
+/** The screens a Settings row pushes (`app/settings` opens each one and goes Back). */
+const SETTINGS_ROWS = [
+	"gestures",
+	"conditions",
+	"keyboard-sheet",
+	"a11y",
+	"camera",
+	"biometrics",
+	"network",
+	"location",
+	"clock",
+];
+
 /**
  * `ios/` is generated (CNG) and `expo run:ios --no-install` skips CocoaPods, so a fresh worktree
  * needs the native project and its pods before the build.
@@ -54,15 +67,23 @@ const AFFECTED = {
 	],
 	ignore: ["**/*.test.ts", "**/*.md", "warden.config.ts", "biome.jsonc", "tsconfig.json"],
 	specs: {
-		onboarding: { entries: ["src/app/welcome.tsx"] },
-		"sign-in": { entries: SIGNED_IN },
-		todos: { entries: [...SIGNED_IN, "src/app/(tabs)/todos.tsx"] },
-		"todo-detail": { entries: [...SIGNED_IN, "src/app/(tabs)/todos.tsx", "src/app/todo/[id].tsx"] },
-		settings: { entries: [...SIGNED_IN, "src/app/(tabs)/settings.tsx"] },
-		"todos-journey": { entries: [...SIGNED_IN, "src/app/(tabs)/todos.tsx", "src/app/(tabs)/settings.tsx"] },
-		devtools: { entries: ["src/app/welcome.tsx"] },
-		perf: { entries: [...SIGNED_IN, "src/app/(tabs)/todos.tsx"] },
-		gestures: { entries: ["src/app/welcome.tsx", "src/app/gestures.tsx", "src/modules/gestures"] },
+		"app/onboarding": { entries: ["src/app/welcome.tsx", "src/app/sign-in.tsx"] },
+		"app/auth": { entries: [...SIGNED_IN, "src/app/(tabs)/settings.tsx", "src/modules/session"] },
+		"app/todos": {
+			entries: [...SIGNED_IN, "src/app/(tabs)/todos.tsx", "src/app/todo/[id].tsx", "src/modules/todos"],
+		},
+		"app/settings": {
+			entries: [
+				...SIGNED_IN,
+				"src/app/(tabs)/settings.tsx",
+				"src/app/(tabs)/todos.tsx",
+				...SETTINGS_ROWS.map((route) => `src/app/${route}.tsx`),
+			],
+		},
+		"app/devtools": { entries: ["src/app/welcome.tsx"] },
+		"app/perf": { entries: [...SIGNED_IN, "src/app/(tabs)/todos.tsx"] },
+		"app/gestures": { entries: ["src/app/welcome.tsx", "src/app/gestures.tsx", "src/modules/gestures"] },
+		"app/keyboard": { entries: ["src/app/welcome.tsx", "src/app/keyboard-sheet.tsx", "src/modules/keyboard"] },
 		"network-offline": { entries: ["src/app/welcome.tsx", "src/app/conditions.tsx", "src/modules/conditions"] },
 		"network-slow": { entries: ["src/app/welcome.tsx", "src/app/conditions.tsx", "src/modules/conditions"] },
 		"network-flaky": { entries: ["src/app/welcome.tsx", "src/app/conditions.tsx", "src/modules/conditions"] },
@@ -84,7 +105,6 @@ const AFFECTED = {
 		},
 		a11y: { entries: ["src/app/welcome.tsx", "src/app/a11y.tsx", "src/modules/a11y"] },
 		camera: { entries: ["src/app/welcome.tsx", "src/app/camera.tsx", "src/modules/camera"] },
-		"keyboard-sheet": { entries: ["src/app/welcome.tsx", "src/app/keyboard-sheet.tsx", "src/modules/keyboard"] },
 	},
 } satisfies Partial<WardenE2eSuite>;
 

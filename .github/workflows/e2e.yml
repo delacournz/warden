@@ -40,7 +40,7 @@ on:
       args:
         description: Extra `warden e2e` arguments
         type: string
-        default: --specs onboarding,settings,sign-in
+        default: --specs app/onboarding,app/settings,app/auth
       warden-version:
         description: source (this checkout, the default), a release tag, or latest
         type: string
@@ -158,6 +158,6 @@ jobs:
           # 1 until the iOS accessibility bridge stops stalling on a second sim (count 2 stalled the second sim's warm-up).
           count: ${{ inputs.count || '1' }}
           retry: ${{ inputs.retry || '1' }}
-          args: ${{ github.event_name == 'workflow_dispatch' && inputs.args || '--specs onboarding,settings,sign-in' }}
+          args: ${{ github.event_name == 'workflow_dispatch' && inputs.args || '--specs app/onboarding,app/settings,app/auth' }}
           warden-version: ${{ (inputs.warden-version || 'source') == 'source' && 'none' || inputs.warden-version }}
           save-cache: ${{ github.event_name == 'pull_request' && 'true' || (inputs.save-cache && 'true') || 'false' }}

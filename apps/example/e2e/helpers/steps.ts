@@ -1,4 +1,4 @@
-import { type App, type Device, expect, type Screen, type TapOptions } from "@delacour/warden-e2e";
+import { type App, type Device, expect, type Locator, type Screen, type TapOptions } from "@delacour/warden-e2e";
 import { ids } from "./ids";
 
 /** How long to wait for the todos screen after submitting sign-in. */
@@ -124,6 +124,54 @@ export async function signedIn(app: Pick<App, "open">, screen: Screen, email = "
 	await openSignIn(app, screen);
 	await submitSignIn(screen, email, "password1");
 	await expectTodosAfterSignIn(screen);
+}
+
+/**
+ * Opens the Settings tab from anywhere in the tabs and waits for the account card. The first tab press after sign-in
+ * can be dropped while the todos screen is still settling, so it re-sends (`tap({ until })`).
+ */
+export async function openSettingsTab(screen: Screen): Promise<void> {
+	await screen.getByTestId(ids.tabs.settings).tap({ until: screen.getByTestId(ids.settings.email) });
+	await expect(screen.getByTestId(ids.settings.screen)).toBeVisible();
+}
+
+/** Opens the Todos tab from anywhere in the tabs and waits for the list. */
+export async function openTodosTab(screen: Screen): Promise<void> {
+	await screen.getByTestId(ids.tabs.todos).tap({ until: screen.getByTestId(ids.todos.input) });
+}
+
+const REVEAL_SWIPES = 4;
+/** Extra room above the cover once revealed, and the least a swipe moves, in points. */
+const REVEAL_MARGIN = 24;
+
+/**
+ * Scrolls `target` (already on screen) until its bottom edge is above `cover`'s top edge. A sticky footer (Settings'
+ * Sign out) floats over the list, and the accessibility tree says nothing about what covers what: a row under it
+ * reads as visible and a tap on it presses the footer. Slow drags (no fling) move the content by about what they ask.
+ */
+export async function revealAbove(screen: Screen, target: Locator, cover: Locator): Promise<void> {
+	for (let swipe = 0; swipe < REVEAL_SWIPES; swipe++) {
+		const box = await target.boundingBox();
+		const above = (await cover.boundingBox()).y - REVEAL_MARGIN;
+		const overlap = box.y + box.height - above;
+		if (overlap <= 0) return;
+		const x = box.x + box.width / 2;
+		const from = Math.max(box.y, above - REVEAL_MARGIN);
+		await screen.swipe({
+			from: { x, y: from },
+			to: { x, y: from - Math.max(overlap, REVEAL_MARGIN) },
+			durationMs: 600,
+		});
+	}
+}
+
+/** From the tabs: Settings, Sign out, and the welcome screen again (the session is in memory, so nothing remains). */
+export async function signOut(screen: Screen): Promise<void> {
+	await openSettingsTab(screen);
+	const button = screen.getByTestId(ids.settings.signOut);
+	await button.scrollTo();
+	await button.tap({ until: screen.getByTestId(ids.welcome.screen) });
+	await expect(screen.getByTestId(ids.welcome.screen)).toBeVisible();
 }
 
 /** Fresh launch, then the accessibility showcase through its deep link; `bad` adds the known failures. */
