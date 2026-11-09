@@ -121,6 +121,15 @@ export type DeviceBiometrics = {
 
 export type Device = DeviceA11y & {
 	/**
+	 * The platform under test (`"ios"` | `"android"`), like React Native's `Platform.OS`. Branch a flow on it:
+	 * `if (device.isAndroid) await device.back();`. To skip a whole test use `test(title, { platforms: ["ios"] }, …)`.
+	 */
+	readonly os: Platform;
+	/** `device.os === "ios"`. */
+	readonly isIOS: boolean;
+	/** `device.os === "android"`. */
+	readonly isAndroid: boolean;
+	/**
 	 * Answers the system alert / sheet on top. `accept` presses the first present of OK, Allow, Open,
 	 * Continue, Yes, Done, Allow While Using App, Allow Once (else the last button); `dismiss` the first
 	 * of Cancel, Don't Allow, Not Now, Dismiss, No, Close (else the first button); `{button}` the button
@@ -391,6 +400,9 @@ export function createDevice({
 	}
 
 	const device: Device = {
+		os: driver.platform,
+		isIOS: driver.platform === "ios",
+		isAndroid: driver.platform === "android",
 		a11yAudit: a11y.a11yAudit,
 		screenReader: a11y.screenReader,
 		announcements: a11y.announcements,

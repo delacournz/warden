@@ -162,3 +162,11 @@ describe("traceDevice", () => {
 		expect(traceDevice(device, undefined)).toBe(device);
 	});
 });
+
+describe("traceDevice platform fields", () => {
+	test("os / isIOS / isAndroid pass through without spans", () => {
+		const { device, spans } = setup("android");
+		expect([device.os, device.isIOS, device.isAndroid]).toEqual(["android", false, true]);
+		expect(spans()).toEqual([]);
+	});
+});

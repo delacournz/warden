@@ -1200,3 +1200,30 @@ describe("device.keyboard", () => {
 		await e2eExpect(down.device).not.toHaveKeyboard({ timeout: 150 });
 	});
 });
+
+describe("device.os / isIOS / isAndroid", () => {
+	test("iOS: os is ios, isIOS true, isAndroid false", () => {
+		const { device } = setup({ platform: "ios" });
+		expect(device.os).toBe("ios");
+		expect(device.isIOS).toBe(true);
+		expect(device.isAndroid).toBe(false);
+	});
+
+	test("Android: os is android, isAndroid true, isIOS false", () => {
+		const { device } = setup({ platform: "android" });
+		expect(device.os).toBe("android");
+		expect(device.isAndroid).toBe(true);
+		expect(device.isIOS).toBe(false);
+	});
+
+	test("reads the driver's platform, not the env's", () => {
+		const driver = fakeDriver({ screens: [snapshotOf([], { platform: "android" })], platform: "android" });
+		const device = createDevice({
+			session: { out: "/tmp/out" },
+			driver,
+			env: { ...env, platform: "ios" },
+			clock: fakeClock(),
+		});
+		expect(device.os).toBe("android");
+	});
+});

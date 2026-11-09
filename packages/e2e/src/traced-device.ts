@@ -15,6 +15,9 @@ export function traceDevice(device: Device, span: SpanRunner | undefined): Devic
 	const { network, location, clock, permissions, camera } = device;
 	const { screenReader } = device;
 	const traced: Device = {
+		os: device.os,
+		isIOS: device.isIOS,
+		isAndroid: device.isAndroid,
 		a11yAudit: (options) => span("device.a11yAudit", () => device.a11yAudit(options)),
 		announcements: (options) => span("device.announcements", () => device.announcements(options)),
 		screenReader: {
