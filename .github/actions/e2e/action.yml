@@ -76,7 +76,7 @@ inputs:
     description: "`github` restores and saves the build, repack and golden caches with actions/cache. `none` leaves storing them to you: the golden is still imported from `~/warden-goldens` but never exported for the cache (run the golden's `beforeSave` from `cache-groups` when your cache missed it; collecting the `golden` artifact already archives a missing one there), and the `cache-groups` output lists every key and path to restore before this step and save after it."
     default: github
   compiler-cache:
-    description: "On a native build cache miss (`cache: github`), install ccache (Homebrew) and restore warden's compiler cache (`~/.warden/ccache`, the newest older key when this fingerprint has none), so the cold build reuses the C/C++/Objective-C objects an older native fingerprint compiled; saved after the run. `false` skips both."
+    description: "On a native build cache miss (`cache: github`), install ccache (a pinned release binary when none is on PATH) and restore warden's compiler cache (`~/.warden/ccache`: the newest save for this native fingerprint, else the newest for any), so the cold build reuses the C/C++/Objective-C objects an earlier build compiled. Saved after the run under a per-run key, only when the build stored new objects. Skipped when the project sets `build.cache: false`. `false` skips all of it."
     default: "true"
   save-cache:
     description: Save the build, repack and golden caches after a green run (true on the default branch, false on pull requests).
@@ -246,6 +246,8 @@ runs:
           echo "ccache=$(key ccache)"
           echo "ccache-dir=$(node -e 'const g=JSON.parse(process.argv[1]).ccache;process.stdout.write(g?.paths[0] ?? "")' "$groups")"
           echo "ccache-restore<<WARDEN_CCACHE_RESTORE"
+          ccache_key=$(key ccache)
+          if [ -n "$ccache_key" ]; then echo "$ccache_key-"; fi
           node -e 'const g=JSON.parse(process.argv[1]).ccache;for(const k of g?.restoreKeys ?? [])console.log(k)' "$groups"
           echo "WARDEN_CCACHE_RESTORE"
           echo "cache-groups<<WARDEN_CACHE_GROUPS"
@@ -277,15 +279,16 @@ runs:
       run: |
         echo "::notice title=native build cache miss::no cached app build for $KEY: warden e2e builds it from source before the first spec (~15-20 min on a 3-core runner, less with a warm compiler cache). The key follows the native fingerprint: native dependencies, config plugins, native files."
 
-    # ccache only helps a cold native build, so it is installed and restored on a builds miss alone. Any older key
-    # helps (most pods compile the same after a native change), hence the restore-keys prefix.
+    # ccache only helps a cold native build, so it is installed and restored on a builds miss alone. Each run saves under
+    # its own key (an exact key is immutable, so a cache saved empty or partial would never grow): restore the newest
+    # save for this fingerprint, else the newest for any (most pods compile the same after a native change).
     - name: Restore the compiler cache
       id: ccache-cache
       if: inputs.cache == 'github' && inputs.compiler-cache == 'true' && steps.keys.outputs.ccache != '' && steps.builds-cache.outputs.cache-hit != 'true'
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ steps.keys.outputs.ccache-dir }}
-        key: ${{ steps.keys.outputs.ccache }}
+        key: ${{ steps.keys.outputs.ccache }}-${{ github.run_id }}-${{ github.run_attempt }}
         restore-keys: ${{ steps.keys.outputs.ccache-restore }}
 
     - name: Install ccache
@@ -296,8 +299,24 @@ runs:
         CCACHE_DIR: ${{ steps.keys.outputs.ccache-dir }}
       run: |
         set -euo pipefail
+        # The release's universal binary needs only system libraries: ~1 s, against ~15 s for Homebrew and its 4 deps.
+        # Homebrew stays the fallback for when GitHub's release download fails.
+        version=4.14.2
+        sha256=cf240009630b605b775c7c5c7b7105a3b196c79f31af322c1557969aa28003fc
         if ! command -v ccache > /dev/null; then
-          HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK=1 brew install ccache
+          dir="$RUNNER_TEMP/ccache-dl"
+          tarball="$dir/ccache-$version-darwin.tar.gz"
+          mkdir -p "$dir" "$HOME/.local/bin"
+          if curl -fsSL --retry 3 -o "$tarball" "https://github.com/ccache/ccache/releases/download/v$version/ccache-$version-darwin.tar.gz" \
+            && echo "$sha256  $tarball" | shasum -a 256 -c - > /dev/null \
+            && tar -xzf "$tarball" -C "$dir"; then
+            install -m 0755 "$dir/ccache-$version-darwin/ccache" "$HOME/.local/bin/ccache"
+            export PATH="$HOME/.local/bin:$PATH"
+            echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          else
+            echo "::warning title=ccache download failed::installing ccache with Homebrew instead"
+            HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK=1 brew install ccache
+          fi
         fi
         ccache --version | head -n 1
         # ccache compresses; 2 GB holds an Expo app's pods and keeps the repo's 10 GB of GitHub cache for the rest
@@ -438,6 +457,8 @@ runs:
           echo "::group::ccache stats"
           ccache --show-stats
           echo "::endgroup::"
+          # Objects this run stored (stats were zeroed after the restore): 0 = nothing new to save
+          echo "ccache-writes=$(ccache --print-stats | awk '$1 == "local_storage_write" { print $2 }')" >> "$GITHUB_OUTPUT"
         fi
 
     - name: Print failure evidence
@@ -536,12 +557,13 @@ runs:
         key: ${{ steps.keys.outputs.golden-key }}
 
     # A failed spec after a green build still compiled good objects: ccache is content-addressed, so save it anyway.
+    # A run that stored nothing (every compile a hit, or the build never reached ccache) saves nothing.
     - name: Save the compiler cache
-      if: always() && inputs.cache == 'github' && inputs.save-cache == 'true' && steps.ccache-prep.outcome == 'success' && steps.ccache-cache.outputs.cache-hit != 'true'
+      if: always() && inputs.cache == 'github' && inputs.save-cache == 'true' && steps.ccache-prep.outcome == 'success' && steps.build-log.outputs.ccache-writes != '' && steps.build-log.outputs.ccache-writes != '0'
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ steps.keys.outputs.ccache-dir }}
-        key: ${{ steps.keys.outputs.ccache }}
+        key: ${{ steps.keys.outputs.ccache }}-${{ github.run_id }}-${{ github.run_attempt }}
 
     - name: Save the native build cache
       if: inputs.cache == 'github' && steps.run.outputs.passed == 'true' && inputs.save-cache == 'true' && steps.builds-cache.outputs.cache-hit != 'true'
