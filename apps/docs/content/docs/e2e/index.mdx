@@ -5,6 +5,13 @@ description: React Native E2E testing for an Expo app. From no warden setup to a
 icon: FlaskConical
 ---
 
+<DemoReel
+  src="/demos/e2e/batch"
+  label="warden batch leasing five iOS simulators and running salient's end-to-end specs across them"
+  command="warden batch salient-e2e"
+  facts="37/37 passed · shown at 5× speed"
+/>
+
 Three commands from an Expo app to a passing end-to-end test on a leased simulator or emulator:
 
 ```bash
@@ -148,16 +155,7 @@ The run lists the failed specs and tests and prints `evidence in <batchDir>`. Op
 warden e2e --count 5
 ```
 
-`--count` leases that many devices and spreads the specs over them, one `bun test` process per device:
-
-<DemoReel
-  src="/demos/e2e/batch"
-  label="warden batch leasing five iOS simulators and running salient's end-to-end specs across them"
-  command="warden batch salient-e2e"
-  facts="37/37 passed · shown at 5× speed"
-/>
-
-37 e2e specs across 5 leased iOS simulators at once, shown at 5× speed. Suite keys (`count`, `platform`, `app`, `metro` and the rest) are in [Suites](/docs/e2e/suites); one spec against a device you claimed yourself is [Run a spec by hand](/docs/e2e/specs#run-a-spec-by-hand).
+`--count` leases that many devices and spreads the specs over them, one `bun test` process per device (the clip at the top is 37 specs on 5 simulators). Suite keys (`count`, `platform`, `app`, `metro` and the rest) are in [Suites](/docs/e2e/suites); one spec against a device you claimed yourself is [Run a spec by hand](/docs/e2e/specs#run-a-spec-by-hand).
 
 ## Let your agent write specs
 
