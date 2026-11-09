@@ -14,6 +14,8 @@ export type A11yTarget = {
 	): Promise<Result<AnnouncementMatch, DriverError>>;
 	/** the current screen as text with the `--a11y` columns (failure evidence); undefined when it cannot be read */
 	a11yScreen(): Promise<string | undefined>;
+	/** whether the on-screen keyboard is up right now (one fresh read) */
+	keyboardVisible(): Promise<boolean>;
 	/** the assertion timeout in ms */
 	assertionTimeout(): number;
 	/** one reported step */

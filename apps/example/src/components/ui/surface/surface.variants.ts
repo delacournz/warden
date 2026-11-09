@@ -5,6 +5,18 @@ export const SURFACE_VARIANTS = ["default", "secondary", "tertiary", "transparen
 
 export const SURFACE_PADDINGS = ["none", "sm", "md", "lg"] as const;
 
+/**
+ * What the surface is made of, orthogonal to which plane it fills.
+ *
+ * `flat` is the library default and draws nothing extra. `etched` sets a
+ * one-pixel highlight into the edge with a very soft drop — see the
+ * `--shadow-etched` tokens. `tray` is the muted frame that holds panels: a
+ * 2xl corner, 4pt of padding and a translucent muted fill, so the panels in it
+ * read as inset cards rather than as loose boxes on a page.
+ */
+export const SURFACE_MATERIALS = ["flat", "etched", "tray"] as const;
+
+export type SurfaceMaterial = (typeof SURFACE_MATERIALS)[number];
 export type SurfaceVariant = (typeof SURFACE_VARIANTS)[number];
 export type SurfacePadding = (typeof SURFACE_PADDINGS)[number];
 
@@ -68,7 +80,7 @@ const NEXT_PLANE = {
  * The root carries no `text-*`: a React Native `View` does not cascade colour
  * to a `Text` descendant, so a class here would reach nothing.
  *
- * Free of React Native imports so it stays unit-testable — `bun test` cannot
+ * Free of React Native imports so it stays unit-testable — a bare JS runtime cannot
  * parse React Native's Flow-typed source. See AGENTS.md.
  */
 export const surfaceVariants = tv({
@@ -88,10 +100,25 @@ export const surfaceVariants = tv({
 			md: { root: "p-4" },
 			lg: { root: "p-6" },
 		},
+		material: {
+			flat: {},
+			etched: { root: "shadow-etched dark:shadow-etched-dark" },
+			tray: {},
+		},
+		// A panel sitting in a tray: one corner step under the tray's own, so
+		// the gap between the two curves stays even round the edge.
+		inTray: { true: {}, false: {} },
 	},
+	compoundVariants: [
+		// Beats the padding axis, so a tray is `p-1` whatever `padding` says.
+		{ material: "tray", class: { root: "rounded-2xl border-transparent bg-muted/70 p-1" } },
+		{ inTray: true, class: { root: "rounded-xl" } },
+	],
 	defaultVariants: {
 		variant: "default",
 		padding: "md",
+		material: "flat",
+		inTray: false,
 	},
 });
 
@@ -123,11 +150,16 @@ export function resolveSurfaceVariant({
  * surface, which paints none — the plane it sits on itself.
  */
 export function resolveSurfacePlane({
+	material = "flat",
 	parentPlane,
 	variant,
 }: {
+	material?: SurfaceMaterial;
 	parentPlane: SurfacePlane | null;
 	variant: SurfaceVariant;
 }): SurfacePlane | null {
+	// A tray paints its own muted fill, so what it holds steps from no plane at
+	// all and resolves to the card fill rather than the next rung down.
+	if (material === "tray") return null;
 	return variant === "transparent" ? parentPlane : variant;
 }

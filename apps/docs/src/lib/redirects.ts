@@ -1,3 +1,5 @@
+import { docsRoute, encodeMarkdownUrl } from "./shared";
+
 /**
  * Docs pages that moved: old slug path → current slug path. Two restructures feed it: the 2026-10
  * one (`guides/*`), the 2026-11 device-conditions split and the 2026-11 split into top tabs (Getting Started, Agents & Simulators, E2E
@@ -91,4 +93,17 @@ export function rewriteDocsLinks(text: string): string {
 		const to = MOVED[path];
 		return to === undefined ? whole : `/docs/${to}`;
 	});
+}
+
+/**
+ * The `.md` twin of a docs URL (query kept), for a client that prefers `text/markdown`. Relative like
+ * {@link trailingSlashTarget}: behind Railway's proxy the request URL is `http://`, and an absolute one sent agents
+ * through an extra http → https hop.
+ */
+export function markdownTwinTarget(url: URL): string {
+	const slugs = url.pathname
+		.slice(docsRoute.length)
+		.split("/")
+		.filter((v) => v.length > 0);
+	return encodeMarkdownUrl(slugs) + url.search;
 }

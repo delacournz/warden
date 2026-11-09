@@ -30,13 +30,13 @@ export function BadgeCloseButton({
 	feedback = "fade",
 	...props
 }: BadgeCloseButtonProps): ReactElement {
-	const { size, isDisabled } = useBadgePart("Badge.CloseButton");
+	const { size, isDisabled, material } = useBadgePart("Badge.CloseButton");
 
 	return (
 		<Pressable
 			accessibilityLabel={accessibilityLabel}
 			accessibilityRole="button"
-			className={badgeVariants({ size }).closeButton({ className })}
+			className={badgeVariants({ material, size }).closeButton({ className })}
 			disabled={isDisabled}
 			feedback={feedback}
 			{...props}

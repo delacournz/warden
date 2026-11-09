@@ -27,7 +27,15 @@ const BASH = existsSync("/bin/bash") ? "/bin/bash" : "bash";
 
 type Group = (typeof GROUPS)[number];
 type Collected = { groups: Group[]; paths: Record<Group, string[]>; archived: boolean; stdout: string };
-type RunOpts = { artifacts: string; passed: boolean; goldenBuilt?: boolean; goldenArchived?: boolean };
+type RunOpts = {
+	artifacts: string;
+	passed: boolean;
+	goldenBuilt?: boolean;
+	goldenArchived?: boolean;
+	goldenCacheHit?: boolean;
+	/** the suite runs without a golden: the action passes an empty GOLDEN_KEY */
+	goldenOff?: boolean;
+};
 
 const STUB = `#!/bin/sh
 case "$1 $2" in
@@ -84,6 +92,8 @@ function collect(opts: RunOpts): Collected {
 			STARTED: "2000",
 			PROFILE: "",
 			STUB_BUILT: opts.goldenBuilt === true ? "1" : "0",
+			GOLDEN_CACHE_HIT: opts.goldenCacheHit === true ? "true" : "",
+			...(opts.goldenOff === true ? { GOLDEN_KEY: "" } : {}),
 		},
 	});
 	expect(proc.exitCode).toBe(0);
@@ -107,11 +117,53 @@ describe("artifacts.sh", () => {
 		expect(run.stdout).not.toContain("exported");
 	});
 
+	test("all for a suite without a golden never looks for one, green or failed", () => {
+		const green = collect({ artifacts: "all", passed: true, goldenOff: true });
+		expect(green.stdout).not.toContain("never built");
+		expect(green.groups).toEqual(["report", "batches", "logs", "app"]);
+		expect(collect({ artifacts: "all", passed: false, goldenOff: true }).groups).toEqual(["report", "batches", "logs"]);
+	});
+
 	test("all after a failed run collects report, batches, logs and golden, not app", () => {
 		const run = collect({ artifacts: "all", passed: false, goldenBuilt: true });
 		expect(run.groups).toEqual(["report", "batches", "logs", "golden"]);
 		expect(run.paths.logs).toEqual([join(home, ".warden", "logs")]);
 		expect(run.paths.app).toEqual([]);
+	});
+
+	test("all after a green run skips a golden restored from the cache: the cache already holds those bytes", () => {
+		const run = collect({
+			artifacts: "all",
+			passed: true,
+			goldenBuilt: true,
+			goldenArchived: true,
+			goldenCacheHit: true,
+		});
+		expect(run.groups).toEqual(["report", "batches", "logs", "app"]);
+		expect(run.paths.golden).toEqual([]);
+		expect(existsSync(join(home, "warden-artifacts", "golden.tar"))).toBe(false);
+	});
+
+	test("all after a failed run keeps a golden restored from the cache: it reproduces the failure", () => {
+		const run = collect({
+			artifacts: "all",
+			passed: false,
+			goldenBuilt: true,
+			goldenArchived: true,
+			goldenCacheHit: true,
+		});
+		expect(run.paths.golden).toEqual([join(home, "warden-artifacts", "golden.tar")]);
+	});
+
+	test("an explicit golden in the list is collected after a green run, cache hit or not", () => {
+		const run = collect({
+			artifacts: "golden",
+			passed: true,
+			goldenBuilt: true,
+			goldenArchived: true,
+			goldenCacheHit: true,
+		});
+		expect(run.paths.golden).toEqual([join(home, "warden-artifacts", "golden.tar")]);
 	});
 
 	test("logs are always collected, whatever the artifacts input says", () => {
@@ -120,6 +172,22 @@ describe("artifacts.sh", () => {
 			expect(collect({ artifacts: "none", passed }).paths.logs).toEqual(logs);
 			expect(collect({ artifacts: "report", passed }).paths.logs).toEqual(logs);
 		}
+	});
+
+	test("the device helpers' logs join the logs group, their sockets left behind", () => {
+		const simd = join(home, ".warden", "simd");
+		mkdirSync(simd, { recursive: true });
+		writeFileSync(join(simd, "U1.log"), "helper log");
+		writeFileSync(join(simd, "U1.sock"), "");
+		const run = collect({ artifacts: "none", passed: true });
+		const copied = join(home, "warden-artifacts", "simd-logs");
+		expect(run.paths.logs).toEqual([join(home, ".warden", "logs"), copied]);
+		expect(readFileSync(join(copied, "U1.log"), "utf8")).toBe("helper log");
+		expect(existsSync(join(copied, "U1.sock"))).toBe(false);
+	});
+
+	test("no helper logs: the logs group is warden's logs alone", () => {
+		expect(collect({ artifacts: "none", passed: true }).paths.logs).toEqual([join(home, ".warden", "logs")]);
 	});
 
 	test("a golden built but not archived is exported, once", () => {
@@ -190,6 +258,50 @@ describe("action.yml artifacts", () => {
 			expect(upload?.if).toContain("inputs.upload-artifacts == 'true'");
 			expect(upload?.with?.path).toBe(`\${{ steps.artifacts.outputs.${group} }}`);
 		}
+	});
+
+	test("the collection knows whether the golden came from the cache", () => {
+		const collectStep = action.runs.steps.find((s) => s.id === "artifacts") as Step & { env?: Record<string, string> };
+		expect(collectStep.env?.GOLDEN_CACHE_HIT).toBe(`\${{ steps.golden-cache.outputs.cache-hit }}`);
+	});
+
+	test("a native build cache miss says so, installs ccache and restores the compiler cache from any older key", () => {
+		const steps = action.runs.steps;
+		const at = (id: string) => steps.findIndex((s) => s.id === id);
+		const prep = steps[at("ccache-prep")] as Step & { run?: string };
+		expect(at("builds-cache")).toBeLessThan(at("ccache-cache"));
+		expect(prep.if).toContain("steps.builds-cache.outputs.cache-hit != 'true'");
+		expect(prep.if).toContain("inputs.compiler-cache == 'true'");
+		expect(steps[at("ccache-cache")]?.if).toBe(prep.if);
+		expect(prep.run).toContain("brew install ccache");
+		expect(prep.run).toContain("ccache --zero-stats");
+		const notice = steps[at("cache-miss")] as Step & { run?: string };
+		expect(notice.if).toContain("steps.builds-cache.outputs.cache-hit != 'true'");
+		expect(notice.if).not.toContain("compiler-cache");
+		expect(notice.run).toContain("::notice title=native build cache miss::");
+		expect(at("cache-miss")).toBeLessThan(at("run"));
+		const restore = steps[at("ccache-cache")];
+		expect(restore?.uses).toStartWith("actions/cache/restore@");
+		expect(restore?.with?.key).toBe(`\${{ steps.keys.outputs.ccache }}`);
+		expect(restore?.with?.["restore-keys"]).toBe(`\${{ steps.keys.outputs.ccache-restore }}`);
+		expect(at("ccache-cache")).toBeLessThan(at("ccache-prep"));
+		expect(at("ccache-prep")).toBeLessThan(at("run"));
+		expect(action.inputs["compiler-cache"]?.default).toBe("true");
+	});
+
+	test("the native build log is printed folded, its workflow commands disarmed; the compiler cache is saved", () => {
+		const steps = action.runs.steps;
+		const at = (id: string) => steps.findIndex((s) => s.id === id);
+		const print = steps[at("build-log")] as Step & { run?: string };
+		expect(at("build-log")).toBeGreaterThan(at("run"));
+		expect(print.if).toContain("always()");
+		expect(print.run).toContain("::group::");
+		expect(print.run).toContain("::stop-commands::");
+		expect(print.run).toContain("ccache --show-stats");
+		const save = steps.find((s) => s.uses?.startsWith("actions/cache/save@") && s.with?.key?.includes("ccache"));
+		expect(save?.if).toContain("always()");
+		expect(save?.if).toContain("steps.ccache-cache.outputs.cache-hit != 'true'");
+		expect(save?.if).toContain("inputs.save-cache == 'true'");
 	});
 
 	test("the cache export reuses the golden the collection archived", () => {

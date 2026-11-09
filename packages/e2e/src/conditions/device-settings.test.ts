@@ -107,7 +107,7 @@ describe("baseline", () => {
 		});
 		expect(c.internals.declared).toBe(true);
 		await c.internals.applyBaseline();
-		expect(methods(driver.calls)).toEqual(["permissions", "timezone", "locale", "a11y", "clock"]);
+		expect(methods(driver.calls)).toEqual(["permissions", "timezone", "locale", "a11y", "clock", "keyboard"]);
 		expect(driver.callsOf("a11y")[0]).toMatchObject({ op: { textSize: "accessibility-large" } });
 		expect(c.internals.dirty()).toBe(false);
 	});
@@ -190,5 +190,79 @@ describe("memory warning and push", () => {
 		});
 		const c = createDeviceConditions({ driver, env, signal: () => undefined, tickerClock: clock });
 		await expect(c.memoryWarning()).rejects.toMatchObject({ message: expect.stringContaining("no way") });
+	});
+});
+
+describe("keyboard", () => {
+	test("hardware is recorded on the lease and the default is put back on teardown", async () => {
+		const { c, driver, recorded, events } = setup();
+		const result = await c.keyboard("hardware");
+		expect(result).toMatchObject({ mode: "hardware" });
+		expect(driver.callsOf("keyboard").at(-1)).toMatchObject({ mode: "hardware" });
+		expect(recorded.at(-1)).toEqual({ kind: "record", area: "keyboard", value: { mode: "hardware" } });
+		expect(events.at(-1)).toMatchObject({ area: "keyboard", value: { mode: "hardware" } });
+		await c.internals.teardown();
+		expect(driver.callsOf("keyboard").at(-1)).toMatchObject({ mode: "software" });
+		expect(recorded.at(-1)).toEqual({ kind: "settle", area: "keyboard", value: { mode: "software" } });
+	});
+
+	test("toggle flips the mode the spec has in place", async () => {
+		const { c, driver } = setup();
+		await c.keyboard("toggle");
+		await c.keyboard("toggle");
+		expect(driver.callsOf("keyboard").map((call) => call.mode)).toEqual(["hardware", "software"]);
+	});
+
+	test("an unknown mode is INVALID_ARGUMENT and touches nothing", async () => {
+		const { c, driver } = setup();
+		await expect(c.keyboard("both" as never)).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+		expect(driver.callsOf("keyboard")).toEqual([]);
+	});
+
+	test("the baseline applies the default on an owned device even when the suite says nothing", async () => {
+		const { c, driver, recorded } = setup();
+		expect(c.internals.declared).toBe(true);
+		await c.internals.applyBaseline();
+		expect(driver.callsOf("keyboard")).toEqual([{ method: "keyboard", mode: "software" }]);
+		expect(recorded).toEqual([{ kind: "settle", area: "keyboard", value: { mode: "software" } }]);
+		await c.internals.teardown();
+		expect(driver.callsOf("keyboard")).toHaveLength(1);
+	});
+
+	test("the suite's conditions.keyboard wins over the default, is recorded, and is the teardown goal", async () => {
+		const { c, driver, recorded } = setup({ keyboard: "hardware" });
+		await c.internals.applyBaseline();
+		expect(driver.callsOf("keyboard")).toEqual([{ method: "keyboard", mode: "hardware" }]);
+		expect(recorded.at(-1)).toEqual({ kind: "record", area: "keyboard", value: { mode: "hardware" } });
+		await c.keyboard("software");
+		await c.internals.teardown();
+		expect(driver.callsOf("keyboard").at(-1)).toMatchObject({ mode: "hardware" });
+	});
+
+	test("a physical phone is never touched: no default, E_UNSUPPORTED from the driver otherwise", async () => {
+		const driver = fakeDriver({ screens: [snapshotOf([])] });
+		const c = createDeviceConditions({
+			driver,
+			env: { ...env, deviceKind: "physical" },
+			signal: () => undefined,
+			tickerClock: clock,
+			recorder: { record: () => undefined, settle: () => undefined },
+			log: () => undefined,
+		});
+		expect(c.internals.declared).toBe(false);
+		await c.internals.applyBaseline();
+		expect(driver.callsOf("keyboard")).toEqual([]);
+	});
+
+	test("a device with no lease is not ours: no default", async () => {
+		const driver = fakeDriver({ screens: [snapshotOf([])] });
+		const c = createDeviceConditions({
+			driver,
+			env,
+			signal: () => undefined,
+			tickerClock: clock,
+			log: () => undefined,
+		});
+		expect(c.internals.declared).toBe(false);
 	});
 });

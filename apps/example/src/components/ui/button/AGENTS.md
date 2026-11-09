@@ -23,7 +23,6 @@ The reference implementation for the patterns in the package
 | `button.context.tsx` | `ButtonContext` and the two group contexts, with their hooks |
 | `button.types.ts` | Prop types shared by two or more parts |
 | `button.variants.ts` | Pure `tv()` slots, no RN imports |
-| `button.variants.test.ts` | |
 
 ## Design
 
@@ -46,7 +45,7 @@ The reference implementation for the patterns in the package
   never picking between two. The shape is a default rather than a law: three
   numbers in `tokens.css` square the whole kit off without touching a
   component. Values above half the height are clamped by the renderer, which is
-  why `tokens.test.ts` holds them under it.
+  why they must stay under it.
 - **A square footprint is a size, not a flag.** `icon-sm` / `icon-md` /
   `icon-lg` are `sm` / `md` / `lg` with the horizontal padding traded for a width
   off the same token. Padding and width are then mutually exclusive by
@@ -133,7 +132,7 @@ for a chunk that says something rather than doing something. An
   emitted after it, and `tv` emits variants in declaration order. A surviving
   `rounded-button-md` on the size axis would therefore delete the squaring pair
   as soon as someone reordered two keys in `buttonVariants`, with nothing to see
-  in the diff. `cn.test.ts` pins the asymmetry in both directions.
+  in the diff.
 - **Horizontal squares on the logical axis; vertical squares on the physical
   one. Never mix them.** `rounded-s-*` / `rounded-e-*` compile to
   `border-start-start-radius` and friends, survive lightningcss, and flip under
@@ -159,7 +158,7 @@ for a chunk that says something rather than doing something. An
   invisible rule. `resolveGroupPositions` and `resolveGroupSeams` are two walks
   rather than one because they ask different questions — "how many of us are
   there" and "what is immediately before me" — and both are pure, so the whole
-  matrix is reachable from `bun test`.
+  matrix is unit-testable.
 - **Membership is a deny-list.** Anything that is not a separator is a member.
   Not `child.type === Button`, for two reasons: it lets a custom control join,
   and it means `button-group.tsx` never imports its own root for an identity
@@ -194,20 +193,54 @@ for a chunk that says something rather than doing something. An
 - **The group paints nothing.** No background, no border, no disabled fade. A
   disabled group publishes `isDisabled` and each member fades itself; a group
   fading as well would compound the two down to a quarter opacity. It carries no
-  `gap` either — a gap is the seam this component exists to close — and no
-  `overflow-hidden`, which would square off the very corners the position
+  `gap` while attached — a gap is the seam this component exists to close — and
+  no `overflow-hidden`, which would square off the very corners the position
   compounds just rounded.
 - **No `accessibilityRole` on the group.** Announcing a control with no action
   in front of every member helps nobody; the members are already buttons.
-- **Horizontal groups are content-width** (`self-start`), because that is what a
-  segmented control is. For a run that fills its parent, put `className="w-full"`
-  on the group and `className="flex-1"` on each member — **and make sure the
-  parent has a definite width**. Yoga resolves a percentage against the parent's
-  content box, so `w-full` inside a container that is itself content-sized
-  resolves to nothing and falls back to the content width: the group collapses
-  onto its buttons and a `flex-1` field between them is squeezed to a few points.
-  It looks like the group ignored `w-full`. It did not; there was no width to
-  take a percentage of.
+- **`isAttached={false}` shares the props and drops the shape.** A toolbar of
+  `Find · Export · Share` wants one `variant` and one `size` without becoming a
+  segmented control. Detached, `resolveGroupPositions` places every member
+  `only` — the lone member's existing position, which draws the lone button's
+  `rounded-button-*` — rather than minting a fourth sentinel, and
+  `resolveGroupSeams` returns no seams, so nothing overlaps into the gap. The gap
+  is `gap-2` on either axis, a `tv` variant on the `group` slot and never inline.
+  `Button.Group.Separator` still renders, as a rule between spaced members.
+- **A detached member presses with `scale` again.** The fade exists only because
+  a scaling member tears its seam, and a detached run has none.
+  `resolveButtonFeedback` takes `isAttached` as a fourth argument, defaulting to
+  `true`, rather than turning into an options object: its positional signature
+  is public, `Input` and the existing tests call it, and the new rung is the only
+  thing that changed.
+- **`isFullWidth` splits the parent equally, not by content.** A
+  `Monthly · Annual · One-off` picker sized to its labels moves its dividers when
+  the copy changes, and a wider segment reads as more important. The group trades
+  `self-start` for `w-full self-stretch` — declared after `orientation` in
+  `buttonVariants`, so tailwind-merge drops `self-start` rather than keeping it —
+  and every member of a horizontal run gets `flex-1 basis-0`. **`basis-0` is the
+  part that matters**: with `flex-1` alone Yoga shares out only the space left
+  after each member's content width, and the widths still follow the labels.
+- **A member learns it stretches from context, as `isStretched`.**
+  `resolveGroupMemberStretch` decides it once per group, it rides on the
+  per-member context beside `position` and `isSeamed`, and `Button` feeds it to
+  an `isStretched` variant on its own `tv`. No `cloneElement`, for the reason
+  above. A caller's `className="flex-none"` on one member still wins — the
+  variant is merged before the caller's class. `Button.Group.Text` and the
+  separator do **not** stretch: a caption and a rule keep their content width
+  and the buttons share what is left. `Input` does not read it yet; a caller
+  sizes a joined field with its own `className`.
+- **`isFullWidth` on a vertical group widens the group and does nothing else.**
+  Its members already stretch on the cross axis, and `basis-0` on the main axis
+  of a column with no definite height would collapse every member to nothing —
+  so `isStretched` is `false` there by construction.
+- **Horizontal groups are content-width by default** (`self-start`), because
+  that is what a segmented control is. `isFullWidth` fills the parent — **and the
+  parent must have a definite width**. Yoga resolves a percentage against the
+  parent's content box, so `w-full` inside a container that is itself
+  content-sized resolves to nothing and falls back to the content width: the
+  group collapses onto its buttons and a `flex-1` field between them is squeezed
+  to a few points. It looks like the group ignored `isFullWidth`. It did not;
+  there was no width to take a percentage of.
 - **`Button.Group.Text` draws the button's own chrome**, not chrome of its own,
   which is what keeps its height, padding and corner identical to the buttons
   beside it — those come off one axis, and restating any of them here is how a
@@ -215,3 +248,10 @@ for a chunk that says something rather than doing something. An
   than `primary` when nothing names a variant: a chunk that cannot be pressed
   should not wear the group's action paint. A group that *does* name a variant
   is followed, so an outline run reads as one piece.
+
+- **`material="etched"` is opt-in and per fill.** `primary` takes `shadow-etched-primary` (a white
+  inset top edge at 16%); `secondary`, `tertiary` and `outline` take the light/dark edge
+  (`shadow-etched dark:shadow-etched-dark`); `ghost`, `destructive` and `destructive-soft` stay flat
+  — a ghost has no surface to lift and a signal colour does not take a second highlight. The press
+  scale is already 0.97. The tokens live in `tokens.css`. `BUTTON_MATERIALS` and `ButtonMaterial`
+  are exported from the index like every other axis.

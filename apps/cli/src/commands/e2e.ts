@@ -21,6 +21,7 @@ import {
 } from "@delacour/warden-core/config.defaults";
 import { parseDuration } from "@delacour/warden-core/duration";
 import { resolveHeadless } from "@delacour/warden-core/headless";
+import { isCi } from "@delacour/warden-core/owner";
 import { checkIosRuntime } from "@delacour/warden-core/providers/ios";
 import { DEFAULT_SLIM_PROFILE, type SlimProfile, validateProfile } from "@delacour/warden-core/sims/slim.profile";
 import type { Platform } from "@delacour/warden-core/types";
@@ -55,6 +56,7 @@ import { selectPreload } from "../e2e/e2e-runtime";
 import { attemptOut, type JobPlan, jobPlan, type ShardRuns, shardRuns } from "../e2e/jobs";
 import { type LaunchPlan, specBundleId, specDevClientScheme, specLaunchArgs } from "../e2e/launch";
 import { annotations, commonFailure, githubTarget, stepSummary, testEvent, testTotals } from "../e2e/report-output";
+import { type E2eTiming, runTiming, timingLine } from "../e2e/timing";
 import { exitGate, type RunShape, type SpecVerdict, type Verdicts, verdicts } from "../e2e/verdicts";
 import { type AppFlagValues, withLeaseOptions } from "../lease-session";
 import { emit, note, reportError, success, warn } from "../output";
@@ -65,6 +67,7 @@ import {
 	type BatchArgs,
 	type BatchDeps,
 	type BatchLeg,
+	type DeviceWarmReport,
 	defaultBatchDeps,
 	type MetroPlan,
 	parseBatchArgs,
@@ -123,8 +126,12 @@ export type E2eReport = {
 	only?: string[];
 	/** per-device setup outcomes, when the suite has a `setup` */
 	setup?: DeviceSetup[];
+	/** iOS: per-device driver warm-up outcomes (`axRecovery`: a wedged accessibility service it found and what became of it) */
+	warm?: DeviceWarmReport[];
 	/** the run stopped before any spec: a phone's runner would not start (`device_locked`, ...) */
 	error?: { code: string; message: string; udid: string };
+	/** where the run's wall time went (ms): setup → tests → teardown; absent when no spec ran */
+	timing?: E2eTiming;
 };
 
 /** The suite's retry / passes and device request (count, profile, runtime, biometrics, camera, ports) as option values. */
@@ -444,6 +451,7 @@ function printVerdict(ctx: CommandContext, report: E2eReport): void {
 	const line = `warden e2e: ${passed}/${report.specs.length} spec(s) passed — ${report.ok ? "gate passed" : "gate failed"}`;
 	if (report.ok) success(ctx, line);
 	else reportError(ctx, "e2e", line.replace(/^warden e2e: /, ""));
+	if (report.timing) ctx.err(timingLine(report.timing));
 }
 
 /** `CI` is set to something other than empty / `0` / `false`. */
@@ -451,13 +459,15 @@ const inCi = (env: Record<string, string | undefined>): boolean => !["", "0", "f
 
 /**
  * Whether a passed gate shuts the devices warden booted down (closing their windows) before their
- * leases are released: the suite's `shutdown`, else yes, locally and under CI. `shutdown: "idle"`
- * keeps them booted for the next run (`warden gc` reaps them once idle). `--no-shutdown` always wins.
+ * leases are released: the suite's `shutdown`, else yes locally and no under CI (the runner is
+ * thrown away, so a shutdown is only time spent; the golden is its own sim, never one of these).
+ * `shutdown: "idle"` keeps them booted for the next run (`warden gc` reaps them once idle).
+ * `--no-shutdown` always wins.
  */
-function shutsDownOnPass(suite: Suite, opts: E2eOpts, physical: boolean): boolean {
+function shutsDownOnPass(ctx: CommandContext, suite: Suite, opts: E2eOpts, physical: boolean): boolean {
 	// a phone is never shut down: with only phones in the run there is nothing to do
 	if (!opts.shutdown || physical) return false;
-	return (suite.config.shutdown ?? "always") === "always";
+	return (suite.config.shutdown ?? (isCi(ctx.env) ? "idle" : "always")) === "always";
 }
 
 /** `--headless` / `--no-headless` > the suite's (else top-level) `headless` > `WARDEN_HEADLESS`. */
@@ -521,6 +531,7 @@ async function e2e(
 	opts: E2eOpts,
 	passed: ReadonlySet<string>
 ): Promise<number> {
+	const began = ctx.now();
 	const fail = (message: string) => {
 		reportError(ctx, "e2e", message);
 		return 1;
@@ -562,7 +573,7 @@ async function e2e(
 		jobs.argvs.get(jobs.jobs[0] ?? "") ?? [],
 		sessionHooks(suite, specs, shape, spec, runs, {
 			platform: selection.platform,
-			shutdown: shutsDownOnPass(suite, opts, physical),
+			shutdown: shutsDownOnPass(ctx, suite, opts, physical),
 			physical,
 			...warmHooks(ctx, deps, suite, opts, physical && selection.platform === "ios"),
 			...jsonLinesHook(ctx, opts),
@@ -574,7 +585,8 @@ async function e2e(
 		attempts: runs.attempts,
 	});
 	for (const warning of result.warnings) ctx.err(ctx.ui.color.yellow(`warden e2e: ${warning}`));
-	const report = buildReport(base, headless, shape.shardOf === undefined ? "spec" : "device", session, result);
+	const isolate = shape.shardOf === undefined ? "spec" : "device";
+	const report = buildReport(base, headless, isolate, session, result, runTiming(began, session, ctx.now()));
 	await publish(ctx, deps, opts, report);
 	await publishGithub(ctx, deps, opts, report);
 	const early = earlyExit(session);
@@ -600,7 +612,8 @@ function buildReport(
 	headless: boolean,
 	isolate: E2eIsolation,
 	session: SessionResult,
-	result: Verdicts
+	result: Verdicts,
+	timing: E2eTiming | undefined
 ): E2eReport {
 	return {
 		...base,
@@ -611,7 +624,9 @@ function buildReport(
 		specs: result.specs,
 		...(result.only.length > 0 ? { only: result.only } : {}),
 		...(session.setups ? { setup: session.setups } : {}),
+		...(session.warm && session.warm.length > 0 ? { warm: session.warm } : {}),
 		...(session.error ? { error: session.error } : {}),
+		...(timing ? { timing } : {}),
 	};
 }
 
@@ -737,13 +752,19 @@ async function runPlan(
 		...(suite.biometrics === true ? { biometrics: true } : {}),
 		...(config.camera !== undefined ? { camera: true } : {}),
 		...(suite.reclaim !== undefined ? { reclaimConfig: suite.reclaim } : {}),
+		golden: suite.golden,
 	});
 	const [first] = picked.data ?? [];
-	const args = parseBatchArgs(platform, first ? legOpts(first) : { ...batchOpts, ...phoneOpts() }, ctx.cwd, {
-		jobs: { kind: "list", jobs: specs.map((f) => f.id) },
-		cwd: suite.cwd,
-		env: { ...config.env },
-	});
+	const args = parseBatchArgs(
+		platform,
+		first ? legOpts(first) : { ...batchOpts, ...phoneOpts(), golden: suite.golden },
+		ctx.cwd,
+		{
+			jobs: { kind: "list", jobs: specs.map((f) => f.id) },
+			cwd: suite.cwd,
+			env: { ...config.env },
+		}
+	);
 	if (!args.success) return args;
 	const legs = batchLegs(platform, picked.data ?? [], legOpts);
 	if (!legs.success) return legs;
@@ -1028,7 +1049,7 @@ export function createE2eCommand(deps: BatchDeps): Command {
 				.option("--devices <legs>", "which e2e.<suite>.devices legs run: default | all | <profile,…>")
 				.option(
 					"--no-shutdown",
-					"keep the devices running after the gate passes (default: shut down the ones warden created; suite shutdown)"
+					"keep the devices running after the gate passes (default: shut down the ones warden created, kept under CI; suite shutdown)"
 				)
 				.option(
 					"--perf [captures]",

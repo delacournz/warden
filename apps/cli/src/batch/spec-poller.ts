@@ -42,7 +42,8 @@ export function specPoller(
 	specs: readonly TrackedSpec[],
 	resultFiles: ReadonlyMap<string, string>,
 	ended: ReadonlySet<string>,
-	sink: SpecSink
+	sink: SpecSink,
+	options: { /** the run's start (epoch ms): test lines add the run's total so far */ startedAt?: number } = {}
 ): { poll: () => Promise<void>; stop: () => void } {
 	const followed = new Map<string, Followed>();
 	const settled = new Set<string>();
@@ -72,7 +73,7 @@ export function specPoller(
 		const lines = results.flatMap((result) => {
 			const spec = entry.tracker.specOf(result);
 			if (spec) sink.finished?.(spec.id, result);
-			return spec ? [testLine(spec.id, result)] : [];
+			return spec ? [testLine(spec.id, result, options.startedAt)] : [];
 		});
 		if (lines.length > 0) sink.tests(lines);
 		if (final) settled.add(key);

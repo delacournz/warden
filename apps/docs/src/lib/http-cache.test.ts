@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { compressResponse, routeRules, shouldCompress } from "./http-cache";
+import { compressResponse, hostRobotsTag, routeRules, shouldCompress } from "./http-cache";
 
 const base = {
 	acceptEncoding: "gzip, br",
@@ -69,5 +69,23 @@ describe("routeRules", () => {
 		expect(all["Permissions-Policy"]).toContain("camera=()");
 		expect("Cache-Control" in all).toBe(false);
 		expect("X-Robots-Tag" in all).toBe(false);
+	});
+});
+
+describe("hostRobotsTag", () => {
+	test("keeps every host but production out of the index", () => {
+		expect(hostRobotsTag(new Request("https://staging.warden.co.nz/docs/e2e"))).toBe("noindex");
+		expect(hostRobotsTag(new Request("http://localhost:3210/"))).toBe("noindex");
+	});
+
+	test("production, behind Railway's http proxy too, is indexable", () => {
+		expect(hostRobotsTag(new Request("https://warden.co.nz/docs/e2e"))).toBeUndefined();
+		expect(hostRobotsTag(new Request("http://warden.co.nz/docs/e2e"))).toBeUndefined();
+	});
+});
+
+describe("docs pages vary on Accept", () => {
+	test("the edge never hands a cached HTML page to a client asking for Markdown", () => {
+		expect(routeRules["/docs/**"].headers.Vary).toBe("Accept");
 	});
 });

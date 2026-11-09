@@ -6,7 +6,7 @@ import { scheduleOnUI } from "react-native-worklets";
 import { shouldResetKeyboardAnimation } from "@/lib/keyboard-animation";
 
 // Re-exported so the pure decision is reachable beside the hook that acts on
-// it; it lives in `lib` only because `bun test` cannot follow this module's
+// it; it lives in `lib` only because a plain unit test cannot follow this module's
 // React Native imports.
 export { shouldResetKeyboardAnimation } from "@/lib/keyboard-animation";
 

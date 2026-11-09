@@ -43,12 +43,14 @@ Never import subpaths (`/device`, `/screen/*`, `/env`). Only `.` and `./preload`
 
 - `test(title, [options], async ({ app, device, screen, platform }) => ...)`
 - `options`: `{ timeout, skip, only, platforms: ("ios"|"android")[], requires: ("pinch"|"multiTouch")[], retry }`. `retry` is bun's retry; only the last attempt lands in `results.jsonl`. `requires` skips the test at collection when the device's driver is known to lack the capability: a physical iPhone has neither (`WARDEN_DEVICE_KIND=physical`); elsewhere the driver decides at run time.
-- `test.skip`, `test.only`, `test.todo(title)`, `test.skipIf(cond)(title, body)`.
+- `test.skip`, `test.only`, `test.todo(title)`, `test.skipIf(cond)(title, body)`. Skipped at collection (`skip`, `skipIf(true)`, wrong `platforms`, missing `requires`) = a `skipped` results line, code `SKIPPED`, message `skipped: <reason>`; counted in `warden e2e`'s skipped total. A scope whose tests are all skipped runs no `beforeAll` / `afterAll` and no serial launch.
 - `test.use({ timeout?, actionTimeout?, assertionTimeout?, launch?: "fresh" | "none", systemAlerts?: "accept" | "dismiss" | "off" })` applies to the file or the enclosing `describe`; put `timeout` above the tests it is for (after a test in the same scope it warns on stderr and that test keeps its old timeout). `systemAlerts` (default `"off"`): reads, actions and `expect` that see an alert on top answer it (`device.alert(mode)`, 3 answers max per look) and look again. Answers the app's own alerts too. `"dismiss"` answers iOS's "Open in …?" sheet with Open, and on Android both `"accept"` and `"dismiss"` close the autofill "Save password?" sheet (ids `autofill_save*`) with Back, never its Never / Continue buttons (they write to the user's Google account), and nothing is answered while `device.openLink` waits on a link (it owns the sheet).
 - `test.extend<Extra>({ name: async (base, use) => { await use(value) } })` returns a `test` with the extra fixture.
-- `describe(title, [{ serial }], body)`. `serial` is accepted but changes nothing (bun runs a file's tests in order).
+- `describe(title, [{ serial }], body)`. The body runs at collection: no fixtures, not awaited; a body with parameters or `async` is `INVALID_ARGUMENT`. Device work goes in hooks or tests.
+- `describe.serial(title, body)` (= `{ serial: true }`): one chain on one app launch. The runner opens the app once before the group's `beforeAll` (step `hook launch`), never between its tests (`test.use({ launch: "none" })` skips that open). Each test starts where the previous one stopped. After a failed test the rest are `skipped` in `results.jsonl` (code `SKIPPED`, message names the failed test); `afterAll` still runs. `retry` on a test inside is `INVALID_ARGUMENT`. The suite's `conditions` baseline goes in once, before the chain's launch and `beforeAll`, never again on the running app; a test's own condition changes are still put back when it ends. What a `beforeAll` changes (permissions, location, ...) is not put back: undo it in `afterAll`. Use it for checks that share a launch + sign-in instead of one long test.
 - `beforeEach/afterEach` receive the base fixtures; `it.beforeEach/afterEach` on a `test.extend` result receive its fixtures too and run only for its tests. `beforeAll/afterAll` receive `app`, `device`, `screen`, `platform` only.
-- The runner calls `app.open()` before every test unless `launch: "none"`. A spec starts from a fresh launch.
+- `beforeAll/afterAll` run like a test: the scope's `timeout`, steps in their own `trace.jsonl` (`<describe>-beforeAll-<hash6>/`), failure capture, and on failure one `failed`/`timed-out` results line titled `[...describe, "beforeAll"]` (bun then runs none of the group's tests). A passing hook writes no results line. Fixtures kept from a hook fail with `SESSION` in a test: use the test's own.
+- The runner calls `app.open()` before every test unless `launch: "none"` or inside `describe.serial`. A spec starts from a fresh launch.
 - Timeouts: test 120 s, action 30 s (`waitFor`, `scrollTo`, actions), assertion 5 s (`expect`). Precedence: test option, then `test.use`, then env (`WARDEN_E2E_*`). In a suite, set them under `spec`.
 
 ## Fixtures
@@ -68,6 +70,8 @@ Never import subpaths (`/device`, `/screen/*`, `/env`). Only `.` and `./preload`
 
 | Member | Does |
 |---|---|
+| `os` / `isIOS` / `isAndroid` | the platform under test (`"ios"` \| `"android"`, like RN `Platform.OS`), read from the driver; branch a flow: `if (device.isAndroid) await device.back()`. Whole test on one platform: `platforms: ["ios"]` |
+| `select({ ios, android } \| { ios?, android?, default })` | the value for the platform under test, like RN `Platform.select`: `screen.getByText(device.select({ ios: "Done", android: "OK" }))`; both platforms or a `default` (type error otherwise); a platform key wins over `default` even when `undefined` |
 | `alert("accept" \| "dismiss" \| { button })` | answer the system alert on top; `false` when none; `ACTION_FAILED` for a missing named button |
 | `openLink(url, { accept?, until?, waitMs? })` | open a URL from outside the app; presses "Open" on the iOS sheet (up to 3 times) and returns once the sheet is gone, or after ~1.4 s when none shows and the app is in front (later links with that scheme return as soon as the app is in front); `until: locator` returns when it is visible; `waitMs` (default 8000) caps the wait, no error |
 | `home()` / `back()` | home key / Android back (iOS throws) |
@@ -75,7 +79,7 @@ Never import subpaths (`/device`, `/screen/*`, `/env`). Only `.` and `./preload`
 | `appearance(set?)` | `"light" \| "dark"`; returns current |
 | `biometrics.status()` / `enroll()` / `unenroll()` / `match()` / `fail()` | simulated Face ID / Touch ID / fingerprint; each returns `{ enrolled, modality: "face" \| "fingerprint" }` after the op (type `BiometricState`). `match` / `fail` answer the pending prompt. Android `enroll` / `unenroll` and any physical device throw `ACTION_FAILED` (driver `E_UNSUPPORTED`) |
 | `clipboard()` / `setClipboard(text)` | read / write |
-| `hideKeyboard()` | iOS presses Enter (may submit the field); Android presses back |
+| `hideKeyboard()` | iOS resigns the first responder through the injected library (never Return, so no `onSubmitEditing`); an app launched without the library falls back to Enter with a log warning; Android presses back |
 | `screenshot(name)` | saves `<attemptDir>/screenshots/NNN-<slug>.png`, returns the path |
 | `snapshot({ interactiveOnly? })` | AX tree as text (same format as `warden ui snapshot`) |
 | `settle({ quietMs = 250, timeout = 3000 })` | wait for a quiet UI; returns `{ quiet, waitedMs }`; hitting the deadline is not an error |
@@ -114,7 +118,7 @@ await device.location.route([{ lat: 37.33, lon: -122.03 }, { lat: 37.34, lon: -1
 - Only the wall clock moves. A JS timer armed while the clock was ahead waits for the shifted time after `clock.reset()`: re-read the time on demand or relaunch. A large offset breaks TLS (certificate dates).
 - Grant a permission the test needs with `device.permissions.set` before `app.open()` instead of tapping through the prompt: iOS does not always raise it.
 
-### `device.permissions` / `timezone` / `locale` / `a11y` / `battery` / `memoryWarning` / `push` (device settings)
+### `device.permissions` / `timezone` / `locale` / `a11y` / `battery` / `keyboard` / `memoryWarning` / `push` (device settings)
 
 Put back when the test ends (to the suite's `conditions.permissions` / `locale` / `timezone` / `a11y`), recorded on the lease like the conditions above, and each change is a `condition` line in `results.jsonl`. Set permissions before `app.open()`: iOS terminates a running app whose permission changes.
 
@@ -126,6 +130,9 @@ Put back when the test ends (to the suite's `conditions.permissions` / `locale` 
 | `locale(tag \| null, { bundleId? })` | BCP 47 (`"fr-FR"`). Android 13+: per-app, live. iOS: applies to the app launched next |
 | `a11y({ textSize?, boldText?, contrast?, reduceMotion? } \| null)` | `textSize`: a category name (`"accessibility-large"`) or a scale (`1.5`). iOS: text size, contrast, `boldText`, `reduceMotion`, `reduceTransparency`, `buttonShapes`, `differentiateWithoutColor`, `onOffLabels`, `screenReader` (fake VoiceOver flag, `screenReader: { mode: "simulated", engine: "voiceover" }` in the result), applied live. Android: text size, `boldText`, `highContrastText`, `colorInversion`, `reduceMotion` (off by default; `true` zeroes `transition_animation_scale`, which RN reads). Other-platform settings and Android `screenReader` are `skipped` with a reason. Returns `{ applied, skipped, notes }`; only-skipped throws `E_UNSUPPORTED`; `null` resets |
 | `battery({ level?, charging? } \| null)` | Android emulator: real. iOS: status bar only, result has `cosmetic: true`. `null` resets |
+| `keyboard("software" \| "hardware" \| "toggle")` | the on-screen keyboard: `software` (the default on every warden device) keeps it up while the spec types, `hardware` hides it (input as from a connected keyboard); `toggle` flips what this spec has in place. Live, no relaunch; put back to the suite's `conditions.keyboard` (else `software`) when the test ends. iOS: the injected library (every launch carries it; `{ appliesOnLaunch: true }` when the running app was launched without). Android: `hardware` disables every IME (saved on the device and the lease, restored by `software` and on release; the keyboard returns at the next field focus). A target under the keyboard is auto-reached on iOS only; on Android use `hideKeyboard()`. Physical iPhone: `E_UNSUPPORTED` |
+| `keyboardVisible()` | `true` while the keyboard is on screen: iOS reads the accessibility tree, Android the IME window |
+| `expect(device).toHaveKeyboard({ timeout? })` / `.not.toHaveKeyboard()` | polls `keyboardVisible()` (default: the assertion timeout) |
 | `memoryWarning({ bundleId? })` | Android: critical trim to the running app. iOS: throws `E_UNSUPPORTED` |
 | `push({ aps: { … } }, { bundleId? })` | iOS: delivers the payload to the app (4096 bytes max). Android: `E_UNSUPPORTED` |
 
@@ -134,7 +141,10 @@ await device.permissions.set({ location: "denied", notifications: "granted" });
 await app.open();
 await device.a11y({ textSize: "accessibility-large" });
 await device.locale("fr-FR");
+await device.keyboard("hardware");
+await expect(device).not.toHaveKeyboard();
 ```
+A `tap()` / `longPress()` whose target sits under the on-screen keyboard (iOS) scrolls it clear when it is in a scroll view, else dismisses the keyboard once (iOS: the injected library resigns the first responder; Enter only when the app runs without it, with a log warning), then acts: no retry.
 Biometrics practice: set `biometrics: true` on the suite (suites.md) so the device is enrolled before the app is installed (a new enrollment invalidates biometry-bound keys); on iOS the first prompt per app shows "Allow X to use Face ID?", answer it with `device.alert("accept")` before `device.biometrics.match()`; Android emulators have fingerprint only; never add an app-side bypass. `fail()` leaves the prompt open (iOS "Face Not Recognized" alert, Android "Not recognized"): assert that, then cancel the prompt (the app gets `user_cancel`): `device.alert({ button: "Cancel" })` on iOS (it presses again if the press lands while the sheet animates in, and throws `ACTION_FAILED` if the alert stays up), `button_negative` on Android; a `match` / `fail` sent as the sheet appears can be dropped, so present again when nothing changed. warden enrolls an iOS biometrics sim again when a spec process starts (`WARDEN_BIOMETRICS=1`), so a spec that called `unenroll` does not leave a reused sim unenrolled.
 
 ### `device.a11yAudit` / `screenReader` / `announcements` (screen readers and audits)
@@ -229,11 +239,12 @@ Roles: button link textbox searchbox checkbox radio switch slider image heading 
 - **Snapshot reuse:** the runner keeps the last whole-screen snapshot (iOS 150 ms, Android 1 s) and reuses it for the first look of a read or `expect` when nothing was done since (tap, key, launch, settle drop it). Actions that aim (`tap`, `longPress`, `fill`, `type`, `clear`, `press`, `scrollTo`) and `boundingBox` never reuse: they always take a new snapshot, so `expect(x).toBeVisible()` then `x.tap()` is two snapshots (a snapshot from a screen still sliding in has the wrong coordinates). `fill` confirm reads and `device.snapshot()` are always real.
 - **Wait:** `waitFor({ state: "attached" | "detached" | "visible" | "hidden", timeout? })`. Default state is `visible`.
 - **Actions** wait for exactly one visible match. Several matches fail with `LOCATOR_AMBIGUOUS`.
-  - `tap({ position?, timeout?, until?, retries = 2, windowMs = 4000, pollMs = 250 })`, `longPress({ durationMs? })`. `until` (a locator that must be visible, or `async () => boolean`) makes the tap retrying: after each tap it polls for `windowMs`, re-taps when `until` did not hold. With a locator `until` a screen that changed after the tap counts as landed (no re-tap, however late `until` is), and an unchanged screen is re-tapped from 750 ms on. The last tap is not waited on (the next assertion reports what is missing). `retries`/`windowMs`/`pollMs` without `until` are `INVALID_ARGUMENT`. Replaces hand-written `tapUntil` helpers.
+  - `tap({ position?, timeout?, until?, retries = 2, windowMs = 4000, pollMs = 250 })`, `longPress({ durationMs? })`. `until` (a locator that must be visible, or `async () => boolean`) makes the tap retrying: after each tap it polls for `windowMs`, re-taps when `until` did not hold. With a locator `until` a screen that reacted to the tap (something new on it, or the tapped element gone) counts as landed (no re-tap, however late `until` is); nodes that only left (the screen a navigation left, a keyboard going down) or only moved (a pop still sliding in) are not a reaction, and a screen with no reaction is re-tapped from 750 ms on. The last tap is not waited on (the next assertion reports what is missing). `retries`/`windowMs`/`pollMs` without `until` are `INVALID_ARGUMENT`. Replaces hand-written `tapUntil` helpers.
   - `fill(text, { via? })` empties the field, puts the text in, verifies on two reads, retries once. `via` is `"type"` (default, per key) or `"paste"` (iOS pastes with one Cmd+V, ~400 ms flat; falls back to typing if the pasteboard write fails; Xcode 27 syncs every sim's pasteboard with the Mac clipboard both ways, so a paste lands in clipboard history and on other sims, so avoid it on parallel runs and for secrets). The retry always types. Android always types. Secure fields are not verified; a field that only reads back as bullets (`•`) is confirmed by their count against the typed length, and its failure message gives the length, never the text.
   - `clear()`, `type(text)` (at the caret)
   - `press(key, { modifiers? })` sends a KEY (`Enter Backspace Tab Space Escape Delete Up Down Left Right`), it is not a tap. Use `tap()` to tap.
-  - `swipe({ direction, momentum? })`, `scrollTo({ direction = "down", momentum?, maxSwipes = 10, timeout? })`
+  - `swipe({ direction, momentum? })`, `scrollTo({ direction = "down", momentum?, maxSwipes = 10, timeout? })`: `scrollTo` stops only when the element is clear of covers (sticky footer, tab bar, header)
+  - Occlusion: `tap` / `longPress` press the part of the element no later control covers (a footer's padded bar counts), drag a wholly covered element clear in its scroll view, else `NOT_ACTIONABLE` `… is covered by button "Sign out" (id=…)` / `… is scrolled past the top of its scroll view`. No `revealAbove`-style helpers in specs. `tap({ until })` within 1.5 s of an input settles (≤ 1.5 s) before aiming
   - `pinch(scale, { durationMs?, radius?, timeout? })`, `rotate(degrees, { durationMs?, radius?, timeout? })` (positive = clockwise). Out-of-range `scale`/`degrees` and unsupported gestures throw `INVALID_ARGUMENT` (no `capabilities.pinch`, or more than `maxPointers` fingers; Android without `warden-uiad`: no pinch/rotate, 1-finger paths only): skip with `test({ platforms: ["ios"] })`.
 
 ## Host commands (`run`)
@@ -260,40 +271,46 @@ Accessibility matchers (`a11y.md`): on a locator `toHaveAccessibleName(t)`, `toH
 - **Degraded reads are inconclusive, never negative.** A look that fell back from the iOS bridge (`axbridge` stalled, host `ax` answered: it drops RN testIDs on static text) or came back an empty root cannot say a node is absent. With zero matches on such a look, `toBeHidden`, `.not.toBeVisible`, `toHaveCount(0)` (and every other matcher) keep polling; `waitFor`, the reads (`read`, `text`, `allTexts`, `boundingBox`, ...) and actions look again within the action timeout; `isVisible`, `isHidden` and `count` (checks a spec branches on) look again for at most 2000 ms (less when the action timeout is shorter). A plain `getByTestId` asks the React tree first (dev client with Metro). A component whose rect is a node's on that read (host `ax` keeps the text node, drops only its testID) resolves to that node: `text()`, `read()`, `toHaveText`, `toContainText`, visibility, `tap({ until })` and every action work as on a whole read. One with no such node (host `ax` drops plain Views) answers from the React tree: presence, rect, visibility, and `text()`/`read().text`/`toHaveText`/`toContainText` from the text it renders (its own, else its children's: a badge around a `Text`); value, state and fills need the node. A secure text input reads as `securefield` on host `ax` too (its `secure-text-field` trait), empty, focused or filled, whether React Native `secureTextEntry`, UIKit `isSecureTextEntry` or a SwiftUI `SecureField`, so `fill` on a password field works on a degraded read. Web content (Safari, a `WKWebView`) is not on host `ax` at all: a degraded look in a web view has no nodes for the page, so its fields wait for the bridge. Still unknown at the timeout: `READ_DEGRADED` (message names `fellBackFrom` and the backend; troubleshooting row 118).
 - `.not` passes only after the inverted state held for 1000 ms (sooner on iOS/Android when the driver reports a quiet screen).
 - `expect.soft(locator)` records the failure and the test fails when its body ends.
-- Failures are `E2eError` with a `code`: `LOCATOR_NOT_FOUND LOCATOR_AMBIGUOUS INVALID_LOCATOR ACTION_FAILED TIMEOUT NOT_ACTIONABLE INVALID_ARGUMENT SESSION DRIVER ASSERTION PERF_BUDGET RUN_FAILED READ_DEGRADED`. `E2eError` also carries `screen` (AX tree text at the failure, when known) and `matches` (count for `LOCATOR_AMBIGUOUS`).
+- Failures are `E2eError` with a `code`: `LOCATOR_NOT_FOUND LOCATOR_AMBIGUOUS INVALID_LOCATOR ACTION_FAILED TIMEOUT NOT_ACTIONABLE INVALID_ARGUMENT SESSION DRIVER ASSERTION PERF_BUDGET RUN_FAILED READ_DEGRADED SKIPPED`. `E2eError` also carries `screen` (AX tree text at the failure, when known) and `matches` (count for `LOCATOR_AMBIGUOUS`).
 
-## Example spec (`apps/example/e2e/todos.e2e.ts`)
+## Example spec (`apps/example/e2e/app/todos.e2e.ts`)
+
+A happy path as one `describe.serial` journey: one launch, one check per test, each test leaving the list the next one names.
 
 ```ts
-import { expect, test } from "@delacour/warden-e2e";
-import { signedIn } from "./helpers/steps";
-import { ids } from "./helpers/ids";
+import { beforeAll, describe, expect, test } from "@delacour/warden-e2e";
+import { ids } from "../helpers/ids";
+import { SPEC_OPTIONS, signedIn } from "../helpers/steps";
 
-test("add, complete and filter todos", async ({ device, screen }) => {
-	await signedIn(device, screen);
-	const remaining = screen.getByTestId(ids.todos.remaining);
+test.use(SPEC_OPTIONS);
 
-	await screen.getByTestId(ids.todos.input).fill("Write e2e specs");
-	await screen.getByTestId(ids.todos.add).tap();
-	await expect(screen.getByTestId(ids.todos.title("todo-1"))).toHaveText("Write e2e specs");
-	await expect(remaining).toHaveText("2 left");
+describe.serial("todos journey", () => {
+	beforeAll(async ({ app, screen }) => {
+		await signedIn(app, screen);
+	});
 
-	await screen.getByTestId(ids.todos.check("todo-1")).tap();
-	await expect(screen.getByTestId(ids.todos.check("todo-1"))).toBeChecked();
-	await expect(remaining).toHaveText("1 left");
+	test("adding appends the todo as active", async ({ screen }) => {
+		await screen.getByTestId(ids.todos.input).fill("Write e2e specs");
+		await screen.getByTestId(ids.todos.add).tap();
+		await expect(screen.getByTestId(ids.todos.title("todo-1"))).toHaveText("Write e2e specs");
+		await expect(screen.getByTestId(ids.todos.remaining)).toHaveText("2 left");
+	});
 
-	await screen.getByTestId(ids.todos.filter("active")).tap();
-	await expect(screen.getByTestId(ids.todos.row("welcome"))).toBeVisible();
-	await expect(screen.getByTestId(ids.todos.row("todo-1"))).toBeHidden();
+	test("checking a todo counts it done", async ({ screen }) => {
+		await screen.getByTestId(ids.todos.check("todo-1")).tap();
+		await expect(screen.getByTestId(ids.todos.check("todo-1"))).toBeChecked();
+		await expect(screen.getByTestId(ids.todos.remaining)).toHaveText("1 left");
+	});
 
-	await screen.getByTestId(ids.todos.check("welcome")).tap();
-	await expect(screen.getByTestId(ids.todos.empty)).toBeVisible();
-
-	await screen.getByTestId(ids.todos.filter("done")).tap();
-	await expect(screen.getByTestId(ids.todos.row("todo-1"))).toBeVisible();
-	await expect(remaining).toHaveText("0 left");
+	test("the Active filter hides done todos", async ({ screen }) => {
+		await screen.getByTestId(ids.todos.filter("active")).tap();
+		await expect(screen.getByTestId(ids.todos.row("welcome"))).toBeVisible();
+		await expect(screen.getByTestId(ids.todos.row("todo-1"))).toBeHidden();
+	});
 });
 ```
+
+A test whose point is a fresh launch (a relaunch signs out, a denied permission set before launch) stays a plain `test`. `apps/example/e2e/framework/` checks the spec API itself (queries, matchers, actions, runner, device).
 
 ## Helper patterns (`apps/example/e2e/helpers/steps.ts`)
 

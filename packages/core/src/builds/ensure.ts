@@ -1,5 +1,5 @@
 import { realpathSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import type { Exec } from "../exec";
 import { type GitFactsCache, readGitFacts } from "../git-facts";
@@ -8,6 +8,7 @@ import type { Store } from "../store";
 import type { Owner, Platform } from "../types";
 import { readExpoConfig } from "./app-config";
 import type { InstallMode } from "./app-option.schema";
+import { BUILD_HEARTBEAT_MS } from "./builds.defaults";
 import {
 	adoptKindDir,
 	aliasBuild,
@@ -45,11 +46,12 @@ import {
 import { type DeviceIo, phoneAppMatches } from "./install-device";
 import { type DeviceTarget, kindlessIsDev, projectForKind } from "./kinds";
 import { liveLogTail, openLiveLog } from "./live-log";
-import { type PrebuildStamp, runLocalBuild } from "./local";
+import { type BuildHeartbeat, type PrebuildStamp, runLocalBuild } from "./local";
 import { type BuildLockDeps, buildLockKey, buildTreeLockKey, withBuildLock } from "./lock";
 import { overlayDirUnlessRepoConfig } from "./overlay";
 import { readProjectKey } from "./project-key";
 import { type AppPhase, type BuildStepOutcome, type EnsureResult, type ResolveSteps, resolveApp } from "./resolve";
+import { cacheSigning } from "./signing-key";
 
 /** Cache `profile` for builds with no EAS profile (local / imported only). */
 export const LOCAL_PROFILE = "local";
@@ -148,6 +150,8 @@ export type EnsureInput = ProjectContext & {
 	log: (line: string) => void;
 	/** a local build's own output, line by line, while it runs (`LocalBuildDeps.output`) */
 	buildOutput?: (line: string) => void;
+	/** the timer of the progress heartbeat a local build logs when `buildOutput` is unset (default `setInterval`) */
+	heartbeatSchedule?: BuildHeartbeat["schedule"];
 	pidAlive: PidAlive;
 	/** owner + pid of the build lock */
 	owner: Owner;
@@ -350,6 +354,15 @@ async function builtMeanwhile(
 	);
 }
 
+/** The progress heartbeat of a local build whose output this run does not show (`warden e2e`, CI). */
+function heartbeatFor(input: EnsureInput): BuildHeartbeat {
+	return {
+		everyMs: BUILD_HEARTBEAT_MS,
+		now: input.now,
+		...(input.heartbeatSchedule ? { schedule: input.heartbeatSchedule } : {}),
+	};
+}
+
 /** Run the local build (under the tree lock), its output mirrored to a live log under `liveKeys`; cache it, alias a re-key. */
 async function buildHere(
 	input: EnsureInput,
@@ -358,7 +371,11 @@ async function buildHere(
 	liveKeys: string[]
 ): AsyncResult<BuildStepOutcome> {
 	const { project, platform } = input;
-	input.onPhase?.({ phase: "building", platform, hash: input.kind?.buildKey ?? input.hash });
+	const hash = input.kind?.buildKey ?? input.hash;
+	input.onPhase?.({ phase: "building", platform, hash });
+	input.log(
+		`no cached ${platform} build for ${hash}: building it from source (a cold native build takes minutes locally, ~15-20 min on a small CI runner)`
+	);
 	const live = openLiveLog(input, liveKeys);
 	const output = (line: string) => {
 		live.write(line);
@@ -370,11 +387,12 @@ async function buildHere(
 			exec: input.exec,
 			project,
 			platform,
-			hash: input.kind?.buildKey ?? input.hash,
+			hash,
 			...(input.native !== undefined ? { native: input.native } : {}),
 			env: input.env,
 			log: input.log,
 			output,
+			...(input.buildOutput ? {} : { heartbeat: heartbeatFor(input) }),
 			...(project.compilerCache === false ? { compilerCache: false } : {}),
 			...(input.git ? { git: input.git } : {}),
 			prebuildStamp: prebuildStamp(input.store, project.root, platform),
@@ -385,6 +403,7 @@ async function buildHere(
 	if (!built.success) return built;
 	const stored = await cache(built.data.artifact, "build", false);
 	if (!stored.success) return stored;
+	if (built.data.signing) cacheSigning(dirname(stored.data.path), built.data.signing);
 	aliasPostKey(input, stored.data, built.data.postKey, onPostKey);
 	return ok({ kind: "built", path: stored.data.path });
 }

@@ -732,10 +732,15 @@ struct GuestReaper: Sendable {
   /// The guests that belong to simulator `udid` among `processes`; empty when the simulator's `launchd_sim` is not
   /// there (never matches another simulator's guests, whose parent is another `launchd_sim`).
   static func guests(of udid: String, in processes: [ProcessEntry]) -> [pid_t] {
+    children(of: udid, in: processes, matching: guestMarker)
+  }
+
+  /// The processes of simulator `udid` (children of its `launchd_sim`) whose command line contains `marker`.
+  static func children(of udid: String, in processes: [ProcessEntry], matching marker: String) -> [pid_t] {
     let launchd = processes.filter { $0.command.contains("launchd_sim") && $0.command.contains("/Devices/\(udid)/") }
     let parents = Set(launchd.map(\.pid))
     guard !parents.isEmpty else { return [] }
-    return processes.filter { parents.contains($0.ppid) && $0.command.contains(guestMarker) }.map(\.pid)
+    return processes.filter { parents.contains($0.ppid) && $0.command.contains(marker) }.map(\.pid)
   }
 
   /// Ends the guests of `udid`; returns the pids it signalled.

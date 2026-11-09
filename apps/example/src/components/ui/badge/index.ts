@@ -4,9 +4,11 @@ export type { BadgeSlotProps } from "./badge.types";
 export {
 	BADGE_COLORS,
 	BADGE_FOREGROUND_TOKEN,
+	BADGE_MATERIALS,
 	BADGE_SIZES,
 	BADGE_VARIANTS,
 	type BadgeColor,
+	type BadgeMaterial,
 	type BadgeSize,
 	type BadgeVariant,
 	type BadgeVariantProps,

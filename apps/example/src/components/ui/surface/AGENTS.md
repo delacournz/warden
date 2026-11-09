@@ -14,7 +14,6 @@ components built on it (`Card`, `Alert`) can read the plane they sit on.
 | `surface.tsx` | `Surface` |
 | `surface.context.tsx` | `SurfaceProvider`, `useSurface()`, `useSurfaceContext()` |
 | `surface.variants.ts` | The `tv()`, `SURFACE_FOREGROUND_TOKENS`, and the two pure resolvers — no RN imports |
-| `surface.variants.test.ts` | |
 
 ## Design
 
@@ -70,3 +69,14 @@ components built on it (`Card`, `Alert`) can read the plane they sit on.
 - **No role.** A surface is layout, not a landmark; it adds nothing a screen
   reader could announce. `ViewProps` pass through, so a caller that does mean
   one — `accessibilityRole="summary"` — sets it.
+
+- **`material` is what the surface is made of, separate from which plane it fills.** `flat` is the
+  default and draws nothing extra. `etched` adds `shadow-etched dark:shadow-etched-dark`: a one-pixel
+  highlight set into the edge (a darkening on the bottom in light, a lightening on the top in dark)
+  and a very soft drop. `tray` is the muted frame that holds panels — `bg-muted/70`, `p-1`,
+  `rounded-2xl`, whatever `padding` says. A tray paints its own fill, so it resets the plane to
+  `null` (`resolveSurfacePlane`) and a surface inside it resolves to the card fill, not the next rung
+  down; `SurfaceContext.material` is how that panel knows to take `rounded-xl`, one step under the
+  tray's corner. A single `shadow-*` utility sets one `box-shadow`, which is why light and dark are
+  two tokens joined by `dark:` and not one composed class. Opt-in: nothing in the default look uses it.
+  `SURFACE_MATERIALS` and `SurfaceMaterial` are exported from the index like every other axis.

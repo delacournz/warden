@@ -1,6 +1,6 @@
 ---
-title: Debugging
-description: Where a failed e2e run leaves its evidence, how to read it, and the fix for each common failure.
+title: Debug React Native E2E test failures
+description: Where a failed React Native E2E run leaves its evidence, how to read it, and the fix for each common failure.
 icon: Bug
 ---
 
@@ -14,7 +14,7 @@ icon: Bug
 When a spec fails, read the evidence in this order: the run's stdout, `screen-at-failure.txt`, `failure.png`, `trace.jsonl`, then the logs. A missing element is fixed in the component, not with retries.
 
 ```bash
-warden e2e example-dev --specs sign-in --json | jq '.specs[] | select(.verdict != "passed")'
+warden e2e example-dev --specs app/auth --json | jq '.specs[] | select(.verdict != "passed")'
 ```
 
 ## Batch directory

@@ -1,6 +1,8 @@
 import { appendFileSync, writeFileSync } from "node:fs";
+import type { AxWedgeState } from "../../driver/ax-wedge";
 import { noteBridgeStall } from "../../driver/bridge-stall";
 import { el, type FakeDriver, fakeDriver, snapshotOf } from "../../driver/driver.testing";
+import type { DriverResult } from "../../driver/driver.types";
 import { noteSpanDetail } from "../../driver/span-detail";
 import { defaultFixtureFactory } from "../../fixtures";
 import {
@@ -16,8 +18,11 @@ export function fixtureLog(line: string): void {
 	if (path !== undefined && path !== "") appendFileSync(path, `${line}\n`);
 }
 
-/** The fake device of this process, for specs that assert on driver calls. */
-export const fake: { driver: FakeDriver | undefined } = { driver: undefined };
+/**
+ * The fake device of this process, for specs that assert on driver calls. `axWedge` set: the driver offers the iOS
+ * helper's wedge check and answers this state (a `recovering` one finishes on the next ask).
+ */
+export const fake: { driver: FakeDriver | undefined; axWedge?: AxWedgeState } = { driver: undefined };
 
 setDefaultNativeLog(undefined);
 // the fake sim reboot only records the commands it would have run
@@ -43,6 +48,14 @@ setDefaultDriverFactory(async (env) => {
 			return undefined;
 		},
 	});
+	const axWedge = async (): DriverResult<AxWedgeState> => {
+		const state = fake.axWedge ?? { restarts: 0, maxRestarts: 1, recovering: false };
+		fixtureLog(`axWedge restarts=${state.restarts} recovering=${state.recovering}`);
+		if (state.recovering)
+			fake.axWedge = { ...state, recovering: false, last: { outcome: "restarted", agoMs: 5, ms: 2100 } };
+		return { success: true, data: state };
+	};
+	if (process.env.FIXTURE_AX_WEDGE === "1") Object.assign(fake.driver, { axWedge });
 	return { success: true, data: fake.driver };
 });
 

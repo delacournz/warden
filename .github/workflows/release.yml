@@ -21,18 +21,19 @@ permissions: {}
 # Build and publish are split so dependency code never runs next to publish
 # credentials: `build` installs/compiles with a read-only token and no registry secret;
 # `publish` holds the OIDC + release write permissions but never installs or
-# executes repo dependencies. `build` runs on Namespace like CI; `publish` stays
-# on a GitHub-hosted runner — npm trusted publishing + provenance refuse
-# self-hosted ones, which is what a Namespace profile is to GitHub.
+# executes repo dependencies. Both run on GitHub-hosted runners (free on a public
+# repo): `build` on `xcode-27` (macOS 27, Xcode 27; `macos-26` stops at Xcode 26.6,
+# which can't build warden-simd), `publish` on Linux — npm trusted publishing +
+# provenance refuse self-hosted runners.
 jobs:
   build:
-    runs-on: namespace-profile-mac-medium
+    runs-on: xcode-27
     permissions:
       contents: read
       packages: read
     steps:
       # fetch-depth 0: the ancestry check below needs origin/main, not just the tagged commit.
-      - uses: namespacelabs/nscloud-checkout-action@66f2dc6f6c42a8ac6c4e53473c4840006822831e # v9.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -58,18 +59,8 @@ jobs:
           xcodebuild -version
           swift --version
 
-      - uses: namespacelabs/nscloud-cache-action@1124a6f3ce44e5cf84cc22111530961f4d2a15f9 # v1.7.0
-        with:
-          cache: |
-            bun
-            swiftpm
-          path: ~/Library/Caches/warden-idb
-
-      # Own turbo team: a release never replays a green that a dispatched ci.yml run (which may run
-      # reviewed fork code) wrote. Still speeds up a `gh run rerun` of a failed release.
-      - uses: namespace-actions/setup-turbocache@3b82149ffb545cab670093f13bc0bad156917e18 # v0.0.4
-        with:
-          team: release
+      # No caches: a tag run can't restore another tag's, and a release never replays a turbo green or
+      # installs from a cache a dispatched ci.yml run (which may run reviewed fork code) wrote.
 
       # `@delacournz/cli-telemetry` (GitHub Packages, private) is a hard dependency of apps/cli, so the
       # install needs a read token. bunfig.toml reads NPM_TOKEN; the job token works because the package
@@ -92,9 +83,10 @@ jobs:
       - run: bun run test
 
       # The iOS driver helper (packages/e2e/native/dist), shipped in @delacour/warden-darwin-arm64 and as a release
-      # asset. The runner is arm64 (macos-latest): the helper is built for the machine it builds on.
+      # asset. The runner must be arm64: the helper is built for the machine it builds on.
       - name: Build warden-simd
         run: |
+          if [ "$(uname -m)" != arm64 ]; then echo "runner is $(uname -m): warden-simd ships as darwin-arm64" >&2; exit 1; fi
           bun run --cwd packages/e2e native:deps
           bun run --cwd packages/e2e native:build
 
@@ -144,6 +136,8 @@ jobs:
           node-version: 24
           registry-url: https://registry.npmjs.org
 
+      # dist/warden-* includes warden-atf-<sha8>.jar, which @delacour/warden-e2e downloads on the first Android
+      # audit, so the release (and that asset) must exist before npm publishes the version that asks for it.
       # A rerun after a failed npm publish finds the release already created: replace its assets
       # instead of failing on create, so `gh run rerun --failed` can finish the publish.
       - name: Publish GitHub release
@@ -178,4 +172,23 @@ jobs:
               continue
             fi
             npm publish "./$dir" --access public --ignore-scripts $provenance
+          done
+
+      # npm holds each new version in an automated review ("Validating") before it can be installed: 1-3 min
+      # normally. Wait here so a green run means every package is installable. --prefer-online skips npm's
+      # metadata cache, so the loop sees a version the moment it goes live.
+      - name: Wait until npm serves every package
+        timeout-minutes: 45
+        run: |
+          start=$(date +%s)
+          for dir in dist/npm/warden-darwin-*/ dist/npm/warden-linux-*/ dist/npm/warden/ dist/npm/warden-e2e/; do
+            name=$(node -p "require('./$dir/package.json').name")
+            version=$(node -p "require('./$dir/package.json').version")
+            until npm view "$name@$version" version --prefer-online > /dev/null 2>&1; do
+              echo "$name@$version not served yet ($(( $(date +%s) - start ))s)"
+              sleep 30
+            done
+            line="$name@$version live after $(( $(date +%s) - start ))s"
+            echo "$line"
+            echo "- $line" >> "$GITHUB_STEP_SUMMARY"
           done

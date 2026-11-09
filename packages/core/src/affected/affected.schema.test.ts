@@ -14,6 +14,15 @@ const issues = (extra: Record<string, unknown>): string[] => {
 	return res.success ? [] : res.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`);
 };
 
+describe("golden", () => {
+	test("optional boolean: unset by default, true / false accepted, anything else refused", () => {
+		expect(suite().golden).toBeUndefined();
+		expect(suite({ golden: true }).golden).toBe(true);
+		expect(suite({ golden: false }).golden).toBe(false);
+		expect(issues({ golden: "yes" })).not.toEqual([]);
+	});
+});
+
 describe("suiteIsolation", () => {
 	test("a suite that says nothing runs one spec process per device", () => {
 		expect(suiteIsolation(suite())).toBe("device");

@@ -261,6 +261,8 @@ export const healthDataSchema = z.looseObject({
 	frontmost: z.object({ unresolvedAgoMs: z.number(), method: z.string() }).optional(),
 	/** stalled AX guests this helper recycled; absent until one was */
 	bridgeRecycles: z.object({ count: z.number(), exhausted: z.boolean() }).optional(),
+	/** the wedged-accessibility-service check (`axWedge` op); absent from a helper that predates it */
+	axWedge: z.lazy(() => axWedgeDataSchema).optional(),
 	state: z.string().optional(),
 	uptimeMs: z.number().optional(),
 });
@@ -391,6 +393,27 @@ export const orientationDataSchema = z.object({
 });
 export type OrientationData = z.infer<typeof orientationDataSchema>;
 
+/**
+ * `axWedge{recover?}`: the helper's check for a wedged accessibility service (both readers silent + the marker in the
+ * sim log → backboardd restarted). `recover: true` runs the check now (or joins the one in flight) and answers when it
+ * is over; nothing runs once `restarts` reached `maxRestarts` (`WARDEN_SIMD_AX_WEDGE_RESTARTS`).
+ */
+export const axWedgeDataSchema = z.looseObject({
+	restarts: z.number(),
+	maxRestarts: z.number(),
+	recovering: z.boolean(),
+	/** `recover: true` only: what the check this ask ran (or joined) found; absent when none ran (budget spent) */
+	checked: z.enum(["restarted", "not-wedged", "failed"]).optional(),
+	last: z
+		.discriminatedUnion("outcome", [
+			z.looseObject({ outcome: z.literal("restarted"), agoMs: z.number(), ms: z.number().optional() }),
+			z.looseObject({ outcome: z.literal("not-wedged"), agoMs: z.number() }),
+			z.looseObject({ outcome: z.literal("failed"), agoMs: z.number(), error: z.string() }),
+		])
+		.optional(),
+});
+export type AxWedgeData = z.infer<typeof axWedgeDataSchema>;
+
 /** Ops whose `data` the client validates and types; every other op's data stays `unknown`. */
 export const opSchemas = {
 	health: healthDataSchema,
@@ -404,6 +427,7 @@ export const opSchemas = {
 	orientation: orientationDataSchema,
 	launch: launchDataSchema,
 	terminate: terminateDataSchema,
+	axWedge: axWedgeDataSchema,
 } as const;
 
 export type OpDataMap = {
@@ -418,6 +442,7 @@ export type OpDataMap = {
 	orientation: OrientationData;
 	launch: LaunchData;
 	terminate: TerminateData;
+	axWedge: AxWedgeData;
 };
 
 export type OpData<Op extends string> = Op extends keyof OpDataMap ? OpDataMap[Op] : unknown;

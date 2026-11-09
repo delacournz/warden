@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { canProbeFrontmost, canReadAlertOn } from "../alerts";
+import { canRecoverAxWedge } from "../ax-wedge";
 import { el, snapshotOf } from "../driver.testing";
 import type { Driver, Snapshot } from "../driver.types";
 import { fakeProxy } from "../network-proxy.testing";
@@ -1016,6 +1017,31 @@ describe("system alerts through one reader and the frontmost probe", () => {
 		expect(helper.of("frontmost")[0]).toMatchObject({ bundleId: BUNDLE });
 	});
 
+	test("axWedge reads the helper's wedge check and asks it to recover", async () => {
+		const reply = {
+			restarts: 1,
+			maxRestarts: 1,
+			recovering: false,
+			last: { outcome: "restarted" as const, agoMs: 40, ms: 2300 },
+		};
+		const { driver, helper } = await open((request) => (request.op === "axWedge" ? { data: reply } : undefined));
+		if (!canRecoverAxWedge(driver)) throw new Error("the iOS driver offers the wedge check");
+		expect(await unwrapped(driver.axWedge({ recover: true }))).toEqual(reply);
+		expect(await unwrapped(driver.axWedge())).toEqual(reply);
+		expect(helper.of("axWedge").map((params) => params.recover)).toEqual([true, false]);
+	});
+
+	test("axWedge on a helper that predates it is E_UNSUPPORTED helper_outdated", async () => {
+		const { driver } = await open((request) => (request.op === "axWedge" ? unknownOp("axWedge") : undefined));
+		if (!canRecoverAxWedge(driver)) throw new Error("the iOS driver offers the wedge check");
+		const result = await driver.axWedge({ recover: true });
+		expect(result.success).toBe(false);
+		if (!result.success) {
+			expect(result.error.code).toBe("E_UNSUPPORTED");
+			expect(result.error.detail).toEqual({ reason: "helper_outdated" });
+		}
+	});
+
 	test("without the AX bridge alertOn('axbridge') reads the host reader and isFrontmost is never asked", async () => {
 		const helper = fakeSimd((request) => (request.op === "alertButtons" ? { data: null } : undefined), {
 			ready: { ax: { default: "ax", bridge: "missing" } },
@@ -1509,6 +1535,48 @@ describe("screenshot", () => {
 		const result = await driver.screenshot({ path: "/out/c.png" });
 		expect(!result.success && result.error.code).toBe("E_TIMEOUT");
 		expect(joined(calls).some((line) => line.includes("simctl io"))).toBe(false);
+	});
+});
+
+describe("dismissKeyboard", () => {
+	const STATE = "/w/inject/UDID-1/state.json";
+	/** an in-memory state dir; `loaded` = an app with the dylib is running and acks every state write */
+	function stateDir(loaded: boolean) {
+		const files = new Map<string, string>();
+		if (loaded) files.set(`${STATE}.ack`, JSON.stringify({ seq: 0, pid: 4242 }));
+		const fs: InjectFs = {
+			mkdir: () => undefined,
+			writeAtomic: (path, text) => {
+				files.set(path, text);
+				if (loaded && path === STATE) {
+					files.set(`${path}.ack`, JSON.stringify({ seq: (JSON.parse(text) as { seq: number }).seq, pid: 4242 }));
+				}
+			},
+			read: (path) => files.get(path),
+			remove: (path) => void files.delete(path),
+			pidAlive: () => true,
+		};
+		return { files, fs };
+	}
+
+	test("with the dylib loaded it resigns the first responder: via resign, never Enter", async () => {
+		const dir = stateDir(true);
+		const { driver, helper, logs } = await open(() => ({ data: null }), { injectFs: dir.fs, wardenHome: "/w" });
+		const result = await driver.dismissKeyboard();
+		expect(result).toEqual({ success: true, data: { via: "resign" } });
+		expect(helper.of("key")).toHaveLength(0);
+		expect(JSON.parse(dir.files.get(STATE) ?? "{}")).toMatchObject({ dismissKeyboard: true });
+		expect(logs.some((line) => line.includes("dismissed with Enter"))).toBe(false);
+	});
+
+	test("without the dylib it presses Enter, answers via key and logs the warning", async () => {
+		const dir = stateDir(false);
+		const { driver, helper, logs } = await open(() => ({ data: null }), { injectFs: dir.fs, wardenHome: "/w" });
+		const result = await driver.dismissKeyboard();
+		expect(result).toEqual({ success: true, data: { via: "key" } });
+		expect(helper.of("key").map(({ usage }) => usage)).toEqual([KEY_USAGE.Enter]);
+		expect(dir.files.has(STATE)).toBe(false);
+		expect(logs.filter((line) => line.includes("[ios] keyboard dismissed with Enter"))).toHaveLength(1);
 	});
 });
 

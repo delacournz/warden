@@ -63,11 +63,15 @@ export const ScreenLegendList = forwardRef(function ScreenLegendListRender<ItemT
 		contentContainerClassName,
 		ListHeaderComponent: ListHeaderComponentProp,
 		ListFooterComponent: ListFooterComponentProp,
+		onScroll,
 		...props
 	}: ScreenLegendListProps<ItemT>,
 	ref: ForwardedRef<LegendListRef>
 ): ReactElement {
-	const { scrollHandler, insetTopAnimatedStyle, insetBottomAnimatedStyle } = useScreenScrollInsets("standard");
+	const { scrollHandler, insetTopAnimatedStyle, insetBottomAnimatedStyle } = useScreenScrollInsets(
+		"standard",
+		onScroll
+	);
 
 	const ListHeaderComponent = useMemo<ReactElement>(
 		() => (

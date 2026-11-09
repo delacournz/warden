@@ -49,7 +49,9 @@ export function ScreenError({
 			<ScreenContent insets={["bottom"]}>
 				<View className={slots.errorContent()}>
 					<View className="gap-1">
-						<Text className={slots.errorTitle()}>{title}</Text>
+						<Text accessibilityRole="header" className={slots.errorTitle()}>
+							{title}
+						</Text>
 						<Text className={slots.errorMessage()}>{message}</Text>
 					</View>
 					{children}

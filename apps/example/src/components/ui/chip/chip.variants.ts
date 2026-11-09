@@ -244,7 +244,7 @@ export const chipVariants = tv({
  * The surface a chip wears — its resting variant, or `selected`.
  *
  * Pure, so the icon colour and the label colour are chosen by one rule that
- * `bun test` reaches. See AGENTS.md.
+ * is unit-testable. See AGENTS.md.
  */
 export function resolveChipSurface({
 	variant,
@@ -312,7 +312,7 @@ export function resolveChipMode({
  */
 export type ChipCloseExposure = "none" | "element" | "action";
 
-/** See {@link ChipCloseExposure}. Pure, so `bun test` reaches it. */
+/** See {@link ChipCloseExposure}. Pure, so it is unit-testable. */
 export function resolveChipCloseExposure({ mode, hasClose }: { mode: ChipMode; hasClose: boolean }): ChipCloseExposure {
 	if (!hasClose) return "none";
 	return mode === "static" ? "element" : "action";

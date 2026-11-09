@@ -1,9 +1,18 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+	copyFileSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import type { Exec, ExecResult } from "../exec";
-import { androidRepacker, parseResourceFiles } from "./repack-android";
+import { androidKeepsSigner, androidRepacker, parseResourceFiles } from "./repack-android";
 
 let dir: string;
 let sdk: string;
@@ -43,6 +52,10 @@ type FakeOptions = {
 	entries?: string[];
 	badging?: (apk: string) => string;
 	failTool?: string;
+	/** signer certificate fingerprint `apksigner verify --print-certs` prints for the base; omitted prints nothing */
+	baseSigner?: string;
+	/** fingerprint of the cert behind each keystore path, for what it signs */
+	keystoreSigner?: Record<string, string>;
 };
 
 const BASE_ENTRIES = [
@@ -83,10 +96,17 @@ function fakeZipalign(cmd: readonly string[]): ExecResult {
 }
 
 /** `apksigner sign` copies the input to `--out` */
-function fakeApksigner(cmd: readonly string[]): ExecResult {
+function fakeApksigner(options: FakeOptions, cmd: readonly string[]): ExecResult {
+	if (cmd[1] === "verify" && cmd[2] === "--print-certs") {
+		const apk = String(cmd.at(-1));
+		const signedBy = apk === base ? undefined : /^signed-by:(.*)$/.exec(readFileSync(apk, "utf8"))?.[1];
+		const sha =
+			apk === base ? options.baseSigner : signedBy === undefined ? undefined : options.keystoreSigner?.[signedBy];
+		return sha === undefined ? ok : { ...ok, stdout: `Signer #1 certificate SHA-256 digest: ${sha}\n` };
+	}
 	if (cmd[1] !== "sign") return ok;
 	const out = cmd[cmd.indexOf("--out") + 1];
-	copyFileSync(String(cmd.at(-1)), String(out));
+	writeFileSync(String(out), `signed-by:${cmd[cmd.indexOf("--ks") + 1]}`);
 	return ok;
 }
 
@@ -106,7 +126,7 @@ function fakeExec(options: FakeOptions = {}): { exec: Exec; calls: Call[] } {
 		if (options.failTool === tool) return { exitCode: 1, stdout: "", stderr: `${tool} exploded` };
 		if (tool === "unzip") return fakeUnzip(options, cmd);
 		if (tool === "zipalign") return fakeZipalign(cmd);
-		if (tool === "apksigner") return fakeApksigner(cmd);
+		if (tool === "apksigner") return fakeApksigner(options, cmd);
 		if (tool === "aapt2") return fakeAapt2(options, cmd);
 		return ok;
 	};
@@ -281,6 +301,82 @@ describe("androidRepacker", () => {
 		expect(again.success).toBe(true);
 	});
 
+	describe("signer matching", () => {
+		const SHA_BASE = "fac61745dc09";
+		const SHA_OTHER = "3d11f7c31017";
+		const homeKs = () => join(dir, "home", ".android", "debug.keystore");
+
+		function signing(keystoreSigner: Record<string, string>, baseSigner = SHA_BASE) {
+			put(homeKs(), "home-ks");
+			const { exec, calls } = fakeExec({ baseSigner, keystoreSigner });
+			const run = () =>
+				androidRepacker({
+					sdkRoot: sdk,
+					keystore: { path: keystore, alias: "key", storePass: "sp", keyPass: "kp" },
+					env: {},
+					home: join(dir, "home"),
+				})(input(exec));
+			return { run, calls };
+		}
+
+		const signedWith = (calls: Call[]) =>
+			toolCalls(calls, "apksigner")
+				.filter((c) => c.cmd[1] === "sign")
+				.map((c) => c.cmd[c.cmd.indexOf("--ks") + 1]);
+
+		test("the first keystore signs when its cert is the base's signer", async () => {
+			const { run, calls } = signing({ [keystore]: SHA_BASE, [homeKs()]: SHA_OTHER });
+			const res = await run();
+			expect(res.success && "artifact" in res.data).toBe(true);
+			expect(signedWith(calls)).toEqual([keystore]);
+		});
+
+		test("a mismatching first keystore is skipped for the one that matches", async () => {
+			const { run, calls } = signing({ [keystore]: SHA_OTHER, [homeKs()]: SHA_BASE });
+			const res = await run();
+			expect(res.success && "artifact" in res.data).toBe(true);
+			expect(signedWith(calls)).toEqual([keystore, homeKs()]);
+			expect(existsSync(outDir) ? readdirSync(outDir) : []).toEqual(["app-release.apk"]);
+		});
+
+		test("the keystore cached beside the base signs before the project's and ~/.android's", async () => {
+			const cachedKs = join(dirname(base), "signing.keystore");
+			put(cachedKs, "cached-ks");
+			put(join(dirname(base), "signing.json"), JSON.stringify({ alias: "ca", storePass: "cs", keyPass: "ck" }));
+			const { run, calls } = signing({ [cachedKs]: SHA_BASE, [keystore]: SHA_OTHER, [homeKs()]: SHA_OTHER });
+			const res = await run();
+			expect(res.success && "artifact" in res.data).toBe(true);
+			expect(signedWith(calls)).toEqual([cachedKs]);
+			const sign = toolCalls(calls, "apksigner").find((c) => c.cmd[1] === "sign");
+			expect(sign?.cmd).toContain("pass:cs");
+			expect(sign?.cmd).toContain("ca");
+		});
+
+		test("a fallback reason never carries a credential", async () => {
+			const cachedKs = join(dirname(base), "signing.keystore");
+			put(cachedKs, "cached-ks");
+			put(
+				join(dirname(base), "signing.json"),
+				JSON.stringify({ alias: "ca", storePass: "SECRETPW", keyPass: "SECRETKP" })
+			);
+			const { run } = signing({ [cachedKs]: SHA_OTHER, [keystore]: SHA_OTHER, [homeKs()]: SHA_OTHER });
+			const res = await run();
+			if (!res.success || !("fallback" in res.data)) throw new Error("expected a fallback");
+			expect(res.data.reason).not.toContain("SECRET");
+		});
+
+		test("no keystore matching the base falls back naming the signers, and leaves nothing", async () => {
+			const { run } = signing({ [keystore]: SHA_OTHER, [homeKs()]: "11223344aabb" });
+			const res = await run();
+			expect(res.success).toBe(true);
+			if (!res.success || !("fallback" in res.data)) throw new Error("expected a fallback");
+			expect(res.data.reason).toContain("fac61745");
+			expect(res.data.reason).toContain("3d11f7c3");
+			expect(res.data.reason).toContain("11223344");
+			expect(existsSync(outDir) ? readdirSync(outDir) : []).toEqual([]);
+		});
+	});
+
 	test("a signing failure leaves no partial output", async () => {
 		const { exec } = fakeExec({ failTool: "apksigner" });
 		const res = await repacker()(input(exec));
@@ -346,5 +442,29 @@ describe("parseResourceFiles", () => {
 			"    resource 0x7f070001 drawable/a\n      (mdpi-v4) (file) res/drawable-mdpi-v4/a.png type=PNG\n"
 		);
 		expect(files.get("drawable/a/mdpi")?.entry).toBe("res/drawable-mdpi-v4/a.png");
+	});
+});
+
+describe("androidKeepsSigner", () => {
+	const other = join("elsewhere", "repack.apk");
+	const run = (certs: Record<string, string>, sdkRoot = sdk) => {
+		const exec: Exec = async (cmd) => {
+			const sha = certs[String(cmd.at(-1))];
+			return sha === undefined ? ok : { ...ok, stdout: `Signer #1 certificate SHA-256 digest: ${sha}\n` };
+		};
+		return androidKeepsSigner(exec, base, other, { sdkRoot, env: {}, home: join(dir, "nohome") });
+	};
+
+	test("same certificate keeps the signer", async () => {
+		expect(await run({ [base]: "AABB", [other]: "aabb" })).toBe(true);
+	});
+
+	test("another certificate does not", async () => {
+		expect(await run({ [base]: "fac61745", [other]: "3d11f7c3" })).toBe(false);
+	});
+
+	test("an unreadable signer or missing build-tools compares nothing", async () => {
+		expect(await run({ [base]: "fac61745" })).toBe(true);
+		expect(await run({ [base]: "a", [other]: "b" }, join(dir, "no-sdk"))).toBe(true);
 	});
 });

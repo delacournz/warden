@@ -23,6 +23,8 @@ export type BatchSummary = {
 	failed: string[];
 	/** `signal` aborted before the queue drained */
 	stopped: boolean;
+	/** jobs no worker pulled although the batch was not stopped (every worker refused by `admit`); absent when none */
+	unrun?: string[];
 };
 
 /** Handed to `onStart`: lets workers join a run already under way. */
@@ -47,6 +49,11 @@ export type RunBatchOptions = {
 	onEvent?: (event: BatchEvent) => void;
 	/** aborted → workers finish their current job and stop pulling */
 	signal?: AbortSignal;
+	/**
+	 * asked once per worker (initial or added) before it pulls its first job: false = the worker leaves at once
+	 * (`worker-idle`) and the others drain the queue. A throw counts as false.
+	 */
+	admit?: (worker: BatchWorker) => Promise<boolean>;
 	/** called once, synchronously, before the initial workers start */
 	onStart?: (handle: BatchHandle) => void;
 };
@@ -80,9 +87,12 @@ export async function runBatch(opts: RunBatchOptions): Promise<BatchSummary> {
 		return willRetry;
 	};
 
+	const admitted = async (w: BatchWorker): Promise<boolean> =>
+		opts.admit ? await opts.admit(w).catch(() => false) : true;
+
 	const work = async (w: BatchWorker) => {
 		let seq = 0;
-		while (!stopped()) {
+		while (!stopped() && (seq > 0 || (await admitted(w)))) {
 			const job = queue.shift();
 			if (job === undefined) break;
 			let n = 0;
@@ -109,7 +119,8 @@ export async function runBatch(opts: RunBatchOptions): Promise<BatchSummary> {
 	for (const w of opts.workers) start(w);
 	while (active.size > 0) await Promise.all([...active]);
 	ended = true;
-	const ok = failed.length === 0 && !stopped();
+	const unrun = stopped() ? [] : queue.splice(0);
+	const ok = failed.length === 0 && unrun.length === 0 && !stopped();
 	emit({ type: "done", ok, stopped: stopped(), at: opts.now() });
-	return { ok, results, failed, stopped: stopped() };
+	return { ok, results, failed, stopped: stopped(), ...(unrun.length > 0 ? { unrun } : {}) };
 }

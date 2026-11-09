@@ -6,21 +6,25 @@ import {
 	type SuiteConditions,
 	toNetworkCondition,
 } from "@delacour/warden-core/conditions/conditions.config";
-import type {
-	A11yCondition,
-	BatteryCondition,
-	CameraCondition,
-	CameraFacing,
-	ClockCondition,
-	HostFault,
-	LatLon,
-	LocaleCondition,
-	LocationCondition,
-	LocationScenario,
-	NetworkCondition,
-	PermissionCondition,
-	PermissionName,
-	PermissionState,
+import {
+	type A11yCondition,
+	type BatteryCondition,
+	type CameraCondition,
+	type CameraFacing,
+	type ClockCondition,
+	DEFAULT_KEYBOARD_MODE,
+	type HostFault,
+	KEYBOARD_MODES,
+	type KeyboardCondition,
+	type KeyboardMode,
+	type LatLon,
+	type LocaleCondition,
+	type LocationCondition,
+	type LocationScenario,
+	type NetworkCondition,
+	type PermissionCondition,
+	type PermissionName,
+	type PermissionState,
 } from "@delacour/warden-core/conditions/conditions.types";
 import { appliedA11y, resolveTextSize } from "@delacour/warden-core/conditions/text-size";
 import { parseDuration } from "@delacour/warden-core/duration";
@@ -33,6 +37,7 @@ import type {
 	CameraState,
 	Driver,
 	DriverResult,
+	KeyboardResult,
 	LocaleState,
 	NetworkState,
 	PermissionGrants,
@@ -212,6 +217,12 @@ export type DeviceConditions = {
 	a11y(op: A11yOp | null): Promise<A11yState>;
 	/** Battery level and charging. Android emulators: real. iOS: the status bar only (`cosmetic: true`). `null` resets. */
 	battery(op: BatteryOp | null): Promise<BatteryState>;
+	/**
+	 * The on-screen keyboard: `software` (the default) keeps it up while the spec types, `hardware` hides it (input as from
+	 * a connected keyboard), `toggle` flips the mode this spec has in place. Live, no relaunch. Put back to the suite's
+	 * `conditions.keyboard` (else `software`) when the test ends.
+	 */
+	keyboard(mode: KeyboardMode | "toggle"): Promise<KeyboardResult>;
 	/** Android: a critical trim-memory signal to the running app. iOS: `E_UNSUPPORTED` (no delivery mechanism works). */
 	memoryWarning(options?: SettingOptions): Promise<void>;
 	/** iOS: delivers an APNs payload (`{ aps: { alert: ... } }`) to the app. Android: `E_UNSUPPORTED`. */
@@ -357,6 +368,8 @@ export function createDeviceConditions(deps: DeviceConditionsDeps): DeviceCondit
 	let localeDirty = false;
 	let a11yDirty = false;
 	let batteryDirty = false;
+	let keyboardDirty = false;
+	let currentKeyboard: KeyboardMode = DEFAULT_KEYBOARD_MODE;
 	let cameraDirty = false;
 	let currentCamera: CameraCondition = {};
 	/** permission states this test set, per name, and the app they are for */
@@ -652,7 +665,16 @@ export function createDeviceConditions(deps: DeviceConditionsDeps): DeviceCondit
 
 	/** a remote driver offers only the ops its server has, so a setting op can be missing at runtime */
 	function settingOp<
-		K extends "permissions" | "timezone" | "locale" | "a11y" | "battery" | "camera" | "memoryWarning" | "push",
+		K extends
+			| "permissions"
+			| "timezone"
+			| "locale"
+			| "a11y"
+			| "battery"
+			| "keyboard"
+			| "camera"
+			| "memoryWarning"
+			| "push",
 	>(name: K): Driver[K] {
 		const op: Driver[K] | undefined = driver[name];
 		if (typeof op !== "function") {
@@ -777,6 +799,29 @@ export function createDeviceConditions(deps: DeviceConditionsDeps): DeviceCondit
 		return state;
 	}
 
+	/** warden's device: a lease records what we change, and a phone is never ours to change */
+	const ownsDevice = recorder !== undefined && env.deviceKind !== "physical";
+	const keyboardGoal: KeyboardMode = baseline.keyboard?.mode ?? DEFAULT_KEYBOARD_MODE;
+
+	async function applyKeyboard(input: KeyboardMode | "toggle"): Promise<KeyboardResult> {
+		const mode = input === "toggle" ? (currentKeyboard === "software" ? "hardware" : "software") : input;
+		if (!KEYBOARD_MODES.includes(mode)) {
+			throw invalid(`unknown keyboard mode "${String(input)}" (use software, hardware or toggle)`);
+		}
+		keyboardDirty = true;
+		const run = settingOp("keyboard");
+		const state = await call("keyboard", () => run(mode));
+		currentKeyboard = mode;
+		const value: KeyboardCondition = {
+			mode,
+			...(state.previousIme === undefined ? {} : { previousIme: state.previousIme }),
+		};
+		if (mode === DEFAULT_KEYBOARD_MODE) recorder?.settle("keyboard", value, true);
+		else recorder?.record("keyboard", value);
+		emit({ area: "keyboard", value });
+		return state;
+	}
+
 	const home = deps.wardenHome ?? wardenHome(process.env);
 
 	/** The whole next camera state to the driver; the feeds that landed are recorded on the lease and reported. */
@@ -889,6 +934,8 @@ export function createDeviceConditions(deps: DeviceConditionsDeps): DeviceCondit
 		baseline.locale !== undefined ||
 		baseline.timezone !== undefined ||
 		baseline.a11y !== undefined ||
+		baseline.keyboard !== undefined ||
+		ownsDevice ||
 		env.cameraFeeds !== undefined;
 
 	/** Puts the baseline's permissions in place, remembering each state so a later reset knows what to restore. */
@@ -922,6 +969,9 @@ export function createDeviceConditions(deps: DeviceConditionsDeps): DeviceCondit
 		},
 		async () => {
 			if (env.cameraFeeds !== undefined) await applyCamera(baselineCamera());
+		},
+		async () => {
+			if (baseline.keyboard !== undefined || ownsDevice) await applyKeyboard(keyboardGoal);
 		},
 	];
 
@@ -963,6 +1013,13 @@ export function createDeviceConditions(deps: DeviceConditionsDeps): DeviceCondit
 			},
 		},
 		{
+			dirty: () => keyboardDirty,
+			run: async () => {
+				await applyKeyboard(keyboardGoal);
+				keyboardDirty = false;
+			},
+		},
+		{
 			dirty: () => cameraDirty,
 			run: async () => {
 				await applyCamera(baselineCamera());
@@ -981,6 +1038,7 @@ export function createDeviceConditions(deps: DeviceConditionsDeps): DeviceCondit
 			localeDirty ||
 			a11yDirty ||
 			batteryDirty ||
+			keyboardDirty ||
 			cameraDirty ||
 			runs.size > 0,
 		wantsInject: () =>
@@ -998,6 +1056,7 @@ export function createDeviceConditions(deps: DeviceConditionsDeps): DeviceCondit
 			localeDirty = false;
 			a11yDirty = false;
 			batteryDirty = false;
+			keyboardDirty = false;
 		},
 		async teardown() {
 			const errors: unknown[] = [];
@@ -1025,6 +1084,7 @@ export function createDeviceConditions(deps: DeviceConditionsDeps): DeviceCondit
 		locale: applyLocale,
 		a11y: applyA11y,
 		battery: applyBattery,
+		keyboard: applyKeyboard,
 		camera: cameraApi,
 		memoryWarning: async (options) => {
 			const op = settingOp("memoryWarning");

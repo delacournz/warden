@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { redirectSlugs, rewriteDocsLinks, trailingSlashTarget } from "./redirects";
+import { readFileSync } from "node:fs";
+import { markdownTwinTarget, redirectSlugs, rewriteDocsLinks, trailingSlashTarget } from "./redirects";
 
 describe("redirectSlugs", () => {
 	test("maps a 2026-10 guide straight to its current tab path", () => {
@@ -57,5 +58,24 @@ describe("trailingSlashTarget", () => {
 	test("leaves the home page and slashless paths alone", () => {
 		expect(trailingSlashTarget(new URL("https://warden.co.nz/"))).toBeUndefined();
 		expect(trailingSlashTarget(new URL("https://warden.co.nz/docs/e2e"))).toBeUndefined();
+	});
+});
+
+describe("markdownTwinTarget", () => {
+	test("points a docs URL at its .md twin as a relative URL, so a proxy's http origin never leaks", () => {
+		expect(markdownTwinTarget(new URL("http://warden.co.nz/docs/sims/ports?x=1"))).toBe("/docs/sims/ports.md?x=1");
+		expect(markdownTwinTarget(new URL("http://warden.co.nz/docs"))).toBe("/docs/index.md");
+	});
+});
+
+describe("site links", () => {
+	test("the landing page links straight to live docs pages, never through a redirect", () => {
+		const landing = readFileSync(new URL("../routes/index.tsx", import.meta.url), "utf8");
+		const targets = [
+			...[...landing.matchAll(/<(?:Primary|Secondary)Link to="([^"]*)"/g)].map((m) => m[1] ?? ""),
+			...[...landing.matchAll(/_splat: "([^"]*)"/g)].map((m) => m[1] ?? ""),
+		];
+		expect(targets.length).toBeGreaterThan(0);
+		for (const to of targets) expect([to, redirectSlugs(to === "" ? [] : to.split("/"))]).toEqual([to, undefined]);
 	});
 });

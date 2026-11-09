@@ -1,5 +1,6 @@
 import { existsSync, realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { DEFAULT_KEYBOARD_MODE } from "@delacour/warden-core/conditions/conditions.types";
 import {
 	launchSettingsPath,
 	readLaunchSettings,
@@ -12,6 +13,7 @@ import type { E2eEnv } from "../../env";
 import type { ReadsA11yEvents } from "../a11y-events";
 import type { ReadsA11y } from "../a11y-read";
 import type { AlertBackend, ProbesFrontmost, ReadsAlertOn } from "../alerts";
+import type { AxWedgeState, RecoversAxWedge } from "../ax-wedge";
 import { bridgeStallSchema, formatBridgeStall, noteBridgeStall, toBridgeStall } from "../bridge-stall";
 import type { ClockRecorder } from "../clock-recorder";
 import type {
@@ -30,6 +32,7 @@ import type {
 } from "../driver.types";
 import { driverErr, driverError } from "../errors";
 import { DEFAULT_RADIUS, type GesturePlan, planGesture, rotatePlan } from "../gesture-geometry";
+import { keyboardVisible } from "../keyboard-state";
 import type { AuditsNatively } from "../native-audit";
 import type { NetworkProxyPort } from "../network-proxy";
 import { readDeadlineRemaining } from "../read-deadline";
@@ -39,6 +42,7 @@ import type { PastesText, SelectsAll } from "../typing";
 import { createInjectChannel, INJECT_DYLIB_ENV, type InjectFs, injectStatePath, locateInjectDylib } from "./inject";
 import { createIosA11y, type IosA11y } from "./ios-a11y";
 import { createIosNativeAudit, type IosNativeAudit, type IosNativeAuditOptions } from "./ios-audit";
+import { createIosKeyboard, type IosKeyboard } from "./ios-keyboard";
 import { createIosNetwork, type IosNetwork } from "./ios-network";
 import { type SwappableClient, swappableClient } from "./ios-session";
 import { createIosSettings, type IosSettings, type StagedSettings, withStagedSettings } from "./ios-settings";
@@ -46,7 +50,15 @@ import { resolveHelper } from "./locate-helper";
 import { normalizeElement, normalizeElements, toSnapshot } from "./normalize";
 import { createSimctl, type Simctl } from "./simctl";
 import { connectSimd, type RequestOptions, type SimdClient, spawnSimd } from "./simd-client";
-import type { AlertButtonsData, HealthData, OpData, RebindData, SettleData, SnapshotData } from "./simd-protocol";
+import type {
+	AlertButtonsData,
+	AxWedgeData,
+	HealthData,
+	OpData,
+	RebindData,
+	SettleData,
+	SnapshotData,
+} from "./simd-protocol";
 import type { SimdSpawn } from "./simd-transport";
 import { typeTextBudgetMs } from "./type-budget";
 
@@ -66,6 +78,7 @@ export type IosDriver = Driver &
 	PastesText &
 	ReadsAlertOn &
 	ProbesFrontmost &
+	RecoversAxWedge &
 	ReadsA11y &
 	ReadsA11yEvents &
 	AuditsNatively;
@@ -343,7 +356,27 @@ function healthDetail(d: HealthData): Record<string, unknown> {
 		...(d.socket ? { socket: d.socket } : {}),
 		...(d.xcode ? { xcode: d.xcode } : {}),
 		...(d.state ? { state: d.state } : {}),
+		...(d.axWedge ? { axWedge: toAxWedgeState(d.axWedge) } : {}),
 	};
+}
+
+/** The wedge check's log read (≤ 20 s), restart (≤ 20 s) and SpringBoard wait (≤ 15 s), with room. */
+const AX_WEDGE_RECOVER_MS = 75_000;
+
+/** Only the fields the driver knows. */
+function toAxWedgeState(d: AxWedgeData): AxWedgeState {
+	const state: AxWedgeState = {
+		restarts: d.restarts,
+		maxRestarts: d.maxRestarts,
+		recovering: d.recovering,
+		...(d.checked !== undefined ? { checked: d.checked } : {}),
+	};
+	const last = d.last;
+	if (last?.outcome === "restarted")
+		state.last = { outcome: "restarted", agoMs: last.agoMs, ...(last.ms !== undefined ? { ms: last.ms } : {}) };
+	else if (last?.outcome === "not-wedged") state.last = { outcome: "not-wedged", agoMs: last.agoMs };
+	else if (last?.outcome === "failed") state.last = { outcome: "failed", agoMs: last.agoMs, error: last.error };
+	return state;
 }
 
 /** Carries a `DriverError` out of a `settleByHash` poll callback. */
@@ -378,6 +411,7 @@ type AppOp = "launch" | "terminate" | "openUrl";
 async function launchWithInjection(
 	net: IosNetwork | undefined,
 	a11y: IosA11y | undefined,
+	keyboard: IosKeyboard | undefined,
 	requested: LaunchOptions | undefined
 ): Promise<Result<LaunchOptions | undefined, DriverError>> {
 	const injected = net ? await net.launchEnv(requested ?? {}) : undefined;
@@ -385,7 +419,9 @@ async function launchWithInjection(
 	// a network/clock launch already carries the dylib (an a11y read rides on it); otherwise an a11y read may ask for it
 	const forA11y = injected?.data || !a11y ? undefined : await a11y.launchEnv(requested ?? {});
 	if (forA11y && !forA11y.success) return forA11y;
-	const env = injected?.data ?? forA11y?.data;
+	const carried = injected?.data ?? forA11y?.data;
+	// the keyboard mode rides on a launch that carries the dylib already, else it loads the dylib itself
+	const env = keyboard ? (carried ? { ...carried, ...keyboard.launchMode() } : keyboard.launchEnv()) : carried;
 	return { success: true, data: env ? { ...requested, env: { ...requested?.env, ...env } } : requested };
 }
 
@@ -405,6 +441,8 @@ export function createIosDriver(
 		settings?: (ctx: { lastBundle: () => string | undefined }) => IosSettings;
 		/** screen-reader facts from the injected dylib (`ios-a11y.ts`); absent: `readA11y` answers `E_UNSUPPORTED` */
 		a11y?: () => IosA11y;
+		/** the on-screen keyboard mode (`ios-keyboard.ts`); absent: `keyboard` answers `E_UNSUPPORTED` */
+		keyboard?: () => IosKeyboard;
 		/** per-app network conditions (`ios-network.ts`); absent: `network` answers `E_UNSUPPORTED` */
 		/** the XCUITest audit (`ios-audit.ts`); absent: `auditNatively` skips with a reason */
 		nativeAudit?: (ctx: { lastBundle: () => string | undefined }) => IosNativeAudit;
@@ -432,6 +470,7 @@ export function createIosDriver(
 			driverRef ? driverRef.app.launch(bundleId, { relaunch: true, inject: true }) : noLeaseProxy(),
 	});
 	const a11y = opts.a11y?.();
+	const kbd = opts.keyboard?.();
 	const nativeAudit = opts.nativeAudit?.({ lastBundle: () => lastLaunched });
 	const { client } = swap;
 	let axFailures = 0;
@@ -723,6 +762,8 @@ export function createIosDriver(
 		if (loaded && !loaded.success) return loaded.error;
 		const a11yLoaded = await a11y?.confirmLoaded();
 		if (a11yLoaded && !a11yLoaded.success) return a11yLoaded.error;
+		const kbdLoaded = await kbd?.confirmLoaded();
+		if (kbdLoaded && !kbdLoaded.success) return kbdLoaded.error;
 		return undefined;
 	}
 
@@ -847,6 +888,19 @@ export function createIosDriver(
 		return result.success ? { success: true, data: result.data.frontmost } : result;
 	}
 
+	/** The helper's wedged-accessibility-service check; `recover` runs it now (log read + restart: up to ~60 s). */
+	async function axWedge(o?: { recover?: boolean }): DriverResult<AxWedgeState> {
+		const recover = o?.recover === true;
+		const result = await request("axWedge", { recover }, { timeoutMs: recover ? AX_WEDGE_RECOVER_MS : 5_000 });
+		if (result.success) return { success: true, data: toAxWedgeState(result.data) };
+		if (predatesOp(result.error)) {
+			return driverErr("E_UNSUPPORTED", "this warden-simd predates the axWedge op", {
+				detail: { reason: "helper_outdated" },
+			});
+		}
+		return result;
+	}
+
 	async function health(): DriverResult<HealthInfo> {
 		const result = await request("health");
 		if (!result.success) return result;
@@ -940,6 +994,7 @@ export function createIosDriver(
 		alert,
 		alertOn,
 		isFrontmost,
+		axWedge,
 		readA11y: async (snapshot) =>
 			a11y
 				? a11y.read(snapshot)
@@ -961,6 +1016,28 @@ export function createIosDriver(
 		locale: (tag, o) => (settings ? settings.locale(tag, o) : noSettings()),
 		a11y: (op) => (settings ? settings.a11y(op) : noSettings()),
 		battery: (op) => (settings ? settings.battery(op) : noSettings()),
+		keyboard: async (mode) =>
+			kbd
+				? kbd.keyboard(mode)
+				: driverErr("E_UNSUPPORTED", "this iOS driver was opened without the injected library channel"),
+		async dismissKeyboard() {
+			const resigned = kbd ? await kbd.dismiss() : undefined;
+			if (resigned !== undefined && !resigned.success) return resigned;
+			if (resigned?.data.attached) return { success: true, data: { via: "resign" } };
+			opts.log?.(
+				"[ios] keyboard dismissed with Enter: the app was launched without libwarden-inject.dylib, so Return may submit the focused field"
+			);
+			const pressed = await sendVoid("key", params({ usage: KEY_USAGE.Enter }));
+			return pressed.success ? { success: true, data: { via: "key" } } : pressed;
+		},
+		async keyboardState() {
+			const taken = await snapshot();
+			if (!taken.success) return taken;
+			return {
+				success: true,
+				data: { mode: kbd?.mode() ?? DEFAULT_KEYBOARD_MODE, visible: keyboardVisible(taken.data) },
+			};
+		},
 		camera: async (op) =>
 			net
 				? net.camera(op)
@@ -985,7 +1062,7 @@ export function createIosDriver(
 		app: {
 			launch: async (bundleId, plain) => {
 				const requested = settings ? withStagedSettings(plain, settings.launchSettings()) : plain;
-				const withEnv = await launchWithInjection(net, a11y, requested);
+				const withEnv = await launchWithInjection(net, a11y, kbd, requested);
 				if (!withEnv.success) return withEnv;
 				const o = withEnv.data;
 				const viaHelper = await appOp(
@@ -1152,6 +1229,7 @@ export async function openIosDriver(o: OpenIosDriverOptions): DriverResult<Drive
 			...(o.coldBridgeBudgetMs !== undefined ? { coldBridgeBudgetMs: o.coldBridgeBudgetMs } : {}),
 			...(network ? { network } : {}),
 			a11y: () => iosA11yFor(o, now, sleep),
+			keyboard: () => iosKeyboardFor(o, now, sleep),
 			nativeAudit: (ctx) => nativeAuditFor(o, exec, log, ctx),
 			settings: (ctx) => settingsFor(o, exec, ctx),
 			...(o.clockRecorder ? { clockRecorder: o.clockRecorder } : {}),
@@ -1202,6 +1280,31 @@ function iosNetworkFactory(
 			relaunch: ctx.relaunch,
 			...(o.debug ? { debug: true } : {}),
 		});
+}
+
+/** The keyboard mode layer of `o`: its own handle on the device's state file. */
+function iosKeyboardFor(o: OpenIosDriverOptions, now: () => number, sleep: (ms: number) => Promise<void>): IosKeyboard {
+	const wardenHome = o.wardenHome ?? resolveWardenHome();
+	return createIosKeyboard({
+		channel: createInjectChannel({
+			statePath: injectStatePath(wardenHome, o.udid),
+			now,
+			sleep,
+			...(o.bundleId ? { bundleId: () => o.bundleId } : {}),
+			...(o.injectFs ? { fs: o.injectFs } : {}),
+		}),
+		dylib: () =>
+			locateInjectDylib({
+				env: { [INJECT_DYLIB_ENV]: process.env[INJECT_DYLIB_ENV], WARDEN_HELPER_DIR: o.env?.helperDir },
+				execPath: o.execPath ?? process.execPath,
+				importDir: o.importDir ?? import.meta.dir,
+				wardenHome,
+				exists: o.exists ?? existsSync,
+				realpath: o.realpath ?? realpathSync,
+				...(o.version ? { version: o.version } : {}),
+			}),
+		...(o.debug ? { debug: true } : {}),
+	});
 }
 
 /** The injected-library accessibility reader of `o`: its own handle on the device's state file. */

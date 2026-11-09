@@ -7,6 +7,7 @@ import { type BadgeContextValue, BadgeProvider } from "./badge.context";
 import {
 	BADGE_FOREGROUND_TOKEN,
 	type BadgeColor,
+	type BadgeMaterial,
 	type BadgeSize,
 	type BadgeVariant,
 	badgeVariants,
@@ -23,6 +24,8 @@ export type BadgeProps = Omit<PressableProps, "asChild" | "busy" | "children" | 
 	/** What the surface means. */
 	color?: BadgeColor;
 	size?: BadgeSize;
+	/** `flat` by default, a capsule. `etched` squares the corner and tints soft status fills as an alpha. */
+	material?: BadgeMaterial;
 	isDisabled?: boolean;
 	/** Composes a trailing dismiss control in. Its press never reaches `onPress`. */
 	onClose?: () => void;
@@ -36,6 +39,7 @@ export type BadgeProps = Omit<PressableProps, "asChild" | "busy" | "children" | 
 function BadgeRoot({
 	variant = "solid",
 	color = "default",
+	material = "flat",
 	size = "md",
 	isDisabled = false,
 	onClose,
@@ -52,11 +56,11 @@ function BadgeRoot({
 	...props
 }: BadgeProps): ReactElement {
 	const context = useMemo<BadgeContextValue>(
-		() => ({ variant, color, size, isDisabled }),
-		[variant, color, size, isDisabled]
+		() => ({ variant, color, size, isDisabled, material }),
+		[variant, color, size, isDisabled, material]
 	);
 
-	const slots = badgeVariants({ color, isDisabled, size, variant });
+	const slots = badgeVariants({ color, isDisabled, material, size, variant });
 
 	// Icons composed into the badge adopt these unless told otherwise.
 	const iconClassName = slots.icon();

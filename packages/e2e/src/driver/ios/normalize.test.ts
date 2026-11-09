@@ -23,6 +23,20 @@ const tree: WireElement[] = [
 	{ role: "keyboard", rawType: "Keyboard", frame: frame(0, 600, 400, 200) },
 ];
 
+describe("keyboard role", () => {
+	test("the bridge's inputView host is the keyboard; other `other` nodes are not", () => {
+		const { flat } = normalizeElements(
+			[
+				{ role: "other", rawType: "Other", identifier: "inputView", frame: frame(0, 546, 400, 254) },
+				{ role: "other", rawType: "Other", identifier: "SystemInputAssistantView", frame: frame(0, 546, 400, 44) },
+				{ role: "button", rawType: "Button", identifier: "inputView", frame: frame(0, 0, 10, 10) },
+			],
+			screen
+		);
+		expect(flat.map((e) => e.role)).toEqual(["keyboard", "other", "button"]);
+	});
+});
+
 describe("normalizeElements", () => {
 	test("fills path ids, depth, normFrame, traits, enabled and children; flat is preorder", () => {
 		const { elements, flat } = normalizeElements(tree, screen);
@@ -155,6 +169,20 @@ describe("toSnapshot fallback", () => {
 		expect(toSnapshot({ ...data, fallback: { from: "axbridge", to: "ax", reason: "stalled" } }, 0)).not.toHaveProperty(
 			"bridgeStall"
 		);
+	});
+
+	test("a bridge read by pid after an unresolved frontmost is whole, not a fallback", () => {
+		const reason = "frontmost unresolved: x; read pid 42 (launched)";
+		const snapshot = toSnapshot(
+			{
+				...data,
+				backend: "axbridge",
+				fallback: { from: "axbridge", to: "ax", reason },
+				target: { pid: 42, source: "launched" },
+			},
+			0
+		);
+		expect(snapshot).not.toHaveProperty("fellBackFrom");
 	});
 
 	test("a plain read is not", () => {

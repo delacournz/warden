@@ -43,3 +43,47 @@ export function llmsIndex(index: string): string {
 	const pages = index.replace(/^# [^\n]*\n+/, "");
 	return `${HEADER}\n${pages}`;
 }
+
+/** A recorded clip `<DemoTabs>` can show: see `DEVICE_CONTROL.clips`. */
+export type DemoClipRef = { id: string; title: string; src: string };
+
+const demoTag = /<(DemoClip|DemoReel|DemoTabs)\b([^>]*?)\s*\/>/g;
+
+const entities: Record<string, string> = { "&#x22;": '"', "&quot;": '"', "&#x27;": "'", "&amp;": "&" };
+
+function attributes(raw: string): Record<string, string> {
+	const out: Record<string, string> = {};
+	for (const [, name, value] of raw.matchAll(/(\w+)="([^"]*)"/g)) {
+		if (name && value !== undefined) out[name] = value.replace(/&#x22;|&quot;|&#x27;|&amp;/g, (e) => entities[e] ?? e);
+	}
+	return out;
+}
+
+function videoLink(label: string, src: string): string {
+	return `[Video: ${label}](${siteUrl}${src}.mp4)`;
+}
+
+/**
+ * The page's demo components as Markdown links to their `.mp4`. The processed Markdown keeps them as JSX, and a
+ * crawler reading the `.md` twin or `/llms-full.txt` took `src="/demos/a11y/audit"` for a URL: a 404, since the
+ * files sit at `<src>.mp4` / `.jpg`.
+ */
+export function demosAsMarkdown(markdown: string, clips: readonly DemoClipRef[]): string {
+	return markdown.replace(demoTag, (tag, name: string, raw: string) => {
+		const attrs = attributes(raw);
+		if (name === "DemoTabs") {
+			const ids: unknown = JSON.parse(attrs.ids ?? "[]");
+			if (!Array.isArray(ids)) return "";
+			return ids
+				.flatMap((id) => clips.filter((clip) => clip.id === id))
+				.map((clip) => `- ${videoLink(clip.title, clip.src)}`)
+				.join("\n");
+		}
+		const { src, label } = attrs;
+		if (!src || !label) return tag;
+		const link = videoLink(label, src);
+		return name === "DemoReel" && attrs.command && attrs.facts
+			? `${link} (\`${attrs.command}\`: ${attrs.facts})`
+			: link;
+	});
+}

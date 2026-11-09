@@ -109,6 +109,15 @@ describe("parseClaimFlags", () => {
 		expect(off.success && "headless" in off.data).toBe(false);
 	});
 
+	test("golden: false is carried (fresh sims); anything else leaves the golden on", () => {
+		const off = parseClaimFlags("ios", { golden: false }, 16);
+		expect(off.success && off.data.golden).toBe(false);
+		const on = parseClaimFlags("ios", { golden: true }, 16);
+		expect(on.success && "golden" in on.data).toBe(false);
+		const unset = parseClaimFlags("ios", {}, 16);
+		expect(unset.success && "golden" in unset.data).toBe(false);
+	});
+
 	test("max defaults to at least count", () => {
 		const result = parseClaimFlags("ios", { count: "3" }, 4);
 		expect(result.success && result.data.request.max).toBe(3);

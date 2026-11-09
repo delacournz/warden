@@ -1,3 +1,4 @@
+import FBSimulatorControl
 import Foundation
 
 /// How long one `axbridge` read may take before it counts as a stalled guest, and how long the bridge is then skipped.
@@ -392,6 +393,11 @@ struct BridgeStallReport: Sendable, Equatable {
   var recycles = 0
   /// Every recycle this helper may do was spent before this read (`BridgeReaper.exhausted`).
   var recyclesExhausted = false
+  /// backboardd restarts this helper made before this read (`AXWedgeRecovery.restarts`).
+  var axWedgeRestarts = 0
+  /// `checking`: both readers were silent on this read, and the helper checks the sim for a wedged accessibility
+  /// server (and restarts backboardd when it is).
+  var axWedge: String?
 
   var json: JSON {
     var fields: [String: JSON] = ["stage": .string(stage.rawValue), "cold": .bool(cold), "probes": .int(probes)]
@@ -401,6 +407,8 @@ struct BridgeStallReport: Sendable, Equatable {
     if let cooldownRemainingMs { fields["cooldownRemainingMs"] = .int(cooldownRemainingMs) }
     if recycles > 0 { fields["recycles"] = .int(recycles) }
     if recyclesExhausted { fields["recyclesExhausted"] = .bool(true) }
+    if axWedgeRestarts > 0 { fields["axWedgeRestarts"] = .int(axWedgeRestarts) }
+    if let axWedge { fields["axWedge"] = .string(axWedge) }
     return .object(fields)
   }
 }
@@ -503,8 +511,12 @@ extension Session {
     now: @escaping @Sendable () -> Double,
     log: @escaping @Sendable (String) -> Void,
     bridgeName: String,
-    guestAgeSeconds: @Sendable () -> Double? = { nil }
+    guestAgeSeconds: @Sendable () -> Double? = { nil },
+    wedge: AXWedgeRecovery? = nil
   ) async throws -> AXOutcome<Value> {
+    if let wedge, await wedge.waitWhileRecovering(ms: AXWedgeRecovery.waitWhileRecoveringMs) {
+      throw wedge.recoveringError()
+    }
     if requested == .ax {
       guard let host else {
         throw WireError(.axUnavailable, "the host accessibility (ax) reader could not be created")
@@ -519,11 +531,14 @@ extension Session {
         stage: stage, readMs: readMs, deadlineMs: deadlineMs,
         guestAgeMs: guestAgeSeconds().map { Int(($0 * 1000).rounded()) }, cold: cold,
         cooldownRemainingMs: gate.cooldownRemainingMs(now: now(), cooldownSeconds: policy.cooldownSeconds),
-        probes: gate.failuresInARow, recycles: recycled.count, recyclesExhausted: recycled.exhausted)
+        probes: gate.failuresInARow, recycles: recycled.count, recyclesExhausted: recycled.exhausted,
+        axWedgeRestarts: wedge?.restarts ?? 0)
     }
 
     let reason: String
-    let stall: BridgeStallReport
+    var stall: BridgeStallReport
+    /// The bridge was silent (stalled, skipped after a stall, or joined a stalled warm-up), not just failing.
+    var bridgeSilent = true
     let probe = { () -> Task<BridgeProbe.Outcome, Never>? in
       guard let recovery else { return nil }
       return startProbe(
@@ -589,6 +604,7 @@ extension Session {
             throw error
           }
           reason = WireError.from(error).message
+          bridgeSilent = error is BridgeStalled || isGuestSilent(error)
         }
       }
     } else {
@@ -597,14 +613,25 @@ extension Session {
       }
       reason = "axbridge reader unavailable (bridge \(bridgeName))"
       stall = report(.connect)
+      bridgeSilent = false
     }
     log("axbridge -> ax fallback: \(reason)")
     do {
       let value = try await host!()
       return AXOutcome(value: value, backend: .ax, fallback: Fallback(reason: reason, stall: stall))
     } catch {
+      // both readers silent: the accessibility server itself may have wedged
+      if bridgeSilent, AXWedgeRecovery.isServiceSilent(error), let wedge, wedge.suspect() != nil {
+        stall.axWedge = "checking"
+      }
       throw AXReadersFailed(bridgeReason: reason, host: error, stall: stall)
     }
+  }
+
+  /// idb's own word for a guest that did not answer.
+  static func isGuestSilent(_ error: any Error) -> Bool {
+    if let error = error as? AXBridgeError, case .guestNotAnswering = error { return true }
+    return false
   }
 
   /// What a stalled bridge read leaves behind. A cold guest's first stall is exempt (asked again next read); any

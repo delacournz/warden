@@ -4,7 +4,7 @@
 #
 #   report   e2e-report.json
 #   batches  ~/.warden/batches (spec logs, results.jsonl, screen-at-failure.txt, metro.log)
-#   logs     ~/.warden/logs (native build logs)
+#   logs     ~/.warden/logs (native build logs) and the device helpers' ~/.warden/simd/*.log (copied: no sockets)
 #   app      app.tar: the .app / .apk builds the run used (`warden builds ls`, last used since STARTED), paths kept
 #            relative to $HOME (`.warden/builds/<project>/…/X.app`) so a base and its repack never clash
 #   golden   golden.tar: the golden simulator archived in ~/warden-goldens (`tar -xf golden.tar -C ~/warden-goldens`,
@@ -13,12 +13,16 @@
 # app and golden are tarballs because upload-artifact drops the executable bit and follows symlinks: a raw .app would
 # not launch and a raw golden would not import. Both land in $RUNNER_TEMP/warden-artifacts.
 #
-# `all` follows the outcome: a green run collects every group, a failed one report, batches, logs and golden.
+# `all` follows the outcome: a green run collects every group, a failed one report, batches, logs and golden. A green
+# run skips a golden restored from the cache (GOLDEN_CACHE_HIT=true): the cache already holds those bytes, and the
+# GB upload is the slowest step of a warm run. A golden named in a list is always collected.
 # logs are always collected, whatever ARTIFACTS says (even `none`): they are small and, when the build broke, the
 # only evidence there is.
 #
 # env: ARTIFACTS (all | none | comma list), PASSED (true | other), REPORT (absolute path), PROFILE (may be empty),
-#      STARTED (epoch seconds the suite started; empty collects every cached build)
+#      STARTED (epoch seconds the suite started; empty collects every cached build),
+#      GOLDEN_CACHE_HIT (true when the golden was restored from the cache; may be empty),
+#      GOLDEN_KEY (the golden's cache key; empty when the suite runs without a golden: `all` then skips golden)
 # outputs: groups (comma list), paths (JSON {group: [path]}), one multiline output per group, golden-archived
 set -uo pipefail
 
@@ -32,9 +36,19 @@ trap 'rm -rf "$work"' EXIT
 
 case "$ARTIFACTS" in
   none | "") selected="" ;;
-  all) if [ "${PASSED:-}" = true ]; then selected="$ALL_GROUPS"; else selected="report batches logs golden"; fi ;;
+  all)
+    if [ "${PASSED:-}" != true ]; then
+      selected="report batches logs golden"
+    elif [ "${GOLDEN_CACHE_HIT:-}" = true ]; then
+      selected="report batches logs app"
+    else
+      selected="$ALL_GROUPS"
+    fi
+    ;;
   *) selected=$(echo "$ARTIFACTS" | tr ',' ' ') ;;
 esac
+# a suite without a golden has none to collect: `all` leaves it out (a list naming it still tries)
+if [ "$ARTIFACTS" = all ] && [ -z "${GOLDEN_KEY-unset}" ]; then selected=${selected//golden/}; fi
 selected="$selected logs"
 
 wants() {
@@ -48,7 +62,16 @@ add() { if [ -e "$2" ]; then echo "$2" >> "$work/$1"; fi; }
 
 if wants report; then add report "$REPORT"; fi
 if wants batches; then add batches "$HOME/.warden/batches"; fi
-if wants logs; then add logs "$HOME/.warden/logs"; fi
+if wants logs; then
+  add logs "$HOME/.warden/logs"
+  # Each device helper's log (warden-simd: stalls, recycles, a wedged accessibility service), copied out because the
+  # directory also holds the helpers' live sockets, which upload-artifact cannot read.
+  simd_logs=("$HOME"/.warden/simd/*.log)
+  if [ -e "${simd_logs[0]}" ]; then
+    mkdir -p "$tars/simd-logs"
+    cp "${simd_logs[@]}" "$tars/simd-logs/" && add logs "$tars/simd-logs"
+  fi
+fi
 # tar_into <group> <tarball> <dir> <entry…>: entries relative to dir; the tarball becomes the group's one path.
 tar_into() {
   local group="$1" tarball="$2" dir="$3"
