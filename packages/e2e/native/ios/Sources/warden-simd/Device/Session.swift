@@ -187,7 +187,8 @@ final class Session: @unchecked Sendable {
     await hid.close()
   }
 
-  /// Screen size in portrait-up points (the AX frame space) and scale.
+  /// Screen size in portrait-up points and scale. AX frames and HID points are in the interface space, which swaps
+  /// these axes while the frontmost app draws landscape (`InterfaceOrientation`).
   var screen: (width: Double, height: Double, scale: Double) {
     guard let info = simulator.screenInfo, info.scale > 0 else { return (0, 0, 0) }
     let scale = Double(info.scale)
