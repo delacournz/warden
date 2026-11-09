@@ -40,7 +40,7 @@ concurrency:
 jobs:
   # The SHA ends up in API paths and checkout refs; refuse anything but a full hex SHA.
   validate:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - env:
           SHA: ${{ inputs.signoff-sha }}
@@ -55,7 +55,7 @@ jobs:
   # `signoff` job settles it as success or failure. Never checks anything out.
   pending:
     needs: validate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       statuses: write
     steps:
@@ -111,7 +111,7 @@ jobs:
   # Paths filter for the native job: does this commit touch packages/e2e/native/** against develop?
   native-changes:
     needs: validate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       native: ${{ steps.paths.outputs.native }}
     steps:
@@ -192,7 +192,7 @@ jobs:
   signoff:
     needs: [pending, checks, native-changes, native]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       statuses: write
     steps:
