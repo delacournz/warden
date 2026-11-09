@@ -189,6 +189,7 @@ describe.serial("sign-in codes", () => {
 - Once a test fails, the rest of the group is not run: each gets a `skipped` line in `results.jsonl` with code `SKIPPED`, naming the test that failed. `afterAll` still runs.
 - `retry` on a test in the group is `INVALID_ARGUMENT`: a retried attempt would start from the screen the failed one left. `warden e2e` passes rerun the whole spec instead.
 - Every test still has its own deadline, steps, `trace.jsonl` and failure artifacts.
+- The suite's `conditions` (network, camera feed, clock, ...) are put in place once, before the launch and the group's `beforeAll`, and not applied again to the running app before each test. What a test changes is still put back when it ends; what a `beforeAll` changes (a permission, a location) is not, so undo it in `afterAll`.
 
 Prefer this to one long test that runs every check: each check gets its own result line, and a failure names it.
 

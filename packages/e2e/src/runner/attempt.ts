@@ -425,7 +425,11 @@ async function setUpAndRun<F extends object>(
 	if (conditions !== undefined) {
 		// registered before it is applied, so a half-applied baseline is still put back
 		teardowns.push({ name: "conditions", run: () => conditions.teardown(), when: () => conditions.dirty() });
-		if (conditions.declared) await session.step("conditions", "conditions.baseline", () => conditions.applyBaseline());
+		// a `describe.serial` chain had it applied once, before its launch: applied again here it would hit the running app
+		const inChain = chainOf(spec.scope) !== undefined;
+		if (conditions.declared && !inChain) {
+			await session.step("conditions", "conditions.baseline", () => conditions.applyBaseline());
+		}
 	}
 	if (use.launch === "fresh") await session.step("app", "app.open", () => base.app.open());
 	for (const entry of spec.fixtures) {

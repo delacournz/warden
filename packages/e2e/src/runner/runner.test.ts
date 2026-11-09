@@ -460,6 +460,12 @@ describe("conditions", () => {
 		expect(events.some((e) => e.area === "network" && e.value.kind === "offline")).toBe(true);
 	});
 
+	test("a describe.serial chain applies the baseline once, before its launch, never to its running app", async () => {
+		const run = await runSpec("conditions-serial", { WARDEN_CONDITIONS: '{"network":"3g"}' });
+		expect(run.exitCode).toBe(0);
+		expect(run.log).toEqual(["beforeAll nets=3g launches=1", "first nets=3g", "second nets=3g,offline,3g launches=1"]);
+	});
+
 	test("without conditions the launch is plain and an untouched test makes no condition call", async () => {
 		const run = await runSpec("conditions");
 		expect(run.exitCode).toBe(0);

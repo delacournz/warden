@@ -1,4 +1,5 @@
 import { afterAll as bunAfterAll, beforeAll as bunBeforeAll, describe as bunDescribe, test as bunTest } from "bun:test";
+import { conditionsOf } from "../conditions/device-conditions";
 import type { Platform } from "../driver/driver.types";
 import { missingRequirements, type Requirement } from "../driver/requirements";
 import { E2eError } from "../errors";
@@ -268,7 +269,10 @@ function registerDescribe(title: string, options: DescribeOptions, body: Describ
 					title: [...scope.title, "launch"],
 					scope,
 					kind: "launch",
-					run: async ({ app }) => {
+					run: async ({ app, device }) => {
+						// the suite's conditions go in once, before anything in the chain runs; tests put back their own changes
+						const conditions = conditionsOf(device);
+						if (conditions?.declared === true) await conditions.applyBaseline();
 						if (resolveUse(scope, registrationDefaults()).launch === "fresh") await app.open();
 					},
 				})
