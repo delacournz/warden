@@ -27,6 +27,9 @@ const SPEC = { bundleId: BUNDLE_ID } satisfies WardenE2eSpec;
 /** Every spec drives these screens before its own (fresh launch → welcome → sign-in). */
 const SIGNED_IN = ["src/app/welcome.tsx", "src/app/sign-in.tsx"];
 
+/** The Conditions screen behind its deep link (no sign-in gate). */
+const CONDITIONS = ["src/app/welcome.tsx", "src/app/conditions.tsx", "src/modules/conditions"];
+
 /** The screens a Settings row pushes (`app/settings` opens each one and goes Back). */
 const SETTINGS_ROWS = [
 	"gestures",
@@ -84,24 +87,17 @@ const AFFECTED = {
 		"app/perf": { entries: [...SIGNED_IN, "src/app/(tabs)/todos.tsx"] },
 		"app/gestures": { entries: ["src/app/welcome.tsx", "src/app/gestures.tsx", "src/modules/gestures"] },
 		"app/keyboard": { entries: ["src/app/welcome.tsx", "src/app/keyboard-sheet.tsx", "src/modules/keyboard"] },
-		"network-offline": { entries: ["src/app/welcome.tsx", "src/app/conditions.tsx", "src/modules/conditions"] },
-		"network-slow": { entries: ["src/app/welcome.tsx", "src/app/conditions.tsx", "src/modules/conditions"] },
-		"network-flaky": { entries: ["src/app/welcome.tsx", "src/app/conditions.tsx", "src/modules/conditions"] },
-		"network-fault": { entries: ["src/app/welcome.tsx", "src/app/conditions.tsx", "src/modules/conditions"] },
-		"location-route": { entries: ["src/app/welcome.tsx", "src/app/conditions.tsx", "src/modules/conditions"] },
-		"location-denied": { entries: ["src/app/welcome.tsx", "src/app/conditions.tsx", "src/modules/conditions"] },
-		"clock-trial": { entries: ["src/app/welcome.tsx", "src/app/conditions.tsx", "src/modules/conditions"] },
+		"conditions/network": {
+			entries: [...CONDITIONS, "src/app/network.tsx", "src/modules/network", "src/modules/showcase"],
+		},
+		"conditions/location": {
+			entries: [...CONDITIONS, "src/app/location.tsx", "src/modules/location", "src/modules/showcase"],
+		},
+		"conditions/clock": {
+			entries: [...CONDITIONS, "src/app/clock.tsx", "src/modules/clock", "src/modules/showcase"],
+		},
 		biometrics: {
 			entries: ["src/app/welcome.tsx", "src/app/biometrics.tsx", "src/modules/biometrics", "src/modules/showcase"],
-		},
-		"network-showcase": {
-			entries: ["src/app/welcome.tsx", "src/app/network.tsx", "src/modules/network", "src/modules/showcase"],
-		},
-		"location-showcase": {
-			entries: ["src/app/welcome.tsx", "src/app/location.tsx", "src/modules/location", "src/modules/showcase"],
-		},
-		"clock-showcase": {
-			entries: ["src/app/welcome.tsx", "src/app/clock.tsx", "src/modules/clock", "src/modules/showcase"],
 		},
 		a11y: { entries: ["src/app/welcome.tsx", "src/app/a11y.tsx", "src/modules/a11y"] },
 		camera: { entries: ["src/app/welcome.tsx", "src/app/camera.tsx", "src/modules/camera"] },
@@ -133,7 +129,7 @@ const bench = {
 } satisfies WardenVariant;
 
 /** Spec ids of the device-conditions specs: they run in the `conditions` suite, not in `example`. */
-const CONDITION_SPECS = "{network-*,location-*,clock-*}";
+const CONDITION_SPECS = "conditions/**";
 
 /**
  * What the `example` and `conditions` suites share. The `conditions` suite declares `conditions.network: "online"`,
