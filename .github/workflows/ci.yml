@@ -98,12 +98,13 @@ jobs:
             turbo-ci-${{ runner.os }}-${{ runner.arch }}-
 
       # `@delacournz/cli-telemetry` (GitHub Packages, private) is a hard dependency of apps/cli, so the
-      # install needs a read token. bunfig.toml reads NPM_TOKEN; the job token works because the package
-      # grants this repo Actions read access (package settings > Manage Actions access). apps/docs'
-      # optional OpenTelemetry packages ride on the same token.
+      # install needs a read token. bunfig.toml reads NPM_TOKEN. NPM_READ_TOKEN (classic PAT,
+      # read:packages) also installs the optional `@delacournz/*` design systems, which the apps that
+      # render one need to typecheck and test; without it the job token still covers cli-telemetry
+      # and apps/docs' optional OpenTelemetry packages (Actions read access granted per package).
       - run: bun install --frozen-lockfile
         env:
-          NPM_TOKEN: ${{ github.token }}
+          NPM_TOKEN: ${{ secrets.NPM_READ_TOKEN || github.token }}
       - run: bun run typecheck
       - run: bun run check
       - run: bun run test
