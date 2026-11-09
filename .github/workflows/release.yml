@@ -116,7 +116,7 @@ jobs:
 
   publish:
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # No required reviewer: merging the version PR is the approval. The environment stays because
     # npm's trusted publisher is bound to this workflow file + environment name, and its deployment
     # branch policy (tags `v*`) still limits where a publish can start.
