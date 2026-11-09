@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import {
 	chmodSync,
 	existsSync,
@@ -24,6 +24,9 @@ const ACTION_DIR = join(ROOT, ".github", "actions", "e2e");
 const SCRIPT = join(ACTION_DIR, "artifacts.sh");
 const GROUPS = ["report", "batches", "logs", "app", "golden"] as const;
 const BASH = existsSync("/bin/bash") ? "/bin/bash" : "bash";
+
+/** Each run spawns bash, tar and the stub warden: 1-3 s on a loaded CI runner, past bun's 5 s default when cold. */
+setDefaultTimeout(30_000);
 
 type Group = (typeof GROUPS)[number];
 type Collected = { groups: Group[]; paths: Record<Group, string[]>; archived: boolean; stdout: string };
