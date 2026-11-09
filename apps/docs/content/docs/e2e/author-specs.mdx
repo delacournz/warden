@@ -8,11 +8,55 @@ icon: Clapperboard
 
 `warden ui record start signin-demo`, then `open --relaunch`, `press` and `fill` through onboarding and sign-in, then `warden ui record stop` writes `e2e/signin-demo.e2e.ts` and replays it once on the same simulator.
 
-An agent (or you) asked for "an e2e test for onboarding and sign in" drives the app with [`warden ui`](/docs/sims/ui) between `warden ui record start` and `record stop`. `stop` writes a `@delacour/warden-e2e` [spec](/docs/e2e/specs) and runs it once on the same leased device. There is no intermediate file and no replay engine: the spec runner is the replay.
+Drive the app with [`warden ui`](/docs/sims/ui) between `record start` and `record stop`, and warden writes a `@delacour/warden-e2e` [spec](/docs/e2e/specs) and runs it once on the same leased device. No intermediate file, no replay engine: the spec runner is the replay.
+
+## In five steps
+
+<Steps>
+<Step>
+
+`warden claim ios --json` (or `android`), then `warden ui record start <name>`.
+
+</Step>
+<Step>
+
+`warden ui open <bundleId> --relaunch`, then `snapshot -i` to see the testIDs.
+
+</Step>
+<Step>
+
+Drive the flow by `id=`: `press`, `fill`, `scroll`, with a `wait id=...` after every navigation and a `record note` per user-visible step.
+
+</Step>
+<Step>
+
+`warden ui record stop` writes the spec, lints it and replays it once. Fix what it reports (a missing testID, a wrong assumption) and stop again.
+
+</Step>
+<Step>
+
+Register the spec in `warden.config.ts`, run `warden e2e <suite> --specs <id>`, then `warden ui close --release`.
+
+</Step>
+</Steps>
+
+## Prompt for an agent
+
+```text
+Write an e2e test for <flow, e.g. onboarding and sign in> using warden.
+Load the warden skill first. Claim a device, then record the flow with
+`warden ui record start`, drive by testID only, wait for a landmark after
+every navigation, assert outcomes with wait/is/get, and finish with
+`warden ui record stop`. If a lint or the verify run fails, fix the app
+(testID + accessible) or undo and redo the steps. Finish by running
+`warden e2e <suite> --specs <id>` green and releasing the device.
+```
 
 The journal lives under `$WARDEN_HOME/ui/<udid>/recording.json` and is internal. It is removed only by a successful `stop` or by `cancel`.
 
 ## The loop
+
+The same steps in full:
 
 ```bash
 warden claim ios --json                                        # → UDID

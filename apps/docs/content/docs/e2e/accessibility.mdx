@@ -8,7 +8,7 @@ icon: Accessibility
 
 `warden ui a11y audit --rule role-in-name` flags the bad variant's “Submit button”, `warden ui a11y audit --no-native` passes the good screen, and `warden ui a11y set --text-size accessibility-large --bold` grows the text.
 
-Specs and [`warden ui`](/docs/sims/ui) can audit a screen, show the order and wording a screen reader would use, read announcements and live-region changes, and set the OS accessibility settings an app reads (bold text, reduce motion, screen reader on: [Accessibility settings](/docs/sims/conditions/accessibility)). Everything is scoped to the lease and undone on release.
+Specs and [`warden ui`](/docs/sims/ui) can audit a screen, show the order and wording a screen reader would use, read announcements and live-region changes, and set the OS accessibility settings an app reads (bold text, reduce motion, screen reader on: [Accessibility settings](/docs/e2e/conditions/accessibility)). Everything is scoped to the lease and undone on release.
 
 ## What works where
 
@@ -26,31 +26,14 @@ Wording and order from warden are a model of VoiceOver and TalkBack (`source: "s
 
 ## Display settings
 
-```ts
-await device.a11y({ textSize: "accessibility-large", boldText: true, reduceMotion: true });
-await app.open();
-```
+Set text size, bold text, contrast, reduce motion and the screen-reader flag from a spec (`device.a11y({ textSize: "accessibility-large", boldText: true })`, before `app.open()`) or with `warden ui a11y set`. Spec keys are in [Accessibility settings](/docs/e2e/conditions/accessibility); every flag, the per-platform behaviour and what is skipped are in [Accessibility settings for simulators](/docs/sims/conditions/accessibility); `warden ui a11y status` shows what is set and `warden ui a11y reset` clears it. Release puts every setting back.
 
 ```bash
 warden ui a11y set --text-size accessibility-large --bold --reduce-motion
-warden ui a11y set --no-bold --no-reduce-motion   # each flag has a --no- form
-warden ui a11y status                             # what is recorded, plus the screen-reader state
-warden ui a11y reset
+warden ui a11y status
 ```
 
-| Flag / key | iOS | Android |
-|---|---|---|
-| `--text-size` / `textSize` | category (`extra-small` ... `accessibility-extra-extra-extra-large`) or scale, live | scale, clamped to 0.5-2 |
-| `--bold` / `boldText` | live | `font_weight_adjustment` |
-| `--contrast increased\|normal` | live | skipped |
-| `--reduce-motion` / `reduceMotion` | live | `transition_animation_scale`; off by default, `true` zeroes it (React Native reads it) |
-| `--reduce-transparency`, `--button-shapes`, `--differentiate-without-color`, `--on-off-labels` | live, no relaunch | skipped |
-| `--high-contrast-text`, `--color-inversion` | skipped | live |
-| `--screen-reader` / `screenReader` | simulated flag | real TalkBack |
-
-A setting a platform has no mechanism for is `skipped` with a reason; a call where everything is skipped fails with `E_UNSUPPORTED`. Release puts every setting back (including TalkBack's accessibility services and master switch, exactly as the device had them).
-
-On Android apps see reduce motion off by default under warden. Warden zeroes window and animator scales while it drives, and restores the device's `transition_animation_scale` afterwards, so an app reading reduce motion no longer sees it on in every spec. Set `reduceMotion: true` for the reduced path.
+On Android, apps see reduce motion off by default under warden (it zeroes animator scales while it drives and restores `transition_animation_scale` afterwards); set `reduceMotion: true` for the reduced path.
 
 ## Screen readers
 

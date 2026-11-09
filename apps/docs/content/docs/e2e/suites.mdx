@@ -1,36 +1,57 @@
 ---
 title: React Native E2E test suites
-description: Declare React Native and Expo E2E test suites in warden.config.ts and run them with warden e2e on leased devices.
+description: Declare React Native and Expo E2E test suites in warden.config.ts, choose iOS or Android devices and build kinds, and run them with warden e2e on leased devices.
 icon: Layers
 ---
 
-A suite is a named entry under `e2e` in `warden.config.ts`: which specs, which app build, how many devices, whether warden runs Metro. You run it with `warden e2e <suite>`.
+A suite is a named entry under `e2e` in `warden.config.ts`: which specs, which app build, how many devices, whether warden runs Metro. You run it with `warden e2e <suite>`. `warden init` writes the first one:
 
 ```ts title="warden.config.ts"
-import { defineConfig } from "@delacour/warden/config";
-
-export default defineConfig({
+export default {
+  projects: [{ name: "my-app", bundleId: "com.example.app" }],
   e2e: {
-    example: {
-      project: "example",
+    "my-app": {
+      project: "my-app",
       specsDir: "e2e",
       platform: "ios",
-      app: true,
-      metro: { env: { EXPO_PUBLIC_E2E: "1" } },
-      spec: { bundleId: "com.example.app" },
+      isolate: "device",
       count: 2,
-      jobTimeoutMs: 15 * 60_000,
+      app: true,
+      metro: { launchArgs: ["-EXDevMenuShowsAtLaunch", "NO", /* … */] },
     },
   },
-});
+};
 ```
+
+| Key | What it does |
+|---|---|
+| `project` | the `projects[].name` whose root runs specs and whose app is installed |
+| `specsDir` | where the `*.e2e.ts(x)` specs are, searched recursively |
+| `platform` | `ios` or `android`; `warden init --platform android` writes it. Without it `warden e2e` needs `--platform` |
+| `isolate` | `"device"`: one `bun test` per device over its share of the specs. `"spec"`: one process per spec |
+| `count` | devices to claim (`--count N` overrides) |
+| `app` | `true` installs the project's app on every device first |
+| `metro` | warden starts Metro for the dev client (`--dev`). iOS only in the starter: it turns the Expo dev menu off at launch |
 
 ```bash
-warden e2e example --all          # the repacked simulator build, no Metro
-warden e2e example --all --dev    # the dev client on a Metro warden starts (the suite's metro block)
+warden e2e my-app --all          # the repacked simulator build, no Metro
+warden e2e my-app --all --dev    # the dev client on a Metro warden starts (the suite's metro block)
 ```
 
-No device to pick, no port to export, no bundler to start first. warden claims the simulators, installs the cached build, starts and verifies its own Metro with `--dev`, runs the specs and releases everything on exit (Ctrl-C included).
+No device to pick, no port to export, no bundler to start first. warden claims the devices, installs the cached build, starts and verifies its own Metro with `--dev`, runs the specs and releases everything on exit (Ctrl-C included). The first run of a native fingerprint builds the app (minutes); later runs reuse the cache. How a run works end to end: [How it works](/docs/e2e/how-it-works).
+
+## iOS and Android
+
+| | iOS | Android |
+|---|---|---|
+| Set with | `platform: "ios"` or `--platform ios` | `platform: "android"` or `--platform android` |
+| Needs | macOS, Xcode, an iOS runtime | the Android SDK (emulator, platform-tools) |
+| Devices | simulators cloned from a golden image | emulators, always headless |
+| `runtime` | pins the iOS runtime | skipped with a note |
+| `slim` | on by default | skipped on a suite that runs both; a config error on `platform: "android"` |
+| Launch args | passed to the app (`metro.launchArgs`) | none; open a deep link instead |
+
+A suite with no `platform` can run on both; `warden e2e` then needs `--platform` each time. To test both platforms with the same specs, declare two suites (one `platform: "ios"`, one `"android"`) or run one suite with each flag. A spec can restrict itself to a platform ([Write specs](/docs/e2e/specs)). Devices of one platform with different profiles are [device legs](#device-legs).
 
 ## Build kinds
 
@@ -50,8 +71,6 @@ No device to pick, no port to export, no bundler to start first. warden claims t
 - `retry`, `passes`: rerun a failed spec up to N times; require N consecutive green runs on the same device (`WARDEN_PASS` = 0, 1).
 - `serve` runs once per run: started before the first spec, stopped after the last. Every device, device leg, retry, `passes` repeat and shard talks to the same process, which is never restarted, so its in-memory state lives for the whole run. Specs must isolate their own state (for example a unique user per test); a fixed port also needs to be free before the run, because `serveReady` cannot tell a leftover process from yours.
 - `serve`, `serveReady`, `serveTimeout`, `ports`, `env`, `setup`, `slim`: a local API, per-device setup, simulator slimming (on by default) and spare ports; see [Affected e2e](/docs/e2e/affected#per-device-setup) and the [field reference](/docs/reference/configuration#e2e).
-
-The first run of a native fingerprint builds the app (minutes); later runs reuse the cache.
 
 ## Device legs
 

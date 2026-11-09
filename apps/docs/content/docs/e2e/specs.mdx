@@ -4,39 +4,152 @@ description: Write React Native and Expo E2E tests with the @delacour/warden-e2e
 icon: FlaskConical
 ---
 
-A spec is a `*.e2e.ts` file that drives the app on a simulator or emulator with `@delacour/warden-e2e`; you write one per user flow. [`warden e2e`](/docs/e2e/suites) leases the devices, installs the build, starts Metro and runs the specs against them. The package drives iOS simulators and Android emulators directly (see [iOS driver helper](/docs/reference/e2e-driver)), so there is no daemon and no other test runner to install.
+A spec is a `*.e2e.ts` file that drives the app on a simulator or emulator, one per user flow. [`warden e2e`](/docs/e2e/suites) leases the devices, installs the build, starts Metro and runs the specs. The package drives iOS simulators and Android emulators directly ([iOS driver helper](/docs/reference/e2e-driver)): no daemon, no other test runner.
 
 ```bash
 bun add -d @delacour/warden-e2e
 ```
 
 <Callout type="warn">
-`@delacour/warden-e2e` is versioned in lock-step with `@delacour/warden`: install the same version of both, and update them together (`warden update`, then bump the dev dependency).
+`@delacour/warden-e2e` is versioned in lock-step with `@delacour/warden`: install the same version of both and update them together (`warden update`, then bump the dev dependency).
 </Callout>
 
-## A spec
+## A spec in 30 seconds
 
 ```ts title="e2e/todos.e2e.ts"
 import { expect, test } from "@delacour/warden-e2e";
 
-test("add a todo", async ({ device, screen }) => {
+test("add a todo", async ({ screen }) => {
   await screen.getByTestId("todo-input").fill("Write e2e specs");
   await screen.getByTestId("todo-add").tap();
   await expect(screen.getByTestId("todos-remaining")).toHaveText("2 left");
 });
 ```
 
-`test(title, options?, body)` receives four fixtures: `app`, `device`, `screen` and `platform` (`"ios" | "android"`). Before every test the runner opens the app fresh (`app.open()`), so a test starts on the app's first screen. Everything a fixture does honours the test's deadline: when it passes, the running driver call is aborted and the test fails with a timeout.
+Before every test the runner opens the app fresh (`app.open()`), so a test starts on the first screen. `test(title, options?, body)` hands the body four fixtures:
 
-| Option | Effect |
+| Fixture | Is |
+|---|---|
+| `screen` | queries (`getByTestId`, ...) and whole-screen gestures; see [Find elements](#find-elements) |
+| `app` | the app under test: `open`, `close`, `restart`, `reinstall`, `clearData`; see [App and device](#app-and-device) |
+| `device` | the simulator or emulator: alerts, links, orientation, screenshots, [conditions](/docs/e2e/conditions); see [App and device](#app-and-device) |
+| `platform` | `"ios"` or `"android"` |
+
+Every fixture call honours the test's deadline: when it passes, the running driver call is aborted and the test fails with a timeout.
+
+| Test option | Effect |
 |---|---|
 | `timeout` | ms for the whole test, hooks included (default 2 min, `spec.timeout`); beats `test.use({ timeout })` |
 | `skip`, `only` | skip the test, or run only this one. A leftover `only` fails the run under `CI` |
 | `platforms` | run only on these platforms, e.g. `["ios"]` |
 | `retry` | extra attempts after a failure; only the last attempt is reported |
 
-`test.skip`, `test.only`, `test.skipIf(condition)` and `test.todo(title)` work as in `bun:test` (a `test.todo` fails when bun runs with `--todo`). A test skipped when collected (`test.skip`, `skipIf(true)`, `platforms` without this device's platform, `requires` it lacks) gets a `skipped` line in `results.jsonl` with code `SKIPPED` and the reason (`skipped: runs on android only, this device is ios`), so `warden e2e` counts it. A `describe` (or file) whose tests are all skipped runs none of its `beforeAll` / `afterAll` hooks, and a `describe.serial` group then opens no app. A test without a body throws `INVALID_ARGUMENT`.
+`test.skip`, `test.only`, `test.skipIf(condition)` and `test.todo(title)` work as in `bun:test` (a `test.todo` fails when bun runs with `--todo`). A test skipped at collection (`skip`, `skipIf(true)`, `platforms` without this device's platform, `requires` it lacks) gets a `skipped` line in `results.jsonl` with code `SKIPPED` and the reason, so `warden e2e` counts it. A `describe` or file whose tests are all skipped runs none of its `beforeAll` / `afterAll` hooks. A test without a body throws `INVALID_ARGUMENT`.
 
+### Settings for a file or group
+
+`test.use({ ... })` applies to every test in the current file or `describe`. Put it above the tests it is for: after a test in the same scope bun has already fixed that test's timeout, and warden prints a warning.
+
+| Setting | Default | Does |
+|---|---|---|
+| `timeout` | 120 s | whole test, hooks included |
+| `actionTimeout` | 30 s | each tap, fill, scroll and `waitFor` waiting for an element |
+| `assertionTimeout` | 5 s | each `expect(locator)` |
+| `launch` | `"fresh"` | `"fresh"` runs `app.open()` before each test; `"none"` leaves the app as it is (you open it yourself, or a `describe.serial` group does) |
+| `systemAlerts` | `"off"` | `"accept"` / `"dismiss"` answers an alert in the way; see below |
+
+Precedence for the timeouts: test option, then `test.use`, then `WARDEN_E2E_*` env, then the default. In a suite, set them under `spec`. An unknown `systemAlerts` value is `INVALID_ARGUMENT`.
+
+With `systemAlerts: "accept"` or `"dismiss"`, a read, action or `expect` that sees an alert on top answers it (`device.alert("accept")` or `"dismiss"`) and looks again on a fresh screen, three answers at most per look. It answers every alert, the app's own as well as the system's, so leave it `"off"` for a test that asserts on an alert. iOS's "Open in ...?" sheet is the exception: `"dismiss"` answers it with Open (Cancel would throw away a link the test opened), and while `device.openLink` waits on a link no read answers any alert, because `openLink` answers the sheet itself.
+
+## Recipes
+
+### Wait for the first screen after launch
+
+`app.open()` returns when the launch call does. Wait on a locator that only the first screen has, then the runner settles once so the next tap lands on a mounted screen:
+
+```ts
+import { test, expect } from "@delacour/warden-e2e";
+
+test.use({ launch: "none" });
+
+test("starts on the list", async ({ app, screen }) => {
+  await app.open({ wait: { until: screen.getByTestId("todo-input"), timeout: 30_000 } });
+  await expect(screen.getByTestId("todos-remaining")).toBeVisible();
+});
+```
+
+`wait: "quiet"` is the no-locator form: it waits for any content and a still screen. See [App and device](#app-and-device).
+
+### Log in once for a group of tests
+
+Use `describe.serial`: one launch, a `beforeAll` that signs in, then one result line per check. Full example and rules in [One launch for a group of tests](#one-launch-for-a-group-of-tests).
+
+### Type a password without writing it in the spec
+
+Read it from the environment (set it in the suite's `env`), and fail loudly when it is missing. A secure field cannot be read back, so `fill` checks that it shows one bullet per character typed:
+
+```ts
+const password = process.env.WARDEN_UI_SECRET_PASSWORD;
+if (password === undefined) throw new Error("set WARDEN_UI_SECRET_PASSWORD");
+
+test("sign in", async ({ screen }) => {
+  await screen.getByTestId("email").fill("ada@example.com");
+  await screen.getByTestId("password").fill(password);
+  await screen.getByTestId("sign-in-submit").tap({ until: screen.getByTestId("home") });
+});
+```
+
+A recorded spec ([Record specs](/docs/e2e/author-specs#secrets)) uses the same variable names.
+
+### Answer a system alert
+
+Grant the permission before launch so no prompt shows ([Permissions](/docs/e2e/conditions/permissions)), or answer the alert:
+
+```ts
+await device.permissions.set({ notifications: "granted" });
+await app.open();
+```
+
+```ts
+await screen.getByTestId("enable-location").tap();
+await device.alert("accept");
+```
+
+`device.alert` resolves `false` when no alert is up. `test.use({ systemAlerts: "dismiss" })` answers alerts wherever a read or tap meets one.
+
+### Scroll a list to an item
+
+```ts
+await screen.scrollUntilVisible(screen.getByTestId("todo-row-40"));
+await screen.getByTestId("todo-row-40").tap();
+```
+
+`scrollUntilVisible` swipes up to `maxSwipes` (default 10) times and fails when the target is still off screen. `locator.scrollTo()` also stops only when the element is clear of a sticky footer or tab bar.
+
+### Assert a count
+
+```ts
+await expect(screen.getByRole("listitem")).toHaveCount(3);
+await expect(screen.getByTestId("todos-remaining")).toHaveText(/^\d+ left$/);
+```
+
+### Tap something that is lost when the screen is still moving
+
+```ts
+await screen.getByTestId("tab-settings").tap({ until: screen.getByTestId("settings-email") });
+```
+
+See [Tap until something shows](#tap-until-something-shows). A plain `tap()` is one tap and is never retried.
+
+### Seed data before a test
+
+```ts
+import { run } from "@delacour/warden-e2e";
+await run(["bun", "scripts/seed-todos.ts"]);
+```
+
+See [Run host commands](#run-host-commands).
 
 ## Find elements
 
@@ -80,8 +193,8 @@ Actions wait for the element (up to `actionTimeout`) and then act. Every action 
 | Action | |
 |---|---|
 | `tap({ position?, until?, retries?, windowMs?, pollMs?, timeout? })`, `longPress({ durationMs?, timeout? })` | touch the element's centre, or `position` (an offset from its top-left corner). `until` makes the tap retrying (below). The element must be enabled and its tap point on screen, and its frame must have held still across two looks (on iOS the second look is a hit-test at the element when there is no earlier look to compare with). A control later in the tree drawn over the element (a sticky footer and its padded bar, a tab bar, a floating button) would take the touch, and so would the header over a row scrolled past the top of its list: the press goes to the part of the element nothing covers, a wholly covered element in a scroll view is dragged clear first, and one that cannot be fails `NOT_ACTIONABLE` naming the cover. An explicit `position` is tapped as given |
-| `fill(text, { via? })` | replace the field's text (focus with the caret at the end, empty it, put the whole string in), then poll until the field holds it on consecutive reads, since the accessibility value lags the keys by 100-200 ms; a mismatch is retried once with a fresh clear and retype, then fails with what the field holds. Emptying is select all on iOS and on Android 13+, then the typed text replaces the selection (no Backspace; on Android with `WARDEN_ANDROID_SETTEXT=1`, a field that holds text is replaced in one `setText` call instead); older Android and the retry press one Backspace per character, and a field that is empty or shows its placeholder gets no keys. Secure fields skip the check. `via` is `"type"` (default) or `"paste"`: with `"paste"`, on iOS the first attempt pastes the text (one Cmd+V over the selection, about 400 ms whatever its length, secure fields included) instead of typing it key by key (70-260 ms a character). Paste is opt-in because Xcode syncs every simulator's pasteboard with the Mac clipboard in both directions: the text lands in your clipboard history and, on a parallel run, on the other simulators' pasteboards; if the pasteboard write cannot be confirmed it types in the same attempt, and the retry always types, so a field that mangles a paste (a mask, a `maxLength`) still passes the read-back. Android always types. `type()` and `clear()` always use keys |
-| `type(text)`, `clear()`, `press(key, { modifiers? })` | keyboard input; the field is tapped first unless it already has focus. `key` is `Enter`, `Backspace`, `Tab`, `Space`, `Escape`, `Delete`, `Up`, `Down`, `Left` or `Right`; `modifiers` is a list of `shift`, `cmd`, `alt`, `ctrl` (Android before 13 cannot send them). `clear()` checks the field is empty afterwards, with one counted retry (secure fields skip the check); an iOS React Native field that shows its placeholder as its value once empty counts as empty, since deleting cannot turn the old text into other text; a field that was already empty and only shows its placeholder is told apart by typing one key and deleting it |
+| `fill(text, { via? })` | replace the field's text (focus with the caret at the end, empty it, put the whole string in), then poll until the field holds it on consecutive reads, since the accessibility value lags the keys by 100-200 ms; a mismatch is retried once with a fresh clear and retype, then fails with what the field holds. Emptying is select all on iOS and on Android 13+, then the typed text replaces the selection (no Backspace; on Android with `WARDEN_ANDROID_SETTEXT=1`, a field that holds text is replaced in one `setText` call instead); older Android and the retry press one Backspace per character, and a field that is empty or shows its placeholder gets no keys. A secure field is checked by its bullet count. `via` is `"type"` (default) or `"paste"`: with `"paste"`, on iOS the first attempt pastes the text (one Cmd+V over the selection, about 400 ms whatever its length, secure fields included) instead of typing it key by key (70-260 ms a character). Paste is opt-in because Xcode syncs every simulator's pasteboard with the Mac clipboard in both directions: the text lands in your clipboard history and, on a parallel run, on the other simulators' pasteboards; if the pasteboard write cannot be confirmed it types in the same attempt, and the retry always types, so a field that mangles a paste (a mask, a `maxLength`) still passes the read-back. Android always types. `type()` and `clear()` always use keys |
+| `type(text)`, `clear()`, `press(key, { modifiers? })` | keyboard input; the field is tapped first unless it already has focus. `key` is `Enter`, `Backspace`, `Tab`, `Space`, `Escape`, `Delete`, `Up`, `Down`, `Left` or `Right`; `modifiers` is a list of `shift`, `cmd`, `alt`, `ctrl` (Android before 13 cannot send them). `clear()` checks the field is empty afterwards, with one counted retry (a secure field is checked by its bullets); an iOS React Native field that shows its placeholder as its value once empty counts as empty, since deleting cannot turn the old text into other text; a field that was already empty and only shows its placeholder is told apart by typing one key and deleting it |
 | `swipe({ direction, momentum? })`, `scrollTo({ direction?, momentum?, maxSwipes? })` | scroll the element, or scroll the screen until it is visible and clear of covers (same defaults as `screen.scrollUntilVisible`): an element on screen under a sticky footer or header is dragged just clear of it |
 | `pinch(scale, { durationMs?, radius?, timeout? })`, `rotate(degrees, { durationMs?, radius?, timeout? })` | two fingers around the element's centre, kept inside its visible rect (defaults 500 ms); `rotate` is clockwise for positive degrees. Same `scale` and `degrees` limits and `INVALID_ARGUMENT` as `screen.gesture` |
 
@@ -150,9 +263,7 @@ describe("settings", () => {
 
 - `describe(title, body)` groups tests; the group title is part of every test title. The body runs while bun collects the tests, before any device exists: it gets no fixtures and is not awaited. A body that takes arguments or is `async` is `INVALID_ARGUMENT`. Device work goes in a hook or a test.
 - `beforeEach` / `afterEach` hooks run outermost scope first / innermost first, and are typed with the base fixtures (`app`, `device`, `screen`, `platform`); `afterEach` runs even when the test failed. To get the fixtures `test.extend` added, register the hook on the extended test (`it.beforeEach(({ account }) => …)`, `it.afterEach`): it is typed with that test's fixtures and runs only for tests made with it (or extended from it). `beforeAll` / `afterAll` run once per file or `describe` with the same base fixtures and never see the ones added by `test.extend`. Each `beforeAll` / `afterAll` runs like a small test: the scope's timeout, its steps in its own `trace.jsonl`, and on failure the same `failure.png`, `screen-at-failure.txt` and logs plus one `failed` (or `timed-out`) line in `results.jsonl` titled with the describe titles and `beforeAll`. bun runs none of the group's tests after a failed `beforeAll`. The fixtures a hook gets work only inside it: keep one in a variable and use it in a test, and it fails with `SESSION`. Tests use their own `{ app, device, screen }`; they all drive the same device and app.
-- `test.use({ timeout, actionTimeout, assertionTimeout, launch, systemAlerts })` applies to every test in the current file or `describe`. `launch: "none"` skips the fresh `app.open()` before each test. Put `test.use({ timeout })` above the tests it is for: after a test in the same scope bun has already fixed that test's timeout, and warden prints a warning. An unknown `systemAlerts` value is `INVALID_ARGUMENT`.
-- `actionTimeout` (default 30 s) bounds each tap, fill and wait for an element; `assertionTimeout` (default 5 s) bounds each `expect(locator)`.
-- `systemAlerts: "accept" | "dismiss" | "off"` (default `"off"`) answers an alert that is in the way. With `"accept"` or `"dismiss"`, a locator read, action or `expect` that sees an alert on top answers it (`device.alert("accept")` or `"dismiss"`) and looks again on a fresh screen, three answers at most per look. It answers every alert, the app's own as well as the system's, so leave it `"off"` for a test that asserts on an alert. iOS's "Open in …?" sheet is the exception: `"dismiss"` answers it with Open (Cancel would only throw away a link the test opened), and while `device.openLink` is waiting on a link no read answers any alert, because `openLink` answers the sheet itself.
+- `test.use({ ... })`: see [Settings for a file or group](#settings-for-a-file-or-group).
 
 ### One launch for a group of tests
 

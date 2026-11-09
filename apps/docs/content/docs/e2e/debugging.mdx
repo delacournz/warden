@@ -11,10 +11,53 @@ icon: Bug
   facts="spec fails 24s in on getByTestId(sign-in-emial) · screen-at-failure.txt lists sign-in-email · real time, no speed ramp"
 />
 
-When a spec fails, read the evidence in this order: the run's stdout, `screen-at-failure.txt`, `failure.png`, `trace.jsonl`, then the logs. A missing element is fixed in the component, not with retries.
+When a spec fails, the run prints the failed tests and where their evidence is. A missing element is fixed in the component, not with retries.
+
+## Your first failure
+
+<Steps>
+<Step>
+### Read the end of the run
+
+```text
+  ✗ sign-in › shows the form alert — <the first line of the error> — artifacts <batchDir>/e2e/<worker>-<seq>/sign-in/shows-the-form-alert-<hash>
+warden e2e: evidence in <batchDir>
+```
+
+Each failed test lists its first error line and its `artifacts` directory. The last line is the batch directory; `warden e2e --json` prints the same report as `e2e-report.json`.
+</Step>
+<Step>
+### Open `screen-at-failure.txt`
 
 ```bash
-warden e2e example-dev --specs app/auth --json | jq '.specs[] | select(.verdict != "passed")'
+grep -i "sign-in" <artifacts dir>/screen-at-failure.txt
+```
+
+It is the full accessibility tree at the moment of failure: every testID, label and value on screen. Two outcomes:
+
+- The id is there with a different spelling: fix the spec (`sign-in-email`, not `sign-in-emial`).
+- The id is not there: the view is missing or not `accessible`. [Fix it in the component](#fix-a-missing-testid-in-the-component).
+</Step>
+<Step>
+### Look at `failure.png`, then `trace.jsonl`
+
+`failure.png` shows what the user would have seen (a system sheet, a loading state, the wrong screen). `trace.jsonl` lists every step with its timing, for a spec that is slow or stuck rather than wrong.
+</Step>
+<Step>
+### Rerun just that spec
+
+```bash
+warden e2e my-app --specs sign-in
+```
+
+A failed run leaves its devices booted so you can inspect them with [`warden ui`](/docs/sims/ui); `warden release --mine --shutdown` when done.
+</Step>
+</Steps>
+
+Read the evidence in this order: the run's stdout, `screen-at-failure.txt`, `failure.png`, `trace.jsonl`, then the logs.
+
+```bash
+warden e2e my-app --specs app/auth --json | jq '.specs[] | select(.verdict != "passed")'
 ```
 
 ## Batch directory
@@ -59,6 +102,8 @@ Every run writes under a batch directory, `$WARDEN_HOME/batches/<id>` (the `--re
 
 ## The evidence files
 
+Each file sits in the failed test's artifacts directory (`e2e/<worker>-<seq>/<spec>/<test>-<hash>/`) unless noted.
+
 | File | Contents |
 |---|---|
 | `failure.png` | the device at the moment of failure |
@@ -67,8 +112,8 @@ Every run writes under a batch directory, `$WARDEN_HOME/batches/<id>` (the `--re
 | `native.log` (+ `.ips` crash reports on iOS) | the app process's unified log (iOS, NDJSON) or its `logcat` plus the crash buffer (Android) over the attempt. A short tail of it, errors and faults first (20 lines at most), is also printed under the failure. iOS reads it inside the simulator (`simctl spawn <udid> log show --info --debug`), so messages resolve against the runtime's own shared cache. Before the app runs, warden makes sure the simulator keeps `%{private}` values readable (`log config --mode private_data:on`; the simulator is a leased, disposable test device). `WARDEN_NATIVE_LOG_PRIVATE=0` leaves its logging mode alone |
 | `console.jsonl`, `network.jsonl` | dev client only, when devtools were attached: the JS console and network requests |
 | `screenshots/` | `device.screenshot(name)` images as `NNN-name.png`, from any test |
-| `results.jsonl` | one line per finished test, skipped ones included: `file`, `title[]`, `status` (`passed`, `failed`, `skipped`, `timed-out`), `durationMs`, `startedAt`, `error` (`message`, `code`, `stack`), `artifacts`, `device` (`udid`, `platform`, `name`). With retries only the final attempt is written |
-| `e2e-report.json` | each spec's `verdict`, `attempts` and `tests[]` (`title`, `status`, `durationMs`, `error`, `artifacts`), a `device`, `log` and `screenshot` for a spec whose last attempt failed; top-level `suite`, `platform`, `base`, `isolate`, `headless`, `batchDir`, `only` and each device's `setup` |
+| `results.jsonl` (`e2e/<worker>-<seq>/`, one per worker) | one line per finished test, skipped ones included: `file`, `title[]`, `status` (`passed`, `failed`, `skipped`, `timed-out`), `durationMs`, `startedAt`, `error` (`message`, `code`, `stack`), `artifacts`, `device` (`udid`, `platform`, `name`). With retries only the final attempt is written |
+| `e2e-report.json` (the batch dir root; `--report <file>` copies it) | each spec's `verdict`, `attempts` and `tests[]` (`title`, `status`, `durationMs`, `error`, `artifacts`), a `device`, `log` and `screenshot` for a spec whose last attempt failed; top-level `suite`, `platform`, `base`, `isolate`, `headless`, `batchDir`, `only` and each device's `setup` |
 
 `<spec>` is the spec's path under the suite's `specsDir` without `.e2e.ts`; `<test-title>` is a slug of the describe and test titles. On a later pass the worker directory is `<worker>-<seq>-p<pass>`. A by-hand run writes under `WARDEN_E2E_OUT` (default `.warden-e2e/<timestamp>` in the current directory).
 
