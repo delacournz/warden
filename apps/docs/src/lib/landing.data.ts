@@ -49,7 +49,7 @@ export type Faq = { q: string; a: string; proof?: Proof };
 
 export const HERO = {
 	pill: "open source · MIT · iOS + Android",
-	lede: "Your coding agents drive your React Native or Expo app on iOS simulators, Android emulators and real phones, and keep what they checked as E2E tests. Devices, ports and builds are leased per worktree, so parallel agents never collide.",
+	lede: "An AI agent toolkit to drive, debug, profile and test React Native and Expo apps on iOS and Android. Your agent taps through your app, reads the component tree, Metro logs and network requests, traces slow screens and keeps what it checked as E2E tests.",
 	installNote: "Installs the CLI and the skill for every agent it finds.",
 } as const;
 

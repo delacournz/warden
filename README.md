@@ -1,6 +1,6 @@
 # warden
 
-Machine-wide leasing of **iOS simulators, Android emulators, ports and native app builds** for agents, Orca worktrees, repos and humans sharing one Mac. A device or port leased by one owner is never handed to another.
+An AI agent toolkit for React Native, Expo and native iOS and Android apps: your agent drives, debugs, profiles and E2E tests the app on its own simulator. Underneath, warden leases **iOS simulators, Android emulators, ports and native app builds** machine-wide for agents, Orca worktrees, repos and humans sharing one Mac. A device or port leased by one owner is never handed to another.
 
 - **Leases** live in one sqlite db (`~/.warden/warden.db`, WAL). Claims run under `BEGIN IMMEDIATE`, which serialises them across processes.
 - **Owners**: a Claude session (hook stdin, `CLAUDE_CODE_SESSION_ID`, `WARDEN_SESSION_ID`), CI (`CI`, `GITHUB_RUN_ID`), or a user shell (parent pid). The repo and worktree are recorded for messages.

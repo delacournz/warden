@@ -3,15 +3,17 @@ import { appDescription, decodeMarkdownUrl, encodeMarkdownUrl, isFileHref, metaD
 
 describe("the search snippets", () => {
 	test("lead with the queries warden answers", () => {
-		expect(metaDescription).toMatch(/^React Native and Expo E2E testing/);
-		expect(metaDescription).toContain("iOS simulators");
-		expect(metaDescription).toContain("Android emulators");
-		expect(metaDescription).toContain("AI coding agents");
+		expect(metaDescription).toMatch(/^AI agent toolkit for React Native and Expo/);
+		expect(metaDescription).toContain("E2E testing");
+		expect(metaDescription).toContain("iOS simulator");
+		expect(metaDescription).toContain("Android emulator");
+		expect(metaDescription).toContain("AI coding agent");
 		expect(metaDescription.length).toBeGreaterThanOrEqual(120);
 		expect(metaDescription.length).toBeLessThanOrEqual(160);
 	});
 
 	test("the long description names React Native and end-to-end testing too", () => {
+		expect(appDescription).toMatch(/AI agent toolkit/);
 		expect(appDescription).toMatch(/React Native/);
 		expect(appDescription).toMatch(/end-to-end/);
 	});
