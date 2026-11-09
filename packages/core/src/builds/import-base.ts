@@ -11,9 +11,10 @@ export type SimulatorBaseFacts = {
 	/** it carries a `main.jsbundle` (built without `SKIP_BUNDLING`): stripped on import, the repack writes its own */
 	embeddedBundle: boolean;
 	/**
-	 * the app's embedded entitlements carry an `application-identifier`; false for an unsigned app or one signed
-	 * without it (`CODE_SIGNING_ALLOWED=NO`), whose Keychain calls fail with errSecMissingEntitlement (-34018) on a
-	 * simulator; undefined when `codesign` could not say
+	 * the app's entitlements (its code signature, or the `__TEXT,__entitlements` section an ad-hoc simulator build links
+	 * in) carry an `application-identifier`; false for an unsigned app or one built without it
+	 * (`CODE_SIGNING_ALLOWED=NO`), whose Keychain calls fail with errSecMissingEntitlement (-34018) on a simulator;
+	 * undefined when neither `codesign` nor `otool` could say
 	 */
 	applicationIdentifier?: boolean;
 };
@@ -56,11 +57,37 @@ async function plistValue(exec: Exec, app: string, key: string): Promise<string 
 	return run.exitCode === 0 && value !== "" ? value : undefined;
 }
 
-/** Does the build embed an `application-identifier` entitlement? undefined when `codesign` is no help. */
-async function hasApplicationIdentifier(exec: Exec, app: string): Promise<boolean | undefined> {
-	const run = await exec(["codesign", "-d", "--entitlements", ":-", app]);
-	if (run.exitCode === 0) return run.stdout.includes("application-identifier");
-	return /not signed at all/i.test(run.stderr) ? false : undefined;
+/**
+ * The text of a section as `otool -X -s <seg> <sect>` prints it: each line is an address, then the bytes, one per
+ * token (x86_64) or as little-endian 32-bit words (arm64). undefined when otool could not read the binary.
+ */
+async function sectionText(exec: Exec, binary: string, segment: string, section: string): Promise<string | undefined> {
+	const run = await exec(["otool", "-X", "-s", segment, section, binary]);
+	if (run.exitCode !== 0) return undefined;
+	const bytes: number[] = [];
+	for (const line of run.stdout.split("\n")) {
+		for (const token of line.trim().split(/\s+/).slice(1)) {
+			if (!/^(?:[0-9a-f]{2}|[0-9a-f]{8})$/i.test(token)) continue;
+			const pairs = token.match(/../g) ?? [];
+			if (token.length === 8) pairs.reverse();
+			for (const pair of pairs) bytes.push(Number.parseInt(pair, 16));
+		}
+	}
+	return Buffer.from(bytes).toString("utf8");
+}
+
+/**
+ * Does the build embed an `application-identifier` entitlement? A device build carries it in its code signature. An
+ * ad-hoc simulator build (`CODE_SIGN_IDENTITY=-`) signs with no entitlements and links them into the executable's
+ * `__TEXT,__entitlements` section, which is what the simulator reads. undefined when neither codesign nor otool can say.
+ */
+async function hasApplicationIdentifier(exec: Exec, app: string, binary: string): Promise<boolean | undefined> {
+	const signature = await exec(["codesign", "-d", "--entitlements", ":-", app]);
+	if (signature.exitCode === 0 && signature.stdout.includes("application-identifier")) return true;
+	const section = await sectionText(exec, binary, "__TEXT", "__entitlements");
+	if (section?.includes("<key>application-identifier</key>")) return true;
+	if (section !== undefined || signature.exitCode === 0) return false;
+	return /not signed at all/i.test(signature.stderr) ? false : undefined;
 }
 
 /**
@@ -111,7 +138,7 @@ export async function checkSimulatorBase(
 			`${name} is a Debug or dev-client build (${debug}): import a Release build (-configuration Release, no expo-dev-client)`
 		);
 	}
-	const applicationIdentifier = await hasApplicationIdentifier(exec, app);
+	const applicationIdentifier = await hasApplicationIdentifier(exec, app, binary);
 	return ok({
 		bundleId,
 		archs,
