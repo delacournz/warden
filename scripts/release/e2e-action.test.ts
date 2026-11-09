@@ -301,6 +301,18 @@ describe("action.yml artifacts", () => {
 		expect(action.inputs["compiler-cache"]?.default).toBe("true");
 	});
 
+	test("warden doctor checks the host after ccache is installed, before anything uses the helper", () => {
+		const steps = action.runs.steps;
+		const at = (id: string) => steps.findIndex((s) => s.id === id);
+		const doctor = steps[at("doctor")] as Step & { run?: string };
+		expect(doctor.run).toContain("warden doctor --fetch-helper");
+		// doctor reports ccache from PATH: before the install it warns about a ccache the action is about to add
+		expect(at("ccache-prep")).toBeLessThan(at("doctor"));
+		expect(at("doctor")).toBeLessThan(at("import"));
+		expect(at("doctor")).toBeLessThan(at("golden-build"));
+		expect(at("doctor")).toBeLessThan(at("run"));
+	});
+
 	test("the native build log is printed folded, its workflow commands disarmed; the compiler cache is saved", () => {
 		const steps = action.runs.steps;
 		const at = (id: string) => steps.findIndex((s) => s.id === id);
