@@ -222,6 +222,15 @@ other_terminal() {
   if command -v pbcopy >/dev/null 2>&1; then printf '%s' "$1" | pbcopy; note "(copied to clipboard)"; fi
 }
 
+# host_lease_id: the wizard's host lease. Another terminal is another owner (the
+# shell that claimed owns the lease), so it is named by id there.
+host_lease_id() {
+  warden ls --json 2>/dev/null | WANT="$LABEL" bun -e '
+    const j = await Bun.stdin.json();
+    const l = (j.leases ?? []).find((l) => l.resource?.kind === "host-device" && l.label === process.env.WANT);
+    console.log(l?.id ?? "");' 2>/dev/null || true
+}
+
 # ssh_opts: the plain-ssh flags for the setup key and proxy the user gave.
 ssh_opts() {
   SSH_OPTS=()
@@ -324,8 +333,11 @@ pause
 
 # ── 9 ─────────────────────────────────────────────────────────────────────
 stage "Watch + drive it in the browser (warden view)"
-step "In a SECOND terminal run this. It opens a browser tab on 127.0.0.1:"
-other_terminal "warden view"
+LEASE_ID=$(host_lease_id)
+[[ -z "$LEASE_ID" ]] && LEASE_ID="<leaseId from: warden ls --hosts>"
+step "In a SECOND terminal run this (another terminal = another owner, so by id)."
+step "It opens a browser tab on 127.0.0.1:"
+other_terminal "warden view $LEASE_ID"
 step "Click = tap, drag = swipe, typing types, Esc = home. Portrait only."
 step "Ctrl-C there when done (the lease stays yours)."
 pause "Done with the browser view? Press Enter"

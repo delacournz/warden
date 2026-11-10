@@ -220,6 +220,15 @@ run() {
 # leases with the "host" side (your normal ~/.warden) on this same Mac.
 lw() { env WARDEN_HOME="$LAPTOP_HOME" warden "$@"; }
 
+# host_lease_id: the wizard's host lease on the laptop side. Another terminal is
+# another owner (the shell that claimed owns the lease), so it is named by id there.
+host_lease_id() {
+  lw ls --json 2>/dev/null | WANT="$LABEL" bun -e '
+    const j = await Bun.stdin.json();
+    const l = (j.leases ?? []).find((l) => l.resource?.kind === "host-device" && l.label === process.env.WANT);
+    console.log(l?.id ?? "");' 2>/dev/null || true
+}
+
 # other_terminal "cmd" puts a long-running command on the clipboard for another
 # terminal: Ctrl-C there must not kill this wizard.
 other_terminal() {
@@ -307,8 +316,14 @@ pause
 stage "Laptop: view it (THIRD terminal)"
 say "For a host device, warden view is a browser tab on 127.0.0.1 (the desktop"
 say "viewer is for cloud devices only)."
+LEASE_ID=$(host_lease_id)
+if [[ -z "$LEASE_ID" ]]; then
+  warn "no '$LABEL' host lease on the laptop side (did stage 5's claim run?)"
+  LEASE_ID="<leaseId from: WARDEN_HOME=$LAPTOP_HOME warden ls --hosts>"
+fi
+say "That terminal is another owner, so the lease ($LEASE_ID) is passed by id."
 step "Open a THIRD terminal and run:"
-other_terminal "WARDEN_HOME=$LAPTOP_HOME warden view"
+other_terminal "WARDEN_HOME=$LAPTOP_HOME warden view $LEASE_ID"
 step "Click = tap, drag = swipe, typing types, Esc = home. Portrait only."
 step "Ctrl-C there when done (the lease stays yours)."
 pause "Done with the view? Press Enter"
