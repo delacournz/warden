@@ -3,7 +3,7 @@ import type { HostDeviceResource } from "@delacour/warden-core/types";
 import { ok } from "@delacour/warden-types/result";
 import { type TestContext, testContext } from "../testing";
 import type { HostLease } from "./claim";
-import { pickHostLease, viewHost } from "./view-run";
+import { hostLeaseHint, pickHostLease, viewHost } from "./view-run";
 
 const ctxs: TestContext[] = [];
 afterEach(() => {
@@ -55,6 +55,23 @@ describe("pickHostLease", () => {
 		expect(pickHostLease(ctx, lease.id)?.id).toBe(lease.id);
 		expect(pickHostLease(ctx, undefined)?.id).toBe(lease.id);
 		expect(pickHostLease(ctx, "nope")).toBeUndefined();
+	});
+});
+
+describe("hostLeaseHint", () => {
+	test("another terminal's host lease is not picked, but named with how to view it", () => {
+		const { ctx, lease } = withHostLease();
+		ctx.env.WARDEN_SESSION_ID = "another-terminal";
+		expect(pickHostLease(ctx, undefined)).toBeUndefined();
+		const hint = hostLeaseHint(ctx);
+		expect(hint).toContain(`${lease.id} (iPhone 16 on mac)`);
+		expect(hint).toContain("warden view <leaseId>");
+	});
+
+	test("nothing to say with no host leases", () => {
+		const ctx = testContext([]);
+		ctxs.push(ctx);
+		expect(hostLeaseHint(ctx)).toBeUndefined();
 	});
 });
 

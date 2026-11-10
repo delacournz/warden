@@ -40,6 +40,27 @@ export function pickHostLease(ctx: CommandContext, arg: string | undefined): Hos
 	return only && hosts.length === 1 && remotes.length === 0 ? only : undefined;
 }
 
+/** The caller holds a hosted device lease (`claim --remote`): then a bare `warden view` is about that one. */
+export function hasOwnRemoteLease(ctx: CommandContext): boolean {
+	return ctx
+		.store()
+		.listLeasesByOwner(resolveOwner(ctx))
+		.some((l) => l.resource.kind === "remote-device");
+}
+
+/**
+ * When `warden view` found nothing of the caller's: the host leases in this warden home (any owner, e.g. claimed in
+ * another terminal, whose shell owns them) and how to name one. Undefined when there are none.
+ */
+export function hostLeaseHint(ctx: CommandContext): string | undefined {
+	const hosts = hostLeases(ctx.store().listLeases());
+	if (hosts.length === 0) return undefined;
+	const list = hosts
+		.map((l) => `${l.id} (${l.resource.name} on ${l.resource.host}${l.label ? `, label ${l.label}` : ""})`)
+		.join(", ");
+	return `no device lease of this terminal's to pick; host leases here: ${list}. View one with: warden view <leaseId>`;
+}
+
 async function defaultConnect(
 	ctx: CommandContext,
 	lease: HostLease

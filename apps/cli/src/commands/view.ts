@@ -130,9 +130,14 @@ export async function attachViewer(
 
 /** A host's device: a browser tab on this Mac (`hosts/view-run.ts`), until Ctrl-C or the lease ends. */
 async function viewOnHost(ctx: CommandContext, arg: string | undefined, opts: ViewOpts): Promise<number | undefined> {
-	const { pickHostLease, viewHost } = await import("../hosts/view-run");
+	const { hasOwnRemoteLease, hostLeaseHint, pickHostLease, viewHost } = await import("../hosts/view-run");
 	const lease = pickHostLease(ctx, arg);
-	if (lease === undefined) return undefined;
+	if (lease === undefined) {
+		const hint = arg === undefined ? hostLeaseHint(ctx) : undefined;
+		if (hint === undefined || hasOwnRemoteLease(ctx)) return undefined;
+		reportError(ctx, "view", hint);
+		return 1;
+	}
 	if (opts.detach) {
 		reportError(ctx, "view", "--detach is for hosted devices; a host's device is viewed while warden view runs");
 		return 1;
