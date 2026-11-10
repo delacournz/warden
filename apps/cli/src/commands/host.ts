@@ -206,9 +206,48 @@ function rm(ctx: CommandContext, name: string, opts: { json?: true }): number {
 	return 0;
 }
 
-type Check = { name: string; ok: boolean; detail: string };
+/** `warning`: the check passed but found something a person may want to clean up (never fails the doctor). */
+type Check = { name: string; ok: boolean; detail: string; warning?: true };
 
-/** Reach, auth and version (`version --json`), then the host's own lease drift report (`doctor --leases --json`). */
+/** `{ findings: [{ kind }] }` from the host's `doctor --leases --json` → `2 device_missing, 1 stale_claim_key`. */
+function findingKinds(json: unknown): { count: number; kinds: string } | undefined {
+	const findings: unknown = typeof json === "object" && json !== null ? Reflect.get(json, "findings") : undefined;
+	if (!Array.isArray(findings)) return undefined;
+	const counts = new Map<string, number>();
+	for (const f of findings) {
+		const kind: unknown = typeof f === "object" && f !== null ? Reflect.get(f, "kind") : undefined;
+		const name = typeof kind === "string" ? kind : "other";
+		counts.set(name, (counts.get(name) ?? 0) + 1);
+	}
+	const kinds = [...counts].map(([kind, n]) => `${n} ${kind}`).join(", ");
+	return { count: findings.length, kinds };
+}
+
+/**
+ * The host's own lease registry. Drift there (stale rows of deleted devices, orphan claim keys) is the host's
+ * housekeeping, not a link problem: a warning. Only a call that broke (ssh dropped, refused, no findings) fails.
+ */
+function leasesCheck(ran: Awaited<ReturnType<typeof wardenJson>>): Check {
+	if (!ran.success) return { name: "leases", ok: false, detail: ran.error };
+	const failure = remoteFailure(ran.data.json);
+	if (failure !== undefined) return { name: "leases", ok: false, detail: failure.message };
+	if (ran.data.exitCode === 0) return { name: "leases", ok: true, detail: "no drift" };
+	const found = findingKinds(ran.data.json);
+	if (found === undefined || found.count === 0) {
+		return { name: "leases", ok: false, detail: `doctor --leases exited ${ran.data.exitCode}` };
+	}
+	return {
+		name: "leases",
+		ok: true,
+		warning: true,
+		detail: `${found.count} finding(s) on the host: ${found.kinds} (there: warden doctor --leases --fix)`,
+	};
+}
+
+/**
+ * Reach, auth and version (`version --json`), then the host's own lease drift report (`doctor --leases --json`).
+ * Exit 1 only for the link; drift on the host is a `warn` line.
+ */
 async function doctor(ctx: CommandContext, name: string, opts: { json?: true }): Promise<number> {
 	const host = lookupHost(ctx, name);
 	if (!host.success) return reportClaimFailure(ctx, SCOPE, host.error);
@@ -220,19 +259,15 @@ async function doctor(ctx: CommandContext, name: string, opts: { json?: true }):
 		putHost(ctx.store(), { ...host.data, version: version.data });
 		const ran = await wardenJson(ctx, host.data, ["doctor", "--leases", "--json"]);
 		leases = ran.success ? ran.data.json : undefined;
-		const failure = ran.success ? remoteFailure(ran.data.json) : { message: ran.error };
-		checks.push({
-			name: "leases",
-			ok: ran.success && ran.data.exitCode === 0,
-			detail: failure?.message ?? (ran.success && ran.data.exitCode === 0 ? "no drift" : "drift found"),
-		});
+		checks.push(leasesCheck(ran));
 	}
 	const okAll = checks.every((c) => c.ok);
+	const label = (c: Check) => (!c.ok ? "FAIL" : c.warning ? "warn" : "ok  ");
 	emit(
 		ctx,
 		opts.json === true,
 		{ host: name, ok: okAll, checks, leases },
-		checks.map((c) => `${c.ok ? "ok  " : "FAIL"} ${c.name}: ${c.detail}`).join("\n"),
+		checks.map((c) => `${label(c)} ${c.name}: ${c.detail}`).join("\n"),
 		{ scope: SCOPE, detail: name }
 	);
 	if (!version.success) return reportClaimFailure(ctx, SCOPE, version.error);

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import type { Exec } from "@delacour/warden-core/exec";
 import { getGrant, getHost, listHosts, putHost } from "@delacour/warden-core/hosts/registry";
 import { fakeExec, type TestContext, testContext } from "../testing";
 import { currentBuild } from "../update/build-info";
@@ -126,6 +127,55 @@ describe("warden host doctor", () => {
 			"/u/me/.local/bin/warden version --json",
 			"doctor --leases --json",
 		]);
+	});
+
+	/** ssh answers `version --json` with this version, and `doctor --leases --json` with `leases`. */
+	function hostExec(leases: { exitCode: number; stdout: string }): Exec {
+		return async (cmd) =>
+			cmd.join(" ").includes("doctor --leases")
+				? { stderr: "", ...leases }
+				: { exitCode: 0, stdout: `{"version":"${VERSION}"}`, stderr: "" };
+	}
+
+	test("drift on the host's own store is a warning, not a failure: the link is fine", async () => {
+		const findings = [
+			{ kind: "device_missing", severity: "drift", fixable: true },
+			{ kind: "device_missing", severity: "drift", fixable: true },
+			{ kind: "stale_claim_key", severity: "info", fixable: true },
+		];
+		const ctx = context(
+			["doctor", "mac", "--json"],
+			hostExec({ exitCode: 1, stdout: JSON.stringify({ ok: false, findings }) })
+		);
+		putHost(ctx.db, { name: "mac", ssh: { hostname: "mac" }, addedAt: 1 });
+		expect(await run(ctx)).toBe(0);
+		const out = JSON.parse(ctx.stdout.join(""));
+		expect(out.ok).toBe(true);
+		expect(out.checks[1]).toMatchObject({ name: "leases", ok: true, warning: true });
+		expect(out.checks[1].detail).toContain("2 device_missing, 1 stale_claim_key");
+		expect(out.checks[1].detail).toContain("warden doctor --leases --fix");
+	});
+
+	test("drift prints a warn line in text mode", async () => {
+		const findings = [{ kind: "device_missing", severity: "drift", fixable: true }];
+		const ctx = context(["doctor", "mac"], hostExec({ exitCode: 1, stdout: JSON.stringify({ ok: false, findings }) }));
+		putHost(ctx.db, { name: "mac", ssh: { hostname: "mac" }, addedAt: 1 });
+		expect(await run(ctx)).toBe(0);
+		expect(ctx.stdout.join("\n")).toContain("warn leases: 1 finding(s) on the host: 1 device_missing");
+	});
+
+	test("a host that refuses or breaks doctor --leases still fails", async () => {
+		const ctx = context(
+			["doctor", "mac", "--json"],
+			hostExec({ exitCode: 2, stdout: JSON.stringify({ error: { code: "refused", message: "refused: doctor" } }) })
+		);
+		putHost(ctx.db, { name: "mac", ssh: { hostname: "mac" }, addedAt: 1 });
+		expect(await run(ctx)).toBe(1);
+		expect(JSON.parse(ctx.stdout.join("")).checks[1]).toMatchObject({
+			name: "leases",
+			ok: false,
+			detail: "refused: doctor",
+		});
 	});
 });
 

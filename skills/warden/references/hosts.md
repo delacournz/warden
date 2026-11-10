@@ -8,7 +8,7 @@ A **host** is another Mac (a desk Mac, a Mac mini over Tailscale, EC2 Mac, MacSt
 |---|---|---|
 | 1 | `warden host add <name> --ssh user@host[:port] [--identity <key>] [--proxy-command <cmd>] [--jump <bastion>] [--host-key 'ssh-ed25519 AAAA…'] [--json]` | First contact: pins the host key in `$WARDEN_HOME/hosts/<name>.known_hosts` (the first key seen, or `--host-key`), reads the host's warden version if it has one. Not reachable = nothing recorded |
 | 2 | `warden host setup <name> [--setup-identity <key>] [--binary <file>] [--install-dir <dir>] [--authorized-keys <file>] [--golden] [--no-helper] [--json]` | With the setup key (a normal shell): installs this warden version at `~/.local/bin/warden` (no sudo; the release binary, downloaded on the laptop with `gh` and checked against `checksums.txt`, or `--binary` for a dev/local build), `doctor --fetch-helper` (`--no-helper` skips), `golden ensure` with `--golden`, then `warden host grant` of the laptop's own key (`$WARDEN_HOME/hosts/id_ed25519`, made once, comment `warden:<machineId>:<user>`). The host record switches to that key |
-| 3 | `warden host doctor <name> [--json]` | Reachable, key accepted, same version, then the host's `doctor --leases` |
+| 3 | `warden host doctor <name> [--json]` | Reachable, key accepted, same version (any of these failing = exit 1 or its `HOST_*` code), then the host's `doctor --leases`: drift there (stale rows, orphan claim keys) is a `warn` line with the finding kinds (`checks[].warning: true`, still exit 0); fix it on the host with `warden doctor --leases --fix` |
 
 `warden host ls [--json]` · `warden host rm <name>` (also drops the pinned key).
 
