@@ -282,8 +282,10 @@ stage "Laptop: register the host + doctor"
 lw host rm "$HOST_NAME" >/dev/null 2>&1 || true   # re-runs: the port changes every attach
 run "register the host on the laptop" env WARDEN_HOME="$LAPTOP_HOME" bash -c "$HOST_ADD_LINE"
 run "host doctor (reachable, key, version, leases)" lw host doctor "$HOST_NAME"
-note "HOST_UNREACHABLE: is the second terminal still running? HOST_AUTH: wrong key pasted."
-note "'warn leases' = stale rows in the host's own ~/.warden, not the link: warden doctor --leases --fix."
+if [[ "${SKIPPED[*]:-}" == *"host doctor (reachable, key, version, leases): failed"* ]]; then
+  note "HOST_UNREACHABLE: is the second terminal still running? HOST_AUTH: wrong key pasted."
+fi
+note "A 'warn leases' line = stale rows in the host's own ~/.warden, not the link (warden doctor --leases --fix)."
 pause
 
 # ── 5 ─────────────────────────────────────────────────────────────────────
