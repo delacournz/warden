@@ -1,9 +1,11 @@
+import { appendFileSync } from "node:fs";
 import { getGrant, HOST_OWNER_ENV, parseHostOwner } from "@delacour/warden-core/hosts/registry";
 import { type HostOwner, sameOwner } from "@delacour/warden-core/types";
 import { ok, type Result } from "@delacour/warden-types/result";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { checkHostCommand } from "../hosts/allowlist";
+import { SERVE_LOG_ENV, serveLogLine } from "../hosts/attach-log";
 import { reportError } from "../output";
 import { selfCommand } from "../self-command";
 
@@ -99,30 +101,46 @@ function callerOwner(ctx: CommandContext, opts: ServeOpts): Result<HostOwner, Re
 	return ok({ kind: "host", machineId: grant.machineId, user: grant.user });
 }
 
+/** One line in `host attach`'s live log, when this session came through it (best effort: never fails the call). */
+function logServe(ctx: CommandContext, owner: HostOwner, argv: readonly string[], refused?: string): void {
+	const path = ctx.env[SERVE_LOG_ENV];
+	if (path === undefined || path === "") return;
+	const entry = { at: ctx.now(), machineId: owner.machineId, user: owner.user, argv, ...(refused ? { refused } : {}) };
+	try {
+		appendFileSync(path, `${serveLogLine(entry)}\n`);
+	} catch {}
+}
+
 async function serve(ctx: CommandContext, deps: HostServeDeps, opts: ServeOpts): Promise<number> {
 	const who = callerOwner(ctx, opts);
 	if (!who.success) {
 		reportError(ctx, SCOPE, who.error.message);
 		return who.error.exit;
 	}
+	const owner = who.data;
+	const words = (ctx.env.SSH_ORIGINAL_COMMAND ?? "").split(/\s+/).filter((w) => w !== "");
+	const asked = /(^|\/)warden$/.test(words[0] ?? "") ? words.slice(1) : words;
 	const checked = checkHostCommand(ctx.env.SSH_ORIGINAL_COMMAND ?? "");
 	if (!checked.success) {
+		logServe(ctx, owner, asked, checked.error);
 		reportError(ctx, SCOPE, checked.error);
 		return EXIT_REFUSED;
 	}
-	const owner = who.data;
 	const { name } = checked.data;
 	const argv = [...checked.data.argv];
 	const refused = leaseRefusal(ctx, name, argv, owner);
 	if (refused !== undefined) {
+		logServe(ctx, owner, argv, refused);
 		reportError(ctx, SCOPE, refused);
 		return EXIT_REFUSED;
 	}
+	logServe(ctx, owner, argv);
 	if (name === "claim" && !argv.some((w) => w === "--ttl" || w.startsWith("--ttl="))) {
 		argv.push("--ttl", ctx.env.WARDEN_REMOTE_TTL ?? DEFAULT_REMOTE_TTL);
 	}
 	const env: Record<string, string | undefined> = { ...ctx.env };
 	for (const key of OWNER_ENV) delete env[key];
+	delete env[SERVE_LOG_ENV];
 	env[HOST_OWNER_ENV] = JSON.stringify({ machineId: owner.machineId, user: owner.user });
 	return (deps.spawn ?? bunSpawn)([...(deps.self ?? selfCommand()), ...argv], env);
 }

@@ -5,7 +5,8 @@ import { wardenHome } from "@delacour/warden-core/store";
 import { err, ok, type Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import { selfCommand } from "../self-command";
-import { grantKey } from "./grant";
+import { SERVE_LOG_ENV } from "./attach-log";
+import { type GrantOutcome, grantKey } from "./grant";
 import { shellQuote } from "./ssh";
 
 /**
@@ -40,6 +41,10 @@ export type Attached = {
 	hostKey: string;
 	/** the `warden host add …` line to run on the laptop */
 	add: string;
+	/** the laptop key granted, and the owner its comment names */
+	granted: GrantOutcome;
+	/** the JSON-lines file each `__host-serve` call through this sshd appends to (`attach-log.ts`) */
+	serveLog: string;
 	/** resolves when sshd (or the dial-out) exits */
 	exited: Promise<number>;
 	stop: () => Promise<void>;
@@ -125,17 +130,24 @@ function freePort(host: string): Promise<number> {
 	});
 }
 
-/** The forced command's warden, with this `WARDEN_HOME` baked in (sshd hands sessions a clean env). */
-function writeWrapper(dir: string, home: string, warden: readonly string[]): string {
+/**
+ * The forced command's warden, with this `WARDEN_HOME` and the live log baked in (sshd hands sessions a clean env).
+ */
+function writeWrapper(dir: string, home: string, warden: readonly string[], serveLog: string): string {
 	const path = join(dir, "warden");
 	const cmd = warden.map(shellQuote).join(" ");
-	writeFileSync(path, `#!/bin/sh\nexec env WARDEN_HOME=${shellQuote(home)} ${cmd} "$@"\n`);
+	const env = `WARDEN_HOME=${shellQuote(home)} ${SERVE_LOG_ENV}=${shellQuote(serveLog)}`;
+	writeFileSync(path, `#!/bin/sh\nexec env ${env} ${cmd} "$@"\n`);
 	chmodSync(path, 0o755);
 	return path;
 }
 
-/** Wait for sshd's "Server listening" line, or its exit; keeps draining stderr after. */
-async function listening(stderr: ReadableStream<Uint8Array>, exited: Promise<number>): Promise<Result<void>> {
+/** Wait for sshd's "Server listening" line, or its exit; keeps draining stderr after, a line at a time to `onLine`. */
+async function listening(
+	stderr: ReadableStream<Uint8Array>,
+	exited: Promise<number>,
+	onLine: (line: string) => void
+): Promise<Result<void>> {
 	const reader = stderr.getReader();
 	const decoder = new TextDecoder();
 	let seen = "";
@@ -148,7 +160,14 @@ async function listening(stderr: ReadableStream<Uint8Array>, exited: Promise<num
 		if (seen.includes("Server listening")) break;
 	}
 	void (async () => {
-		for (;;) if ((await reader.read().catch(() => ({ done: true }))).done) return;
+		let partial = "";
+		for (;;) {
+			const next = await reader.read().catch(() => ({ done: true, value: undefined }));
+			if (next.done || next.value === undefined) return;
+			const lines = (partial + decoder.decode(next.value)).split("\n");
+			partial = lines.pop() ?? "";
+			for (const line of lines) onLine(line);
+		}
 	})();
 	return ok(undefined);
 }
@@ -171,8 +190,12 @@ export async function loginUser(ctx: CommandContext): Promise<Result<string>> {
 	return id.exitCode === 0 && name !== "" ? ok(name) : err(`id -un failed: ${id.stderr.trim() || "no output"}`);
 }
 
-/** Set up and start the sshd (and the dial-out); `stop` ends both. */
-export async function startAttach(ctx: CommandContext, opts: AttachOptions): Promise<Result<Attached>> {
+/** Set up and start the sshd (and the dial-out); `stop` ends both. sshd's log lines go to `onSshdLine`. */
+export async function startAttach(
+	ctx: CommandContext,
+	opts: AttachOptions,
+	onSshdLine: (line: string) => void = () => {}
+): Promise<Result<Attached>> {
 	if (!existsSync(SSHD)) return err(`${SSHD} is missing: host attach needs OpenSSH's sshd`);
 	const home = wardenHome(ctx.env);
 	const dir = join(home, "attach");
@@ -181,7 +204,9 @@ export async function startAttach(ctx: CommandContext, opts: AttachOptions): Pro
 	if (!hostKey.success) return hostKey;
 	const authorized = join(dir, "authorized_keys");
 	rmSync(authorized, { force: true });
-	const wrapper = writeWrapper(dir, home, opts.warden ?? selfCommand());
+	const serveLog = join(dir, "serve.log");
+	rmSync(serveLog, { force: true });
+	const wrapper = writeWrapper(dir, home, opts.warden ?? selfCommand(), serveLog);
 	const granted = grantKey(ctx, { key: opts.grant, authorizedKeys: authorized, warden: wrapper }, ctx.now());
 	if (!granted.success) return granted;
 	const port = opts.port ?? (await freePort(opts.listen));
@@ -191,7 +216,7 @@ export async function startAttach(ctx: CommandContext, opts: AttachOptions): Pro
 		stdout: "ignore",
 		stderr: "pipe",
 	});
-	const up = await listening(sshd.stderr, sshd.exited);
+	const up = await listening(sshd.stderr, sshd.exited, onSshdLine);
 	if (!up.success) {
 		sshd.kill();
 		return up;
@@ -218,6 +243,8 @@ export async function startAttach(ctx: CommandContext, opts: AttachOptions): Pro
 		port,
 		hostKey: hostKey.data,
 		add,
+		granted: granted.data,
+		serveLog,
 		exited,
 		stop: async () => {
 			dial?.kill();

@@ -1,8 +1,16 @@
 import { parseDuration } from "@delacour/warden-core/duration";
 import { err, ok, type Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
-import { emit, note, reportError, success } from "../output";
+import { emit, note, reportError, success, warn } from "../output";
 import { type AttachJump, type AttachOptions, startAttach } from "./attach";
+import {
+	describeServeLine,
+	describeSshdEvent,
+	type GrantedLaptop,
+	type LogLine,
+	parseSshdLine,
+	tailLines,
+} from "./attach-log";
 
 export type AttachFlags = {
 	grant?: string;
@@ -69,6 +77,15 @@ export async function attachOptions(ctx: CommandContext, flags: AttachFlags): Pr
 	});
 }
 
+/** One live-log line on stderr, stamped with the local time. */
+function logLine(ctx: CommandContext, line: LogLine): void {
+	const at = new Date(ctx.now()).toTimeString().slice(0, 8);
+	const text = `${at} ${line.text}`;
+	if (line.level === "success") success(ctx, text);
+	else if (line.level === "warn") warn(ctx, text);
+	else note(ctx, text);
+}
+
 /** Until Ctrl-C / SIGTERM, `--for` running out, or sshd / the dial-out exiting. */
 function hold(exited: Promise<number>, forMs: number | undefined): Promise<string> {
 	return new Promise((resolve) => {
@@ -97,7 +114,21 @@ export async function attachHost(ctx: CommandContext, flags: AttachFlags): Promi
 		reportError(ctx, "host attach", opts.error);
 		return 1;
 	}
-	const started = await startAttach(ctx, opts.data);
+	let granted: GrantedLaptop | undefined;
+	let print: (line: LogLine) => void = () => {};
+	const sshdLines: string[] = [];
+	let seen = false;
+	const onSshd = (line: string, laptop: GrantedLaptop) => {
+		const event = parseSshdLine(line);
+		if (event === undefined) return;
+		const described = describeSshdEvent(event, laptop, seen);
+		if (event.kind === "connected" && event.fingerprint === laptop.fingerprint) seen = true;
+		if (described) print(described);
+	};
+	const started = await startAttach(ctx, opts.data, (line) => {
+		if (granted === undefined) sshdLines.push(line);
+		else onSshd(line, granted);
+	});
 	if (!started.success) {
 		reportError(ctx, "host attach", started.error);
 		return 1;
@@ -110,7 +141,16 @@ export async function attachHost(ctx: CommandContext, flags: AttachFlags): Promi
 		`on the laptop:\n  ${a.add}`
 	);
 	if (!flags.json) success(ctx, `sshd on ${opts.data.listen}:${a.port}; one laptop key granted`);
+	print = (line) => logLine(ctx, line);
+	granted = a.granted;
+	for (const line of sshdLines.splice(0)) onSshd(line, a.granted);
+	note(ctx, "waiting for the laptop: connections and the commands it runs show here");
+	const stopTail = tailLines(a.serveLog, (line) => {
+		const described = describeServeLine(line);
+		if (described) print(described);
+	});
 	const why = await hold(a.exited, forMs.data);
+	stopTail();
 	await a.stop();
 	note(ctx, `host attach: ${why}`);
 	return why.startsWith("sshd") ? 1 : 0;

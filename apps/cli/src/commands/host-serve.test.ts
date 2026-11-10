@@ -140,3 +140,37 @@ describe("warden __host-serve", () => {
 		expect(both.spawned).toHaveLength(0);
 	});
 });
+
+describe("warden __host-serve: host attach's live log", () => {
+	test("appends one entry per call (refusals too) when WARDEN_HOST_SERVE_LOG is set, and never passes it on", async () => {
+		const { mkdtempSync, readFileSync, rmSync } = await import("node:fs");
+		const { tmpdir } = await import("node:os");
+		const { join } = await import("node:path");
+		const dir = mkdtempSync(join(tmpdir(), "serve-log-"));
+		try {
+			const log = join(dir, "serve.log");
+			const ok = setup("warden ls --json");
+			ok.ctx.env.WARDEN_HOST_SERVE_LOG = log;
+			expect(await ok.run()).toBe(0);
+			expect(ok.spawned[0]?.env.WARDEN_HOST_SERVE_LOG).toBeUndefined();
+			const no = setup("warden doctor --fix --json");
+			no.ctx.env.WARDEN_HOST_SERVE_LOG = log;
+			expect(await no.run()).toBe(2);
+			const lines = readFileSync(log, "utf8")
+				.trim()
+				.split("\n")
+				.map((l) => JSON.parse(l));
+			expect(lines[0]).toMatchObject({ machineId: "m1", user: "chris", argv: ["ls", "--json"] });
+			expect(lines[1]).toMatchObject({ user: "chris", argv: ["doctor", "--fix", "--json"] });
+			expect(lines[1].refused).toContain("refused");
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	test("no log env, no file", async () => {
+		const { spawned, run } = setup("warden ls --json");
+		expect(await run()).toBe(0);
+		expect(spawned).toHaveLength(1);
+	});
+});
