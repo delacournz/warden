@@ -429,7 +429,7 @@ export const USE_CASES = {
 			title: "Test the unhappy paths",
 			command: "warden ui network",
 			body: "Offline, a failing host, an expired trial, a failed Face ID: the states nobody tests by hand, as specs.",
-			href: "sims/conditions",
+			href: "e2e/conditions",
 			proof: { source: "packages/core/src/netproxy/proxy.ts" },
 		},
 		{

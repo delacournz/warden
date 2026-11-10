@@ -1,6 +1,6 @@
 ---
 title: Device conditions
-description: Change the network, GPS location, clock, biometrics, permissions, camera feed, locale, accessibility settings, battery and keyboard of a simulator or emulator from a spec, a suite or warden ui, and have it undone on release.
+description: Change the network, GPS location, clock, biometrics, permissions, camera feed, locale, accessibility settings, battery and keyboard of a leased simulator or emulator with warden ui, and have it undone on release.
 icon: Signal
 ---
 
@@ -8,22 +8,18 @@ import { Accessibility, BatteryMedium, BellRing, Camera, Clock, FingerprintPatte
 
 <DemoTabs ids={["network", "fault", "location", "clock", "biometrics", "camera", "a11y", "events"]} />
 
-A spec can put the device into a condition (offline, 3G, one host failing, a moving GPS fix, a clock two weeks ahead, a failed Face ID, a denied permission, a QR code in front of the camera) and check what the app does. Everything a test changes belongs to its lease: when the test ends, or the lease is released or reclaimed, warden puts it back, so the next agent never inherits a shaped device.
+An agent (or you) can put a leased device into a condition (offline, 3G, one host failing, a moving GPS fix, a clock two weeks ahead, a failed Face ID, a denied permission, a QR code in front of the camera) and watch what the app does. Everything you change belongs to your lease: when it is released or reclaimed, warden puts it back, so the next agent never inherits a shaped device.
 
-```ts title="e2e/network-offline.e2e.ts"
-import { expect, test } from "@delacour/warden-e2e";
-
-test("cold start offline shows the banner, going online recovers the fetch", async ({ app, device, screen }) => {
-  await device.network.set("offline"); // before the app opens: a cold start offline
-  await app.open();
-  await expect(screen.getByTestId("conditions-offline-banner")).toBeVisible({ timeout: 15_000 });
-
-  await device.network.set("online");
-  await expect(screen.getByTestId("conditions-offline-banner")).toBeHidden({ timeout: 15_000 });
-});
+```bash
+warden ui network set offline
+warden ui location scenario city-run
+warden ui clock advance 15d
+warden ui permission set location=denied
 ```
 
-The example app has a Conditions screen (`warden-example://conditions`) and a spec for each area in `apps/example/e2e`.
+See [warden ui](/docs/sims/ui) for every flag. To keep a condition as a test, set it from a spec or as a suite's starting state: [Device conditions in E2E tests](/docs/e2e/conditions).
+
+The example app has a Conditions screen (`warden-example://conditions`).
 
 ## Conditions
 
@@ -59,90 +55,11 @@ Simulators and emulators only: every condition fails `E_UNSUPPORTED` on a physic
 | [Keyboard](/docs/sims/conditions/keyboard) | live, in an app launched by warden | live, device-wide |
 | [Push and memory warnings](/docs/sims/conditions/events) | push | memory warning |
 
-On iOS, network and clock reach only an app launched with warden's network dylib: declare them in the suite's `conditions`, or pass `{ relaunch: true }` ([how it reaches the app](/docs/sims/conditions/network#how-it-reaches-the-app)).
+On iOS, network and clock reach only an app launched with warden's network dylib: pass `--relaunch`, or in a suite declare them in `conditions` ([how it reaches the app](/docs/sims/conditions/network#how-it-reaches-the-app)).
 
-## Three places to set one
+## In a spec or a suite
 
-The same conditions are available from a spec, as a suite's starting state, and by hand while you drive a device.
-
-<Tabs items={["Spec", "Suite", "By hand"]}>
-<Tab value="Spec">
-
-```ts
-await device.network.set("3g");
-await device.location.scenario("city-run");
-await device.clock.advance("15d");
-await device.permissions.set({ location: "denied" });
-```
-
-</Tab>
-<Tab value="Suite">
-
-```ts title="warden.config.ts"
-conditions: {
-  network: "3g",
-  location: "city-run",
-  clock: { offset: "15d" },
-  permissions: { location: "denied" },
-},
-```
-
-</Tab>
-<Tab value="By hand">
-
-```bash
-warden ui network set 3g
-warden ui location scenario city-run
-warden ui clock advance 15d
-warden ui permission set location=denied
-```
-
-</Tab>
-</Tabs>
-
-## Suite baseline: the `conditions` key
-
-`conditions` at the top level of `warden.config.ts`, or inside a suite, is the device state every spec starts from. It is applied before the app launches and put back after each spec.
-
-```ts title="warden.config.ts"
-e2e: {
-  conditions: {
-    ...exampleSuite,
-    include: ["{network-*,location-*,clock-*}"],
-    conditions: { network: "online" },
-  },
-},
-```
-
-| Area | Value |
-|---|---|
-| `network` | `"online"`, `"offline"`, a preset or `{ latencyMs, jitterMs, downKbps, upKbps, lossPct }` |
-| `location` | `{ lat, lon, altM? }` or a scenario name |
-| `clock` | an ISO instant (it keeps running), `{ at, frozen? }` or `{ offset: "2d" }` |
-| `permissions` | `{ location: "denied", camera: "granted", … }` |
-| `locale` | a BCP 47 tag |
-| `timezone` | an IANA name |
-| `a11y` | `{ textSize?, boldText?, contrast?, reduceMotion? }` |
-| `keyboard` | `"software"` (default) or `"hardware"` |
-
-A suite's key replaces the top-level one for that area. A bad value fails config load. On iOS, declaring `network` or `clock` launches the app with the dylib, which is why the example runs its condition specs in a separate `conditions` suite: the other specs keep a plain launch.
-
-```bash
-warden e2e conditions --specs conditions/network,conditions/location,conditions/clock
-```
-
-The camera feed is the suite's own `camera` key, not a `conditions` key ([Camera](/docs/sims/conditions/camera#in-a-suite)). Biometrics is not one either: enrolled devices come from `biometrics: true` ([Biometrics](/docs/sims/conditions/biometrics#enrolled-devices-biometrics-true)).
-
-## Timeline
-
-```ts
-const run = await device.timeline([
-  { at: "0s", network: "offline" },
-  { at: "5s", network: "online", location: { lat: 37.33, lon: -122.0 } },
-]);
-```
-
-A timeline changes the network and the location on a schedule. `at` is an offset from now. A step sets a condition, not a flap. The returned run has the same `stop()`, `done` and `status()` as a [flap](/docs/sims/conditions/network#flapping).
+The same conditions are available from a spec (`device.network.set("3g")`), and as a suite's starting state (the `conditions` key in `warden.config.ts`). See [Device conditions in E2E tests](/docs/e2e/conditions), the [suite baseline](/docs/e2e/conditions#suite-baseline-the-conditions-key) and the [timeline](/docs/e2e/conditions#timeline).
 
 ## What is undone on release
 
@@ -153,4 +70,4 @@ Release, gc and the end of a spec put the device back:
 - the clock real again; a still-running injected iOS app is reset to online and the real clock
 - permissions reset, text size and contrast or font scale and bold back to defaults, the app locale cleared, the timezone back, the battery real, the keyboard back to `software`, the camera feed off
 
-Each change a spec makes is a `condition` line in `results.jsonl`.
+In a spec, the end of the test puts them back too, and each change is a `condition` line in `results.jsonl`.

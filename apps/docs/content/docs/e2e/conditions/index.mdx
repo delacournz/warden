@@ -1,0 +1,119 @@
+---
+title: Device conditions
+description: Test the app offline, on 3G, with one host failing, at a moving GPS fix, two weeks in the future, with a failed Face ID, a denied permission, a QR code in the camera, another locale or the largest text size, from a spec or a suite.
+icon: Signal
+---
+
+import { Accessibility, BatteryMedium, BellRing, Camera, Clock, FingerprintPattern, Keyboard, Languages, MapPin, ShieldCheck, Wifi } from "lucide-react";
+
+A spec can put the device into a condition (offline, 3G, one host failing, a moving GPS fix, a clock two weeks ahead, a failed Face ID, a denied permission, a QR code in front of the camera) and check what the app does. Everything a test changes belongs to its lease: when the test ends, warden puts it back, so the next spec never inherits a shaped device.
+
+```ts title="e2e/network-offline.e2e.ts"
+import { expect, test } from "@delacour/warden-e2e";
+
+test("cold start offline shows the banner, going online recovers the fetch", async ({ app, device, screen }) => {
+  await device.network.set("offline"); // before the app opens: a cold start offline
+  await app.open();
+  await expect(screen.getByTestId("conditions-offline-banner")).toBeVisible({ timeout: 15_000 });
+
+  await device.network.set("online");
+  await expect(screen.getByTestId("conditions-offline-banner")).toBeHidden({ timeout: 15_000 });
+});
+```
+
+The example app has a Conditions screen (`warden-example://conditions`) and a spec for each area in `apps/example/e2e`.
+
+## Conditions
+
+<Cards className="lg:grid-cols-3">
+<Card icon={<Wifi />} title="Network" href="/docs/e2e/conditions/network">Offline, presets from `edge` to `wifi`, a flapping link, one failing host.</Card>
+<Card icon={<MapPin />} title="Location" href="/docs/e2e/conditions/location">A GPS point, a route or GPX file played at a speed, bundled scenarios.</Card>
+<Card icon={<Clock />} title="Clock" href="/docs/e2e/conditions/clock">Expire a trial in one step: advance, jump or freeze the clock.</Card>
+<Card icon={<FingerprintPattern />} title="Biometrics" href="/docs/e2e/conditions/biometrics">Match and fail the real Face ID, Touch ID and fingerprint prompt.</Card>
+<Card icon={<ShieldCheck />} title="Permissions" href="/docs/e2e/conditions/permissions">Skip the prompt, or test the denied path on purpose.</Card>
+<Card icon={<Camera />} title="Camera" href="/docs/e2e/conditions/camera">Scan a known QR code, capture a known photo.</Card>
+<Card icon={<Languages />} title="Locale and timezone" href="/docs/e2e/conditions/locale">Translations, date formats and day boundaries.</Card>
+<Card icon={<Accessibility />} title="Accessibility settings" href="/docs/e2e/conditions/accessibility">Layouts at the largest text size, reduced-motion paths.</Card>
+<Card icon={<BatteryMedium />} title="Battery" href="/docs/e2e/conditions/battery">Low-power banners and charging-only work.</Card>
+<Card icon={<Keyboard />} title="Keyboard" href="/docs/e2e/conditions/keyboard">Sheets and footers that ride the keyboard.</Card>
+<Card icon={<BellRing />} title="Push and memory warnings" href="/docs/e2e/conditions/events">Deliver a push payload, trim memory.</Card>
+</Cards>
+
+Simulators and emulators only: every condition fails `E_UNSUPPORTED` on a physical device. What each platform supports, and how to set the same conditions by hand with `warden ui`: [Device conditions on a simulator](/docs/sims/conditions#platform-support).
+
+## In a spec or a suite
+
+The same conditions can change mid-test from a spec, or be the starting state of every spec in a suite.
+
+<Tabs items={["Spec", "Suite"]}>
+<Tab value="Spec">
+
+```ts
+await device.network.set("3g");
+await device.location.scenario("city-run");
+await device.clock.advance("15d");
+await device.permissions.set({ location: "denied" });
+```
+
+</Tab>
+<Tab value="Suite">
+
+```ts title="warden.config.ts"
+conditions: {
+  network: "3g",
+  location: "city-run",
+  clock: { offset: "15d" },
+  permissions: { location: "denied" },
+},
+```
+
+</Tab>
+</Tabs>
+
+## Suite baseline: the `conditions` key
+
+`conditions` at the top level of `warden.config.ts`, or inside a suite, is the device state every spec starts from. It is applied before the app launches and put back after each spec.
+
+```ts title="warden.config.ts"
+e2e: {
+  conditions: {
+    ...exampleSuite,
+    include: ["{network-*,location-*,clock-*}"],
+    conditions: { network: "online" },
+  },
+},
+```
+
+| Area | Value |
+|---|---|
+| `network` | `"online"`, `"offline"`, a preset or `{ latencyMs, jitterMs, downKbps, upKbps, lossPct }` |
+| `location` | `{ lat, lon, altM? }` or a scenario name |
+| `clock` | an ISO instant (it keeps running), `{ at, frozen? }` or `{ offset: "2d" }` |
+| `permissions` | `{ location: "denied", camera: "granted", … }` |
+| `locale` | a BCP 47 tag |
+| `timezone` | an IANA name |
+| `a11y` | `{ textSize?, boldText?, contrast?, reduceMotion? }` |
+| `keyboard` | `"software"` (default) or `"hardware"` |
+
+A suite's key replaces the top-level one for that area. A bad value fails config load. On iOS, declaring `network` or `clock` launches the app with the dylib, which is why the example runs its condition specs in a separate `conditions` suite: the other specs keep a plain launch.
+
+```bash
+warden e2e conditions --specs conditions/network,conditions/location,conditions/clock
+```
+
+The camera feed is the suite's own `camera` key, not a `conditions` key ([Camera](/docs/e2e/conditions/camera#in-a-suite)). Biometrics is not one either: enrolled devices come from `biometrics: true` ([Biometrics](/docs/e2e/conditions/biometrics#enrolled-devices-biometrics-true)).
+
+## Timeline
+
+```ts
+const run = await device.timeline([
+  { at: "0s", network: "offline" },
+  { at: "5s", network: "online", location: { lat: 37.33, lon: -122.0 } },
+]);
+```
+
+A timeline changes the network and the location on a schedule. `at` is an offset from now. A step sets a condition, not a flap. The returned run has the same `stop()`, `done` and `status()` as a [flap](/docs/e2e/conditions/network#flapping).
+
+## What is undone after each spec
+
+The end of a spec puts the device back to the suite's baseline (or the real state without one): the network, location, clock, permissions, accessibility settings, locale, timezone, battery, keyboard and camera feed. Each change a spec makes is a `condition` line in `results.jsonl`. The full list is in [What is undone on release](/docs/sims/conditions#what-is-undone-on-release).

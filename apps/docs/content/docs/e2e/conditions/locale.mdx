@@ -1,0 +1,28 @@
+---
+title: Locale and timezone
+description: Test translations, date formats and day boundaries by running the app in another language, region or timezone from a spec or a suite.
+icon: Languages
+---
+
+`device.locale` and `device.timezone` change what the app formats dates, numbers and strings with. Both take `null` to put the setting back, and both are undone when the test ends.
+
+```ts
+await device.locale("fr-FR");
+await device.timezone("Asia/Tokyo");
+await app.open(); // iOS: the next launch picks both up
+```
+
+| Member | Does |
+|---|---|
+| `locale(tag \| null, { bundleId? })` | a BCP 47 tag (`"fr-FR"`) for the app |
+| `timezone(tz \| null)` | an IANA name (`"Asia/Tokyo"`) |
+
+On iOS, set both before `app.open()`, or relaunch the app. Android changes them live; the per-app locale needs Android 13+ ([per platform](/docs/sims/conditions/locale#per-platform)).
+
+## In a suite
+
+```ts title="warden.config.ts"
+conditions: { locale: "fr-FR", timezone: "Asia/Tokyo" },
+```
+
+By hand with `warden ui locale` and `warden ui timezone`: [Locale and timezone on a simulator](/docs/sims/conditions/locale).

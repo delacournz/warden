@@ -1,25 +1,50 @@
 ---
 title: React Native E2E tests in GitHub Actions
+sidebarTitle: GitHub Actions
 description: Run React Native and Expo E2E tests (warden e2e) in GitHub Actions on a macOS runner, install warden with the install action or npm, and gate a pull request on the affected specs.
 icon: Workflow
 ---
 
-Use this page to run `warden e2e` on a macOS GitHub Actions runner; it covers installing warden, the run command, headless behavior and cleanup.
+`warden e2e` runs on a macOS GitHub Actions runner. The smallest workflow that works is the e2e action, which installs warden, restores the build and golden caches and uploads the evidence when a spec fails:
 
 ```yaml title=".github/workflows/e2e.yml"
+name: e2e
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
 jobs:
   e2e:
-    runs-on: macos-15
+    runs-on: macos-26
+    timeout-minutes: 60
     steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: delacournz/warden/.github/actions/e2e@v0.16.0
+        with:
+          suite: my-app
+          args: --base origin/main
+          save-cache: ${{ github.event_name != 'pull_request' }}
+```
+
+`suite` is the name under `e2e` in `warden.config.ts` (optional with one suite). `--base origin/main` runs only the specs the diff needs ([Affected](/docs/e2e/affected)), so `fetch-depth: 0` is needed for the merge-base. The job fails when a required spec fails. Details of what the action does and every input: [Run e2e in GitHub Actions](#run-e2e-in-github-actions).
+
+Without the action, install warden and call it yourself:
+
+```yaml
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
       - uses: oven-sh/setup-bun@v2
       - run: bun install
       - uses: delacournz/warden/.github/actions/install-warden@main
-      - run: warden e2e mobile --base origin/main --count 2 --report e2e-report.json
+      - run: warden e2e my-app --base origin/main --count 2 --report e2e-report.json
 ```
 
-`fetch-depth: 0` gives warden the history it needs for the merge-base against `--base`. The same command runs locally or in a pre-push hook.
+The same command runs locally or in a pre-push hook.
 
 ## Install warden
 
@@ -134,7 +159,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with: { fetch-depth: 0 }
-      - uses: delacournz/warden/.github/actions/e2e@v0.12.2
+      - uses: delacournz/warden/.github/actions/e2e@v0.16.0
         with:
           working-directory: apps/mobile
           suite: mobile
@@ -175,6 +200,7 @@ Pin the action to a commit SHA or release tag. In order, it:
 | `github-token` | `github.token` | reads the job's start for the `job timing` line (needs `actions: read`); never passed to warden |
 | `xcode-path` | runner default | e.g. `/Applications/Xcode_27.2.app` |
 | `headroom-gb` | 1 on hosts of 16 GB or less | `WARDEN_CAPACITY_HEADROOM_GB` |
+| `suite-timeout-minutes` | `35` | stops the suite (SIGINT, SIGKILL 60 s later) so a hung run still prints and uploads its evidence; keep it under the job timeout |
 | `report-path` | `warden-e2e-report.json` | where the report goes |
 | `cache` | `github` | `github` saves and restores with `actions/cache`; `none` leaves storing to you (see below) |
 | `cache-prefix` | `warden-e2e-v1` | change it to drop every cache |
@@ -287,7 +313,7 @@ Build the `.app` with ad-hoc signing and pass it in. `CODE_SIGNING_ALLOWED=NO` l
             -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
             ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGN_IDENTITY=- \
             -derivedDataPath ios/build/dd build
-      - uses: delacournz/warden/.github/actions/e2e@v0.12.2
+      - uses: delacournz/warden/.github/actions/e2e@v0.16.0
         with:
           app-path: ios/build/dd/Build/Products/Release-iphonesimulator/App.app
 ```

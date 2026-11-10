@@ -1,0 +1,19 @@
+---
+title: Battery
+description: Test low-power banners and charging-only work by setting the battery level and charging state from a spec.
+icon: BatteryMedium
+---
+
+`device.battery` sets the level and charging state. On an Android emulator the app sees it; on an iOS simulator only the status bar changes (the result has `cosmetic: true` and a warning), so assert battery-driven behaviour on Android.
+
+```ts
+await device.battery({ level: 5, charging: false });
+await device.battery(null); // the real battery back
+```
+
+| Option | Takes |
+|---|---|
+| `level` | 0-100 |
+| `charging` | boolean |
+
+The real battery comes back when the test ends. By hand with `warden ui battery`: [Battery on a simulator](/docs/sims/conditions/battery).

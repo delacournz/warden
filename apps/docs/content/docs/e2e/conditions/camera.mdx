@@ -1,0 +1,51 @@
+---
+title: Camera
+description: Test QR scanning, photo capture and video recording against a known image or video fed into the app's real camera, from a spec or a suite.
+icon: Camera
+---
+
+A spec or a suite feeds a file into the app's real camera API, so the app's own preview, photo capture, video recording and QR scanning run against a known picture. There is no app-side bypass.
+
+Accepted files: png, jpg, heic (image), mp4, mov (video). warden reads the leading bytes, not the extension. Anything else is `E_CAMERA_MEDIA`, and a missing file is `E_CAMERA_NOT_FOUND`.
+
+## In a spec
+
+```ts
+import { expect, test } from "@delacour/warden-e2e";
+
+test("scans the ticket", async ({ app, device, screen }) => {
+	await device.camera.set("fixtures/qr-hello.png");
+	await app.open();
+	await expect(screen.getByTestId("scan-result")).toHaveText("hello");
+	await device.camera.set("fixtures/qr-bye.png", { facing: "both" });
+});
+```
+
+| Member | Does |
+|---|---|
+| `device.camera.set(path, { facing?, loop? })` | `path` is relative to the spec file. `facing`: `"back"` (default), `"front"` or `"both"`; the other facing keeps its feed. `loop` (video, default `true`). Returns `{ feeds, appliesOnLaunch?, appliesOnCameraOpen?, rebooted? }` |
+| `device.camera.clear(facing?)` | takes the feed off one facing, or both (default) |
+| `device.camera.status()` | `{ feeds }` the spec has in place |
+
+The camera goes back to the suite's `camera` (or none) when the test ends. Each change is a `condition` line in `results.jsonl`.
+
+## In a suite
+
+```ts
+export default defineConfig({
+	e2e: {
+		scan: { camera: { back: "e2e/fixtures/qr-hello.png", front: { path: "e2e/fixtures/face.mp4", loop: true } } },
+	},
+});
+```
+
+Paths are relative to `warden.config.ts`. The feeds apply before each spec's first `app.open()`. On Android, the suite's legs claim emulators with `--camera`.
+
+## Practice
+
+- **iOS:** camera permission stays real (`simctl privacy` has no camera service), so the app's prompt shows: answer it with `device.alert("accept")`, with `systemAlerts` off for the spec so it is not dismissed.
+- **Android:** grant the permission up front with `device.permissions.set({ camera: "granted" })`.
+- **Android:** an image shows on the app's next camera open (`appliesOnCameraOpen`). An open camera keeps its frames, so close and reopen it (or flip facing).
+- **Android:** keep a QR code in the left half of a 4:3 image, with a white margin: the emulator crops the image to the app's preview.
+
+What each platform serves, feeding a running app and `warden ui camera`: [Camera on a simulator](/docs/sims/conditions/camera). Errors and fixes are in [Debugging](/docs/e2e/debugging).

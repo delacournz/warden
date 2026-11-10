@@ -1,6 +1,6 @@
 ---
 title: Camera
-description: Feed an image or video into the app's real camera on iOS simulators and Android emulators - preview, photo capture, video recording and QR scanning, in specs, suites and by hand.
+description: Feed an image or video into the app's real camera on a leased iOS simulator or Android emulator with warden ui - preview, photo capture, video recording and QR scanning - and how each platform serves it.
 icon: Camera
 ---
 
@@ -8,44 +8,7 @@ icon: Camera
 
 `warden ui camera set qr-hello.png` swaps a QR image into the example app's camera preview on a leased simulator, then `warden ui wait text "hello"` sees the app's own scanner read it.
 
-Specs, suites and [`warden ui`](/docs/sims/ui) feed a file into the app's real camera API, so the app's own preview, photo capture, video recording and QR scanning run against a known picture. There is no app-side bypass. Simulators and emulators only: a physical device fails with `E_UNSUPPORTED`.
-
-Accepted files: png, jpg, heic (image), mp4, mov (video). warden reads the leading bytes, not the extension. Anything else is `E_CAMERA_MEDIA`, and a missing file is `E_CAMERA_NOT_FOUND`.
-
-## In a spec
-
-```ts
-import { expect, test } from "@delacour/warden-e2e";
-
-test("scans the ticket", async ({ app, device, screen }) => {
-	await device.camera.set("fixtures/qr-hello.png");
-	await app.open();
-	await expect(screen.getByTestId("scan-result")).toHaveText("hello");
-	await device.camera.set("fixtures/qr-bye.png", { facing: "both" });
-});
-```
-
-| Member | Does |
-|---|---|
-| `device.camera.set(path, { facing?, loop? })` | `path` is relative to the spec file. `facing`: `"back"` (default), `"front"` or `"both"`; the other facing keeps its feed. `loop` (video, default `true`). Returns `{ feeds, appliesOnLaunch?, appliesOnCameraOpen?, rebooted? }` |
-| `device.camera.clear(facing?)` | takes the feed off one facing, or both (default) |
-| `device.camera.status()` | `{ feeds }` the spec has in place |
-
-The camera goes back to the suite's `camera` (or none) when the test ends. Each change is a `condition` line in `results.jsonl`.
-
-## In a suite
-
-```ts
-export default defineConfig({
-	e2e: {
-		scan: { camera: { back: "e2e/fixtures/qr-hello.png", front: { path: "e2e/fixtures/face.mp4", loop: true } } },
-	},
-});
-```
-
-Paths are relative to `warden.config.ts`. The feeds apply before each spec's first `app.open()`. On Android, the suite's legs claim emulators with `--camera`.
-
-## By hand
+[`warden ui`](/docs/sims/ui) feeds a file into the app's real camera API, so the app's own preview, photo capture, video recording and QR scanning run against a known picture. There is no app-side bypass. Simulators and emulators only: a physical device fails with `E_UNSUPPORTED`.
 
 ```bash
 warden ui camera set fixtures/qr-hello.png            # back camera
@@ -54,15 +17,17 @@ warden ui camera status
 warden ui camera clear
 ```
 
-The feed is recorded on your lease and undone on release. With `--json` the answer is `result.camera`.
+The feed is recorded on your lease and undone on release. With `--json` the answer is `result.camera`. From a spec or a suite: [Camera in E2E tests](/docs/e2e/conditions/camera).
+
+Accepted files: png, jpg, heic (image), mp4, mov (video). warden reads the leading bytes, not the extension. Anything else is `E_CAMERA_MEDIA`, and a missing file is `E_CAMERA_NOT_FOUND`.
 
 ## iOS
 
 The app is launched with warden's injected library, which serves the feeds through the real AVFoundation and UIKit API: device discovery, the preview layer, photo output, movie recording, video data output, QR metadata output and the image picker's camera.
 
-- A feed set while the app runs swaps live. Set before launch, it applies on the next `app.open()` (`appliesOnLaunch`).
+- A feed set while the app runs swaps live. Set before launch, it applies on the next launch (`appliesOnLaunch`).
 - QR is the only code type decoded.
-- Camera permission stays real. `simctl privacy` has no camera service, so the app's prompt shows: answer it with `device.alert("accept")` (turn `systemAlerts` off for the spec so it is not dismissed).
+- Camera permission stays real. `simctl privacy` has no camera service, so the app's prompt shows.
 
 ## Android
 
@@ -70,7 +35,7 @@ The emulator's cameras read files fixed at boot, so only a `--camera` emulator c
 
 - An image shows on the app's next camera open (`appliesOnCameraOpen`). An open camera keeps its frames, so close and reopen it (or flip facing).
 - A video feed, or switching between image and video, reboots the emulator (`rebooted`).
-- Grant the permission up front with `device.permissions.set({ camera: "granted" })`.
+- Grant the camera permission up front (`warden ui permission set camera=granted`).
 - Frame the subject for the preview, not the file. The emulator fills the app's preview from the image and crops the rest, so a code near an edge can fall outside it, and a scanner only reads what reaches the app. With expo-camera on a Pixel emulator, a landscape preview shows about the left half of a 4:3 image: keep a QR code there, with a white margin. iOS passes the whole frame.
 
 Errors and fixes are in [Debugging](/docs/e2e/debugging).

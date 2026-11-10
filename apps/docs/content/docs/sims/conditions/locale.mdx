@@ -1,38 +1,10 @@
 ---
 title: Locale and timezone
-description: Run the app in another language, region or timezone, to test translations, date formats and day boundaries.
+description: Run the app on a leased simulator or emulator in another language, region or timezone with warden ui, and when each platform applies it.
 icon: Languages
 ---
 
-`device.locale` and `device.timezone` change what the app formats dates, numbers and strings with. Both take `null` to put the setting back, and both are undone when the test ends.
-
-```ts
-await device.locale("fr-FR");
-await device.timezone("Asia/Tokyo");
-await app.open(); // iOS: the next launch picks both up
-```
-
-| Member | Does |
-|---|---|
-| `locale(tag \| null, { bundleId? })` | a BCP 47 tag (`"fr-FR"`) for the app |
-| `timezone(tz \| null)` | an IANA name (`"Asia/Tokyo"`) |
-
-## Per platform
-
-| | iOS simulator | Android emulator |
-|---|---|---|
-| Locale | applies to the app launched next (`-AppleLanguages` / `-AppleLocale`) | Android 13+ (API 33): per app, live |
-| Timezone | applies to the app launched next (`TZ`); the result has `appliesOnLaunch: true` | live and device-wide |
-
-On iOS, set both before `app.open()`, or relaunch the app.
-
-## In a suite
-
-```ts title="warden.config.ts"
-conditions: { locale: "fr-FR", timezone: "Asia/Tokyo" },
-```
-
-## By hand
+`warden ui locale` and `warden ui timezone` change what the app formats dates, numbers and strings with.
 
 ```bash
 warden ui locale fr-FR
@@ -41,4 +13,11 @@ warden ui locale status
 warden ui timezone reset
 ```
 
-On iOS the change is staged for the next launch (`staged: true` and a warning): `warden ui open --relaunch`. Release clears the app locale and puts the timezone back.
+The locale is a BCP 47 tag (`fr-FR`), the timezone an IANA name (`Asia/Tokyo`). On iOS the change is staged for the next launch (`staged: true` and a warning): `warden ui open --relaunch`. Release clears the app locale and puts the timezone back. From a spec or a suite: [Locale and timezone in E2E tests](/docs/e2e/conditions/locale).
+
+## Per platform
+
+| | iOS simulator | Android emulator |
+|---|---|---|
+| Locale | applies to the app launched next (`-AppleLanguages` / `-AppleLocale`) | Android 13+ (API 33): per app, live |
+| Timezone | applies to the app launched next (`TZ`); the result has `appliesOnLaunch: true` | live and device-wide |

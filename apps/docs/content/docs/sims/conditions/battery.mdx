@@ -1,26 +1,10 @@
 ---
 title: Battery
-description: Set the battery level and charging state, to test low-power banners and charging-only work.
+description: Set a leased simulator or emulator's battery level and charging state with warden ui, and what the app sees on each platform.
 icon: BatteryMedium
 ---
 
-`device.battery` sets the level and charging state. On an Android emulator the app sees it; on an iOS simulator only the status bar changes.
-
-```ts
-await device.battery({ level: 5, charging: false });
-await device.battery(null); // the real battery back
-```
-
-| Option | Takes |
-|---|---|
-| `level` | 0-100 |
-| `charging` | boolean |
-
-| | iOS simulator | Android emulator |
-|---|---|---|
-| What changes | the status bar only: the result has `cosmetic: true` and a warning | the battery the app reads (`dumpsys battery`) |
-
-## By hand
+`warden ui battery` sets the level (0-100) and charging state.
 
 ```bash
 warden ui battery set --level 5 --no-charging
@@ -28,4 +12,8 @@ warden ui battery status
 warden ui battery reset
 ```
 
-Release puts the real battery back.
+Release puts the real battery back. From a spec: [Battery in E2E tests](/docs/e2e/conditions/battery).
+
+| | iOS simulator | Android emulator |
+|---|---|---|
+| What changes | the status bar only: the result has `cosmetic: true` and a warning | the battery the app reads (`dumpsys battery`) |
