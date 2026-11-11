@@ -1,6 +1,6 @@
-import { type KeyboardEvent, type ReactElement, useEffect, useRef } from "react";
+import { type KeyboardEvent, type ReactElement, useRef } from "react";
 import { cn } from "@/lib/cn";
-import { useReducedMotion } from "./landing/demo-video";
+import { useAutoplay, useReducedMotion } from "./landing/demo-video";
 
 /**
  * A recorded clip with no player chrome: `public/<src>.{mp4,jpg}`, muted, looping. It autoplays unless the visitor
@@ -19,12 +19,7 @@ export function QuietVideo({
 	const reduced = useReducedMotion();
 	const ref = useRef<HTMLVideoElement>(null);
 
-	useEffect(() => {
-		const video = ref.current;
-		if (!video) return;
-		if (reduced) video.pause();
-		else void video.play().catch(() => undefined);
-	}, [reduced]);
+	useAutoplay(ref, reduced);
 
 	const toggle = () => {
 		const video = ref.current;

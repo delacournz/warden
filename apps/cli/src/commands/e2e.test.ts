@@ -46,6 +46,23 @@ describe("warden e2e", () => {
 		expect(c.stderr.join("\n")).toContain("2/2 spec(s) passed — gate passed");
 	});
 
+	test("the report and the last lines carry the run's setup / tests / teardown split", async () => {
+		write("src/chat/lazy.tsx", "export const x = 2;\n");
+		const c = setup([]);
+		let clock = 1_000_000;
+		c.now = () => {
+			clock += 1_000;
+			return clock;
+		};
+		const h = harness();
+		expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+		const timing = reportOf(h.files, c).timing;
+		expect(timing?.testsMs).toBeGreaterThan(0);
+		expect(timing?.setupMs).toBeGreaterThan(0);
+		expect((timing?.setupMs ?? 0) + (timing?.testsMs ?? 0) + (timing?.teardownMs ?? 0)).toBe(timing?.totalMs ?? -1);
+		expect(c.stderr.at(-1)).toMatch(/^warden e2e: took \S+ — setup \S+ · tests \S+ · teardown \S+$/);
+	});
+
 	test("an optional spec failing doesn't fail the gate; a required one does", async () => {
 		write("src/chat/lazy.tsx", "export const x = 2;\n");
 		write("src/settings/form.tsx", "export const y = 2;\n");
@@ -216,7 +233,8 @@ describe("warden e2e", () => {
 		const h = harness();
 		expect(await createE2eCommand(h.deps).run(c)).toBe(0);
 		expect(h.serve()?.cmd).toEqual(["sh", "-c", "bun api"]);
-		expect(h.probes).toEqual([{ kind: "tcp", host: "127.0.0.1", port: 9000 }]);
+		// probed before serve is spawned (a stale listener) and again for the ready wait
+		expect(h.probes).toEqual(Array(2).fill({ kind: "tcp", host: "127.0.0.1", port: 9000 }));
 		for (const s of [h.serve(), ...h.jobs()]) {
 			expect(s?.opts.env.WARDEN_PORT_0).toBe("8091");
 			expect(s?.opts.env.WARDEN_PORTS).toBe("8091");
@@ -234,7 +252,7 @@ describe("warden e2e", () => {
 		const h = harness();
 		expect(await createE2eCommand(h.deps).run(c)).toBe(0);
 		expect(h.serve()?.cmd).toEqual(["sh", "-c", "bun api --port 8091"]);
-		expect(h.probes).toEqual([{ kind: "tcp", host: "127.0.0.1", port: 8091 }]);
+		expect(h.probes).toEqual(Array(2).fill({ kind: "tcp", host: "127.0.0.1", port: 8091 }));
 		const job = h.jobs()[0];
 		expect(job?.opts.env.WARDEN_PORT).toBe("8091");
 		expect(job?.opts.env.AGENT_DEVICE_STATE_DIR).toBeUndefined();

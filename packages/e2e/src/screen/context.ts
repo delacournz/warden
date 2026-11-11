@@ -1,12 +1,13 @@
 import type { DevtoolsFacet } from "../devtools/devtools.types";
 import type { Driver, DriverError, DriverResult, Snapshot } from "../driver/driver.types";
 import { canDetectAlerts, canObserve, type PreviousLook } from "../driver/observation-cache";
+import { readDeadlineRemaining, withReadDeadline } from "../driver/read-deadline";
 import { DEFAULT_ASSERTION_TIMEOUT_MS } from "../env";
 import { E2eError } from "../errors";
 import type { SpanOptions, SpanRunner } from "../runner/span";
 import { indexSnapshot, type NodeIndex } from "./nodes";
 import { type Clock, type PollResult, type PollStep, poll, systemClock } from "./poll";
-import { locateByTestIdViaReact, type ReactMatch } from "./react-locator";
+import { lookUpTestIdViaReact, type ReactLookup, type ReactMatch } from "./react-locator";
 import { renderHeader, renderSnapshot } from "./render";
 import type { TextMatch } from "./text";
 
@@ -78,7 +79,7 @@ export type ObserveOptions = {
 };
 
 export class Runtime {
-	private reactCache: { key: string; at: number; matches: ReactMatch[] } | undefined;
+	private reactCache: { key: string; at: number; lookup: ReactLookup } | undefined;
 	/** the index of each snapshot, so a snapshot that several reads share is indexed once */
 	private readonly indexed = new WeakMap<Snapshot, NodeIndex>();
 
@@ -130,13 +131,14 @@ export class Runtime {
 			const before = options.withPrevious === true && canObserve(driver) ? driver.previous?.() : undefined;
 			const result = canObserve(driver) ? await driver.observe({ reuse }) : await driver.snapshot();
 			if (!result.success) return { ok: false, error: result.error };
+			const snapshot = result.data;
 			const observation: Observation = {
 				ok: true,
-				observed: { driver, snapshot: result.data, index: this.indexOf(result.data) },
+				observed: { driver, snapshot, index: this.indexOf(snapshot) },
 			};
 			if (before !== undefined) observation.earlier = this.earlierThan(driver, before, result.data);
 			if (options.alerts === false || answered >= MAX_ALERT_ANSWERS) return observation;
-			if (!(await this.answeredAlert(driver, result.data))) return observation;
+			if (!(await this.answeredAlert(driver, snapshot))) return observation;
 			reuse = false;
 		}
 	}
@@ -189,17 +191,31 @@ export class Runtime {
 	 * Empty without devtools. Reads are throttled: inside the window the previous answer for the same query is reused.
 	 */
 	async reactMatches(testId: TextMatch, observed: Observed): Promise<ReactMatch[]> {
+		const lookup = await this.reactLookup(testId, observed);
+		return lookup.answered ? lookup.matches : [];
+	}
+
+	/** Whether the host has devtools to ask the React tree through. */
+	hasReactTree(): boolean {
+		return this.host.devtools?.() !== undefined;
+	}
+
+	/**
+	 * `reactMatches`, keeping "the React tree could not be read" (`answered: false`, also without devtools) apart from
+	 * "it has no such component", for a degraded read that must not take the first for the second.
+	 */
+	async reactLookup(testId: TextMatch, observed: Observed): Promise<ReactLookup> {
 		const facet = this.host.devtools?.();
-		if (facet === undefined) return [];
+		if (facet === undefined) return { answered: false };
 		const key = typeof testId === "string" ? `s:${testId}` : `r:${testId.toString()}`;
 		const cached = this.reactCache;
 		if (cached !== undefined && cached.key === key && this.clock.now() - cached.at < REACT_THROTTLE_MS) {
-			return cached.matches;
+			return cached.lookup;
 		}
 		const view = { platform: observed.snapshot.platform, screen: observed.snapshot.screen };
-		const matches = await locateByTestIdViaReact(facet, testId, view, { timeoutMs: REACT_TIMEOUT_MS });
-		this.reactCache = { key, at: this.clock.now(), matches };
-		return matches;
+		const lookup = await lookUpTestIdViaReact(facet, testId, view, { timeoutMs: REACT_TIMEOUT_MS });
+		this.reactCache = { key, at: this.clock.now(), lookup };
+		return lookup;
 	}
 
 	/**
@@ -213,7 +229,9 @@ export class Runtime {
 
 	/**
 	 * `poll` on this runtime's clock and abort signal; an abort throws instead of returning. `intervalMs` is a fixed gap
-	 * between attempts instead of the back-off schedule.
+	 * between attempts instead of the back-off schedule. The poll's deadline is the read deadline of every driver read
+	 * made inside it (`withReadDeadline`), so a read that waits for the device (the cold iOS bridge) stops with it; a
+	 * poll inside another keeps the nearer deadline.
 	 */
 	async poll<T, S>(
 		step: (attempt: number) => Promise<PollStep<T, S>> | PollStep<T, S>,
@@ -221,13 +239,19 @@ export class Runtime {
 		options: { intervalMs?: number } = {}
 	): Promise<Exclude<PollResult<T, S>, { status: "aborted" }>> {
 		const signal = this.host.signal;
-		const result = await poll(step, {
-			timeoutMs,
-			...(options.intervalMs === undefined ? {} : { intervalMs: options.intervalMs }),
-			...(signal === undefined ? {} : { signal }),
-			now: this.clock.now,
-			sleep: this.clock.sleep,
-		});
+		const outer = readDeadlineRemaining();
+		const deadline = this.clock.now() + (outer === undefined ? timeoutMs : Math.min(timeoutMs, outer));
+		const result = await withReadDeadline(
+			() => deadline - this.clock.now(),
+			() =>
+				poll(step, {
+					timeoutMs,
+					...(options.intervalMs === undefined ? {} : { intervalMs: options.intervalMs }),
+					...(signal === undefined ? {} : { signal }),
+					now: this.clock.now,
+					sleep: this.clock.sleep,
+				})
+		);
 		if (result.status === "aborted") throw abortError(signal);
 		return result;
 	}

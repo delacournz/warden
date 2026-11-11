@@ -33,6 +33,7 @@ type RunSettings = {
 	passes: number;
 	count?: number | undefined;
 	profile?: string | undefined;
+	runtime?: string | undefined;
 	devices?: Array<{ profile: string; default: boolean }> | undefined;
 };
 
@@ -231,6 +232,8 @@ export const e2eSuiteSchema = z
 		retry: z.number().int().min(0).default(0),
 		count: z.number().int().min(1).optional(),
 		profile: z.string().min(1).optional(),
+		/** iOS simulator runtime the run's devices and golden use: `latest`, `iOS-26-5`, `26.5` (`--runtime` overrides) */
+		runtime: z.string().min(1).optional(),
 		/** install the project's app on each device first (`warden batch --app`); `{ installMode }` = `--install-mode` */
 		app: appOptionSchema.optional(),
 		/** ports leased for the run (`<from>[:<span>]`), exported as `WARDEN_PORT_<i>` / `WARDEN_PORTS` to serve, setup and every spec process */
@@ -246,6 +249,8 @@ export const e2eSuiteSchema = z
 		setup: z.string().min(1).optional(),
 		/** iOS: switch off the simulator daemons specs never need on each device, before `setup`. An object keeps categories (`except`, ids) or single labels (`keep`) on */
 		slim: slimConfigSchema.optional(),
+		/** iOS: clone the suite's simulators from a golden image (`true`); default off = each is a fresh `simctl create` + first boot */
+		golden: z.boolean().optional(),
 		/** devices of this suite have a fingerprint / Face ID enrolled (own golden, own pool); overrides the top-level `biometrics` */
 		biometrics: z.boolean().optional(),
 		/** `erase` | `uninstall` | `none`: reclaim the suite's devices when they are released; overrides the top-level `reclaim` */

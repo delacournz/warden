@@ -51,7 +51,14 @@ function setup(env: Record<string, string> = {}) {
 	const c = testContext(["ios", "--count", "3", "--max", "4", "--jobs", "a,b,c,d,e", "--no-tui", "--", "x", "{job}"], {
 		exec: statefulSimctl(sims),
 	});
-	c.env = { ...c.env, ...OWNER_ENV, WARDEN_CAPACITY_MAX: "3", WARDEN_CAPACITY_HEADROOM_GB: "0", ...env };
+	c.env = {
+		...c.env,
+		...OWNER_ENV,
+		WARDEN_CAPACITY: "on",
+		WARDEN_CAPACITY_MAX: "3",
+		WARDEN_CAPACITY_HEADROOM_GB: "0",
+		...env,
+	};
 	c.db.insertLease(
 		{
 			resource: { kind: "device", platform: "ios", id: "U4", name: "warden-iphone-17-4" },
@@ -142,6 +149,15 @@ describe("warden batch elastic workers", () => {
 		expect(c.db.listLeases().filter((l) => !(l.owner.kind === "agent" && l.owner.sessionId === "other"))).toEqual([]);
 		expect(c.db.listQueue()).toEqual([]);
 	}, 15_000);
+
+	test("default (capacity not opted in): all workers claimed up front, no elastic note", async () => {
+		const { c } = setup();
+		delete c.env.WARDEN_CAPACITY;
+		const h = harness();
+		expect(await createBatchCommand(h.deps).run(c)).toBe(0);
+		expect(new Set(h.jobs().map((j) => j.opts.env.WARDEN_UDID)).size).toBe(3);
+		expect(c.stderr.join("\n")).not.toContain("host fits");
+	});
 
 	test("WARDEN_CAPACITY=off: all workers claimed up front, no elastic note", async () => {
 		const { c } = setup({ WARDEN_CAPACITY: "off" });

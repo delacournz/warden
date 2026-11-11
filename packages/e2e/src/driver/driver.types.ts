@@ -2,6 +2,8 @@ import type {
 	CameraCondition,
 	ClockCondition,
 	HostFault,
+	ImeState,
+	KeyboardMode,
 	LocationCondition,
 	NetworkCondition,
 	PermissionName,
@@ -10,6 +12,7 @@ import type {
 } from "@delacour/warden-core/conditions/conditions.types";
 import type { AsyncResult } from "@delacour/warden-types/result";
 import type { ScreenReaderState } from "../a11y/a11y.types";
+import type { BridgeStall } from "./bridge-stall";
 
 /**
  * The device driver contract every layer of warden-e2e builds on: the spec API (`screen`, `device`,
@@ -176,6 +179,14 @@ export type Snapshot = {
 	flat: Element[];
 	truncated: boolean;
 	modal?: ModalInfo;
+	/**
+	 * Set when `backend` answered because this reader failed or was skipped first (iOS: `axbridge` stalled, `ax` read in
+	 * its place). The fallback reader can lack what the first one has, so a missing node on such a snapshot is not final:
+	 * the iOS helper probes the first reader in the background, and a later read is back on it once it answers.
+	 */
+	fellBackFrom?: SnapshotBackend;
+	/** iOS: what the bridge failure behind `fellBackFrom` looked like, when the helper reported it */
+	bridgeStall?: BridgeStall;
 };
 
 export type Orientation = "portrait" | "portraitUpsideDown" | "landscapeLeft" | "landscapeRight";
@@ -352,6 +363,21 @@ export interface Driver {
 	 * OS and the app. iOS: status bar override only (`cosmetic: true`): the app still reads the real battery.
 	 */
 	battery(op: BatteryOp | null): DriverResult<BatteryState>;
+	/**
+	 * The on-screen keyboard mode (KBD-2): `software` keeps it up while warden types, `hardware` hides it (input as from
+	 * a connected keyboard). Live, no relaunch. iOS simulator: the injected dylib (`appliesOnLaunch` when the running
+	 * app was launched without it). Android: disables the soft IMEs (stashed on the device, restored by `software` and on release). Physical iOS:
+	 * `E_UNSUPPORTED`.
+	 */
+	keyboard(mode: KeyboardMode): DriverResult<KeyboardResult>;
+	/** The mode in force and whether a keyboard is on screen now (a `keyboard` element in the accessibility tree). */
+	keyboardState(): DriverResult<KeyboardState>;
+	/**
+	 * Takes the on-screen keyboard down without a keystroke that could submit a form. iOS simulator: the injected
+	 * dylib resigns the first responder (`via: "resign"`); an app launched without it falls back to Enter (`via:
+	 * "key"`, with a warning in the log). Android: back. Physical iPhone: Enter.
+	 */
+	dismissKeyboard(): DriverResult<DismissKeyboardResult>;
 	/** Android: `am send-trim-memory RUNNING_CRITICAL` to the running app. iOS: `E_UNSUPPORTED` (no way verified to reach an app). */
 	memoryWarning(opts?: SettingOptions): DriverResult<void>;
 	/** iOS: `simctl push` of an APNs payload (needs `aps`) to the app. Android: `E_UNSUPPORTED`. */
@@ -446,6 +472,14 @@ export type A11yState = {
 	/** Android: the accessibility services / master switch the device had before TalkBack was turned on (`null` = unset), for the lease's condition record */
 	screenReaderPrevious?: { services: string | null; enabled: string | null };
 };
+
+/** `previousIme` (Android `hardware`): the input methods switched off, for the lease record. */
+export type KeyboardResult = { mode: KeyboardMode; appliesOnLaunch?: boolean; previousIme?: ImeState };
+
+/** `via`: how the keyboard was dismissed; `key` (Enter) can submit the focused field. */
+export type DismissKeyboardResult = { via: "resign" | "key" | "back" };
+
+export type KeyboardState = { mode: KeyboardMode; visible: boolean };
 
 export type BatteryOp = { level?: number; charging?: boolean };
 

@@ -48,11 +48,12 @@ export type ScreenScrollAreaProps = ScrollViewProps &
  * </Screen.ScrollArea>
  */
 export const ScreenScrollArea = forwardRef<ScreenScrollViewRef, ScreenScrollAreaProps>(function ScreenScrollAreaRender(
-	{ header, className, contentContainerClassName, keyboardAware = false, children, ...props },
+	{ header, className, contentContainerClassName, keyboardAware = false, onScroll, children, ...props },
 	ref
 ): ReactElement {
 	const { scrollHandler, insetTopAnimatedStyle, insetBottomAnimatedStyle } = useScreenScrollInsets(
-		keyboardAware ? "keyboard-aware" : "standard"
+		keyboardAware ? "keyboard-aware" : "standard",
+		onScroll
 	);
 	// A sticky footer rides the keyboard, so the focused field has to clear the
 	// footer too — not just the keyboard. Deliberately not the chat list's
@@ -85,11 +86,11 @@ export const ScreenScrollArea = forwardRef<ScreenScrollViewRef, ScreenScrollArea
 			<StyledKeyboardAwareScrollView
 				className={className}
 				keyboardShouldPersistTaps="handled"
-				onScroll={scrollHandler}
 				showsHorizontalScrollIndicator={false}
 				showsVerticalScrollIndicator={false}
 				bottomOffset={footerClearance}
 				{...props}
+				onScroll={scrollHandler}
 				ref={ref as Ref<KeyboardAwareScrollViewRef>}
 				contentContainerClassName={contentContainer}
 			>
@@ -102,10 +103,10 @@ export const ScreenScrollArea = forwardRef<ScreenScrollViewRef, ScreenScrollArea
 		<Animated.ScrollView
 			className={className}
 			keyboardShouldPersistTaps="handled"
-			onScroll={scrollHandler}
 			showsHorizontalScrollIndicator={false}
 			showsVerticalScrollIndicator={false}
 			{...props}
+			onScroll={scrollHandler}
 			ref={ref}
 			contentContainerClassName={contentContainer}
 		>

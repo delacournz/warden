@@ -120,7 +120,8 @@ export const COMMANDS: readonly CommandEntry[] = [
 	{
 		name: "golden",
 		group: "Devices",
-		summary: "golden iOS images / Android snapshots new devices start from (fast boots): ensure | ls | prune",
+		summary:
+			"golden iOS images / Android snapshots new devices start from (fast boots): ensure | ls | prune | key | export | import",
 		load: async () => (await import("./golden")).goldenCommand,
 	},
 	{
@@ -166,6 +167,12 @@ export const COMMANDS: readonly CommandEntry[] = [
 		summary:
 			"drive another Mac's sims / emulators over ssh: add, setup, doctor, run, fetch, ls, rm (host side: grant, revoke)",
 		load: async () => (await import("./host")).hostCommand,
+	},
+	{
+		name: "ci",
+		group: "Builds",
+		summary: "CI helpers: cache prints the cache keys and paths a CI job saves between runs",
+		load: async () => (await import("./ci")).ciCommand,
 	},
 	{
 		name: "ui",
@@ -328,6 +335,12 @@ export const COMMANDS: readonly CommandEntry[] = [
 		group: "Setup",
 		summary: "print warden's version and build channel (dev / local / release)",
 		load: async () => (await import("./version")).versionCommand,
+	},
+	{
+		name: "telemetry",
+		group: "Setup",
+		summary: "see, enable or disable anonymous usage telemetry",
+		load: async () => (await import("./telemetry")).telemetryCommand,
 	},
 	{
 		name: "mcp",

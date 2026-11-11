@@ -5,6 +5,7 @@ import { readResults, type TestResult, type TestStatus } from "@delacour/warden-
 import { runnerFailureShot } from "../batch/screenshot";
 import { failing, realPath, specOf } from "../batch/spec-progress";
 import { attemptKey, legJob, type SessionResult } from "../commands/batch";
+import { specLine } from "./report-output";
 
 /** One test of a spec, as `e2e-report.json` carries it. */
 export type TestVerdict = {
@@ -14,6 +15,8 @@ export type TestVerdict = {
 	durationMs: number;
 	/** the failure message */
 	error?: string;
+	/** the line in the spec file where it failed (first stack frame in the spec) */
+	line?: number;
 	/** the attempt dir: `failure.png`, `screen-at-failure.txt`, `trace.jsonl`… */
 	artifacts?: string;
 	/** `device.perf` / `--perf` wrote a report: `<artifacts>/perf` (`report.json`, `report.md`, `session.json`) */
@@ -94,11 +97,14 @@ function lastFailure(
 export const PERF_ARTIFACT_DIR = "perf";
 const PERF_REPORT_FILE = `${PERF_ARTIFACT_DIR}/report.json`;
 
+const withLine = (line: number | undefined): { line?: number } => (line !== undefined ? { line } : {});
+
 const testVerdict = (t: TestResult): TestVerdict => ({
 	title: t.title,
 	status: t.status,
 	durationMs: t.durationMs,
 	...(t.error ? { error: t.error.message } : {}),
+	...withLine(specLine(t.error?.stack, t.file)),
 	...(t.error?.code === "PERF_BUDGET" ? { kind: "perf_budget" as const } : {}),
 	...(t.artifacts ? { artifacts: t.artifacts.dir } : {}),
 	...(t.artifacts?.files.includes(PERF_REPORT_FILE) ? { perf: join(t.artifacts.dir, PERF_ARTIFACT_DIR) } : {}),

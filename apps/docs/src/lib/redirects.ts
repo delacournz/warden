@@ -1,3 +1,5 @@
+import { docsRoute, encodeMarkdownUrl } from "./shared";
+
 /**
  * Docs pages that moved: old slug path → current slug path. Two restructures feed it: the 2026-10
  * one (`guides/*`), the 2026-11 device-conditions split and the 2026-11 split into top tabs (Getting Started, Agents & Simulators, E2E
@@ -41,18 +43,8 @@ const MOVED: Record<string, string> = {
 	"devices/app-builds": "sims/app-builds",
 
 	"e2e/first-test": "e2e",
-	"e2e/conditions": "sims/conditions",
-	"e2e/biometrics": "sims/conditions/biometrics",
-	"e2e/conditions/network": "sims/conditions/network",
-	"e2e/conditions/location": "sims/conditions/location",
-	"e2e/conditions/clock": "sims/conditions/clock",
-	"e2e/conditions/biometrics": "sims/conditions/biometrics",
-	"e2e/conditions/permissions": "sims/conditions/permissions",
-	"e2e/conditions/locale": "sims/conditions/locale",
-	"e2e/conditions/accessibility": "sims/conditions/accessibility",
-	"e2e/conditions/battery": "sims/conditions/battery",
-	"e2e/conditions/events": "sims/conditions/events",
-	"e2e/camera": "sims/conditions/camera",
+	"e2e/biometrics": "e2e/conditions/biometrics",
+	"e2e/camera": "e2e/conditions/camera",
 	bench: "e2e/bench/comparison",
 	"bench/comparison": "e2e/bench/comparison",
 	"bench/run": "e2e/bench/run",
@@ -91,4 +83,17 @@ export function rewriteDocsLinks(text: string): string {
 		const to = MOVED[path];
 		return to === undefined ? whole : `/docs/${to}`;
 	});
+}
+
+/**
+ * The `.md` twin of a docs URL (query kept), for a client that prefers `text/markdown`. Relative like
+ * {@link trailingSlashTarget}: behind Railway's proxy the request URL is `http://`, and an absolute one sent agents
+ * through an extra http → https hop.
+ */
+export function markdownTwinTarget(url: URL): string {
+	const slugs = url.pathname
+		.slice(docsRoute.length)
+		.split("/")
+		.filter((v) => v.length > 0);
+	return encodeMarkdownUrl(slugs) + url.search;
 }

@@ -4,7 +4,7 @@ import Foundation
 enum BuildInfo {
   static let protocolVersion = 1
   static let version = "0.1.0"
-  static let idb = "v1.7.7"
+  static let idb = "v1.7.8"
 }
 
 /// A JSON value. The wire format is NDJSON, so every request/response/event is one of these.
@@ -86,6 +86,8 @@ extension JSON: Codable {
     case .null: try container.encodeNil()
     case let .bool(value): try container.encode(value)
     case let .int(value): try container.encode(value)
+    // JSONEncoder throws on NaN / ±infinity, which would lose the whole line; a non-finite number is `null` instead.
+    case let .double(value) where !value.isFinite: try container.encodeNil()
     case let .double(value): try container.encode(value)
     case let .string(value): try container.encode(value)
     case let .array(value): try container.encode(value)

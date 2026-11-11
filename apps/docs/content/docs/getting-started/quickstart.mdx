@@ -4,6 +4,13 @@ description: Install warden, set up an Expo app, let your agent verify a screen 
 icon: Rocket
 ---
 
+<DemoReel
+  command="warden dev ios"
+  facts="dev build from cache 3.5s · Metro 3.9s · dev client 0.2s · hot reload 0.8s · real time"
+  label="warden dev's dashboard beside the iOS simulator it leased: the dev client opens, an edited string hot reloads on the phone, the HUD turns on, q releases the device and port"
+  src="/demos/dev/hero"
+/>
+
 ## Set up with your agent
 
 Paste this into your coding agent. It installs warden, sets up the app, verifies a screen and runs the first test.
@@ -14,11 +21,10 @@ Paste this into your coding agent. It installs warden, sets up the app, verifies
 1. Install it with bunx @delacour/warden install if bun is installed (check with command -v bun), otherwise npx @delacour/warden install. Show me the diff before you approve it. If warden is not found afterwards, add ~/.local/bin to PATH.
 2. Run warden doctor and fix anything it reports.
 3. Run warden skill show, read it, and follow its rules from now on.
-4. In the Expo app, run warden init (add --bundle-id <id> if the app has none) and install every package it names.
-5. Add @delacour/warden-e2e as a dev dependency, at the version warden --version prints.
-6. Run warden dev ios --json in the background and take the udid from its first line. Pass it on every call.
-7. Run warden ui snapshot -i and tell me what is on the first screen.
-8. Stop warden dev, then run warden e2e. If a spec fails, read screen-at-failure.txt in the batch dir and fix the cause (a missing testID goes in the component with accessible), never the timeout.
+4. In the Expo app, run warden init (add --bundle-id <id> if the app has none, --platform android for Android) and run every install command it prints.
+5. Run warden dev ios --json in the background and take the udid from its first line. Pass it on every call.
+6. Run warden ui snapshot -i and tell me what is on the first screen.
+7. Stop warden dev, then run warden e2e. If a spec fails, read screen-at-failure.txt in the batch dir and fix the cause (a missing testID goes in the component with accessible), never the timeout.
 Report what you installed, what you verified and the e2e result.`}
 />
 
@@ -73,11 +79,11 @@ In the Expo app's directory:
 warden init --bundle-id com.example.app
 ```
 
-This writes the bundle id into `app.json`, a `warden.config.ts` and `e2e/smoke.e2e.ts`. It names the packages to install and installs nothing:
+This writes the bundle id into `app.json`, a `warden.config.ts` and `e2e/smoke.e2e.ts`. For an Android suite add `--platform android`. It names the packages to install and installs nothing; run what it prints, which uses your project's package manager:
 
 ```bash
 npx expo install expo-dev-client
-bun add -d @delacour/warden-e2e     # same version as the CLI
+npm install -D @delacour/warden-e2e@<warden version>
 ```
 
 `--dry-run` prints what would be written.
@@ -123,7 +129,7 @@ If the agent does not know warden yet, see [Set up your agent](/docs/getting-sta
 warden e2e
 ```
 
-`warden e2e` leases devices, installs the app, runs every spec and writes a report under the batch directory. Add `--count 3` to fan out over three simulators. Next: [your first test](/docs/e2e).
+`warden e2e` leases devices, installs the app, runs every spec and writes a report under the batch directory. The first run builds the app (minutes). Add `--count 3` to fan out over three devices. Next: [your first test](/docs/e2e).
 
 </Step>
 </Steps>

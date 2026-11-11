@@ -3,11 +3,19 @@ import XCTest
 
 /// Collects the issues XCTest records while an op runs. With `continueAfterFailure = true` a failed `typeText` or `tap`
 /// records an issue instead of ending `testServe`; the executor turns those into one wire error (`ErrorClassifier`).
+/// `RunnerTests.record(_:)` hands it the transient snapshot issues it mutes (never recorded, so never observed) via
+/// `mute`; `muted` counts them for `health`.
 final class IssueCollector: NSObject, XCTestObservation {
   var messages: [String] = []
+  private(set) var muted = 0
 
   func testCase(_ testCase: XCTestCase, didRecord issue: XCTIssue) {
     messages.append(issue.compactDescription)
+  }
+
+  func mute(_ message: String) {
+    muted += 1
+    messages.append(message)
   }
 }
 
@@ -92,8 +100,10 @@ final class XCUIExecutor: CommandExecutor {
   private func run(_ command: RunnerCommand) throws -> JSON {
     switch command {
     case .health:
+      var fields = readyFields()
+      fields["mutedIssues"] = .int(issues.muted)
       return RunnerInfo.health(
-        fields: readyFields(), uptimeMs: Int(Date().timeIntervalSince(started) * 1000), state: "serving")
+        fields: fields, uptimeMs: Int(Date().timeIntervalSince(started) * 1000), state: "serving")
     case let .snapshot(params): return try snapshot(params)
     case let .tap(point, count, holdMs, bundleId): return tap(point, count: count, holdMs: holdMs, bundleId: bundleId)
     case let .longPress(point, durationMs, bundleId):
@@ -149,7 +159,10 @@ final class XCUIExecutor: CommandExecutor {
         detail: ["bundleId": .string(params.bundleId ?? activeBundleId ?? Self.springboardId)])
     }
     let began = Date()
-    let snapshot = try application.snapshot()
+    // One retry after a transient accessibility refusal (busy or deep screen), then the error is the answer.
+    let snapshot = try SnapshotIssue.retryOnce(
+      isTransient: SnapshotIssue.isTransient(error:), pause: { Thread.sleep(forTimeInterval: 0.3) }
+    ) { try readSnapshot(application) }
     let root = Self.rawNode(snapshot)
     let readMs = Date().timeIntervalSince(began) * 1000
     let space = space(rootFrame: root.frame)
@@ -159,6 +172,19 @@ final class XCUIExecutor: CommandExecutor {
       params.axbridgeRequested
       ? ["from": "axbridge", "to": "ax", "reason": "a physical device has no AX bridge; read through XCUITest"] : nil
     return SnapshotEncoder.snapshotData(output, screen: info, ms: readMs, fallback: fallback)
+  }
+
+  /// `application.snapshot()`, failing on a transient issue `RunnerTests.record(_:)` muted during the read (the call
+  /// itself may still return a tree, or throw).
+  private func readSnapshot(_ application: XCUIApplication) throws -> XCUIElementSnapshot {
+    issues.messages.removeAll()
+    let snapshot = try application.snapshot()
+    if !issues.messages.isEmpty {
+      let failure = ErrorClassifier.classify(op: "snapshot", messages: issues.messages)
+      issues.messages.removeAll()
+      throw failure
+    }
+    return snapshot
   }
 
   private static func rawNode(_ snapshot: XCUIElementSnapshot) -> RawNode {

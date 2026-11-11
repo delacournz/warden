@@ -2,6 +2,7 @@ import type { ReactElement, ReactNode } from "react";
 import { View, type ViewProps } from "react-native";
 import { cn } from "@/lib/cn";
 import { useAvatarPart } from "./avatar.context";
+import { resolveAvatarBadgeHasContent } from "./avatar.utils";
 import { type AvatarBadgePlacement, type AvatarColor, avatarVariants } from "./avatar.variants";
 
 export type AvatarBadgeProps = ViewProps & {
@@ -18,7 +19,8 @@ export type AvatarBadgeProps = ViewProps & {
  * An overlay pinned to a corner of the avatar — an unread count, a presence dot.
  *
  * **Empty, it is a presence dot** sized to the face it sits on and ringed in the
- * page background, so it reads as separate from the photo underneath. Given
+ * page background, so it reads as separate from the photo underneath. Empty
+ * means no element: a `0` or `""` from a conditional count is a dot too. Given
  * children, it is only the pin: a `Badge` or an `Icon` dropped in keeps its own
  * look, which is what lets a count and a dot share one part.
  *
@@ -38,7 +40,7 @@ export function AvatarBadge({
 	const { size } = useAvatarPart("Avatar.Badge");
 	const slots = avatarVariants({ size, placement, color });
 
-	if (children === undefined || children === null || children === false) {
+	if (!resolveAvatarBadgeHasContent(children)) {
 		return <View className={cn(slots.badge(), slots.dot(), className)} pointerEvents="none" {...props} />;
 	}
 

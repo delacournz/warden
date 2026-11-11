@@ -266,6 +266,11 @@ export function createDeviceA11y(deps: DeviceA11yDeps): DeviceA11y & { target: A
 			const merged = await withA11yRead(driver, taken.data);
 			return renderA11yScreen(merged.success ? merged.data : taken.data);
 		},
+		async keyboardVisible() {
+			const state = await settled(() => driver.keyboardState(), "keyboardState", signal());
+			if (!state.success) throw toE2eError(state.error, "read the keyboard");
+			return state.data.visible;
+		},
 		assertionTimeout: () => env.assertionTimeoutMs,
 		step: (label, fn) => (deps.step === undefined ? fn() : deps.step(label, fn)),
 	};

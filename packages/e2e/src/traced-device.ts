@@ -15,6 +15,10 @@ export function traceDevice(device: Device, span: SpanRunner | undefined): Devic
 	const { network, location, clock, permissions, camera } = device;
 	const { screenReader } = device;
 	const traced: Device = {
+		os: device.os,
+		isIOS: device.isIOS,
+		isAndroid: device.isAndroid,
+		select: (options) => device.select(options),
 		a11yAudit: (options) => span("device.a11yAudit", () => device.a11yAudit(options)),
 		announcements: (options) => span("device.announcements", () => device.announcements(options)),
 		screenReader: {
@@ -61,6 +65,8 @@ export function traceDevice(device: Device, span: SpanRunner | undefined): Devic
 		locale: (tag, options) => span("device.locale", () => device.locale(tag, options)),
 		a11y: (op) => span("device.a11y", () => device.a11y(op)),
 		battery: (op) => span("device.battery", () => device.battery(op)),
+		keyboard: (mode) => span("device.keyboard", () => device.keyboard(mode)),
+		keyboardVisible: () => span("device.keyboardVisible", () => device.keyboardVisible()),
 		camera: {
 			set: (path, options) => span("device.camera.set", () => camera.set(path, options)),
 			clear: (facing) => span("device.camera.clear", () => camera.clear(facing)),

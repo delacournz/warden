@@ -1,0 +1,163 @@
+name: e2e
+
+# warden's own iOS e2e suite (`apps/example`) on GitHub's hosted `xcode-27` runner (macOS 27, Xcode 27; free on a public repo), through the reusable action
+# in .github/actions/e2e. Separate from `ci` (the signoff escape hatch) so it never slows a PR that
+# touches nothing it covers: pull requests only run it for the paths below.
+#
+# Runs on pull requests into develop only (never on a push to develop or main). Caches: a pull request
+# saves its own after a green run (scoped to the PR, so its next push starts warm) and can restore
+# develop's. `workflow_dispatch` on develop seeds the shared entries every PR can restore.
+#
+# Runner: the `runner` input (e.g. a self-hosted Mac label), else the repo variable WARDEN_E2E_RUNNER, else
+# `xcode-27` (GitHub's macOS 27 image, public preview; `macos-26` stops at Xcode 26.6, which can't build
+# warden-simd). Checkout and caches are GitHub's own actions, so any macOS label works.
+on:
+  pull_request:
+    branches: [develop]
+    paths:
+      - apps/example/**
+      - apps/cli/**
+      - packages/core/**
+      - packages/e2e/**
+      - bun.lock
+      - package.json
+      - .github/actions/e2e/**
+      - .github/workflows/e2e.yml
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: runs-on label, e.g. macos-26 (empty = the repo variable WARDEN_E2E_RUNNER, else xcode-27)
+        type: string
+        default: ""
+      count:
+        description: Simulators in parallel (empty = 1)
+        type: string
+        default: ""
+      retry:
+        description: Reruns of a failed spec
+        type: string
+        default: "1"
+      args:
+        description: Extra `warden e2e` arguments
+        type: string
+        default: --specs app/onboarding,app/settings,app/auth
+      warden-version:
+        description: source (this checkout, the default), a release tag, or latest
+        type: string
+        default: source
+      save-cache:
+        description: Save the caches after a green run
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  # bun install pulls @delacournz/* from GitHub Packages with the job token.
+  packages: read
+  # the action's `job timing` line reads this job's start from the jobs API.
+  actions: read
+
+# One group per branch: a new push to a pull request cancels the run on its previous head.
+concurrency:
+  group: e2e-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  example:
+    runs-on: ${{ inputs.runner || vars.WARDEN_E2E_RUNNER || 'xcode-27' }}
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # `source` runs the checkout's own CLI, so a change to warden is tested by this job; a release tag or
+      # `latest` runs a published binary for comparison. The shim needs the bun and the install the action sets up.
+      - name: Run warden from this checkout
+        if: (inputs.warden-version || 'source') == 'source'
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          printf '#!/bin/sh\nexec bun "%s/apps/cli/src/cli.ts" "$@"\n' "$GITHUB_WORKSPACE" > "$HOME/.local/bin/warden"
+          chmod +x "$HOME/.local/bin/warden"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      # `source` also builds warden-simd from this checkout (`packages/e2e/native/dist`, which the driver prefers over
+      # `$WARDEN_HOME/simd`), so a helper change is tested here and a version with no release yet (the version PR)
+      # needs no download: the action's `warden doctor --fetch-helper` finds it and fetches nothing. Same toolchain
+      # as ci's native job and the release build (newest Xcode, for the build only).
+      - if: (inputs.warden-version || 'source') == 'source'
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: package.json
+
+      - name: Pick the newest Xcode for the helper build
+        id: xcode
+        if: (inputs.warden-version || 'source') == 'source'
+        run: |
+          set -euo pipefail
+          xcode=$( (ls -d /Applications/Xcode_*.app /Applications/Xcode-*.app 2>/dev/null || true) | sort -V | tail -1)
+          if [ -n "$xcode" ]; then echo "developer-dir=$xcode/Contents/Developer" >> "$GITHUB_OUTPUT"; export DEVELOPER_DIR="$xcode/Contents/Developer"; fi
+          echo "build=$(xcodebuild -version | awk '/Build version/ {print $3}')" >> "$GITHUB_OUTPUT"
+          # Tracked blobs only: hashFiles also hashed untracked files the runner left in these paths, so the key moved
+          # between commits that changed none of them.
+          git ls-files -s packages/e2e/native/idb.lock.json packages/e2e/native/ios/Package.swift packages/e2e/native/ios/Sources \
+            packages/e2e/native/ios-inject packages/e2e/native/scripts/build.ts packages/e2e/native/scripts/deps.ts \
+            packages/e2e/native/scripts/inject.ts packages/e2e/package.json > "$RUNNER_TEMP/simd-inputs"
+          echo "sources=$(shasum -a 256 "$RUNNER_TEMP/simd-inputs" | cut -c1-40)" >> "$GITHUB_OUTPUT"
+          xcodebuild -version
+
+      # The built dist/ is keyed on what goes into it (the helper's sources, the inject dylib, the build scripts, the
+      # pinned idb) and the Xcode that builds it: most pull requests touch none of them and skip the ~25 s release build.
+      - name: Restore warden-simd
+        id: simd-cache
+        if: (inputs.warden-version || 'source') == 'source'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: packages/e2e/native/dist
+          key: warden-simd-${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode.outputs.build }}-${{ steps.xcode.outputs.sources }}
+
+      # Only on a dist/ miss: the pinned idb checkout and SwiftPM's dependency + build caches, keyed on the pins and
+      # the Xcode, so a helper source change rebuilds incrementally instead of from a cold clone.
+      - name: Cache the helper's dependencies
+        if: (inputs.warden-version || 'source') == 'source' && steps.simd-cache.outputs.cache-hit != 'true'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/Library/Caches/warden-idb
+            ~/Library/Caches/org.swift.swiftpm
+            packages/e2e/native/ios/.build
+          key: warden-simd-deps-${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode.outputs.build }}-${{ hashFiles('packages/e2e/native/idb.lock.json', 'packages/e2e/native/ios/Package.swift') }}
+          restore-keys: |
+            warden-simd-deps-${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode.outputs.build }}-
+
+      - name: Build warden-simd from this checkout
+        if: (inputs.warden-version || 'source') == 'source' && steps.simd-cache.outputs.cache-hit != 'true'
+        env:
+          NPM_TOKEN: ${{ github.token }}
+          DEVELOPER_DIR: ${{ steps.xcode.outputs.developer-dir }}
+        run: |
+          set -euo pipefail
+          if [ -z "$DEVELOPER_DIR" ]; then unset DEVELOPER_DIR; fi
+          bun install --frozen-lockfile
+          bun run --cwd packages/e2e native:deps
+          bun run --cwd packages/e2e native:build
+          ls -l packages/e2e/native/dist/warden-simd
+
+      - name: Save warden-simd
+        if: (inputs.warden-version || 'source') == 'source' && steps.simd-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: packages/e2e/native/dist
+          key: ${{ steps.simd-cache.outputs.cache-primary-key }}
+
+      - id: e2e
+        uses: ./.github/actions/e2e
+        with:
+          working-directory: apps/example
+          suite: example
+          # 1 until the iOS accessibility bridge stops stalling on a second sim (count 2 stalled the second sim's warm-up).
+          count: ${{ inputs.count || '1' }}
+          retry: ${{ inputs.retry || '1' }}
+          args: ${{ github.event_name == 'workflow_dispatch' && inputs.args || '--specs app/onboarding,app/settings,app/auth' }}
+          warden-version: ${{ (inputs.warden-version || 'source') == 'source' && 'none' || inputs.warden-version }}
+          save-cache: ${{ github.event_name == 'pull_request' && 'true' || (inputs.save-cache && 'true') || 'false' }}

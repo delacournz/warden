@@ -28,23 +28,42 @@ export function missingPackages(root: string, names: readonly string[]): string[
 	}
 }
 
-/** Lockfile → how to run Expo's installer in that checkout; the first match walking up from the app wins. */
-const LOCKFILE_RUNNERS: ReadonlyArray<[lockfile: string, runner: readonly string[]]> = [
-	["bun.lock", ["bunx"]],
-	["bun.lockb", ["bunx"]],
-	["pnpm-lock.yaml", ["pnpm"]],
-	["yarn.lock", ["yarn"]],
-	["package-lock.json", ["npx"]],
+type PackageManager = "bun" | "pnpm" | "yarn" | "npm";
+
+/** Lockfile → the package manager and how to run Expo's installer in that checkout; the first match walking up from the app wins. */
+const LOCKFILE_RUNNERS: ReadonlyArray<[lockfile: string, manager: PackageManager, runner: readonly string[]]> = [
+	["bun.lock", "bun", ["bunx"]],
+	["bun.lockb", "bun", ["bunx"]],
+	["pnpm-lock.yaml", "pnpm", ["pnpm"]],
+	["yarn.lock", "yarn", ["yarn"]],
+	["package-lock.json", "npm", ["npx"]],
 ];
+
+const DEV_ADD: Record<PackageManager, readonly string[]> = {
+	bun: ["bun", "add", "-d"],
+	pnpm: ["pnpm", "add", "-D"],
+	yarn: ["yarn", "add", "-D"],
+	npm: ["npm", "install", "-D"],
+};
+
+/** The lockfile entry the checkout uses (from `root` upwards); bun when there is none. */
+function lockfileEntry(root: string): (typeof LOCKFILE_RUNNERS)[number] | undefined {
+	for (let dir = root; ; dir = dirname(dir)) {
+		const hit = LOCKFILE_RUNNERS.find(([lockfile]) => existsSync(join(dir, lockfile)));
+		if (hit) return hit;
+		if (dirname(dir) === dir) return undefined;
+	}
+}
+
+/** `<pm> add -d <packages>` through the package manager the checkout uses; bun when no lockfile is found. */
+export function devInstallCommand(root: string, packages: readonly string[]): string[] {
+	return [...DEV_ADD[lockfileEntry(root)?.[1] ?? "bun"], ...packages];
+}
 
 /**
  * `expo install <packages>` through the package manager the checkout uses (its lockfile, from `root`
  * upwards), so the install lands in the right lockfile; `bunx expo install` when no lockfile is found.
  */
 export function expoInstallCommand(root: string, packages: readonly string[]): string[] {
-	for (let dir = root; ; dir = dirname(dir)) {
-		const hit = LOCKFILE_RUNNERS.find(([lockfile]) => existsSync(join(dir, lockfile)));
-		if (hit) return [...hit[1], "expo", "install", ...packages];
-		if (dirname(dir) === dir) return ["bunx", "expo", "install", ...packages];
-	}
+	return [...(lockfileEntry(root)?.[2] ?? ["bunx"]), "expo", "install", ...packages];
 }

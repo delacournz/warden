@@ -256,6 +256,39 @@ function leaseHostDevice(
 	});
 }
 
+/** `--claim` of a physical iPhone takes a lease: wait for it to be unlocked first (stderr; no lease is held meanwhile). */
+async function unlockPhysicalIosForClaim(
+	ctx: CommandContext,
+	owner: Owner,
+	candidate: Candidate,
+	platform: Platform,
+	claim: boolean
+): Promise<Result<undefined, UiError>> {
+	if (!(claim && platform === "ios" && isPhysicalIosId(candidate.id))) return ok(undefined);
+	const unlocked = await awaitPhonesUnlocked(
+		ctx,
+		owner,
+		{ platform: "ios", profile: "iphone-17", count: 1, max: 1, physical: { ids: [candidate.id] } },
+		{ noWait: false }
+	);
+	return unlocked.success ? ok(undefined) : fail(claimError(unlocked.error));
+}
+
+/** The `UiError` for a refused `ensureCallerLease`; only the non-busy/foreign codes hint at `--claim`. */
+function leaseError(error: { code: Parameters<typeof uiError>[0]; message: string }, platform: Platform): UiError {
+	const { code, message } = error;
+	return code === "device_foreign" || code === "device_busy"
+		? uiError(code, message)
+		: uiError(code, message, { hint: `add --claim, or run warden claim ${platform} --json` });
+}
+
+/** After a fresh claim, undoes conditions an earlier holder left on the device (each failure goes to stderr). */
+async function undoLeftoverConditions(ctx: CommandContext, platform: Platform, id: string): Promise<void> {
+	const { undoOrphansWith } = await import("@delacour/warden-core/conditions/orphans");
+	const report = await undoOrphansWith(ctx.store(), { exec: ctx.exec, env: ctx.env, now: ctx.now }, { platform, id });
+	for (const e of report.errors) ctx.err(`warden: leftover condition on ${id} not undone — ${e}`);
+}
+
 /** Prove the caller may use `candidate` (heartbeat / refuse / take over with `--claim`). */
 async function leaseCandidate(
 	ctx: CommandContext,
@@ -270,16 +303,8 @@ async function leaseCandidate(
 		platform.data === "android" && !isEmulatorSerial(candidate.id)
 			? await checkPhone(ctx, candidate.id)
 			: { kind: "other" };
-	// `--claim` of a physical iPhone takes a lease: wait for it to be unlocked first (stderr; no lease is held meanwhile)
-	if (claim && platform.data === "ios" && isPhysicalIosId(candidate.id)) {
-		const unlocked = await awaitPhonesUnlocked(
-			ctx,
-			owner,
-			{ platform: "ios", profile: "iphone-17", count: 1, max: 1, physical: { ids: [candidate.id] } },
-			{ noWait: false }
-		);
-		if (!unlocked.success) return fail(claimError(unlocked.error));
-	}
+	const unlocked = await unlockPhysicalIosForClaim(ctx, owner, candidate, platform.data, claim);
+	if (!unlocked.success) return unlocked;
 	const pid = leasePidFor(owner);
 	const leased = ensureCallerLease(ctx.store(), owner, platform.data, candidate.id, {
 		now: ctx.now(),
@@ -290,27 +315,13 @@ async function leaseCandidate(
 		exclusive: check.exclusive,
 		...(phone.kind === "phone" ? { physical: phone.physical } : {}),
 	});
-	if (!leased.success) {
-		const { code, message } = leased.error;
-		return fail(
-			code === "device_foreign" || code === "device_busy"
-				? uiError(code, message)
-				: uiError(code, message, { hint: `add --claim, or run warden claim ${platform.data} --json` })
-		);
-	}
+	if (!leased.success) return fail(leaseError(leased.error, platform.data));
 	const { lease, action } = leased.data;
 	// the lease is kept: the user fixes the phone (accept the prompt, replug) and retries
 	const notReady = phone.kind === "phone" ? phoneStateError(candidate.id, phone.adbState) : undefined;
 	if (notReady) return fail(notReady);
-	if (claim && (action === "reclaimed" || action === "leased")) {
-		const { undoOrphansWith } = await import("@delacour/warden-core/conditions/orphans");
-		const report = await undoOrphansWith(
-			ctx.store(),
-			{ exec: ctx.exec, env: ctx.env, now: ctx.now },
-			{ platform: platform.data, id: candidate.id }
-		);
-		for (const e of report.errors) ctx.err(`warden: leftover condition on ${candidate.id} not undone — ${e}`);
-	}
+	if (claim && (action === "reclaimed" || action === "leased"))
+		await undoLeftoverConditions(ctx, platform.data, candidate.id);
 	return ok({
 		udid: candidate.id,
 		platform: platform.data,

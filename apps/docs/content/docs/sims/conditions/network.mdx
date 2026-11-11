@@ -1,29 +1,26 @@
 ---
 title: Network
-description: Take the device offline, slow it to 3G, flap the connection or fail one host, from a spec, a suite or warden ui.
+description: Take a leased simulator or emulator offline, slow it to 3G, flap the connection or fail one host with warden ui, and how the shaping reaches the app on each platform.
 icon: Wifi
 ---
 
 <DemoTabs ids={["network", "fault"]} />
 
-`device.network` shapes what the app's own requests see: offline, a preset speed, a flapping link or one host that fails. The rest of the Mac's traffic is untouched, and the network is back online when the lease ends.
+`warden ui network` shapes what the app's own requests see: offline, a preset speed, a flapping link or one host that fails. The rest of the Mac's traffic is untouched, and the network is back online when the lease ends.
 
-```ts title="e2e/network-offline.e2e.ts"
-import { expect, test } from "@delacour/warden-e2e";
-
-test("cold start offline shows the banner, going online recovers the fetch", async ({ app, device, screen }) => {
-  await device.network.set("offline"); // before the app opens: a cold start offline
-  await app.open();
-  await expect(screen.getByTestId("conditions-offline-banner")).toBeVisible({ timeout: 15_000 });
-
-  await device.network.set("online");
-  await expect(screen.getByTestId("conditions-offline-banner")).toBeHidden({ timeout: 15_000 });
-});
+```bash
+warden ui network set 3g
+warden ui network flap --up 10s --down 3s
+warden ui network fault api.example.com reset
+warden ui network status
+warden ui network reset
 ```
 
-## Set a condition
+`warden ui network log` is the request log of the dev client. See [warden ui](/docs/sims/ui) for every flag, including `--relaunch`. From a spec or a suite: [Network in E2E tests](/docs/e2e/conditions/network).
 
-`device.network.set(condition)` takes `"online"`, `"offline"`, a preset or a custom shape.
+## Presets
+
+`set` takes `online`, `offline` or a preset.
 
 | Preset | Latency | Jitter | Down | Up | Loss |
 |---|---|---|---|---|---|
@@ -35,46 +32,7 @@ test("cold start offline shows the banner, going online recovers the fetch", asy
 | `slow` | 2000 ms | 100 ms | 400 kbps | 400 kbps | 0 |
 | `lossy` | 500 ms | 50 ms | 1 Mbps | 1 Mbps | 10% |
 
-`{ kind: "custom", latencyMs?, jitterMs?, downKbps?, upKbps?, lossPct? }` sets your own.
-
-```ts
-await device.network.set("3g");
-await device.network.during("offline", async () => {
-  // the previous condition is back afterwards, also when this throws
-});
-await device.network.reset(); // back to the suite's conditions.network (online without one)
-```
-
-| Member | Does |
-|---|---|
-| `set(c, { relaunch? })` | change the network. A running flap stops first |
-| `during(c, fn)` | run `fn` under `c`, then restore |
-| `flap({ up, down, jitterPct?, seed?, base? })` | alternate `base` (default online) and offline until `stop()` or the end of the test; returns `{ stop(), done, status() }` |
-| `fault(rule \| rules)` | per-host faults; `[]` clears |
-| `status()` | `{ condition, faults, flapping }` |
-| `reset()` | stop the flap, clear faults, back to the baseline |
-
-## Flapping
-
-```ts
-const flap = await device.network.flap({ up: "1s", down: "1s" });
-// ... exercise the retry path ...
-await flap.stop();
-```
-
-A fixed `seed` replays the same sequence. A flap and faults do not combine: reset one before setting the other.
-
-## Faults
-
-A fault applies to every request whose host matches a glob.
-
-```ts
-await device.network.fault({ match: "api.example.com", action: { kind: "reset" } });
-```
-
-Actions: `{ kind: "status", code }`, `{ kind: "reset" }`, `{ kind: "delay", ms }`, `{ kind: "blackhole" }`.
-
-HTTPS requests are tunnelled without being opened, so a `status` fault cannot answer one: an `https://` request matching it is reset, and `fault()` returns a note saying so. Use `reset` (or `delay` / `blackhole`) for HTTPS hosts and `status` for plain HTTP.
+A fault applies to every request whose host matches a glob. Actions: `status:503`, `reset`, `delay:2s`, `blackhole`; `warden ui network fault --clear` removes every fault. A flap and faults do not combine: `network reset` or `fault --clear` first.
 
 ## How it reaches the app
 
@@ -83,33 +41,13 @@ HTTPS requests are tunnelled without being opened, so a `status` fault cannot an
 | Speed, delay, offline | per-app proxy (a dylib routes the app's `NSURLSession` traffic through the lease's shaping proxy) and a reachability signal | native: `adb emu network`, airplane mode |
 | Loss, faults | the proxy | the proxy, through the system `http_proxy` |
 
-A simulator shares the Mac's network, so on iOS a condition reaches only an app that was launched with warden's network dylib. A running app without it fails `E_NETWORK_RELAUNCH`. Either declare `conditions.network` for the suite ([suite baseline](/docs/sims/conditions#suite-baseline-the-conditions-key)), so every launch carries the dylib, or pass `{ relaunch: true }`.
+A simulator shares the Mac's network, so on iOS a condition reaches only an app that was launched with warden's network dylib. A running app without it fails `E_NETWORK_RELAUNCH`: pass `--relaunch`, or in a suite declare `conditions.network` so every launch carries the dylib.
 
 The shaping proxy binds loopback, and only while it shapes traffic.
-
-## In a suite
-
-```ts title="warden.config.ts"
-conditions: { network: "online" },
-```
-
-`network` takes `"online"`, `"offline"`, a preset or `{ latencyMs, jitterMs, downKbps, upKbps, lossPct }`. Every spec starts from it, and `reset()` returns to it.
-
-## By hand
-
-```bash
-warden ui network set 3g
-warden ui network flap --up 10s --down 3s
-warden ui network fault api.example.com reset
-warden ui network status
-warden ui network reset
-```
-
-`warden ui network log` is the request log of the dev client. See [warden ui](/docs/sims/ui) for every flag, including `--relaunch`.
 
 ## Limitations
 
 - iOS shapes the app's `NSURLSession` traffic only. Raw sockets, `NWConnection` and `CFStream` bypass the proxy.
 - Android loss and faults go through the system `http_proxy`: an app that ignores it (a raw socket, `Proxy.NO_PROXY`) is not covered. Speed, delay and offline are native and reach everything.
-- A `status` fault cannot answer an HTTPS request (it is reset).
-- Shaping applies to new traffic through the proxy, and an open connection keeps its cost: after warming a connection, a 3g request pays one round trip (the preset's latency), not the three or four of a cold connection. Assert an ordering with a margin, not an absolute number.
+- A `status` fault cannot answer an HTTPS request (it is reset): HTTPS is tunnelled without being opened.
+- Shaping applies to new traffic through the proxy, and an open connection keeps its cost.

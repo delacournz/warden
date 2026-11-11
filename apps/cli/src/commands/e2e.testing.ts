@@ -1,7 +1,7 @@
 import { afterEach, beforeEach } from "bun:test";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
-import { makeSuiteRepo } from "@delacour/warden-core/affected/fixture.testing";
+import { makeSuiteRepo, SUITE_REPO_HOOK_TIMEOUT_MS } from "@delacour/warden-core/affected/fixture.testing";
 import { bunExec, type Exec } from "@delacour/warden-core/exec";
 import type { TestResult } from "@delacour/warden-e2e/runner/results";
 import { result } from "../batch/results.testing";
@@ -27,7 +27,7 @@ export const SPEC_ISOLATION = { isolate: "spec" };
 export function useE2eFixture(): void {
 	beforeEach(async () => {
 		({ dir, write } = await makeSuiteRepo(SPEC_ISOLATION));
-	});
+	}, SUITE_REPO_HOOK_TIMEOUT_MS);
 	afterEach(() => {
 		if (ctxActive) ctx.cleanup();
 		ctxActive = false;

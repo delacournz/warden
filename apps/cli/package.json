@@ -1,7 +1,8 @@
 {
 	"name": "@delacour/warden",
-	"version": "0.8.0",
-	"description": "warden CLI: machine-wide device + port leasing for agents and users",
+	"version": "0.16.0",
+	"description": "AI agent toolkit for React Native and Expo: every coding agent gets its own iOS simulator or Android emulator to drive, debug, profile and E2E test the app, with devices, ports and app builds leased machine-wide",
+	"homepage": "https://warden.co.nz",
 	"license": "MIT",
 	"type": "module",
 	"private": true,
@@ -30,6 +31,7 @@
 		"@delacour/warden-e2e": "workspace:*",
 		"@delacour/warden-perf": "workspace:*",
 		"@delacour/warden-types": "workspace:*",
+		"@delacournz/cli-telemetry": "^0.1.0",
 		"@modelcontextprotocol/sdk": "1.32.2",
 		"@xterm/headless": "6",
 		"chalk": "^6.0.1",

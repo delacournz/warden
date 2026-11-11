@@ -29,7 +29,7 @@ Example GitHub Actions workflow (macOS runner, userspace tailscaled, `TS_AUTHKEY
 | the machine | `WARDEN_HOST_TOKEN=<t> warden host uplink [--api <url>] [--token-file <file>]` | One outbound WebSocket to warden-api (`--api`, else `$WARDEN_API_URL`, else the hosted one); the token comes from `--token-file` or `$WARDEN_HOST_TOKEN`, never a flag value. Each command a laptop sends runs through the same forced `__host-serve`, allowlist and TTL leases as ssh. Redials 1 s → 30 s; holds until Ctrl-C / SIGTERM, or exits 1 when warden-api ends it for good (token refused or revoked, another uplink for the host took over, hosted session over) |
 | laptop | `warden host add <name> --cloud [--host-id <id>] [--json]` | Uses this laptop's `warden login` session (account + org pinned on the record): picks `--host-id`, else the account's host called `<name>`, else its only one. Records it with the hosted session's end (`expiresAt`) and reads its warden if it is online. Can't go with `--ssh`, `--identity`, `--proxy-command`, `--jump`, `--host-key`, `--granted` |
 
-Then `claim --host`, `ui`, `app ensure`, `host run`, `host fetch` and `host doctor` work as over ssh. Not yet over the relay: `warden dev --host` (no port forward for Metro; row 126). A hosted Mac's leases are capped at its `expiresAt` and end `LEASE_LOST` `host_expired`. A relay failure is exit 255 like ssh's: `HOST_AUTH` for a refused session, else `HOST_UNREACHABLE` (`relay: HOST_OFFLINE` = no uplink).
+Then `claim --host`, `ui`, `app ensure`, `host run`, `host fetch` and `host doctor` work as over ssh. Not yet over the relay: `warden dev --host` (no port forward for Metro; row 137). A hosted Mac's leases are capped at its `expiresAt` and end `LEASE_LOST` `host_expired`. A relay failure is exit 255 like ssh's: `HOST_AUTH` for a refused session, else `HOST_UNREACHABLE` (`relay: HOST_OFFLINE` = no uplink).
 
 ## Claim on a host (`claim --host`)
 
@@ -131,4 +131,4 @@ Every call is `ssh -T -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnown
 | `HOST_VERSION_SKEW` | 14 | the host runs another warden version: `warden host setup <name>` |
 | `HOST_UNKNOWN` | 15 | no host by that name: `warden host ls` |
 
-Rows 115-126 in troubleshooting.md.
+Rows 126-137 in troubleshooting.md.

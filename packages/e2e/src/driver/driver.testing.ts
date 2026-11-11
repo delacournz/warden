@@ -1,11 +1,13 @@
-import type {
-	CameraCondition,
-	ClockCondition,
-	HostFault,
-	LocationCondition,
-	NetworkCondition,
-	PermissionName,
-	PermissionState,
+import {
+	type CameraCondition,
+	type ClockCondition,
+	DEFAULT_KEYBOARD_MODE,
+	type HostFault,
+	type KeyboardMode,
+	type LocationCondition,
+	type NetworkCondition,
+	type PermissionName,
+	type PermissionState,
 } from "@delacour/warden-core/conditions/conditions.types";
 import type { Result } from "@delacour/warden-types/result";
 import type { ScreenReaderState } from "../a11y/a11y.types";
@@ -22,6 +24,7 @@ import type {
 	BiometricOp,
 	CameraState,
 	ClockState,
+	DismissKeyboardResult,
 	Driver,
 	DriverCapabilities,
 	DriverError,
@@ -30,6 +33,8 @@ import type {
 	GestureOptions,
 	HardwareButton,
 	HealthInfo,
+	KeyboardResult,
+	KeyboardState,
 	KeyName,
 	LaunchOptions,
 	LocaleState,
@@ -54,6 +59,7 @@ import type {
 import type { ActsOnElements, ScrollDirection } from "./element-actions";
 import { driverError } from "./errors";
 import { planGesture } from "./gesture-geometry";
+import { keyboardVisible } from "./keyboard-state";
 import type { AuditsNatively, NativeAuditOptions, NativeAuditResult } from "./native-audit";
 import { faultNotes } from "./network-proxy";
 import type { DrivesScreenReader, SpokenRead } from "./screen-reader";
@@ -234,6 +240,9 @@ export type DriverCall =
 	| { method: "locale"; tag: string | null; opts?: SettingOptions }
 	| { method: "a11y"; op: A11yOp | null }
 	| { method: "battery"; op: BatteryOp | null }
+	| { method: "keyboard"; mode: KeyboardMode }
+	| { method: "keyboardState" }
+	| { method: "dismissKeyboard" }
 	| { method: "memoryWarning"; opts?: SettingOptions }
 	| { method: "push"; payload: PushPayload; opts?: SettingOptions }
 	| { method: "biometrics"; op: BiometricOp }
@@ -367,6 +376,68 @@ function findAlert(snapshot: Snapshot): AlertInfo | null {
 	return info;
 }
 
+/** The `run` recorder `fakeDriver` hands to its optional-capability wiring. */
+type RunCall = <T>(call: DriverCall, fallback: () => T) => Awaited<DriverResult<T>>;
+
+/** Wire the optional `Driver` capabilities that `options` switch on onto `driver`. */
+function attachOptionalOps(
+	driver: FakeDriver,
+	options: FakeDriverOptions,
+	calls: DriverCall[],
+	run: RunCall,
+	visibleAlert: () => AlertInfo | null
+): void {
+	if (options.selectAll) driver.selectAll = async () => run({ method: "selectAll" }, () => undefined);
+	if (options.pasteText) driver.pasteText = async (text) => run({ method: "pasteText", text }, () => undefined);
+	if (options.setText) driver.setText = async (text) => run({ method: "setText", text }, () => undefined);
+	const actions = options.elementActions;
+	if (actions !== undefined) {
+		driver.pressElement = async (element) => run({ method: "pressElement", element }, () => actions.handled);
+		driver.scrollElement = async (direction, within) =>
+			run({ method: "scrollElement", direction, ...(within ? { within } : {}) }, () => actions.handled);
+	}
+	const { alertBackends, frontmost } = options;
+	if (alertBackends !== undefined) {
+		driver.alertOn = async (backend) =>
+			run<AlertInfo | null>({ method: "alertOn", backend }, () =>
+				alertBackends.includes(backend) ? visibleAlert() : null
+			);
+	}
+	if (frontmost !== undefined) {
+		driver.isFrontmost = async (bundleId) => run({ method: "isFrontmost", bundleId }, () => frontmost() === bundleId);
+	}
+	if (options.readA11y !== undefined) {
+		const read = options.readA11y;
+		driver.readA11y = async (snapshot) => run({ method: "readA11y" }, () => read(snapshot));
+	}
+	if (options.a11yEvents !== undefined) {
+		const events = options.a11yEvents;
+		driver.a11yEvents = async (since) =>
+			run({ method: "a11yEvents", ...(since === undefined ? {} : { since }) }, () => events(since));
+	}
+	if (options.auditNatively !== undefined) {
+		const audit = options.auditNatively;
+		driver.auditNatively = async (opts) => {
+			calls.push({ method: "auditNatively", ...(opts === undefined ? {} : { options: opts }) });
+			return audit(opts);
+		};
+	}
+	if (options.screenReader !== undefined) {
+		const reader = options.screenReader;
+		driver.screenReaderState = async () =>
+			run({ method: "screenReaderState" }, () => reader.state?.() ?? { mode: "real", engine: "talkback" });
+		driver.screenReaderNext = async () => run({ method: "screenReaderNext" }, () => reader.next?.());
+		driver.screenReaderPrev = async () => run({ method: "screenReaderPrev" }, () => reader.prev?.());
+		driver.screenReaderActivate = async () => run({ method: "screenReaderActivate" }, () => reader.activate?.());
+		driver.screenReaderFocused = async () => run({ method: "screenReaderFocused" }, () => reader.focused?.());
+		driver.screenReaderSpoken = async (since) =>
+			run(
+				{ method: "screenReaderSpoken", ...(since === undefined ? {} : { since }) },
+				() => reader.spoken?.(since) ?? { lines: [], cursor: since ?? 0 }
+			);
+	}
+}
+
 export function fakeDriver(options: FakeDriverOptions): FakeDriver {
 	const platform = options.platform ?? "ios";
 	const calls: DriverCall[] = [];
@@ -383,6 +454,7 @@ export function fakeDriver(options: FakeDriverOptions): FakeDriver {
 	const wallNow = options.wallNow ?? Date.now;
 	let net: NetworkState = { online: true, condition: { kind: "online" }, needsProxy: [] };
 	let enrolled = false;
+	let keyboardMode: KeyboardMode = DEFAULT_KEYBOARD_MODE;
 	const running = new Set<string>();
 	const installed = new Set<string>();
 
@@ -633,6 +705,25 @@ export function fakeDriver(options: FakeDriverOptions): FakeDriver {
 				})
 			);
 		},
+		async keyboard(mode) {
+			return run({ method: "keyboard", mode }, (): KeyboardResult => {
+				keyboardMode = mode;
+				return { mode };
+			});
+		},
+		async keyboardState() {
+			return run(
+				{ method: "keyboardState" },
+				(): KeyboardState => ({ mode: keyboardMode, visible: keyboardVisible(currentScreen()) })
+			);
+		},
+		async dismissKeyboard() {
+			if (platform === "android") {
+				const pressed = await run({ method: "pressButton", button: "back" }, () => undefined);
+				return pressed.success ? { success: true, data: { via: "back" } } : pressed;
+			}
+			return run({ method: "dismissKeyboard" }, (): DismissKeyboardResult => ({ via: "resign" }));
+		},
 		async camera(op, opts) {
 			return run({ method: "camera", op, ...(opts ? { opts } : {}) }, (): CameraState => ({ feeds: op ?? {} }));
 		},
@@ -655,55 +746,7 @@ export function fakeDriver(options: FakeDriverOptions): FakeDriver {
 			driver.closed = true;
 		},
 	};
-	if (options.selectAll) driver.selectAll = async () => run({ method: "selectAll" }, () => undefined);
-	if (options.pasteText) driver.pasteText = async (text) => run({ method: "pasteText", text }, () => undefined);
-	if (options.setText) driver.setText = async (text) => run({ method: "setText", text }, () => undefined);
-	const actions = options.elementActions;
-	if (actions !== undefined) {
-		driver.pressElement = async (element) => run({ method: "pressElement", element }, () => actions.handled);
-		driver.scrollElement = async (direction, within) =>
-			run({ method: "scrollElement", direction, ...(within ? { within } : {}) }, () => actions.handled);
-	}
-	const { alertBackends, frontmost } = options;
-	if (alertBackends !== undefined) {
-		driver.alertOn = async (backend) =>
-			run<AlertInfo | null>({ method: "alertOn", backend }, () =>
-				alertBackends.includes(backend) ? visibleAlert() : null
-			);
-	}
-	if (frontmost !== undefined) {
-		driver.isFrontmost = async (bundleId) => run({ method: "isFrontmost", bundleId }, () => frontmost() === bundleId);
-	}
-	if (options.readA11y !== undefined) {
-		const read = options.readA11y;
-		driver.readA11y = async (snapshot) => run({ method: "readA11y" }, () => read(snapshot));
-	}
-	if (options.a11yEvents !== undefined) {
-		const events = options.a11yEvents;
-		driver.a11yEvents = async (since) =>
-			run({ method: "a11yEvents", ...(since === undefined ? {} : { since }) }, () => events(since));
-	}
-	if (options.auditNatively !== undefined) {
-		const audit = options.auditNatively;
-		driver.auditNatively = async (opts) => {
-			calls.push({ method: "auditNatively", ...(opts === undefined ? {} : { options: opts }) });
-			return audit(opts);
-		};
-	}
-	if (options.screenReader !== undefined) {
-		const reader = options.screenReader;
-		driver.screenReaderState = async () =>
-			run({ method: "screenReaderState" }, () => reader.state?.() ?? { mode: "real", engine: "talkback" });
-		driver.screenReaderNext = async () => run({ method: "screenReaderNext" }, () => reader.next?.());
-		driver.screenReaderPrev = async () => run({ method: "screenReaderPrev" }, () => reader.prev?.());
-		driver.screenReaderActivate = async () => run({ method: "screenReaderActivate" }, () => reader.activate?.());
-		driver.screenReaderFocused = async () => run({ method: "screenReaderFocused" }, () => reader.focused?.());
-		driver.screenReaderSpoken = async (since) =>
-			run(
-				{ method: "screenReaderSpoken", ...(since === undefined ? {} : { since }) },
-				() => reader.spoken?.(since) ?? { lines: [], cursor: since ?? 0 }
-			);
-	}
+	attachOptionalOps(driver, options, calls, run, visibleAlert);
 	return driver;
 }
 

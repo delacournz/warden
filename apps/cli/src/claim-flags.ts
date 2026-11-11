@@ -123,6 +123,8 @@ export type ClaimFlagValues = {
 	biometrics?: boolean | undefined;
 	/** `--camera`: Android only (the `+cam` identity); iOS leaves the profile unchanged */
 	camera?: boolean | undefined;
+	/** `e2e.<suite>.golden`, already picked by the caller: `false` creates fresh iOS sims instead of golden clones */
+	golden?: boolean | undefined;
 	/** `e2e.<suite>.reclaim` / preset `reclaim` / top-level `reclaim`, already picked by the caller (`WARDEN_RECLAIM` applies below it, at release) */
 	reclaimConfig?: ReclaimMode | undefined;
 };
@@ -170,6 +172,8 @@ export type ClaimFlags = {
 	slim?: SlimLayers;
 	/** reclaim mode from config; released with `releaseDevices({ reclaim })` (absent: `WARDEN_RECLAIM`, then none) */
 	reclaim?: ReclaimMode;
+	/** iOS: new sims are fresh `simctl create`s, never golden clones (absent: golden unless `WARDEN_GOLDEN=0`) */
+	golden?: false;
 };
 
 /** Claim queue wait when `--wait` is not given. */
@@ -328,6 +332,7 @@ function withOptionalFlags(flags: ClaimFlags, values: ClaimFlagValues): ClaimFla
 	if (values.label !== undefined) flags.label = values.label;
 	if (values.headless) flags.headless = true;
 	if (values.reclaimConfig !== undefined) flags.reclaim = values.reclaimConfig;
+	if (values.golden === false) flags.golden = false;
 	const slim: SlimLayers = {};
 	if (values.slim !== undefined) slim.flag = values.slim;
 	if (values.slimConfig !== undefined) slim.config = values.slimConfig;
@@ -443,7 +448,68 @@ function ownerLimitOf(ctx: CommandContext, platform: Platform): Result<number | 
 	return parsed.success ? ok(limitFor(parsed.data, platform)) : parsed;
 }
 
-/** Run a device claim with the context's store + provider; iOS claims then tile the sims' windows (headless: close them; see `options.onHide`). */
+/** The provider options of an iOS claim (slim profile, physical, named phones); none for Android. */
+function providerOptions(request: DeviceRequest, slim: SlimProfile | false, golden: false | undefined) {
+	if (request.platform !== "ios") return {};
+	return {
+		slim,
+		...(golden === false ? { golden } : {}),
+		physical: request.physical !== undefined,
+		...(request.physical?.ids ? { namedPhysical: request.physical.ids } : {}),
+	};
+}
+
+/** How long a locked iPhone is waited for: never with `--wait 0`; the claim's abort and test sleep pass through. */
+function unlockOptions(flags: ClaimFlags, options: ClaimHideOptions) {
+	return {
+		noWait: flags.waitMs === 0,
+		...(options.abort ? { abort: options.abort } : {}),
+		...(options.unlockSleep ? { sleep: options.unlockSleep } : {}),
+	};
+}
+
+/** The pool size of a claim whose `--max` was not given and capacity limits are off: no cap. */
+export const UNCAPPED_POOL = Number.MAX_SAFE_INTEGER;
+
+/**
+ * A defaulted `--max` (cores / 4, a host-spec figure) is dropped when capacity limits are off, and grows to
+ * what the host's capacity budget has room for when they are on. A `--max` the user gave (flag or config) stays.
+ */
+export function resolveDefaultMax(
+	request: DeviceRequest,
+	capacity: Awaited<ReturnType<typeof buildCapacityDeps>>,
+	flags: Pick<ClaimFlags, "maxDefaulted">
+): DeviceRequest {
+	if (!flags.maxDefaulted) return request;
+	if (!capacity) return { ...request, max: UNCAPPED_POOL };
+	const room = maxConcurrent(request.platform, capacity.budget, capacity.config);
+	return { ...request, max: Math.max(request.max, room) };
+}
+
+/** The optional `claimDevices` inputs: owner limit, claim id / idempotency key, label, pid, abort, poll, capacity. */
+function optionalClaimInputs(
+	ownerLimit: number | undefined,
+	flags: ClaimFlags,
+	pid: number | undefined,
+	options: ClaimHideOptions,
+	capacity: Awaited<ReturnType<typeof buildCapacityDeps>>
+) {
+	return {
+		...(ownerLimit !== undefined ? { ownerLimit } : {}),
+		...(options.claimId !== undefined ? { claimId: options.claimId } : {}),
+		...(options.idempotencyKey !== undefined ? { idempotencyKey: options.idempotencyKey } : {}),
+		...(flags.label !== undefined ? { label: flags.label } : {}),
+		...(pid !== undefined ? { pid } : {}),
+		...(options.abort ? { abort: options.abort } : {}),
+		...(options.pollMs !== undefined ? { pollMs: options.pollMs } : {}),
+		...(capacity ? { capacity } : {}),
+	};
+}
+
+/**
+ * Run a device claim with the context's store + provider; iOS claims then tile the sims' windows (headless: close them; see `options.onHide`).
+ * The awaits stay inline here: the claim's await sequence is what an early warm-up races against.
+ */
 export async function claimWithFlags(
 	ctx: CommandContext,
 	owner: Owner,
@@ -457,57 +523,31 @@ export async function claimWithFlags(
 	if (!resolved.success) return resolved;
 	const allowed = await withPhysicalAllowlist(ctx, resolved.data);
 	if (!allowed.success) return allowed;
-	let request = allowed.data;
 	const priority = resolvePriority(flags, ctx.env);
 	if (!priority.success) return priority;
 	// a locked iPhone is waited for here, before any lease: nothing is held (or queued) while the person unlocks it
-	if (request.physical !== undefined && request.platform === "ios") {
-		const unlocked = await awaitPhonesUnlocked(ctx, owner, request, {
-			noWait: flags.waitMs === 0,
-			...(options.abort ? { abort: options.abort } : {}),
-			...(options.unlockSleep ? { sleep: options.unlockSleep } : {}),
-		});
+	if (allowed.data.physical !== undefined && allowed.data.platform === "ios") {
+		const unlocked = await awaitPhonesUnlocked(ctx, owner, allowed.data, unlockOptions(flags, options));
 		if (!unlocked.success) return unlocked;
 	}
 	const capacity = await buildCapacityDeps(ctx, owner);
-	if (capacity && flags.maxDefaulted) {
-		const room = maxConcurrent(request.platform, capacity.budget, capacity.config);
-		request = { ...request, max: Math.max(request.max, room) };
-	}
+	const request = resolveDefaultMax(allowed.data, capacity, flags);
 	const slim = resolveSlim({ ...flags.slim, env: ctx.env });
 	if (!slim.success) return slim;
 	const outcome = await claimDevices({
 		store: ctx.store(),
-		...(ownerLimit.data !== undefined ? { ownerLimit: ownerLimit.data } : {}),
-		...(options.claimId !== undefined ? { claimId: options.claimId } : {}),
-		...(options.idempotencyKey !== undefined ? { idempotencyKey: options.idempotencyKey } : {}),
-		provider: providerFor(
-			request.platform,
-			ctx,
-			owner,
-			request.platform === "ios"
-				? {
-						slim: slim.data,
-						physical: request.physical !== undefined,
-						...(request.physical?.ids ? { namedPhysical: request.physical.ids } : {}),
-					}
-				: {}
-		),
+		provider: providerFor(request.platform, ctx, owner, providerOptions(request, slim.data, flags.golden)),
 		...(request.platform === "ios" ? { slim: slim.data !== false } : {}),
 		owner,
 		request,
 		ttlMs: flags.ttlMs,
-		...(flags.label !== undefined ? { label: flags.label } : {}),
-		...(pid !== undefined ? { pid } : {}),
 		now: ctx.now,
 		pidAlive: processAlive,
 		waitMs: flags.waitMs,
 		priority: priority.data,
-		...(options.abort ? { abort: options.abort } : {}),
-		...(options.pollMs !== undefined ? { pollMs: options.pollMs } : {}),
-		...(capacity ? { capacity } : {}),
 		orphans: { exec: ctx.exec, env: ctx.env },
 		log: (line) => ctx.err(`warden: ${line}`),
+		...optionalClaimInputs(ownerLimit.data, flags, pid, options, capacity),
 	});
 	if (outcome.success && request.platform === "ios" && !request.physical) {
 		await slimReusedBooted(ctx, outcome.data, slim.data);

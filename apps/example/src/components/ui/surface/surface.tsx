@@ -4,6 +4,7 @@ import { type SurfaceContextValue, SurfaceProvider, useSurfaceContext } from "./
 import {
 	resolveSurfacePlane,
 	resolveSurfaceVariant,
+	type SurfaceMaterial,
 	type SurfacePadding,
 	type SurfaceVariant,
 	surfaceVariants,
@@ -17,6 +18,8 @@ export type SurfaceProps = ViewProps & {
 	variant?: SurfaceVariant;
 	/** Inner spacing. `none` also clips, for content bled to the corners. */
 	padding?: SurfacePadding;
+	/** `flat` by default. `etched` sets a highlight into the edge; `tray` is the muted frame that holds panels. */
+	material?: SurfaceMaterial;
 	className?: string;
 	children?: ReactNode;
 };
@@ -50,18 +53,32 @@ export type SurfaceProps = ViewProps & {
  *   <Image className="h-40 w-full" source={cover} />
  * </Surface>
  */
-export function Surface({ variant, padding = "md", className, children, ...props }: SurfaceProps): ReactElement {
+export function Surface({
+	variant,
+	padding = "md",
+	material = "flat",
+	className,
+	children,
+	...props
+}: SurfaceProps): ReactElement {
 	const parent = useSurfaceContext();
 	const parentPlane = parent?.plane ?? null;
 
 	const resolved = resolveSurfaceVariant({ parentPlane, variant });
-	const plane = resolveSurfacePlane({ parentPlane, variant: resolved });
+	const plane = resolveSurfacePlane({ material, parentPlane, variant: resolved });
+	const inTray = parent?.material === "tray";
 
-	const context = useMemo<SurfaceContextValue>(() => ({ plane, variant: resolved }), [plane, resolved]);
+	const context = useMemo<SurfaceContextValue>(
+		() => ({ material, plane, variant: resolved }),
+		[material, plane, resolved]
+	);
 
 	return (
 		<SurfaceProvider value={context}>
-			<View className={surfaceVariants({ padding, variant: resolved }).root({ className })} {...props}>
+			<View
+				className={surfaceVariants({ inTray, material, padding, variant: resolved }).root({ className })}
+				{...props}
+			>
 				{children}
 			</View>
 		</SurfaceProvider>

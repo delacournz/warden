@@ -14,6 +14,7 @@ export const ids = {
 		emailError: "sign-in-email-error",
 		passwordError: "sign-in-password-error",
 		formError: "sign-in-error",
+		back: "sign-in-back",
 	},
 	todos: {
 		screen: "todos-screen",
@@ -47,6 +48,9 @@ export const ids = {
 		location: "settings-location",
 		clock: "settings-clock",
 		camera: "settings-camera",
+		conditions: "settings-conditions",
+		keyboardSheet: "settings-keyboard-sheet",
+		a11y: "settings-a11y",
 	},
 	camera: {
 		screen: "camera-screen",
@@ -62,6 +66,15 @@ export const ids = {
 		flip: "camera-flip",
 		pick: "camera-pick",
 		back: "camera-back",
+	},
+	keyboardSheet: {
+		screen: "keyboard-sheet-screen",
+		open: "keyboard-sheet-open",
+		sheet: "keyboard-sheet",
+		input: "keyboard-sheet-input",
+		save: "keyboard-sheet-save",
+		saved: "keyboard-sheet-saved",
+		back: "keyboard-sheet-back",
 	},
 	biometrics: {
 		screen: "bio-screen",
@@ -117,6 +130,7 @@ export const ids = {
 	},
 	conditions: {
 		screen: "conditions-screen",
+		back: "conditions-back",
 		offlineBanner: "conditions-offline-banner",
 		connected: "conditions-net-connected",
 		reachable: "conditions-net-reachable",

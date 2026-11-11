@@ -21,9 +21,8 @@ export type FieldTextPart = (typeof FIELD_TEXT_PARTS)[number];
  * label with its description, `root` groups a field's parts, `set` groups a
  * legend with its fields, and `group` separates one field from the next. Each
  * step is looser than the one inside it, which is what makes a field read as one
- * thing and two fields as two — `field.variants.test.ts` pins the ordering
- * rather than the numbers, so the spacing can be retuned without the test
- * becoming a transcript of it.
+ * thing and two fields as two — the ordering is the
+ * contract, not the numbers, so the spacing can be retuned freely.
  *
  * **No slot here carries a type scale or a colour.** The text parts render the
  * `Text` presets — `Text.Label`, `Text.Caption` — and pass a colour through
@@ -35,8 +34,7 @@ export type FieldTextPart = (typeof FIELD_TEXT_PARTS)[number];
  * The `View` slots hold no `text-*` at all: a React Native `View` does not
  * cascade colour to a `Text` descendant. See AGENTS.md rule 1.
  *
- * Free of React Native imports so it stays unit-testable — `bun test` cannot
- * parse React Native's Flow-typed source. See AGENTS.md.
+ * Free of React Native imports so it stays pure and unit-testable. See AGENTS.md.
  */
 export const fieldVariants = tv({
 	slots: {
@@ -102,7 +100,7 @@ export const fieldVariants = tv({
  * The error is destructive even outside an invalid field, because an error message is
  * never the calm case.
  *
- * Pure, so the whole matrix is reachable from `bun test`. See AGENTS.md.
+ * Pure, so the whole matrix is unit-testable. See AGENTS.md.
  */
 export function resolveFieldTextColor(part: FieldTextPart, isInvalid: boolean): TextColor | undefined {
 	switch (part) {
@@ -127,7 +125,7 @@ export function resolveFieldTextColor(part: FieldTextPart, isInvalid: boolean): 
  * A type predicate rather than a plain boolean, so the branch that renders the
  * `Pressable` gets a non-null `onPress` out of the same check that decided it.
  *
- * Pure, so the decision is reachable from `bun test`. See AGENTS.md.
+ * Pure, so the decision is unit-testable. See AGENTS.md.
  */
 export function resolveFieldInteractive(press: (() => void) | null): press is () => void {
 	return press !== null;
@@ -144,7 +142,7 @@ export function resolveFieldInteractive(press: (() => void) | null): press is ()
  * all, which is worse than reading the value alone.
  *
  * React Native has no `<label for>`; this is the association, done by hand
- * through the field's context. Pure, so `bun test` reaches it. See AGENTS.md.
+ * through the field's context. Pure, so it is unit-testable. See AGENTS.md.
  */
 export function resolveFieldLabelText(children: unknown): string | null {
 	if (typeof children === "number") return String(children);

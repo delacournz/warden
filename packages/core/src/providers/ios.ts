@@ -194,7 +194,7 @@ export function parseSimctlDeviceTypes(stdout: string): Result<SimDeviceType[]> 
 }
 
 /** `latest`/undefined → any; else `iOS-26-5`, full identifier, `26.5`, `iOS 26.5`. */
-function runtimeMatches(runtime: SimRuntime, wanted: string | undefined): boolean {
+export function runtimeMatches(runtime: SimRuntime, wanted: string | undefined): boolean {
 	if (wanted === undefined || wanted === "latest") return true;
 	return (
 		runtime.identifier === wanted ||
@@ -230,6 +230,27 @@ export function resolveCreateTarget(
 		return err(`no iOS runtime matching "${runtime ?? "latest"}" supports ${type.name}`);
 	}
 	return ok({ type, runtime: supported });
+}
+
+/**
+ * Refuses a pinned iOS runtime that is not installed, naming the installed ones. `latest` / undefined always pass:
+ * which runtime that is gets decided at claim time. Never picks another runtime for the caller.
+ */
+export async function checkIosRuntime(
+	exec: Exec,
+	wanted: string | undefined,
+	timer?: (ms: number) => Timer
+): AsyncResult<SimRuntime> {
+	const listed = await simctl(timedExec(exec, timer), ["list", "runtimes", "-j"], IOS_TIMEOUTS.listMs);
+	if (!listed.success) return listed;
+	const runtimes = parseSimctlRuntimes(listed.data);
+	if (!runtimes.success) return runtimes;
+	const found = runtimes.data.find((r) => runtimeMatches(r, wanted));
+	if (found) return ok(found);
+	const installed = runtimes.data.map((r) => shortRuntime(r.identifier)).join(", ");
+	return err(
+		`iOS runtime "${wanted}" is not installed (installed: ${installed || "none"}); install it in Xcode > Settings > Components, or pin an installed one`
+	);
 }
 
 /**
@@ -418,6 +439,22 @@ export function createIosProvider(deps: ProviderDeps, options: IosProviderOption
 		const prepared = await prepareOfflineSlim(id, slim, { root: disabledStoreRoot(deps.env) });
 		if (!prepared.success) note(`${target.name} offline slim skipped (${prepared.error})`);
 	};
+	/** Post the enrollment notification (set, then post); the first failure's error, else undefined. */
+	const postEnrollment = async (id: string): Promise<string | undefined> => {
+		for (const args of [
+			["-s", ENROLLMENT_NOTIFICATION, "1"],
+			["-p", ENROLLMENT_NOTIFICATION],
+		]) {
+			const out = await simctl(runner, ["spawn", id, "notifyutil", ...args], IOS_TIMEOUTS.listMs);
+			if (!out.success) return out.error;
+		}
+		return undefined;
+	};
+	/** Read the enrollment state back: true when it reads 1. */
+	const enrollmentTook = async (id: string): Promise<boolean> => {
+		const read = await simctl(runner, ["spawn", id, "notifyutil", "-g", ENROLLMENT_NOTIFICATION], IOS_TIMEOUTS.listMs);
+		return read.success && /\s1\s*$/.test(read.data);
+	};
 	/**
 	 * A biometrics sim (recorded profile `<profile>+bio`) enrolls on every boot: the simulator forgets its enrollment
 	 * when it shuts down, and a clone of a golden starts unenrolled, so there is nothing to bake. Runs before any
@@ -431,22 +468,12 @@ export function createIosProvider(deps: ProviderDeps, options: IosProviderOption
 		const rec = deps.store.listDevices("ios").find((d) => d.id === id);
 		if (!rec || isGoldenName(rec.name) || !splitBiometricProfile(rec.profile ?? "").biometrics) return;
 		for (let attempt = 1; attempt <= ENROLL_ATTEMPTS; attempt++) {
-			for (const args of [
-				["-s", ENROLLMENT_NOTIFICATION, "1"],
-				["-p", ENROLLMENT_NOTIFICATION],
-			]) {
-				const out = await simctl(runner, ["spawn", id, "notifyutil", ...args], IOS_TIMEOUTS.listMs);
-				if (!out.success) {
-					note(`${rec.name} biometrics enroll failed (${out.error})`);
-					return;
-				}
+			const failure = await postEnrollment(id);
+			if (failure !== undefined) {
+				note(`${rec.name} biometrics enroll failed (${failure})`);
+				return;
 			}
-			const read = await simctl(
-				runner,
-				["spawn", id, "notifyutil", "-g", ENROLLMENT_NOTIFICATION],
-				IOS_TIMEOUTS.listMs
-			);
-			if (read.success && /\s1\s*$/.test(read.data)) return;
+			if (await enrollmentTook(id)) return;
 			if (attempt < ENROLL_ATTEMPTS) await sleep(ENROLL_RETRY_MS);
 		}
 		note(`${rec.name} biometrics enroll did not take after ${ENROLL_ATTEMPTS} attempts`);

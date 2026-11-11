@@ -1,11 +1,13 @@
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { conditionsOf } from "../conditions/device-conditions";
+import { formatNativeTail } from "../devtools/native-log-tail";
 import { isRecoverableLoss } from "../driver/ios/hid-recovery";
 import { E2eError } from "../errors";
 import { perfStartFor } from "../perf/device-perf";
 import { type AttemptBinding, attemptSession, type Session } from "../session";
 import { attemptDir, hash6, specIdOf } from "./artifacts";
+import { bridgeEvidence } from "./bridge-evidence";
 import {
 	CAPTURE_TIMEOUT_MS,
 	captureDevtoolsArtifacts,
@@ -15,7 +17,7 @@ import {
 } from "./failure";
 import type { AttemptContext, BaseFixtures } from "./fixtures.types";
 import type { TestResult } from "./results";
-import { BUN_TIMEOUT_MARGIN_MS, hooksFor, type ResolvedUse, resolveUse, type Scope } from "./scope";
+import { BUN_TIMEOUT_MARGIN_MS, chainOf, hooksFor, type ResolvedUse, resolveUse, type Scope } from "./scope";
 import { runStep } from "./step";
 import { formatConsoleLine, openTrace, shortName } from "./trace";
 
@@ -217,11 +219,13 @@ export async function runAttempt<F extends object>(session: Session, spec: Attem
  */
 async function runAttemptOnce<F extends object>(session: Session, spec: AttemptSpec<F>): Promise<"again" | undefined> {
 	const { env } = session;
-	const use = resolveUse(
+	const resolved = resolveUse(
 		spec.scope,
 		{ timeoutMs: env.timeoutMs, actionTimeoutMs: env.actionTimeoutMs, assertionTimeoutMs: env.assertionTimeoutMs },
 		spec.timeout
 	);
+	// a `describe.serial` chain opens the app once, before its `beforeAll` (`runHookAttempt`), never per test
+	const use: ResolvedUse = chainOf(spec.scope) === undefined ? resolved : { ...resolved, launch: "none" };
 	const startedAt = Date.now();
 	const cleanupBy = cleanupDeadline(startedAt, use.timeoutMs, spec.bunTimeoutMs);
 	const budget = (): number => cleanupBy - Date.now();
@@ -236,8 +240,10 @@ async function runAttemptOnce<F extends object>(session: Session, spec: AttemptS
 	const files = new Set<string>();
 	// what this attempt's fixtures and steps run against: the run context, its cleanup context, then a finished one
 	let binding: AttemptBinding | undefined;
+	const bridge = bridgeEvidence();
 	const trace = openTrace(join(dir, "trace.jsonl"), (event) => {
 		files.add("trace.jsonl");
+		bridge.observe(event);
 		print(formatConsoleLine(event, { clock, short, depth: binding?.context.depth ?? 0 }));
 	});
 	const controller = new AbortController();
@@ -282,7 +288,7 @@ async function runAttemptOnce<F extends object>(session: Session, spec: AttemptS
 
 	outcome = failIf(outcome, cleanupErrors.length > 0, () => cleanupErrors[0]);
 
-	return concludeAttempt(session, spec, ctx, { startedAt, device }, outcome, print, clock);
+	return concludeAttempt(session, spec, ctx, { startedAt, device, bridge: bridge.summary() }, outcome, print, clock);
 }
 
 type BodyOutcome = { failed: boolean; failure: unknown; deadlineHit: boolean };
@@ -322,7 +328,7 @@ async function concludeAttempt<F extends object>(
 	session: Session,
 	spec: AttemptSpec<F>,
 	ctx: AttemptContext,
-	run: { startedAt: number; device: TestResult["device"] },
+	run: AttemptRun,
 	outcome: BodyOutcome,
 	print: (line: string | undefined) => void,
 	clock: boolean
@@ -335,18 +341,25 @@ async function concludeAttempt<F extends object>(
 		outcome.failed ? { failed: true, error: outcome.failure, timedOut: outcome.deadlineHit } : { failed: false }
 	);
 	print(formatConsoleLine({ type: "test-end", result }, { clock }));
-	if (
-		outcome.failed &&
-		session.recoverHid !== undefined &&
-		isRecoverableLoss(outcome.failure, session.env.deviceKind) &&
-		(await session.recoverHid())
-	) {
-		return "again";
-	}
+	if (outcome.failed && (await recovered(session, outcome.failure, run.startedAt))) return "again";
 	if (!outcome.failed || spec.final) session.results.append(result);
 
 	if (outcome.failed) throw outcome.failure instanceof Error ? outcome.failure : new Error(String(outcome.failure));
 	return undefined;
+}
+
+/**
+ * Whether a failed attempt is worth running again: the device lost its HID connection or runner host and was
+ * recovered, or the iOS helper restarted a wedged accessibility service (which quit the app) during it.
+ */
+async function recovered(session: Session, failure: unknown, startedAt: number): Promise<boolean> {
+	if (
+		session.recoverHid !== undefined &&
+		isRecoverableLoss(failure, session.env.deviceKind) &&
+		(await session.recoverHid())
+	)
+		return true;
+	return session.recoverAxWedge !== undefined && (await session.recoverAxWedge(Date.now() - startedAt));
 }
 
 /** One error for every `expect.soft` failure of the attempt. */
@@ -358,12 +371,13 @@ export function softFailureError(failures: readonly E2eError[]): E2eError {
 
 type Outcome = { failed: false } | { failed: true; error: unknown; timedOut: boolean };
 
-function buildResult<F extends object>(
-	spec: AttemptSpec<F>,
-	ctx: AttemptContext,
-	run: { startedAt: number; device: TestResult["device"] },
-	outcome: Outcome
-): TestResult {
+/** What `results.jsonl` needs of the attempt beyond its outcome: when, on what, and its bridge fallbacks. */
+type AttemptRun = { startedAt: number; device: TestResult["device"]; bridge: TestResult["bridge"] };
+
+/** What a results line names: the spec file, the titles, and whether it was a `.only`. */
+type ResultRef = { file: string; title: readonly string[]; only: boolean };
+
+function buildResult(spec: ResultRef, ctx: AttemptContext, run: AttemptRun, outcome: Outcome): TestResult {
 	const status: TestResult["status"] = !outcome.failed ? "passed" : outcome.timedOut ? "timed-out" : "failed";
 	return {
 		file: spec.file,
@@ -374,6 +388,7 @@ function buildResult<F extends object>(
 		...(spec.only ? { only: true } : {}),
 		...(outcome.failed ? { error: errorInfo(outcome.error) } : {}),
 		...(ctx.files.size > 0 ? { artifacts: { dir: ctx.dir, files: [...ctx.files].sort() } } : {}),
+		...(run.bridge === undefined ? {} : { bridge: run.bridge }),
 		device: run.device,
 	};
 }
@@ -410,7 +425,11 @@ async function setUpAndRun<F extends object>(
 	if (conditions !== undefined) {
 		// registered before it is applied, so a half-applied baseline is still put back
 		teardowns.push({ name: "conditions", run: () => conditions.teardown(), when: () => conditions.dirty() });
-		if (conditions.declared) await session.step("conditions", "conditions.baseline", () => conditions.applyBaseline());
+		// a `describe.serial` chain had it applied once, before its launch: applied again here it would hit the running app
+		const inChain = chainOf(spec.scope) !== undefined;
+		if (conditions.declared && !inChain) {
+			await session.step("conditions", "conditions.baseline", () => conditions.applyBaseline());
+		}
 	}
 	if (use.launch === "fresh") await session.step("app", "app.open", () => base.app.open());
 	for (const entry of spec.fixtures) {
@@ -455,6 +474,7 @@ async function captureFailureArtifacts(
 				]),
 	];
 	for (const capture of captures) {
+		for (const line of formatNativeTail(capture.tail ?? [])) session.log(line);
 		for (const file of capture.files) ctx.files.add(file);
 		for (const problem of capture.problems) {
 			ctx.trace.write({ type: "note", ts: Date.now(), kind: "note", label: `failure capture: ${problem}` });
@@ -506,4 +526,118 @@ async function runCleanup<F extends object>(
 	cleanup.abort(new E2eError("SESSION", "attempt finished"));
 	session.leaveAttempt(cleanupCtx);
 	return errors;
+}
+
+/**
+ * A `describe.serial` test that is not run because `cause` failed earlier in its chain: a `skipped` results line
+ * (code `SKIPPED`), the `■` line, then the error, so bun does not count a test that never ran as passed.
+ */
+export function skipInChain(session: Session, test: ResultRef, cause: readonly string[]): never {
+	const error = new E2eError(
+		"SKIPPED",
+		`not run: "${cause.join(" > ")}" failed earlier in this describe.serial group, which shares one app state`
+	);
+	recordSkipped(session, test, error);
+	throw error;
+}
+
+/**
+ * Writes the `skipped` results line (and console line) for a test that does not run: one a `describe.serial` failure
+ * stopped, or one skipped when collected (`test.skip`, `skipIf`, `platforms`, `requires`), which bun never calls.
+ */
+export function recordSkipped(session: Session, test: ResultRef, error: E2eError): void {
+	const { env } = session;
+	const startedAt = Date.now();
+	const result: TestResult = {
+		file: test.file,
+		title: [...test.title],
+		status: "skipped",
+		durationMs: 0,
+		startedAt,
+		...(test.only ? { only: true } : {}),
+		error: errorInfo(error),
+		device: { udid: env.udid, platform: env.platform },
+	};
+	session.log(formatConsoleLine({ type: "test-end", result }, { clock: !env.logTimestamps }) ?? "");
+	session.results.append(result);
+}
+
+/** What `runHookAttempt` runs: a `beforeAll` / `afterAll` hook, or a serial chain's one `app.open()`. */
+export type HookSpec = {
+	/** absolute path of the spec file */
+	file: string;
+	/** the scope's describe titles, then `kind` */
+	title: readonly string[];
+	scope: Scope;
+	/** `beforeAll`, `afterAll` or `launch`: the step label, and what a kept fixture's error names */
+	kind: string;
+	run: (fixtures: BaseFixtures) => void | Promise<void>;
+};
+
+/**
+ * One `beforeAll` / `afterAll` as an attempt of its own: the scope's deadline (`test.use({ timeout })` or the env),
+ * fixtures bound to it, its steps in `trace.jsonl` under `<out>/<spec>/<describe>-<kind>-<hash6>/`, and on failure
+ * the same capture as a test plus one `failed` / `timed-out` results line titled `[...describe, kind]` (bun never
+ * runs the group's tests then, so that line is the only record). A passing hook writes no results line. Fixtures
+ * the hook keeps past its end fail with `SESSION`: every test gets its own.
+ */
+export async function runHookAttempt(session: Session, spec: HookSpec): Promise<void> {
+	const { env } = session;
+	const resolved = resolveUse(spec.scope, {
+		timeoutMs: env.timeoutMs,
+		actionTimeoutMs: env.actionTimeoutMs,
+		assertionTimeoutMs: env.assertionTimeoutMs,
+	});
+	const use: ResolvedUse = { ...resolved, launch: "none" };
+	const startedAt = Date.now();
+	const cleanupBy = cleanupDeadline(startedAt, use.timeoutMs, env.timeoutMs + timing.bunMarginMs);
+	const budget = (): number => cleanupBy - Date.now();
+	const device = { udid: env.udid, platform: env.platform };
+	const clock = !env.logTimestamps;
+	const short = shortName(spec.file);
+	const dir = attemptDir(session.out, specIdOf(spec.file, env.specsDir), spec.title, hash6(spec.file, ...spec.title));
+	const print = (line: string | undefined): void => {
+		if (line !== undefined) session.log(line);
+	};
+	const files = new Set<string>();
+	let binding: AttemptBinding | undefined;
+	const bridge = bridgeEvidence();
+	const trace = openTrace(join(dir, "trace.jsonl"), (event) => {
+		files.add("trace.jsonl");
+		bridge.observe(event);
+		print(formatConsoleLine(event, { clock, short, depth: binding?.context.depth ?? 0 }));
+	});
+	const controller = new AbortController();
+	const ctx: AttemptContext = { signal: controller.signal, dir, short, trace, depth: 0, files, softFailures: [] };
+	binding = { context: ctx, finished: false };
+	const bound = attemptSession(session, () => binding ?? { context: ctx, finished: false });
+	session.enterAttempt(ctx);
+
+	let outcome = await raceDeadline(controller, use.timeoutMs, async () => {
+		const fixtures = await buildBaseFixtures(bound, controller.signal, use);
+		await bound.step("hook", spec.kind, async () => spec.run(fixtures));
+	});
+	outcome = failIf(outcome, ctx.softFailures.length > 0, () => softFailureError(ctx.softFailures));
+	if (outcome.failed) await captureFailureArtifacts(session, ctx, budget, startedAt);
+
+	const finished = new E2eError(
+		"SESSION",
+		`${spec.kind} finished: the fixtures it was given work only inside it; use the test's own fixtures in a test`
+	);
+	if (!controller.signal.aborted) controller.abort(finished);
+	binding = { context: { ...ctx, signal: AbortSignal.abort(finished), depth: 0 }, finished: true };
+	session.leaveAttempt(ctx);
+	trace.flush();
+	if (!outcome.failed) return;
+
+	for (const shot of listScreenshots(dir)) files.add(shot);
+	const result = buildResult(
+		{ file: spec.file, title: spec.title, only: false },
+		ctx,
+		{ startedAt, device, bridge: bridge.summary() },
+		{ failed: true, error: outcome.failure, timedOut: outcome.deadlineHit }
+	);
+	print(formatConsoleLine({ type: "test-end", result }, { clock }));
+	session.results.append(result);
+	throw outcome.failure instanceof Error ? outcome.failure : new Error(String(outcome.failure));
 }

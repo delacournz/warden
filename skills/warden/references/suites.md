@@ -10,7 +10,7 @@ Selects the specs a change needs, leases devices, runs one `bun test` per spec (
 warden e2e example --dry-run --explain     # what would run and why, nothing leased
 warden e2e example                         # the specs this branch needs
 warden e2e example --all                   # every spec
-warden e2e example --specs todos,settings  # exactly these ids / globs
+warden e2e example --specs app/todos,app/settings  # exactly these ids / globs (`app/**` too)
 ```
 
 | Flag | Meaning |
@@ -22,6 +22,7 @@ warden e2e example --specs todos,settings  # exactly these ids / globs
 | `--required-only` | only specs with `required: true` |
 | `--explain` / `--dry-run` | print why each spec was selected / select, run nothing |
 | `--report <file>` | also write `e2e-report.json` there |
+| `--json-lines` | stdout is NDJSON: `{"event":"test",spec,file,title[],status,durationMs,error?,code?,line?,artifacts?,device}` per test as it finishes, then `{"event":"report",report}`. Progress stays on stderr |
 | `--devices default\|all\|<profile,...>` | which `devices` legs run |
 | `--no-shutdown` | keep devices up after a pass (default: shut down those warden created, locally and under CI; suite `shutdown`) |
 | `--dev` | the dev client (kind `dev`) on a Metro warden starts: the suite's `metro` block, or the defaults when it has none. Not with `--kind` / `--variant` |
@@ -34,6 +35,10 @@ warden e2e example --specs todos,settings  # exactly these ids / globs
 | batch flags | `--retry --passes --serve --serve-ready --serve-timeout --job-timeout --record <dir> --logs <dir> --no-tui` |
 
 Suite settings are defaults. A flag passed on the command line wins.
+
+**Verdict (stderr):** failed specs with their tests, then `warden e2e: tests <n> passed · <n> failed · <n> skipped`, `<k>/<n> failed tests share one error: <msg>` when 2+ do (usually the root cause, not the specs), `evidence in <batchDir>`, then `<k>/<n> spec(s) passed — gate passed|failed`, then `took <total> — setup <s> · tests <t> · teardown <d>` (setup = start → first spec: plan, claim, boot, install, warm-up; tests = the spec processes' window; teardown = report + device shutdown). The `--no-tui` / batch-log test lines read `✓ <spec> › <title> (<test>s · total <since first spec>)`.
+
+**GitHub Actions** (`GITHUB_ACTIONS=true`, automatic): one `::error` per failed test on its spec file at the line it failed (`::warning` for an optional spec; a spec with no results is annotated on the file), paths relative to `GITHUB_WORKSPACE`; on stdout, on stderr with `--json` / `--json-lines`. A markdown table of failed tests is appended to `$GITHUB_STEP_SUMMARY`.
 
 **Exit codes:** `0` every required spec passed (or nothing affected, or dry-run). `1` the gate failed or an error. `130` interrupted.
 
@@ -79,18 +84,20 @@ Paths and globs are relative to `warden.config.ts`. Unknown keys are errors.
 |---|---|---|
 | `devices` | none | `[{ profile, count = 1, env?, default = true }]`. Replaces `profile` / `count`. At least one leg must be default |
 | `count`, `profile` | claim defaults | single pool |
+| `runtime` | newest installed | iOS simulator runtime for the run's devices and their golden: `latest`, `iOS-26-5`, `26.5`. Applies to every `devices` leg. `--runtime` wins. Not installed → the run fails before any claim, listing the installed runtimes (never another runtime). Skipped with a note on an Android run. `warden golden key --profile <p> --runtime <r>` names the golden the run uses. See "Pin the iOS runtime" |
 | `metro` | none | `{ enabled = true, port = "8081:100", launchArgs = [], open = true, env, prewarm = true, readyTimeout = "2m" }`. warden starts one Metro for the run and points the dev client at it. Applies only with `--dev` / kind `dev`, unless the suite pins `app.variant` or `app.kind: "dev"`, or installs no app. Without Metro (kind `simulator` / `release`) its `env` is still the bundle env: `EXPO_PUBLIC_*` values land in the repacked / built JS (and its cache key), over `.env*` and the shell |
 | `headless` | off | keep Simulator.app windows closed (top-level `headless` is the default; `--headless` / `--no-headless` win) |
 | `slim` | on | iOS only: simulator daemons specs never need are off from first boot. `false` leaves them running; `true` is the default profile; `{ except?: string[]; keep?: string[] }`: `except` keeps whole categories running (ids from `warden sim profiles`, e.g. `store` for push/StoreKit, `web` for universal links, `search` Spotlight, `pim` Contacts/Calendar pickers, `photos` photo picker), `keep` keeps single `com.apple.*` labels. Unknown ids fail config load. `--no-slim` / `WARDEN_SLIM=0` opt out. Skipped with a note on an Android run; refused on a suite fixed to `platform: "android"` |
 | `physical` | off | `true` = any ready physical device, `{ ids: [...] }` = exactly these (adb serials / CoreDevice UDIDs). Also per `devices` leg (a leg's wins). Not with `slim` / `headless` / `biometrics` / `conditions` (config error). Command-line `--physical` / `--serial` / `--udid` win. See "Physical devices" |
 | `reclaim` | `none` | `erase` \| `uninstall` \| `none`: what happens to the suite's devices when they are released. Top-level `reclaim` and `batches.<preset>.reclaim` work the same (suite / preset wins over top level, which wins over `WARDEN_RECLAIM`). See "Reclaim on release" |
 | `biometrics` | off | devices have a fingerprint (Android) / Face ID (iOS) enrolled before any app install. Own pool and golden: profile `<profile>+bio`. Top-level `biometrics` and `batches.<preset>.biometrics` work the same (suite / preset wins over top level); `--biometrics` on claim/run/batch/e2e turns it on for one run |
-| `warmDrivers` | on | iOS: start every device's driver helper before the specs |
+| `golden` | off | iOS: `true` clones the suite's new sims from a golden (first-booted, settled sim built once per profile + runtime). Off: each new sim is a fresh `simctl create` + first boot, and `warden ci cache --suite <name>` prints `golden: null`, so the e2e action restores, builds, saves and collects no golden. Pool sims already there are reused either way; `WARDEN_GOLDEN=0` turns it off for every claim |
+| `warmDrivers` | on | iOS: start every device's driver helper before the specs, one device after the other; each retries its first snapshot (one read per try) with backoff (2 s, then 5 s) for up to 2 min before it goes cold |
 
 ### Conditions
 | Key | Default | Meaning |
 |---|---|---|
-| `conditions` | none | `{ network?, location?, clock?, permissions?, locale?, timezone?, a11y? }` at the top level or per suite (a suite's key replaces the top-level one per area): the device state every spec starts from, applied before the app launches and put back after each spec. `network`: `"online" \| "offline"`, a preset (`edge 3g 4g lte wifi slow lossy`) or `{ latencyMs, jitterMs, downKbps, upKbps, lossPct }`. `location`: `{ lat, lon, altM? }` or `"city-run" \| "city-bike" \| "freeway"`. `clock`: an ISO instant (keeps running), `{ at, frozen? }` or `{ offset: "2d" }`. On iOS a declared `network` / `clock` launches the app with the network dylib, so specs can change it later. `permissions`: `{ location: "denied", camera: "granted", … }` (names as `device.permissions.set`, applied before the app launches). `locale`: a BCP 47 tag. `timezone`: an IANA name. `a11y`: `{ textSize?, boldText?, contrast?, reduceMotion? }`. A bad value fails config load |
+| `conditions` | none | `{ network?, location?, clock?, permissions?, locale?, timezone?, a11y?, keyboard? }` at the top level or per suite (a suite's key replaces the top-level one per area): the device state every spec starts from, applied before the app launches and put back after each spec. `network`: `"online" \| "offline"`, a preset (`edge 3g 4g lte wifi slow lossy`) or `{ latencyMs, jitterMs, downKbps, upKbps, lossPct }`. `location`: `{ lat, lon, altM? }` or `"city-run" \| "city-bike" \| "freeway"`. `clock`: an ISO instant (keeps running), `{ at, frozen? }` or `{ offset: "2d" }`. On iOS a declared `network` / `clock` launches the app with the network dylib, so specs can change it later. `permissions`: `{ location: "denied", camera: "granted", … }` (names as `device.permissions.set`, applied before the app launches). `locale`: a BCP 47 tag. `timezone`: an IANA name. `a11y`: `{ textSize?, boldText?, contrast?, reduceMotion? }`. `keyboard`: `"software"` (the default: the on-screen keyboard stays up while specs type) or `"hardware"` (hidden); applied to every spec on a warden-leased device, never a physical one. A bad value fails config load |
 
 ### Accessibility
 | Key | Default | Meaning |
@@ -109,7 +116,7 @@ Paths and globs are relative to `warden.config.ts`. Unknown keys are errors.
 | `project` | config dir | `projects[].name`; specs, serve and setup run in its root |
 | `ports` | none | `["<from>[:<span>]"]`, exported as `WARDEN_PORT_<i>` and `WARDEN_PORTS` |
 | `env` | none | added to serve, setup and spec env |
-| `serve` / `serveReady` / `serveTimeout` | none | `sh -c` before the specs, killed at the end. `serveReady` is `http://...`, `tcp:PORT` or `file:PATH`. Both need `serve` |
+| `serve` / `serveReady` / `serveTimeout` | none | `sh -c` once per run before the first spec (own process group), killed once after the last. One process shared by every device, leg, retry, `passes` repeat and shard, never restarted, so its state (users, codes) lives for the whole run and specs must isolate themselves (e.g. a unique user per test). A fixed port still held by a leftover process is not detected by `serveReady`. `serveReady` is `http://...`, `tcp:PORT` or `file:PATH`. Both need `serve` |
 | `setup` | none | `sh -c` once per device before its first spec; `{udid}` is substituted. A non-zero exit drops that device |
 
 ### Runtime
@@ -117,7 +124,7 @@ Paths and globs are relative to `warden.config.ts`. Unknown keys are errors.
 |---|---|---|
 | `spec` | `{}` | `{ bundleId, launchArgs, timeout = "2m", actionTimeout = "30s", assertionTimeout = "5s" }`. `bundleId` defaults to the project's |
 | `isolate` | `device` | `device` or `spec` (`spec` when `passes > 1`) |
-| `shutdown` | `always` | `always`: shut down warden's devices (and close their windows) after a passed gate; ephemeral iOS sims are then deleted. `idle`: leave them booted for the next run (`warden gc` reaps idle ones). A failed run always leaves them up |
+| `shutdown` | `always` (`idle` under `CI`) | `always`: shut down warden's devices (and close their windows) after a passed gate; ephemeral iOS sims are then deleted. `idle`: leave them booted for the next run (`warden gc` reaps idle ones). A failed run always leaves them up |
 | `jobTimeoutMs` | `600000` | per spec: a process past this for each spec it runs is killed and counts as failed |
 | `passes` | `1` | consecutive green runs needed per spec. `isolate: device` with `passes > 1` is an error |
 | `retry` | `0` | re-run a failed job on the same device. Under `isolate: device` a retry reruns only the specs that did not pass |
@@ -127,7 +134,7 @@ Removed: `warmRunners` (use `warmDrivers`).
 
 ## Build kinds and the repack
 
-`app: true` installs the `simulator` kind: a Release build with no JS embedded, built once per native fingerprint (`kinds.simulator` config, built-in command by default), then this worktree's JS is bundled (Hermes-compiled, ad-hoc re-signed) into a clone of it: a repack keyed by the JS content (`jsKey`: `kinds.simulator.jsInputs` + bundle env + native fingerprint), not by branch. Same JS in two worktrees = one repack. The run repacks once before the first device installs, not per device. `--dev` / `--kind dev` runs the dev client on Metro; `--kind release` the JS-embedded build.
+`app: true` installs the `simulator` kind: a Release build with no JS embedded, built once per native fingerprint (`kinds.simulator` config, built-in command by default), then this worktree's JS is bundled (Hermes-compiled, ad-hoc re-signed) into a clone of it: a repack keyed by the JS content (`jsKey`: `kinds.simulator.jsInputs` + bundle env + native fingerprint), not by branch. Same JS in two worktrees = one repack. The run repacks once before the first device installs, not per device. When the base itself must be built: iOS bundles the JS alongside the native build (Hermes compile + apply after it); Android's freshly built base already embeds this JS, so its apk is recorded as the repack with no second bundle (`fromBase: true`, log `simulator repack <jsKey> built from the base build's bundle`). `--dev` / `--kind dev` runs the dev client on Metro; `--kind release` the JS-embedded build.
 
 | `projects[].kinds.<kind>` | Meaning |
 |---|---|
@@ -136,11 +143,45 @@ Removed: `warmRunners` (use `warmDrivers`).
 | `jsInputs` | globs of the JS sources `simulator` / `release` key on (default: every tracked file but `ios/`, `android/`, `node_modules`) |
 
 - Device builds (iPhone / iPad, `--udid` or `--physical`): `--kind dev|release` build with `xcodebuild -destination generic/platform=iOS -allowProvisioningUpdates CODE_SIGN_STYLE=Automatic DEVELOPMENT_TEAM=<team>` into `ios/build` (`<Config>-iphoneos`), cached under `<nativeFp>/device/<team>/<kind>/` with the team in the key (another team, or another `ios.device.bundleIdentifier`, is another build; a simulator build is never reused). Team: `WARDEN_IOS_TEAM_ID`, then `ios.teamId`, then the one keychain team (`ios_team_ambiguous` otherwise). No kind on an iPhone means `release`; `--kind simulator` and `--variant` fail (a repack cannot be re-signed yet). Installed, probed and removed with `xcrun devicectl device install app|info apps|uninstall app`; the install record (`installs` table, build key) plus the phone's `CFBundleVersion` decide whether the app is current. `--install-mode clean` reinstalls (data cannot be wiped in place), `--reset-keychain` is refused. `projects[].ios.device.bundleIdentifier` replaces `PRODUCT_BUNDLE_IDENTIFIER` when your id belongs to another Apple team. A phone the app's profile does not list is registered once automatically (a build with `-destination id=<udid>`, then the cached build is rebuilt and installed again; registered UDIDs are recorded beside the build); if it still fails, `device_not_in_profile`; EAS builds are never used. Android phones keep the host-built kinds (all ABIs; `abi_mismatch` guards the install).
-- `warden repack ios|android` makes (or finds) the repack and prints `baseHash`, `jsKey`, `artifact`, `reused|repacked`, `bundleMs`; `--force` rebuilds a cached one.
-- Android repack needs the SDK build-tools (`zipalign`, `apksigner`, `aapt2`) and system `zip` / `unzip`. It signs with the project's `android/app/debug.keystore` when present (the base's signer), else the default debug keystore. The Android simulator base is a plain `assembleRelease` whose embedded bundle is stale on purpose: the repack replaces it.
+- `warden repack ios|android` makes (or finds) the repack and prints `baseHash`, `jsKey`, `artifact`, `reused|repacked`, `bundleMs`; `--force` rebuilds a cached one. A repack is bound to the base it was cloned from (hash of the base's executable + signature, `Info.plist`, `CodeResources`; Android: the apk): after `builds import --kind simulator-base` replaces the base under the same fingerprint, the next repack is rebuilt on its own (`reason: "base-changed"`; `base-unrecorded` once for repacks made before this tracking; `signer-changed` when an Android repack was signed by another key than its base. Android signs a repack only with a keystore whose certificate is the base's signer, else it falls back to a full simulator build), and devices reinstall it.
+- Android repack needs the SDK build-tools (`zipalign`, `apksigner`, `aapt2`) and system `zip` / `unzip`. It signs with the keystore Gradle signed the base with: warden copies it beside the base APK (`signing.keystore` + owner-only `signing.json` in the cache dir; never logged or sent) when it builds the base, so a repack needs no `android/`. Order tried: that cached keystore, the project's `android/app/debug.keystore`, `~/.android/debug.keystore`; the first whose certificate is the base's signer wins. A base from `builds import` (CI prebuilt base) or built before this has no cached keystore: it relies on the project / `~/.android` match, else the run builds the `release` kind. The Android simulator base is a plain `assembleRelease`: its embedded bundle is this worktree's JS at build time, so the run that built it uses it as the repack; later JS changes repack over it as usual (only a base built in that same run is adopted, never a cached one or another warden's). Default Android builds (`dev`, `release`, kind-less) are `expo prebuild` when `android/` is missing, then `cd android && ./gradlew app:assemble<Debug|Release> -PreactNativeArchitectures=<host ABI>`: never `expo run:android`, which installs on whatever emulator is booted.
 - Android can't repack new image / raw resources (they live in the compiled resource table): that run builds the `release` kind instead and logs why (`new Android resource(s): … needs a full build`; `fallbackReason` in `--json`). A changed vector drawable is not detected: the base's copy is kept.
 - A project's `fingerprint.include: "native+js"` / `fingerprint.jsInputs` belong to the kind-less flow (variants, `warden app ensure` with no `--kind`): `--kind dev|simulator` warns once on stderr that they are ignored. Move them into `kinds.simulator.jsInputs`.
 - `warden builds ls` shows each build's kind, base (native fingerprint), jsKey, worktree and branch.
+
+## CI: reuse a prebuilt base and the golden
+
+A fresh runner otherwise builds the simulator base (a Release `xcodebuild`) and the iOS golden (~4 min first boot) every run.
+
+In GitHub Actions use the composite action `delacournz/warden/.github/actions/e2e` (inputs `working-directory suite profile count retry args app-path warden-version bun-version install-command github-token xcode-path headroom-gb report-path cache cache-prefix js-inputs save-cache compiler-cache artifacts upload-artifacts retention-days artifact-name`; outputs `report-path`, `passed`, `cache-groups`, `artifact-groups`, `artifact-paths`): it installs warden and bun (from npm), runs `warden doctor --fetch-helper`, caches the build, the JS repacks and the golden (restore and save separate, save only after a green run with `save-cache: true`, so not on pull requests; `cache: none` skips `actions/cache` and the golden export but still imports the golden, so you store the `cache-groups` paths yourself and run the golden's `beforeSave` when your cache missed it), on a native build cache miss prints a `native build cache miss` notice, `brew install ccache` and restores `~/.warden/ccache` from the newest older key (`compiler-cache: false` skips; saved even after a failed run), prints `job timing: prep <p> (workflow steps <w> · action <a>) · warden e2e <s> · total <t>` after the suite (job start from the jobs API: `github-token` needs `actions: read`, else `action prep … (job start unknown: …)`), prints each native build log the run wrote (`~/.warden/logs/build-*.log`) in a collapsed group plus `ccache --show-stats`, prints each `screen-at-failure.txt` into the log, then collects artifact groups `report batches logs app golden` (`app` and `golden` as `app.tar` / `golden.tar` in `$RUNNER_TEMP/warden-artifacts`, keeping exec bits and symlinks; `tar -xf golden.tar -C ~/warden-goldens` then `warden golden import`) and uploads each as `<artifact-name>-<group>` (`artifacts: all` default = every group after a green run (less `golden` when restored from the cache), `report,batches,logs,golden` after a failed one; a list picks groups, `none` skips; `logs` always collected, even with a list or `none`; the golden is exported only when built and not yet in `~/warden-goldens`, never built for it; `upload-artifacts: false` only collects, upload from the `artifact-paths` JSON `{group: [path]}` yourself). Docs: `/docs/e2e/ci`. By hand, the steps are:
+
+| Step | Command |
+|---|---|
+| every cache key and path at once (any CI) | `warden ci cache --json [--project <dir>] [--prefix warden-e2e-v1] [--profile <p>] [--js-input <pathspec>]… [--golden-dir ~/warden-goldens] [--suite <name>]` → `{builds, repack, golden, ccache}`, each `{kind, key, paths}` (`ccache` adds `restoreKeys`: prefixes to restore on a miss); `golden` is `null` when the suite (`--suite`, else the only one) does not set `golden: true`; `ccache` is `null` when the project sets `build.cache: false`; `kind: "paths"` = store the dirs as they are (a `!` path is excluded); `kind: "archive"` (golden) adds `afterRestore` / `beforeSave` commands to run around them. Keys: `<prefix>-builds-<os>-<arch>-<fp>`, `<prefix>-repack-<os>-<arch>-<fp>-<js>`, `<prefix>-<os>-<arch>-<golden>`, `<prefix>-ccache-<os>-<arch>-<fp>` (`RUNNER_OS-RUNNER_ARCH` when set). iOS only |
+| base key (the native fp the base is filed under) | `warden app fingerprint ios --kind simulator --json` → `.fingerprints.ios`, `.hashes.ios` (`<fp>:base`). Not `@expo/fingerprint`'s hash |
+| seed the base from another job's `.app` | `warden builds import path/App.app --kind simulator-base [--hash <fp>] [--project <dir>] --json` |
+| golden cache key | `warden golden key [--profile <p>] [--runtime <r>]` → `warden-golden-<profile>-<key>-r<recipe>` (Xcode build + runtime build + device type + recipe) |
+| restore golden | `warden golden import <dir>` (exit 0; missing dir, stale or broken archive, golden already here → skipped with reason; the next claim builds it) |
+| save golden on a cache miss | `warden golden export <dir> [--profile <p>] [--runtime <r>]` (builds it first if missing) → `<dir>/<name>/{golden.json,device/}` (~2 GB). Exit 1 on a golden that never settled (still usable locally); `--allow-unsettled` exports it anyway (`"unsettled": true` in `--json`), for a runner too small to ever settle one. Run it only after a green run (`success()`, never `!cancelled()`) |
+
+- A simulator `.app` built with `CODE_SIGNING_ALLOWED=NO` has no entitlements, so Keychain calls fail with `errSecMissingEntitlement` (-34018): build with `CODE_SIGN_IDENTITY=-`. `builds import` warns when the `.app` has no `application-identifier` in its code signature or its `__TEXT,__entitlements` section (where an ad-hoc simulator build keeps it) (`applicationIdentifier: false` in `--json`).
+- Repack cache for CI: `~/.warden/builds/*/ios/*/simulator/repacks`, keyed on the fingerprint plus a hash of the project's JS inputs; cache the rest of `~/.warden/builds` apart from it. A restored base / repack dir with no `warden.db` row is registered on first use (source `restored`), never rebuilt.
+- `--kind simulator-base` checks the `.app`: `DTPlatformName` `iphonesimulator`, a slice for this Mac (`arm64` on Apple silicon: `ARCHS=arm64`), `CFBundleIdentifier` = the project's iOS bundle id (`--bundle-id` overrides), no Debug / dev-client payload (`<exe>.debug.dylib`, `EXDevLauncher`, `EXDevMenu`). An embedded `main.jsbundle` is stripped from the cached copy (`strippedBundle: true`); every repack writes its own. Android: not supported (`--kind` is iOS only).
+- `golden import` registers a fresh `-wip` device with `simctl create`, copies the archive over its dir (not `device.plist`), re-points absolute symlinks to the new udid, checks the first-boot migration record and `AutomationEnabled`, then renames it: no CoreSimulatorService restart, other sims untouched. `--platform android` is refused for key / export / import.
+
+## Pin the iOS runtime
+
+Accessibility values change between iOS releases, so a suite should run on one runtime locally and on CI. Set `runtime` in the suite (or pass `--runtime`); a runtime that is not installed fails before any claim with `iOS runtime "<r>" is not installed (installed: …)`. Devices and goldens are matched on the runtime (`27.0`, `iOS-27-0` and `iOS 27.0` are the same), so a pool never hands the run a sim on another one.
+
+```ts
+e2e: { mobile: { specsDir: "e2e", platform: "ios", profile: "iphone-17", runtime: "27.0" } }
+```
+
+```bash
+warden golden key --profile iphone-17 --runtime 27.0   # the cache key of the golden the run uses
+warden e2e mobile --all                                 # runs on 27.0 (suite runtime)
+warden e2e mobile --all --runtime 26.5                  # flag overrides the suite
+```
 
 ## Example config (`apps/example/warden.config.ts`)
 
@@ -221,7 +262,17 @@ e2e/<w>-<seq>[-p<N>]/results.jsonl        (-pN: pass N+1 of an attempt, with pas
 e2e/<w>-<seq>[-p<N>]/<specId>/<title>-<hash6>/   trace.jsonl screenshots/ failure.png screen-at-failure.txt console.jsonl network.jsonl perf/ (with --perf)
 ```
 
-`e2e-report.json`: `{ suite, platform, base?, isolate, ok, headless, batchDir?, specs[], only?, setup? }`. Each spec has `verdict`, `attempts`, `tests[]`.
+`e2e-report.json`: `{ suite, platform, base?, isolate, ok, headless, batchDir?, specs[], only?, setup?, warm?, timing? }`. `timing` (ms, absent when no spec ran): `{ totalMs, setupMs, testsMs, teardownMs }`. iOS `warm[]`: per device `{ worker, udid, ok, error?, axRecovery?, dropped?, quarantined? }`; `axRecovery` `{ outcome: "recovered" }` (backboardd restarted), `{ outcome: "rebooted" }` (the sim rebooted) or `{ outcome: "failed", error, stage? }` (`stage`: `log`, `restart` or `reboot`) when the warm-up found the sim's accessibility service wedged (troubleshooting 119); `dropped: true` = its reads still timed out and it ran no spec, `quarantined: true` = also quarantined for 24 h with a `warm: ` reason (`warden sim unquarantine <udid>` lifts it now). Each spec has `verdict`, `attempts`, `tests[]`; a failed test carries `line` (where it failed in the spec, from the stack) when the spec is on its stack.
+
+iOS bridge stalls (the in-sim accessibility bridge did not answer and the read went to `ax`) show in three places:
+
+| Where | What |
+|---|---|
+| `results.jsonl` `bridge` | `{ fallbacks, first, last }`: how many reads of the test left `axbridge`, and the first and last with `reason` / `code` plus the stall fields below. Absent when every read was on the bridge |
+| `trace.jsonl` `driver.snapshot` span | `fallback` (reason), `stallStage`, `stallReadMs`, `stallDeadlineMs`, `stallGuestAgeMs`, `stallCold`, `stallCooldownMs`, `stallProbes`, `stallRecycles`, `stallRecyclesExhausted`; a failed read's span also carries the helper's `bridgeRecycles` / `bridgeRecyclesExhausted` from `health` |
+| `screen-at-failure.txt` line 2 | `# read on ax: axbridge stalled (stage read · read 12004 ms of a 12000 ms deadline · cold (first read) · …)`: that tree may lack testIDs |
+
+Stall fields: `stage` `connect` (no bridge reader) / `read` (a bridge read stalled or failed) / `warm-up` (joined a stalled background warm-up) / `cooldown` (bridge skipped after a stall); `readMs` how long the bridge read ran; `deadlineMs` its deadline (the cold one on a first read); `guestAgeMs` how long the AX guests had been up; `cold` no answer yet since helper start / guest recycle / launch; `cooldownRemainingMs` cooldown left; `probes` bridge reads failed in a row; `recycles` stalled guests the helper had ended before this read (absent while none), `recyclesExhausted` every recycle it may do was spent (3, or `WARDEN_SIMD_BRIDGE_MAX_RECYCLES`); `axWedge` `checking` both readers were silent and the helper checks for a wedged accessibility service, `axWedgeRestarts` backboardd restarts it made (troubleshooting 119). A helper built before this sends only the reason. Fixes: troubleshooting 112.
 
 `batch.json` jobs (one per attempt) may carry `logDrainMs`: ms spent draining the job's log pipes after it exited, summed over its `passes`.
 

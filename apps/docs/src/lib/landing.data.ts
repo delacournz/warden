@@ -29,6 +29,8 @@ export type Feature = {
 	link: { to: string; text: string };
 	/** Terminal or file sample shown beside the points; absent for the run chart. */
 	sample?: { label: string; code: string };
+	/** A recorded clip shown in place of the sample (which stays one toggle away): under `public/`, no extension. */
+	clip?: { src: string; label: string };
 };
 
 /** One recorded clip: a real simulator driven by the commands its caption names. */
@@ -47,7 +49,7 @@ export type Faq = { q: string; a: string; proof?: Proof };
 
 export const HERO = {
 	pill: "open source · MIT · iOS + Android",
-	lede: "warden leases iOS simulators, Android emulators and real phones to your coding agents, drives the app on them and keeps what they checked as tests. Devices, ports and builds, leased across every worktree on your Mac. One CLI, free and open source.",
+	lede: "An AI agent toolkit to drive, debug, profile and test React Native and Expo apps on iOS and Android. Your agent taps through your app, reads the component tree, Metro logs and network requests, traces slow screens and keeps what it checked as E2E tests.",
 	installNote: "Installs the CLI and the skill for every agent it finds.",
 } as const;
 
@@ -197,6 +199,11 @@ export const ON_THE_DEVICE = {
 			],
 			link: { to: "sims/dev", text: "Dev client per worktree" },
 			sample: { label: "terminal", code: DEV_SAMPLE },
+			clip: {
+				src: "/demos/dev/hero",
+				label:
+					"warden dev's dashboard beside the iOS simulator it leased: the dev client opens, an edited string hot reloads on the phone, the HUD turns on, q releases the device and port",
+			},
 		},
 		{
 			label: "Drive it",
@@ -209,6 +216,11 @@ export const ON_THE_DEVICE = {
 			],
 			link: { to: "sims/ui", text: "Drive a device" },
 			sample: { label: "terminal", code: DRIVE_SAMPLE },
+			clip: {
+				src: "/demos/agent/loop",
+				label:
+					"warden ui reads the sign-in screen, fills it, presses submit and waits for the todos screen on a leased simulator.",
+			},
 		},
 		{
 			label: "Debug it",
@@ -233,10 +245,14 @@ export const ON_THE_DEVICE = {
 			],
 			link: { to: "e2e", text: "Write your first test" },
 			sample: { label: "e2e/add-todo.e2e.ts", code: KEEP_SAMPLE },
+			clip: {
+				src: "/demos/record/spec",
+				label: "warden ui record start drives a sign-in on a leased simulator, then record stop writes the spec.",
+			},
 		},
 		{
 			label: "Run the suite",
-			title: "The suite on every device at once",
+			title: "Your E2E suite on every device at once",
 			points: [
 				"warden e2e leases N simulators and installs the build",
 				"One bun test per device, the specs shared between them",
@@ -244,6 +260,10 @@ export const ON_THE_DEVICE = {
 				"Failures leave a screenshot, the screen tree and a trace",
 			],
 			link: { to: "e2e/how-it-works", text: "How e2e works" },
+			clip: {
+				src: "/demos/e2e/parallel",
+				label: "warden e2e runs five of the example app's specs on two leased iOS simulators at once.",
+			},
 		},
 	] satisfies readonly Feature[],
 } as const;
@@ -303,6 +323,36 @@ export const DEVICE_CONTROL = {
 			href: "sims/conditions/clock",
 			proof: { source: "skills/warden/references/ui.md" },
 		},
+		{
+			id: "camera",
+			tab: "Camera",
+			title: "Point the camera at anything.",
+			caption:
+				"`warden ui camera set qr-hello.png` feeds an image into the app's real camera preview; `warden ui wait text \"hello\"` sees the app's own scanner read the QR.",
+			src: "/demos/camera/qr",
+			href: "sims/conditions/camera",
+			proof: { source: "skills/warden/references/ui.md" },
+		},
+		{
+			id: "a11y",
+			tab: "Accessibility",
+			title: "Audit the screen.",
+			caption:
+				"`warden ui a11y audit` flags a broken control and passes the good screen; `warden ui a11y set --text-size accessibility-large --bold` grows the text.",
+			src: "/demos/a11y/audit",
+			href: "sims/conditions/accessibility",
+			proof: { source: "skills/warden/references/a11y.md" },
+		},
+		{
+			id: "events",
+			tab: "Push",
+			title: "Send a push to the app.",
+			caption:
+				'`warden ui push payload.json` delivers a notification payload to the running app on an iOS simulator; `warden ui wait text "Order shipped"` sees the app\'s handler receive it.',
+			src: "/demos/events/push",
+			href: "sims/conditions/events",
+			proof: { source: "skills/warden/references/ui.md" },
+		},
 	] satisfies readonly Clip[],
 } as const;
 
@@ -343,7 +393,7 @@ export const SAFE_BY_DEFAULT = {
 } as const;
 
 export const FIRST_PROMPT = {
-	title: "Productive from the first prompt.",
+	title: "Your first React Native E2E test, from one prompt.",
 	lede: "Paste this into Claude Code, Codex, Cursor or any agent in your app's directory. The warden skill tells it the rest.",
 	prompt: `Install warden (npm i -g @delacour/warden && warden install) and set this Expo app up with warden init.
 Run the app from this worktree with warden dev, then drive it with warden ui and check the home screen renders.
@@ -379,7 +429,7 @@ export const USE_CASES = {
 			title: "Test the unhappy paths",
 			command: "warden ui network",
 			body: "Offline, a failing host, an expired trial, a failed Face ID: the states nobody tests by hand, as specs.",
-			href: "sims/conditions",
+			href: "e2e/conditions",
 			proof: { source: "packages/core/src/netproxy/proxy.ts" },
 		},
 		{
@@ -406,6 +456,25 @@ export const FAQ = {
 		{
 			q: "What is warden?",
 			a: "One open-source CLI that leases iOS simulators, Android emulators and phones to coding agents, drives the app on them, and runs e2e specs across many of them at once. Devices, Metro ports and app builds are leased per worktree, so agents in parallel never collide.",
+		},
+		{
+			q: "How do I write end-to-end tests for a React Native app?",
+			a: "An E2E test in warden is a TypeScript `*.e2e.ts` spec written with `@delacour/warden-e2e`: `test` and `expect` over `bun test`. Mark the views a flow touches with `testID` and `accessible`, find them with `screen.getByTestId(...)`, and assert on what is on screen. `warden init` scaffolds the first spec; `warden e2e` leases simulators, installs your build and runs the specs on all of them at once.",
+			proof: { source: "apps/cli/src/commands/init.ts" },
+		},
+		{
+			q: "Does warden work with Expo?",
+			a: "Yes, Expo is the main target. `warden init` sets an Expo app up, `warden dev` runs its dev client per worktree, and `warden e2e` installs a build cached by the app's Expo fingerprint and runs your specs on leased iOS simulators or Android emulators. A bare React Native app works with `warden dev` and `warden ui`; `warden e2e` is Expo-only.",
+			proof: { source: "apps/cli/src/commands/e2e.ts" },
+		},
+		{
+			q: "How is warden different from Detox or Maestro?",
+			a: "Detox is a gray-box framework: it synchronises with the app from inside it, and the app needs a native test build configured for it. Maestro runs YAML flows from its own CLI. A warden spec is TypeScript that drives the installed app from outside, through the simulator's accessibility tree, with no test library in the app. warden also leases the devices, ports and builds, so many agents or CI jobs can run specs on one Mac at once.",
+		},
+		{
+			q: "Can an AI coding agent write and run my E2E tests?",
+			a: "Yes, that is what warden is for. `warden install` adds the warden skill to Claude Code, Codex, Cursor and other agents. The agent claims its own simulator, drives your app with `warden ui`, and `warden ui record` writes the session as a `*.e2e.ts` spec and runs it once. `warden e2e` then runs the spec on every device.",
+			proof: { source: "apps/cli/src/commands/ui.ts" },
 		},
 		{
 			q: "Does warden sandbox my agents?",

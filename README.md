@@ -1,6 +1,6 @@
 # warden
 
-Machine-wide leasing of **iOS simulators, Android emulators, ports and native app builds** for agents, Orca worktrees, repos and humans sharing one Mac. A device or port leased by one owner is never handed to another.
+An AI agent toolkit for React Native, Expo and native iOS and Android apps: your agent drives, debugs, profiles and E2E tests the app on its own simulator. Underneath, warden leases **iOS simulators, Android emulators, ports and native app builds** machine-wide for agents, Orca worktrees, repos and humans sharing one Mac. A device or port leased by one owner is never handed to another.
 
 - **Leases** live in one sqlite db (`~/.warden/warden.db`, WAL). Claims run under `BEGIN IMMEDIATE`, which serialises them across processes.
 - **Owners**: a Claude session (hook stdin, `CLAUDE_CODE_SESSION_ID`, `WARDEN_SESSION_ID`), CI (`CI`, `GITHUB_RUN_ID`), or a user shell (parent pid). The repo and worktree are recorded for messages.
@@ -83,8 +83,8 @@ Never edit `version` by hand. `bun run release <version>` is a break-glass for w
 warden claim ios --json                          # lease 1 sim (reuse → boot → create), booted + ready
 warden claim android --profile pixel-10 --count 2
 warden claim ios --count 2 --wait 10m --ttl 1h --label e2e
-warden claim ios --priority high --no-wait       # host full → queue by priority (default --wait 30m); --no-wait fails fast
-warden capacity [--json]                         # host budget (RAM + perf cores), usage, what binds
+warden claim ios --priority high --no-wait       # WARDEN_CAPACITY=on + host full → queue by priority (default --wait 30m); --no-wait fails fast
+warden capacity [--json]                         # host budget (RAM + perf cores), usage, what binds, whether limits are enforced (off by default)
 warden queue [--json]                            # claims waiting for a boot slot: position, priority, age
 warden release --mine [--label x] [--shutdown]   # or <leaseId…> | --udid X | --session S; --label = only --mine leases with that label; --shutdown = warden-created or self-booted sims
 warden release <leaseId> --bad [reason]          # release + quarantine the device (claims skip it); clear: warden sim unquarantine <udid>
@@ -94,6 +94,7 @@ warden ls                                        # leases: resource, state, owne
 warden clone <udid|name> [--name x]              # duplicate a shut-down sim into the pool (seconds, no first boot)
 warden golden ensure|ls|prune [--all]            # golden iOS images / Android snapshots new devices start from
 warden arrange                                   # tile warden simulator windows in name order (macOS; also runs after iOS claims)
+warden telemetry [status|enable|disable]         # anonymous usage telemetry: on by default, commands + flag names only; off with WARDEN_TELEMETRY_DISABLED=1 / DO_NOT_TRACK=1
 warden doctor [--json]                           # check home, db, device tools, helper, install method, hooks, stale leases
 warden devices [ios|android]                     # every sim/emulator (booted or not) + AVDs, warden-owned?, leased by (alias: list)
 warden sims [--max-size 40G]                     # disk audit: every sim + runtime, size, owner, lease, what can go

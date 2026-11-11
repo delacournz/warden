@@ -1,4 +1,13 @@
-import { type App, type Device, expect, type Locator, type Screen, test } from "@delacour/warden-e2e";
+import {
+	type App,
+	beforeAll,
+	type Device,
+	describe,
+	expect,
+	type Locator,
+	type Screen,
+	test,
+} from "@delacour/warden-e2e";
 import { ids } from "./helpers/ids";
 import { launch, openDeepLink, SPEC_OPTIONS } from "./helpers/steps";
 
@@ -46,41 +55,62 @@ async function presentUntil(present: () => Promise<unknown>, landed: Locator): P
 	}
 }
 
-test("enrolled device unlocks on a matching biometric", async ({ app, device, screen, platform }) => {
-	await openBiometrics(app, device, screen);
-	expect((await device.biometrics.status()).enrolled).toBe(true);
-	await expect(screen.getByTestId(ids.biometrics.status)).toHaveText("Ready");
-
-	await startUnlock(device, screen, platform);
-	await presentUntil(() => device.biometrics.match(), screen.getByTestId(ids.biometrics.status));
-
-	await expect(screen.getByTestId(ids.biometrics.status)).toHaveText("Unlocked");
-});
-
 /**
- * A non-matching biometric is not a result the app sees: both systems keep the prompt open and say so
- * (iOS: a "Face Not Recognized" alert with Try Again / Cancel; Android: BiometricPrompt's "Not recognized"). The app
- * only hears back when the user cancels, so the spec asserts the system's rejection and then cancels it.
+ * The vault on one launch, on a device enrolled before the app was installed (`biometrics: true`): unlock, lock,
+ * a rejected biometric, then an unlock after that cancel. iOS asks "Allow X to use Face ID?" once per install;
+ * `startUnlock` answers it when it is there.
  */
-test("a non-matching biometric is rejected and leaves the app locked", async ({ app, device, screen, platform }) => {
-	await openBiometrics(app, device, screen);
+describe.serial("vault", () => {
+	beforeAll(async ({ app, device, screen }) => {
+		await openBiometrics(app, device, screen);
+	});
 
-	await startUnlock(device, screen, platform);
-	const rejection = screen.getByText(platform === "ios" ? "Face Not Recognized" : "Not recognized");
-	await presentUntil(() => device.biometrics.fail(), rejection);
+	test("an enrolled device starts Ready", async ({ device, screen }) => {
+		expect((await device.biometrics.status()).enrolled).toBe(true);
+		await expect(screen.getByTestId(ids.biometrics.status)).toHaveText("Ready");
+	});
 
-	if (platform === "ios") {
+	test("a matching biometric unlocks the vault", async ({ device, screen, platform }) => {
+		await startUnlock(device, screen, platform);
+		await presentUntil(() => device.biometrics.match(), screen.getByTestId(ids.biometrics.status));
+		await expect(screen.getByTestId(ids.biometrics.status)).toHaveText("Unlocked");
+	});
+
+	test("Lock puts the vault back to Ready", async ({ screen }) => {
+		await screen.getByTestId(ids.biometrics.unlock).tap();
+		await expect(screen.getByTestId(ids.biometrics.status)).toHaveText("Ready");
+	});
+
+	/**
+	 * A non-matching biometric is not a result the app sees: both systems keep the prompt open and say so
+	 * (iOS: a "Face Not Recognized" alert with Try Again / Cancel; Android: BiometricPrompt's "Not recognized"). The
+	 * app only hears back when the user cancels, so the test asserts the system's rejection and then cancels it.
+	 */
+	test("a non-matching biometric is rejected and cancelling leaves the vault locked", async ({
+		device,
+		screen,
+		platform,
+	}) => {
+		await startUnlock(device, screen, platform);
+		const rejection = screen.getByText(platform === "ios" ? "Face Not Recognized" : "Not recognized");
+		await presentUntil(() => device.biometrics.fail(), rejection);
+
 		await expect(rejection).toBeVisible();
-		expect(await device.alert({ button: "Cancel" })).toBe(true);
-	} else {
-		await expect(rejection).toBeVisible();
-		await screen.getByTestId("button_negative").tap();
-	}
+		if (platform === "ios") expect(await device.alert({ button: "Cancel" })).toBe(true);
+		else await screen.getByTestId("button_negative").tap();
 
-	await expect(screen.getByTestId(ids.biometrics.status)).toHaveText("Cancelled");
-	await expect(screen.getByTestId(ids.biometrics.error)).toHaveText("user_cancel");
+		await expect(screen.getByTestId(ids.biometrics.status)).toHaveText("Cancelled");
+		await expect(screen.getByTestId(ids.biometrics.error)).toHaveText("user_cancel");
+	});
+
+	test("after a cancel, a matching biometric still unlocks", async ({ device, screen, platform }) => {
+		await startUnlock(device, screen, platform);
+		await presentUntil(() => device.biometrics.match(), screen.getByTestId(ids.biometrics.status));
+		await expect(screen.getByTestId(ids.biometrics.status)).toHaveText("Unlocked");
+	});
 });
 
+/** Unenrolling has to happen before the screen reads enrollment, so this test launches on its own. */
 test("an unenrolled device reports Not enrolled", { platforms: ["ios"] }, async ({ app, device, screen }) => {
 	await device.biometrics.unenroll();
 	await openBiometrics(app, device, screen);

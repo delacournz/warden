@@ -7,10 +7,18 @@ export const BADGE_VARIANTS = ["solid", "soft", "outline", "ghost"] as const;
 /** What the surface means. Orthogonal to {@link BADGE_VARIANTS}. */
 export const BADGE_COLORS = ["default", "primary", "success", "warning", "destructive", "info"] as const;
 
+/**
+ * `flat` is the library default, a capsule. `etched` squares it to the small
+ * corner and tints the status fills as a low alpha of the status colour, so a
+ * badge sits quietly on any surface it lands on.
+ */
+export const BADGE_MATERIALS = ["flat", "etched"] as const;
+
 export const BADGE_SIZES = ["sm", "md", "lg"] as const;
 
 export type BadgeVariant = (typeof BADGE_VARIANTS)[number];
 export type BadgeColor = (typeof BADGE_COLORS)[number];
+export type BadgeMaterial = (typeof BADGE_MATERIALS)[number];
 export type BadgeSize = (typeof BADGE_SIZES)[number];
 
 /**
@@ -98,8 +106,7 @@ export const BADGE_FOREGROUND_TOKEN: Record<BadgeVariant, Record<BadgeColor, str
  * colour to a `Text` descendant, so label colour lives on the `label` slot and
  * icon colour is resolved from {@link BADGE_FOREGROUND_TOKEN}.
  *
- * Free of React Native imports so it stays unit-testable — `bun test` cannot
- * parse React Native's Flow-typed source. See AGENTS.md.
+ * Free of React Native imports so it stays pure and unit-testable. See AGENTS.md.
  */
 export const badgeVariants = tv({
 	slots: {
@@ -148,6 +155,7 @@ export const badgeVariants = tv({
 				icon: "size-icon-md",
 			},
 		},
+		material: { flat: {}, etched: {} },
 		// The empty `false` branch is load-bearing typing, not a placeholder.
 		// See the note in button.variants.ts.
 		isDisabled: { true: { root: "opacity-50" }, false: {} },
@@ -204,6 +212,18 @@ export const badgeVariants = tv({
 		{ variant: "ghost", color: "warning", class: { label: "text-warning-soft-foreground" } },
 		{ variant: "ghost", color: "destructive", class: { label: "text-destructive-soft-foreground" } },
 		{ variant: "ghost", color: "info", class: { label: "text-info-soft-foreground" } },
+
+		// Written out per colour: Tailwind's scanner cannot see `bg-${color}/8`.
+		{ material: "etched", class: { root: "rounded-sm", closeButton: "rounded-sm" } },
+		{ material: "etched", variant: "soft", color: "success", class: { root: "bg-success/8 dark:bg-success/16" } },
+		{ material: "etched", variant: "soft", color: "warning", class: { root: "bg-warning/8 dark:bg-warning/16" } },
+		{
+			material: "etched",
+			variant: "soft",
+			color: "destructive",
+			class: { root: "bg-destructive/8 dark:bg-destructive/16" },
+		},
+		{ material: "etched", variant: "soft", color: "info", class: { root: "bg-info/8 dark:bg-info/16" } },
 	],
 	defaultVariants: {
 		variant: "solid",
@@ -223,7 +243,7 @@ export const badgeVariants = tv({
  * `onClose` is deliberately not read here: the dismiss control is its own
  * pressable, so a badge that can only be dismissed still has an inert root.
  *
- * Pure, so the matrix is reachable from `bun test`. See AGENTS.md.
+ * Pure, so the matrix is unit-testable. See AGENTS.md.
  */
 export function resolveBadgeInteractive({
 	onPress,

@@ -227,6 +227,21 @@ export function uiAppearance(
 
 const BIOMETRIC_OPS: readonly BiometricOp[] = ["status", "enroll", "unenroll", "match", "fail"];
 
+/** The error a physical device gets for any biometrics op: a real sensor is never enrolled or matched. */
+function biometricsPhysicalError(device: UiDevice) {
+	const what = device.platform === "ios" ? "a physical iPhone" : "a physical Android device";
+	return driverErr(
+		"E_UNSUPPORTED",
+		`biometrics is not available on ${what}: a real Face ID / fingerprint sensor is never enrolled or matched; use a simulator or emulator`
+	);
+}
+
+/** The one-line result of a biometrics op (`status` has no `op:` prefix). */
+function biometricsText(op: BiometricOp, modality: string, enrolled: boolean): string {
+	const state = `${modality} ${enrolled ? "enrolled" : "not enrolled"}`;
+	return op === "status" ? state : `${op}: ${state}`;
+}
+
 /** `warden ui biometrics [status|enroll|unenroll|match|fail]`: simulated Face ID / Touch ID / fingerprint; no op reads the state. */
 export function uiBiometrics(
 	ctx: CommandContext,
@@ -244,15 +259,7 @@ export function uiBiometrics(
 				error: uiError("usage", `unknown biometrics op "${raw}"`, { hint: BIOMETRIC_OPS.join(" | ") }),
 			};
 		}
-		if (physicalDevice(device)) {
-			const what = device.platform === "ios" ? "a physical iPhone" : "a physical Android device";
-			return fromDriver(
-				driverErr(
-					"E_UNSUPPORTED",
-					`biometrics is not available on ${what}: a real Face ID / fingerprint sensor is never enrolled or matched; use a simulator or emulator`
-				)
-			);
-		}
+		if (physicalDevice(device)) return fromDriver(biometricsPhysicalError(device));
 		const driver = await env.driver();
 		if (!driver.success) return driver;
 		const state = fromDriver(await driver.data.biometrics(op));
@@ -260,10 +267,7 @@ export function uiBiometrics(
 		const { enrolled, modality } = state.data;
 		return finishAction(ctx, deps, env, device, driver.data, settle.data, {
 			action: "biometrics",
-			text:
-				op === "status"
-					? `${modality} ${enrolled ? "enrolled" : "not enrolled"}`
-					: `${op}: ${modality} ${enrolled ? "enrolled" : "not enrolled"}`,
+			text: biometricsText(op, modality, enrolled),
 			...(op === "status" ? {} : { args: { op } }),
 			extra: { biometrics: state.data },
 		});

@@ -1,5 +1,5 @@
 import { realpathSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import type { Exec } from "../exec";
 import { type GitFactsCache, readGitFacts } from "../git-facts";
@@ -8,7 +8,9 @@ import type { Store } from "../store";
 import type { Owner, Platform } from "../types";
 import { readExpoConfig } from "./app-config";
 import type { InstallMode } from "./app-option.schema";
+import { BUILD_HEARTBEAT_MS } from "./builds.defaults";
 import {
+	adoptKindDir,
 	aliasBuild,
 	type BuildSource,
 	buildKindOfKey,
@@ -42,13 +44,14 @@ import {
 	uninstallApp,
 } from "./install";
 import { type DeviceIo, phoneAppMatches } from "./install-device";
-import { type DeviceTarget, projectForKind } from "./kinds";
+import { type DeviceTarget, kindlessIsDev, projectForKind } from "./kinds";
 import { liveLogTail, openLiveLog } from "./live-log";
-import { type PrebuildStamp, runLocalBuild } from "./local";
+import { type BuildHeartbeat, type PrebuildStamp, runLocalBuild } from "./local";
 import { type BuildLockDeps, buildLockKey, buildTreeLockKey, withBuildLock } from "./lock";
 import { overlayDirUnlessRepoConfig } from "./overlay";
 import { readProjectKey } from "./project-key";
 import { type AppPhase, type BuildStepOutcome, type EnsureResult, type ResolveSteps, resolveApp } from "./resolve";
+import { cacheSigning } from "./signing-key";
 
 /** Cache `profile` for builds with no EAS profile (local / imported only). */
 export const LOCAL_PROFILE = "local";
@@ -75,14 +78,14 @@ export type ProjectContextInput = {
 	git?: GitFactsCache;
 };
 
-/** Load the project for `start` (bounded by its git toplevel) and compute its project key. */
-export async function projectContext(input: ProjectContextInput): AsyncResult<ProjectContext> {
-	const facts = await readGitFacts(input.exec, input.start, input.git);
-	const stopAt = facts?.toplevel;
-	const overlay = await overlayDirUnlessRepoConfig(input.exec, input.start, stopAt, input.env, input.git);
-	// a monorepo root with one app below it: look the project up from that app
-	const start = appStart(input.start, stopAt, overlay);
-	const load = {
+/** The `loadProject` options for a `projectContext` call. */
+function loadOptions(
+	input: ProjectContextInput,
+	start: string,
+	stopAt: string | undefined,
+	overlay: string | undefined
+) {
+	return {
 		start,
 		env: input.env,
 		...(stopAt ? { stopAt } : {}),
@@ -92,28 +95,50 @@ export async function projectContext(input: ProjectContextInput): AsyncResult<Pr
 		...(input.variant !== undefined ? { variant: input.variant } : {}),
 		...(input.variantOptional ? { variantOptional: true } : {}),
 	};
-	let appConfig: ProjectContext["appConfig"];
-	let project = loadProject(load);
-	if (!project.success) {
-		const dynamicDir = dynamicAppConfigDir(start, stopAt, input.bundleId, overlay);
-		if (dynamicDir === undefined) return project;
-		// the app's config is code: only Expo can resolve it, so ask Expo once and detect again with its answer
-		const read = await readExpoConfig(input.exec, dynamicDir);
-		if (!read.success) return err(`${project.error}; ${read.error}`);
-		appConfig = {
-			...(read.data.slug ? { slug: read.data.slug } : {}),
-			...(read.data.scheme ? { scheme: read.data.scheme } : {}),
-		};
-		project = loadProject({
-			...load,
-			bundleId: { ...read.data.bundleId, ...input.bundleId },
-			...(read.data.slug ? { appName: read.data.slug } : {}),
-		});
-		if (!project.success) return project;
-	}
-	const key = await readProjectKey(input.exec, project.data.root, input.git);
+}
+
+/** `loadProject`; when it fails on a dynamic app config, ask Expo once and detect again with its answer. */
+async function loadWithExpoFallback(
+	input: ProjectContextInput,
+	load: ReturnType<typeof loadOptions>,
+	start: string,
+	stopAt: string | undefined,
+	overlay: string | undefined
+): AsyncResult<{ project: Project; appConfig: ProjectContext["appConfig"] }> {
+	const first = loadProject(load);
+	if (first.success) return ok({ project: first.data, appConfig: undefined });
+	const dynamicDir = dynamicAppConfigDir(start, stopAt, input.bundleId, overlay);
+	if (dynamicDir === undefined) return first;
+	// the app's config is code: only Expo can resolve it, so ask Expo once and detect again with its answer
+	const read = await readExpoConfig(input.exec, dynamicDir);
+	if (!read.success) return err(`${first.error}; ${read.error}`);
+	const appConfig = {
+		...(read.data.slug ? { slug: read.data.slug } : {}),
+		...(read.data.scheme ? { scheme: read.data.scheme } : {}),
+	};
+	const second = loadProject({
+		...load,
+		bundleId: { ...read.data.bundleId, ...input.bundleId },
+		...(read.data.slug ? { appName: read.data.slug } : {}),
+	});
+	if (!second.success) return second;
+	return ok({ project: second.data, appConfig });
+}
+
+/** Load the project for `start` (bounded by its git toplevel) and compute its project key. */
+export async function projectContext(input: ProjectContextInput): AsyncResult<ProjectContext> {
+	const facts = await readGitFacts(input.exec, input.start, input.git);
+	const stopAt = facts?.toplevel;
+	const overlay = await overlayDirUnlessRepoConfig(input.exec, input.start, stopAt, input.env, input.git);
+	// a monorepo root with one app below it: look the project up from that app
+	const start = appStart(input.start, stopAt, overlay);
+	const load = loadOptions(input, start, stopAt, overlay);
+	const loaded = await loadWithExpoFallback(input, load, start, stopAt, overlay);
+	if (!loaded.success) return loaded;
+	const { project, appConfig } = loaded.data;
+	const key = await readProjectKey(input.exec, project.root, input.git);
 	if (!key.success) return key;
-	return ok({ project: project.data, projectKey: key.data, ...(appConfig ? { appConfig } : {}) });
+	return ok({ project, projectKey: key.data, ...(appConfig ? { appConfig } : {}) });
 }
 
 export type EnsureInput = ProjectContext & {
@@ -125,6 +150,8 @@ export type EnsureInput = ProjectContext & {
 	log: (line: string) => void;
 	/** a local build's own output, line by line, while it runs (`LocalBuildDeps.output`) */
 	buildOutput?: (line: string) => void;
+	/** the timer of the progress heartbeat a local build logs when `buildOutput` is unset (default `setInterval`) */
+	heartbeatSchedule?: BuildHeartbeat["schedule"];
 	pidAlive: PidAlive;
 	/** owner + pid of the build lock */
 	owner: Owner;
@@ -163,8 +190,11 @@ export type EnsureInput = ProjectContext & {
 	git?: GitFactsCache;
 	/** progress for a spinner: fetching / waiting / building / installing / ready (`AppPhase`) */
 	onPhase?: (phase: AppPhase) => void;
-	/** set by `ensureKindBuild`: the build goes into its kind dir and a local build is verified against `buildKey` */
-	kind?: { key: KindBuildKey; buildKey: string };
+	/**
+	 * set by `ensureKindBuild`: the build goes into its kind dir and a local build is verified against `buildKey`.
+	 * `kindless`: the kind-less cache key that names the same build (`kindlessIsDev`), read as an alias of this one.
+	 */
+	kind?: { key: KindBuildKey; buildKey: string; kindless?: string };
 };
 
 /** The kind builds `ensureKindBuild` makes: a repack is made from a base by the repack engine, never built. */
@@ -324,6 +354,15 @@ async function builtMeanwhile(
 	);
 }
 
+/** The progress heartbeat of a local build whose output this run does not show (`warden e2e`, CI). */
+function heartbeatFor(input: EnsureInput): BuildHeartbeat {
+	return {
+		everyMs: BUILD_HEARTBEAT_MS,
+		now: input.now,
+		...(input.heartbeatSchedule ? { schedule: input.heartbeatSchedule } : {}),
+	};
+}
+
 /** Run the local build (under the tree lock), its output mirrored to a live log under `liveKeys`; cache it, alias a re-key. */
 async function buildHere(
 	input: EnsureInput,
@@ -332,7 +371,11 @@ async function buildHere(
 	liveKeys: string[]
 ): AsyncResult<BuildStepOutcome> {
 	const { project, platform } = input;
-	input.onPhase?.({ phase: "building", platform, hash: input.kind?.buildKey ?? input.hash });
+	const hash = input.kind?.buildKey ?? input.hash;
+	input.onPhase?.({ phase: "building", platform, hash });
+	input.log(
+		`no cached ${platform} build for ${hash}: building it from source (a cold native build takes minutes locally, ~15-20 min on a small CI runner)`
+	);
 	const live = openLiveLog(input, liveKeys);
 	const output = (line: string) => {
 		live.write(line);
@@ -344,11 +387,12 @@ async function buildHere(
 			exec: input.exec,
 			project,
 			platform,
-			hash: input.kind?.buildKey ?? input.hash,
+			hash,
 			...(input.native !== undefined ? { native: input.native } : {}),
 			env: input.env,
 			log: input.log,
 			output,
+			...(input.buildOutput ? {} : { heartbeat: heartbeatFor(input) }),
 			...(project.compilerCache === false ? { compilerCache: false } : {}),
 			...(input.git ? { git: input.git } : {}),
 			prebuildStamp: prebuildStamp(input.store, project.root, platform),
@@ -359,6 +403,7 @@ async function buildHere(
 	if (!built.success) return built;
 	const stored = await cache(built.data.artifact, "build", false);
 	if (!stored.success) return stored;
+	if (built.data.signing) cacheSigning(dirname(stored.data.path), built.data.signing);
 	aliasPostKey(input, stored.data, built.data.postKey, onPostKey);
 	return ok({ kind: "built", path: stored.data.path });
 }
@@ -385,9 +430,41 @@ function buildStep(
 	return () => lockFollowing(input, treeKey, run, waitLine);
 }
 
+/**
+ * A dev build cached under its kind-less key (before `warden dev` and `--kind dev` shared one key): aliased under the
+ * kind hash, so the cache, the build lock and an install recorded at the old key all name it.
+ */
+function adoptKindless(input: EnsureInput): void {
+	const kindless = input.kind?.kindless;
+	if (kindless === undefined) return;
+	const { store, projectKey, platform, hash } = input;
+	if (cachedBuild(store, projectKey, platform, hash, input.now())) return;
+	const plain = cachedBuild(store, projectKey, platform, kindless, input.now());
+	if (plain === undefined || (plain.kind !== undefined && plain.kind !== "legacy")) return;
+	if (aliasBuild(store, { ...plain, kind: "dev" }, hash, input.now())) {
+		input.log(`using the dev build cached under ${kindless}`);
+	}
+}
+
+/** A kind build whose files a CI cache restored without their row: registered, so the cache step finds it. */
+function adoptRestored(input: EnsureInput): void {
+	if (input.kind === undefined) return;
+	const adopted = adoptKindDir(input.store, {
+		env: input.env,
+		projectKey: input.projectKey,
+		platform: input.platform,
+		profile: profileOf(input.project),
+		key: input.kind.key,
+		now: input.now(),
+	});
+	if (adopted) input.log(`using the ${adopted.kind ?? "cached"} build restored at ${adopted.path}`);
+}
+
 /** Wire the real effects (sqlite cache, simctl/adb, eas-cli, local build) into `resolveApp`. */
 export async function ensureApp(input: EnsureInput): AsyncResult<EnsureResult> {
 	const { store, env, project, projectKey, platform, hash } = input;
+	adoptKindless(input);
+	adoptRestored(input);
 	const layout = input.kind && {
 		dir: kindDir(env, projectKey, platform, input.kind.key),
 		kind:
@@ -427,8 +504,8 @@ export async function ensureApp(input: EnsureInput): AsyncResult<EnsureResult> {
 		...(input.onPhase ? { onPhase: input.onPhase } : {}),
 		cached: () => cachedBuild(store, projectKey, platform, hash, input.now())?.path,
 		legacy: async () => {
-			if (input.kind) return ok(undefined);
-			const found = findLegacyArtifact(project.cacheDirs, platform, hash);
+			if (input.kind && input.kind.kindless === undefined) return ok(undefined);
+			const found = findLegacyArtifact(project.cacheDirs, platform, input.kind?.kindless ?? hash);
 			if (!found) return ok(undefined);
 			const stored = await cache(found, "legacy", false);
 			return stored.success ? ok(stored.data.path) : stored;
@@ -451,58 +528,70 @@ export async function ensureApp(input: EnsureInput): AsyncResult<EnsureResult> {
 	if (deviceId !== undefined) {
 		const bundleId = bundleIdFor(project, platform);
 		if (!bundleId.success) return bundleId;
-		const target = { platform, deviceId, ...(input.physical === true ? { physical: true } : {}) };
-		const deps = {
-			exec: input.exec,
-			env,
-			...(input.fileSize ? { fileSize: input.fileSize } : {}),
-			...(input.deviceIo ? { deviceIo: input.deviceIo } : {}),
-			...(input.fileDigest ? { fileDigest: input.fileDigest } : {}),
-		};
-		steps.device = {
-			installedHash: () => installedAt(getInstall(store, platform, deviceId, bundleId.data)?.hash),
-			confirm: () => probeApp(deps, target, bundleId.data),
-			matches: async (cachedPath, installed) => {
-				// a phone has no container to stat: the install record named this build, devicectl names its version
-				if (isPhoneIos(target)) return ok(await phoneAppMatches(input.exec, cachedPath, installed));
-				// the container this process recorded at install, executable untouched: that install (17-7, no plutil)
-				const record = getInstall(store, platform, deviceId, bundleId.data);
-				const container = installed.container;
-				if (container !== undefined && record?.container === container && record.exeStamp !== undefined) {
-					if ((await executableStamp(container, input.fileStamp)) === record.exeStamp) return ok(true);
-				}
-				return appMatchesArtifact(deps, target, bundleId.data, cachedPath, container);
-			},
-			uninstall: async () => {
-				input.log(`uninstalling ${bundleId.data} from ${deviceId} (${input.installMode ?? "reinstall"})`);
-				const gone = await uninstallApp(deps, target, bundleId.data);
-				return gone.success && input.resetKeychain ? resetSimKeychain(deps, target) : gone;
-			},
-			reset: () => {
-				input.log(`resetting ${bundleId.data} data on ${deviceId} (clean)`);
-				const fs = input.resetFs ?? nodeResetFs;
-				return resetAppData({ ...deps, fs }, target, bundleId.data, { keychain: input.resetKeychain === true });
-			},
-			install: async (appPath) => {
-				input.log(`installing ${appPath} on ${deviceId}`);
-				const done = await installAndProbe(deps, target, appPath, bundleId.data);
-				if (!done.success) return done;
-				const { container } = done.data;
-				const exeStamp = container === undefined ? undefined : await executableStamp(container, input.fileStamp);
-				recordInstall(store, {
-					platform,
-					deviceId,
-					bundleId: bundleId.data,
-					hash: installKey,
-					installedAt: input.now(),
-					...(container !== undefined ? { container } : {}),
-					...(exeStamp !== undefined ? { exeStamp } : {}),
-				});
-				return ok(undefined);
-			},
-		};
+		steps.device = deviceStep(input, deviceId, bundleId.data, installedAt, () => installKey);
 	}
 	return resolveApp(steps);
+}
+
+/** The install-side steps of `resolveApp` for one device: probe, match the cached build, uninstall / reset, install. */
+function deviceStep(
+	input: EnsureInput,
+	deviceId: string,
+	bundleId: string,
+	installedAt: (recorded: string | undefined) => string | undefined,
+	installKey: () => string
+): NonNullable<ResolveSteps["device"]> {
+	const { store, env, platform } = input;
+	const target = { platform, deviceId, ...(input.physical === true ? { physical: true } : {}) };
+	const deps = {
+		exec: input.exec,
+		env,
+		...(input.fileSize ? { fileSize: input.fileSize } : {}),
+		...(input.deviceIo ? { deviceIo: input.deviceIo } : {}),
+		...(input.fileDigest ? { fileDigest: input.fileDigest } : {}),
+	};
+	return {
+		installedHash: () => installedAt(getInstall(store, platform, deviceId, bundleId)?.hash),
+		confirm: () => probeApp(deps, target, bundleId),
+		matches: async (cachedPath, installed) => {
+			// a phone has no container to stat: the install record named this build, devicectl names its version
+			if (isPhoneIos(target)) return ok(await phoneAppMatches(input.exec, cachedPath, installed));
+			// the container this process recorded at install, executable untouched: that install (17-7, no plutil)
+			const record = getInstall(store, platform, deviceId, bundleId);
+			const container = installed.container;
+			if (container !== undefined && record?.container === container && record.exeStamp !== undefined) {
+				if ((await executableStamp(container, input.fileStamp)) === record.exeStamp) return ok(true);
+			}
+			return appMatchesArtifact(deps, target, bundleId, cachedPath, container);
+		},
+		uninstall: async () => {
+			input.log(`uninstalling ${bundleId} from ${deviceId} (${input.installMode ?? "reinstall"})`);
+			const gone = await uninstallApp(deps, target, bundleId);
+			return gone.success && input.resetKeychain ? resetSimKeychain(deps, target) : gone;
+		},
+		reset: () => {
+			input.log(`resetting ${bundleId} data on ${deviceId} (clean)`);
+			const fs = input.resetFs ?? nodeResetFs;
+			return resetAppData({ ...deps, fs }, target, bundleId, { keychain: input.resetKeychain === true });
+		},
+		install: async (appPath) => {
+			input.log(`installing ${appPath} on ${deviceId}`);
+			const done = await installAndProbe(deps, target, appPath, bundleId);
+			if (!done.success) return done;
+			const { container } = done.data;
+			const exeStamp = container === undefined ? undefined : await executableStamp(container, input.fileStamp);
+			recordInstall(store, {
+				platform,
+				deviceId,
+				bundleId,
+				hash: installKey(),
+				installedAt: input.now(),
+				...(container !== undefined ? { container } : {}),
+				...(exeStamp !== undefined ? { exeStamp } : {}),
+			});
+			return ok(undefined);
+		},
+	};
 }
 
 /** The device target a kind key was made for, if any (only `dev` / `release` have one). */
@@ -522,14 +611,17 @@ export type EnsureKindInput = Omit<EnsureInput, "hash" | "kind" | "project"> & {
 /**
  * `ensureApp` for one build of a kind, through the same cache / EAS / local-build / install pipeline: cached under
  * `kindDir`, keyed (cache, build lock, install record) by `kindHash(key)`, built with the kind's command and env
- * (`projectForKind`). The legacy cache dirs are not consulted, and EAS never supplies the simulator base.
+ * (`projectForKind`). EAS never supplies the simulator base. A `dev` build whose project's kind-less build is the same
+ * build (`kindlessIsDev`) also finds the kind-less row and legacy dirs of its fingerprint; other kinds never do.
  */
 export async function ensureKindBuild(input: EnsureKindInput): AsyncResult<EnsureResult> {
 	const { key, buildKey, project, ...rest } = input;
+	const kindless =
+		key.kind === "dev" && !key.device && kindlessIsDev(project, input.platform) ? key.nativeFp : undefined;
 	return ensureApp({
 		...rest,
 		project: projectForKind(project, buildKindOfKey(key), deviceOf(key)),
 		hash: kindHash(key),
-		kind: { key, buildKey },
+		kind: { key, buildKey, ...(kindless !== undefined ? { kindless } : {}) },
 	});
 }

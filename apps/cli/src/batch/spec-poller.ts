@@ -1,3 +1,4 @@
+import type { TestResult } from "@delacour/warden-e2e/runner/results";
 import { createResultsTail, type ParseLine, type ReadFrom, type ResultsTail } from "./results-tail";
 import { type SpecMark, type SpecTracker, specTracker, type TrackedSpec, testLine } from "./spec-progress";
 
@@ -8,6 +9,8 @@ export const SPEC_POLL_MS = 1_000;
 export type SpecSink = {
 	specs: (worker: number, marks: Readonly<Record<string, SpecMark>>) => void;
 	tests: (lines: readonly string[]) => void;
+	/** each finished test with the spec it belongs to (`warden e2e --json-lines`) */
+	finished?: (spec: string, result: TestResult) => void;
 };
 
 export type SpecPollerDeps = {
@@ -39,7 +42,8 @@ export function specPoller(
 	specs: readonly TrackedSpec[],
 	resultFiles: ReadonlyMap<string, string>,
 	ended: ReadonlySet<string>,
-	sink: SpecSink
+	sink: SpecSink,
+	options: { /** the run's start (epoch ms): test lines add the run's total so far */ startedAt?: number } = {}
 ): { poll: () => Promise<void>; stop: () => void } {
 	const followed = new Map<string, Followed>();
 	const settled = new Set<string>();
@@ -68,7 +72,8 @@ export function specPoller(
 		}
 		const lines = results.flatMap((result) => {
 			const spec = entry.tracker.specOf(result);
-			return spec ? [testLine(spec.id, result)] : [];
+			if (spec) sink.finished?.(spec.id, result);
+			return spec ? [testLine(spec.id, result, options.startedAt)] : [];
 		});
 		if (lines.length > 0) sink.tests(lines);
 		if (final) settled.add(key);

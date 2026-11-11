@@ -6,7 +6,10 @@ import { openStore, type Store } from "@delacour/warden-core/store";
 import type { Fetch } from "./remote/api";
 import type { CloudErrorCode } from "./remote/errors";
 import type { SpawnViewer } from "./remote/viewer";
+import { certainlyOff } from "./telemetry/opt-out";
+import { createTracker, type Tracker } from "./telemetry/tracker";
 import { terminalUi, type Ui } from "./ui";
+import { currentBuild } from "./update/build-info";
 
 /** Everything a command touches from the outside world — injectable for tests. */
 export type CommandContext = {
@@ -39,6 +42,8 @@ export type CommandContext = {
 	readFile?: (path: string) => Promise<string | undefined>;
 	/** starts the `warden view` window; unset = `Bun.spawn` (tests inject a fake) */
 	spawn?: SpawnViewer;
+	/** anonymous usage telemetry for this invocation; unset in tests, so nothing is ever recorded there */
+	tracker?: Tracker;
 };
 
 /** A machine-readable code (and link) for a failure, carried into the `--json` error envelope. */
@@ -107,5 +112,12 @@ export function defaultContext(argv: string[]): CommandContext {
 		git: createGitFactsCache(),
 		readStdin: () => Bun.stdin.text(),
 		ui: terminalUi(process.env),
+		tracker: createTracker({
+			telemetry: async () => {
+				if (certainlyOff(process.env, currentBuild().channel)) return undefined;
+				return (await import("./telemetry/client")).telemetry();
+			},
+			stderr: STDERR.write,
+		}),
 	};
 }

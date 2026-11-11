@@ -42,7 +42,7 @@ When a native build can't be avoided, warden local builds get compiler caches th
 | iOS (Xcode 26+) | compilation caching (`COMPILATION_CACHE_ENABLE_CACHING=YES`) | content-addressed |
 | Android | Gradle build cache (`-Dorg.gradle.caching=true`) | relocatable task outputs in `~/.gradle` |
 
-ccache only runs when the Podfile enables it: set `ios.ccacheEnabled: true` with `expo-build-properties` (written to `ios/Podfile.properties.json` as `apple.ccacheEnabled`) and `brew install ccache`. `warden doctor` checks both, and warns when React Native is built from source (`ios.buildReactNativeFromSource`) instead of using the prebuilt core. `warden builds prune` also runs `ccache --cleanup`.
+ccache needs `brew install ccache` before `pod install`. warden's builds turn it on with `USE_CCACHE=1`, which Expo's and React Native's Podfiles read, and export `CCACHE_BINARY`: React Native's compiler wrapper runs `$CCACHE_BINARY clang`, and the Xcode build setting CocoaPods writes for it never reaches the compiler, so without it every compile skips ccache. A plain `expo run:ios` outside warden needs `ios.ccacheEnabled: true` with `expo-build-properties` (written to `ios/Podfile.properties.json` as `apple.ccacheEnabled`) and `CCACHE_BINARY=$(which ccache)` in its env. `warden doctor` checks the Podfile property, and warns when React Native is built from source (`ios.buildReactNativeFromSource`) instead of using the prebuilt core. `warden builds prune` also runs `ccache --cleanup`.
 
 ### Prebuilt React Native (iOS)
 
@@ -77,6 +77,8 @@ Why not share DerivedData? Its build database and dependency files hold absolute
 | `simulator` | Release for a simulator, no JS embedded (the **base**) | repacked per JS content | base: native fingerprint; repack: native fingerprint + `jsKey` |
 | `release` | Release | embedded at build | native fingerprint + JS content |
 
+A project whose own build is the `dev` kind's build (Debug, the default or the same `build` command, no variant, no `fingerprint.include: "native+js"`, no `kinds.dev.env`) has one dev build per fingerprint: `warden dev`, `warden app ensure` with no `--kind`, `--kind dev`, `warden ui open` and `warden e2e --dev` all find, build and install it under `<fingerprint>:dev`, so `warden app ensure ios --kind dev --no-install` warms the cache `warden dev` reads. A build an older warden cached under the plain `<fingerprint>` (or a legacy cache dir of it) is reused as that build, and a device it was installed on is not reinstalled.
+
 ```bash
 warden repack ios                     # this worktree's JS into the cached simulator base (builds the base once)
 warden repack ios --json              # { result, baseHash, jsKey, artifact, bundleMs }
@@ -84,7 +86,7 @@ warden app ensure ios --kind simulator --udid <udid>
 warden builds ls                      # kind, base, jsKey, worktree, branch, size, age
 ```
 
-`jsKey` is a hash of the `jsInputs` files, the bundle env (`kinds.<kind>.env`, `EXPO_PUBLIC_*`, `NODE_ENV`), the bundler flags and the native fingerprint, so a repack is never stale and never keyed by branch; worktree and branch are metadata only. A repack is an APFS clone of the base with the new bundle (iOS: `main.jsbundle` and assets, re-signed ad hoc; Android: the apk's `assets/index.android.bundle`, zipaligned and re-signed with the base's key) and ships its source map. Repacks are simulator-only. On Android, new or renamed images cannot be repacked (they live in the compiled resource table): that run builds the `release` kind and says why. `warden repack` exits 1 in that case. `fingerprint.include` / `fingerprint.jsInputs` belong to the kind-less flow and warn when set with `--kind dev|simulator`.
+`jsKey` is a hash of the `jsInputs` files, the bundle env (`kinds.<kind>.env`, `EXPO_PUBLIC_*`, `NODE_ENV`), the bundler flags and the native fingerprint, so a repack is never stale and never keyed by branch; worktree and branch are metadata only. A repack is valid only for the exact base it was cloned from: its `meta.json` records the base's identity (iOS: a hash of the executable with its embedded signature and entitlements, `Info.plist` and `_CodeSignature/CodeResources`; Android: the apk), and replacing the base under the same fingerprint (`warden builds import`, another signer) makes the next `warden repack` / `warden e2e` repack instead of reuse (`reason: "base-changed"`). No `--force` needed. A repack from before this tracking is rebuilt once. A repack is an APFS clone of the base with the new bundle (iOS: `main.jsbundle` and assets, re-signed ad hoc; Android: the apk's `assets/index.android.bundle`, zipaligned and re-signed with the base's key) and ships its source map. Repacks are simulator-only. On Android, new or renamed images cannot be repacked (they live in the compiled resource table): that run builds the `release` kind and says why. `warden repack` exits 1 in that case. `fingerprint.include` / `fingerprint.jsInputs` belong to the kind-less flow and warn when set with `--kind dev|simulator`.
 
 ## Release builds and JS changes
 
@@ -125,6 +127,9 @@ warden builds ls
 warden builds rm cd8e2dbeae5b             # drop one bad build (+ its install records)
 warden builds prune --max-size 20G        # LRU; build-locked entries stay
 warden builds import App.app --hash <h>   # file a local build under a fingerprint
+warden builds import App.app --kind simulator-base   # a CI-built Release simulator .app as the repack base
 ```
+
+`--kind simulator-base` takes a Release simulator `.app` built outside warden (another CI job's `xcodebuild … -configuration Release -sdk iphonesimulator`) and files it as the base the `simulator` kind repacks, keyed on warden's own native fingerprint of the project (`warden app fingerprint ios --kind simulator`). It checks the `.app` first (simulator build, a slice for this Mac, the project's bundle id, no Debug or dev-client payload) and leaves an embedded `main.jsbundle` out of the cached copy. See [CI](/docs/e2e/ci#reuse-a-prebuilt-app-and-the-golden).
 
 `--max-size` defaults to `20G` (or `$WARDEN_MAX_CACHE_SIZE`). `warden gc` runs the same prune (`--max-cache-size`), keeping builds used in the last 30 min, so the cache stays bounded without you calling it. The cache lives under `$WARDEN_HOME/builds` (`~/.warden/builds`).

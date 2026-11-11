@@ -110,6 +110,26 @@ export type A11yCondition = {
 /** `cosmetic`: the status bar says so, the OS and the app still see the real battery (iOS simulators) */
 export type BatteryCondition = { level?: number; charging?: boolean; cosmetic?: boolean };
 
+export type KeyboardMode = "software" | "hardware";
+
+export const KEYBOARD_MODES: readonly KeyboardMode[] = ["software", "hardware"];
+
+/** What every warden-leased device starts on and what release restores: the on-screen keyboard shows. */
+export const DEFAULT_KEYBOARD_MODE: KeyboardMode = "software";
+
+/** `software`: the on-screen keyboard shows; `hardware`: it is hidden, input arrives as from a connected keyboard. */
+export type KeyboardCondition = { mode: KeyboardMode; previousIme?: ImeState };
+
+/** Global settings holding the IME state `hardware` mode switched off (survives the driver process). */
+export const IME_STASH_ENABLED = "warden_ime_enabled";
+export const IME_STASH_DEFAULT = "warden_ime_default";
+
+/**
+ * Android only: the input methods `hardware` mode switched off, recorded so release puts them back exactly.
+ * `enabled` is `settings secure enabled_input_methods` and `default` is `default_input_method` (empty = none).
+ */
+export type ImeState = { enabled: string; default: string };
+
 export type CameraFacing = "back" | "front";
 
 export const CAMERA_FACINGS: readonly CameraFacing[] = ["back", "front"];
@@ -130,6 +150,7 @@ export type ConditionValues = {
 	a11y: A11yCondition;
 	battery: BatteryCondition;
 	camera: CameraCondition;
+	keyboard: KeyboardCondition;
 };
 
 export type ConditionArea = keyof ConditionValues;
@@ -144,6 +165,7 @@ export const CONDITION_AREAS: readonly ConditionArea[] = [
 	"a11y",
 	"battery",
 	"camera",
+	"keyboard",
 ];
 
 /** A process warden spawned to hold a condition (shaping proxy, route ticker); undo kills it. */

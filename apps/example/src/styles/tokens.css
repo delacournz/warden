@@ -29,7 +29,7 @@
 	 * The corner is half the height at every step, so a button is a capsule and
 	 * a square one a circle. A token rather than `rounded-full` because the
 	 * shape is a default, not a law: a kit that wants squarer buttons changes
-	 * three numbers here and touches no component. `tokens.test.ts` keeps each
+	 * three numbers here and touches no component. Each must stay
 	 * under half its height — past that the renderer clamps and the number
 	 * stops meaning what it says.
 	 */
@@ -106,6 +106,50 @@
 	--spacing-chart-sm: 160px;
 	--spacing-chart-md: 220px;
 	--spacing-chart-lg: 280px;
+
+	/*
+	 * The kicker: the tiny uppercase mono label that sits over a group, a
+	 * screen or a field. Ten points at 0.2em tracking, named as a pair so
+	 * `Text variant="kicker"` and a hand-written `text-kicker tracking-kicker`
+	 * agree. Nothing reads it unless asked, so the default look is unchanged.
+	 */
+	--text-kicker: 10px;
+	--tracking-kicker: 0.2em;
+
+	/*
+	 * The etched material: a one-pixel highlight set into a surface's edge plus
+	 * a very soft drop. Light puts the highlight on the bottom edge as a
+	 * darkening, dark puts it on the top edge as a lightening, so a card reads
+	 * as lit from above in both. They are two tokens because one `shadow-*`
+	 * utility sets one `box-shadow` and a scheme flip needs `dark:`.
+	 *
+	 * `etched-primary` is the primary button's own: a white inset top edge at
+	 * 16% that is the same in both schemes, because the fill under it is the
+	 * dark one in light and invisible against the pale one in dark.
+	 *
+	 * `focus` is the three-point halo an etched field draws round its ring
+	 * border. A neutral alpha rather than the ring colour: `color-mix` inside a
+	 * `box-shadow` does not survive Uniwind's compile and draws nothing, and
+	 * the ring is a neutral in every base ramp anyway.
+	 *
+	 * Opt-in only: no default component reads any of these.
+	 */
+	--shadow-etched: inset 0 -1px 0 0 rgb(0 0 0 / 4%), 0 1px 2px 0 rgb(0 0 0 / 5%);
+	--shadow-etched-dark: inset 0 1px 0 0 rgb(255 255 255 / 6%), 0 1px 2px 0 rgb(0 0 0 / 30%);
+	--shadow-etched-primary: inset 0 1px 0 0 rgb(255 255 255 / 16%), 0 1px 2px 0 rgb(0 0 0 / 5%);
+	--shadow-focus: 0 0 0 3px rgb(0 0 0 / 10%);
+	--shadow-focus-dark: 0 0 0 3px rgb(255 255 255 / 14%);
+
+	/*
+	 * A floating action button's footprint — the circle's edge, and the
+	 * height of an extended one. A scale of its own rather than
+	 * `--spacing-button-*`: a fab sits over content rather than in a row of
+	 * controls, so it is a step larger, and retuning a toolbar's density must
+	 * not move the one thing floating over the list.
+	 */
+	--spacing-fab-sm: 44px;
+	--spacing-fab-md: 56px;
+	--spacing-fab-lg: 64px;
 }
 
 /*

@@ -25,11 +25,13 @@ Export `demo: DemoDefinition` (`scripts/demo/demo.types.ts`). Copy `apps/example
 | `phoneCaption` | line under the phone, default `real simulator · not an animation`; `""` hides it |
 | `claim` | `{ biometrics?, profile? }` -> `warden claim ios --json --label demo-<feature>-<clip> --ttl 30m [--biometrics]` |
 | `app` | `bundleId`, `kind` (`simulator` default), `project` (repo-relative cwd), `deepLink` opened with `--settle`, `appearance` (`light`/`dark`, set via `simctl ui` on the leased udid, restored after) |
-| `setup` | `warden` argv run off camera after the app opens, before the deep link; `["ui","network","set","online","--relaunch"]` gives the iOS dylib launch network / clock steps need |
+| `setup` | `warden` argv run off camera after the app opens, before the deep link; `["ui","network","set","online","--relaunch"]` gives the iOS dylib launch network / clock steps need. An entry is an argv or `{ argv, optional: true }`: an optional step that exits non-zero is logged (`optional setup warden … -> <code>`) instead of failing the take (a permission prompt that may not show) |
 | `ready` | `warden ui wait` selectors that must pass after the deep link and before the video starts (e.g. `id=bio-screen`); a step never presses a screen that has not mounted |
 | `leadInMs` / `tailHoldMs` | idle before step 1 / last frame hold, padded by the renderer (the take tail is 1 s) |
-| `steps[]` | `argv` (after `warden`; recorder appends `--udid`), `output` (`ok` draws a vector check, `plain` is muted), `pauseAfterMs`, `shown?`, `hidden?` |
+| `steps[]` | `argv` (after `warden`; recorder appends `--udid`), `output` (`ok` draws a vector check, `plain` is muted, `lines` prints several muted lines), `pauseAfterMs`, `shown?`, `hidden?`, `quote?` |
 | `outro` | `# comment` line typed after the last output |
+
+`output: { kind: "lines", text: [...] }` prints one muted line per entry (keep to about 6; each past the first costs 0.4 of an entry pitch in the layout) for code or text shown from a file. Pair it with `quote: { file }` (path relative to `app.project`): after the step the recorder checks that every printed line, trimmed, occurs in that file and throws `quoted line not in <file>: <line>` otherwise, so a quoted line is never invented. Lines still go through `maskSecrets`.
 
 Times are never written by hand: the recorder measures each step's start and end against the video clock and the output line appears at the step's END.
 
@@ -84,4 +86,43 @@ Output: `apps/docs/public/demos/<feature>/<clip>.mp4` + `<clip>.jpg` (poster = l
 <DemoClip src="/demos/<feature>/<clip>" label="warden ui … doing … on a leased simulator" />
 ```
 
-Add a caption sentence naming the commands. The landing page's `apps/docs/public/demo/` is a different pipeline (`bun run demo:compose`).
+Add a caption sentence naming the commands. The batch reel `apps/docs/public/demos/e2e/batch.*` (embedded with `<DemoReel>`) is a different pipeline (`bun run demo:compose`).
+
+## 8. The `warden dev` reel (`dev/hero`)
+
+A third pipeline: warden's REAL dev dashboard (left, in a terminal card) beside the simulator `warden dev` claims itself (right). Nothing is typed or faked: `dev-take.ts` spawns `warden dev ios --label demo-dev-<clip> --headless --no-shutdown` in a PTY (`Bun.spawn({ terminal })`) mirrored into `@xterm/headless` (frame reads for the waits) and writes every PTY chunk to `tui.cast`; the clock origin is the spawn. It polls `warden ls --json` for the labelled device lease, then sets dark + 9:41, uninstalls the app and starts `ui screen video` (the phone is black until then). The dev child gets its own `WARDEN_SESSION_ID`: `warden dev` adopts a device lease held by the caller's session, and every teammate agent shares one, so without it the take could drive someone else's simulator.
+
+```bash
+bun run demo:dev dev/hero --record-only        # claim, uninstall app, 9:41 + dark, record, release by id
+bun run demo:dev dev/hero --render-only --sheet # agg + ffmpeg -> apps/docs/public/demos/dev/hero.{mp4,webm,jpg}, <work>/sheet.jpg
+bun run demo:dev dev/hero                      # both
+```
+
+- Kit: `dev-demo.ts` (CLI), `dev-take.ts` (recorder, `runBeats`), `dev-render.ts` (agg + compose, `DEV_LAYOUT`), `dev-frame.py` (card, ring, mask), `dev-timeline.ts` (cast text, ramp segments, captions). Types: `DevDemoDefinition` / `DevBeat` in `demo.types.ts`. Definition: `apps/example/demos/dev/<clip>.demo.ts`; work dir `$TMPDIR/warden-demo/dev/<clip>` (`take.mp4`, `tui.cast`, `dev.json`, `sheet.jpg`, `failure-frame.txt`).
+- A beat = `waitScreen` (regex over the TUI frame) + `waitPhone` (`ui wait` selectors) -> action (`keys` into the TUI, and/or a real `edit` of a repo file) -> `afterPhone` selectors (the hot reload landing) -> `pauseAfterMs`. `dev.json` holds each beat's start / ready / end on the video clock; captions run from a beat's action to the next one's.
+- The edit is a real source edit (`welcome.tsx` body string), reverted byte for byte in `finally`; check `git diff apps/example/src` is empty after a take.
+- `uninstallFirst` removes the app from the leased sim so `warden dev` installs the dev build from the cache on camera. The FIRST take on a fingerprint is a local build (minutes, `dev build` row compiles): record once to warm the cache, then re-record. `warden app ensure --kind dev` does not warm the cache `warden dev` reads.
+- Speed ramps: `DevBeat.ramp: N` speeds up that beat's wait by N (keeping 1.2 s head and 1 s tail at real speed) and the reel draws a `× N speed` tag. A warm take that is slow in the dev client wait ramps it. Keys and the hot reload are always real time.
+- Honesty: facts in the `<DemoReel>` caption come from the take's TUI rows (`dev build 3.5s`, `Metro 3.9s`, `dev client 161ms`) and `dev.json` (edit -> `ui wait` sees the new text: 0.76 s). Re-read them after every re-record; they change.
+- Limits: the dashboard has no separate claim row (it is inside `preparing the ios dev build`); `--headless` so no Device Hub window opens; 100x26 PTY (100 cols is the HUD's minimum). A beat with `stopVideoFirst` stops the video before its action (`q` ends the lease and `warden ui` then refuses). After `q` the take verifies `warden ls` holds no lease of the session (fails otherwise), and the cast is cut where the dashboard leaves the alt screen so the reel ends on its last frame. The dev launcher's white loading screen and the blue `Refreshing…` banner are the real app; a Metro reload can also come from another agent editing `apps/example/src`.
+- Ramps: `ramp` only applies when the wait, minus its 1.2 s head and 1 s tail, is at least 6 s (`RAMP_MIN_S`). The hero ramps its dev client wait 3x with a tag.
+- `devEnv` adds env to the `warden dev` child; the hero sets `EXPO_NO_DEPENDENCY_VALIDATION=1` (`@expo/cli` `checkDependenciesOnStart`) to drop Expo's "update available" nag from the Metro pane. Use it only for noise, never behaviour.
+- Embed with `<DemoReel src="/demos/dev/hero" command="warden dev ios" facts="…" label="…" />` (landing hero, `sims/dev.mdx`, `getting-started/quickstart.mdx`). Poster = the `posterBeat` action frame + 1 s (HUD on, all rows done, app running).
+
+## 9. Terminal-heavy clips (VID-6)
+
+All real commands; every reel shows only what ran. One clip at a time, release by label after each.
+
+| Clip | Pipeline | Command |
+|---|---|---|
+| `e2e/parallel` | `batch-take.ts`: `warden e2e <suite> --count N --record --headless` into `<work>/rec`, styling each leased sim dark + 9:41 as it boots, then `compose.ts --height 1080` | `bun run demo:batch e2e/parallel --suite example --specs app/devtools,app/gestures,app/onboarding,app/auth,app/todos --count 2` (`--record-only` / `--compose-only`; header shows spec count; counter reads `N/total shards done` when specs differ from jobs) |
+| `dev/worktrees` | `LanesDemoDefinition`: one `recordDev` per lane concurrently, a shell strip (`warden ls`) below | `bun run demo:lanes dev/worktrees` (`lanes.ts`, `lanes-frame.py`, `lanes-demo.ts`; lanes share one clock via `DevTake.startedAtS`) |
+| `golden/clone` | `DevDemoDefinition.script`: a shell script runs in the PTY instead of `warden dev` | `bun run demo:dev golden/clone` |
+| `debug/failure` | `script` + `rawVideo` | `bun run demo:dev debug/failure --sheet` |
+
+- `script` mode: no uninstall, no release check; the take ends with `release --mine --label L --shutdown` and `sims delete <udid> --yes`. A beat with `waitBoot` polls `simctl io screenshot` until the PNG exceeds 100 KB (`HOME_SCREEN_MIN_BYTES`): a freshly cloned headless sim shows the Apple logo 10+ s after `claim` returns. Ramp that wait (3x, with tag).
+- `rawVideo`: records with `simctl io recordVideo` (SIGINT to stop) because warden's `ui screen video` helper conflicts with `warden e2e` on one device.
+- `--record` only records devices present at start; elastic late joiners have no video. The host capacity gate sets how many fit, so ask for no more sims than are booted at start (max 2 here).
+- Throwaway spec for `debug/failure` is written to `apps/example/e2e/debug-demo.e2e.ts` and removed by a shell trap; check `git status` after (a killed take can leave it).
+- Embed with `<DemoReel src="/demos/<feature>/<clip>" command="…" facts="…" label="…" />`; facts come from the take, re-read after each re-record.
+- `demo:batch` styles sims with a poller (`styleWhenBooted`: `warden ls --json` for the label, `simctl list` for Booted, then `ui appearance dark` + `status_bar override 9:41`) because `warden e2e` has no per-device hook; it releases `--mine --label demo-<feature>-<clip> --shutdown` in `finally`. Use specs that pass on a clean sim (`perf`, `settings`, `todos` do not reliably); the compose `--height 1080` flag gives the 16:9 layout (terminal card left, phones right). Lanes reels (`dev/worktrees`) are 1920x1080 by construction.

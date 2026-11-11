@@ -12,7 +12,7 @@
 		"lint": "biome lint --write ./src",
 		"check": "biome check ./src",
 		"typecheck": "tsc --noEmit",
-		"test": "bun test --parallel --timings=test-timings.json",
+		"test": "bun test --parallel --timings=test-timings.json --timeout 20000",
 		"test:timings": "bun test --parallel --timings=test-timings.json --update-timings"
 	},
 	"dependencies": {

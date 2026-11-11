@@ -118,14 +118,12 @@ describe("large exports", () => {
 		};
 		Bun.gc(true);
 		const before = process.memoryUsage().rss;
-		const t0 = performance.now();
 		const res = await analyzeTrace(deps, "big.trace", { workDir: "/w" });
-		const ms = performance.now() - t0;
 		const grew = process.memoryUsage().rss - before;
 		if (!res.success) throw new Error(res.error.message);
 		expect(res.data.sampleCount).toBeGreaterThan(40_000);
 		expect(res.data.hotspots[0]?.frame).toBe("fn0");
-		expect(ms).toBeLessThan(30_000);
 		expect(grew).toBeLessThan(800 * 1024 * 1024);
+		// No wall-clock bound: ~1 s here, 30.7 s on a loaded CI runner. The 60 s timeout still catches a quadratic parse.
 	}, 60_000);
 });

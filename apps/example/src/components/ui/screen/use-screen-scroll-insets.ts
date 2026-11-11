@@ -1,4 +1,5 @@
 import { useState } from "react";
+import type { NativeScrollEvent, NativeSyntheticEvent } from "react-native";
 import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
 import {
 	type DerivedValue,
@@ -6,6 +7,7 @@ import {
 	useAnimatedReaction,
 	useAnimatedScrollHandler,
 	useAnimatedStyle,
+	useComposedEventHandler,
 	useDerivedValue,
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -19,6 +21,7 @@ import {
 	resolveScrollTopInset,
 	type ScreenScrollInsetMode,
 } from "./screen.variants";
+import { classifyScrollHandler, type ScreenScrollCallback } from "./screen-scroll-handler";
 
 /**
  * The footer's collapsed baseline height, as JS state.
@@ -40,8 +43,7 @@ function useFooterBaselineHeight(estimatedHeight = 0): number {
 		(current, previous) => {
 			if (current <= 0 || current === previous) return;
 			scheduleOnRN(setMeasured, current);
-		},
-		[]
+		}
 	);
 
 	return measured;
@@ -80,8 +82,7 @@ export function useChatComposerInset(): DerivedValue<number> {
 	const { bottom } = useSafeAreaInsets();
 
 	return useDerivedValue(
-		() => footerOccupancy(footer.height.value, bottom) + footer.overlayHeight.value + CHAT_COMPOSER_GAP,
-		[bottom]
+		() => footerOccupancy(footer.height.value, bottom) + footer.overlayHeight.value + CHAT_COMPOSER_GAP
 	);
 }
 
@@ -95,8 +96,7 @@ export function useChatComposerGrowthPadding(): DerivedValue<number> {
 	const { footer } = useScreenPart("useChatComposerGrowthPadding");
 
 	return useDerivedValue(
-		() => Math.max(0, footer.height.value - footer.initialHeight.value) + footer.overlayHeight.value,
-		[]
+		() => Math.max(0, footer.height.value - footer.initialHeight.value) + footer.overlayHeight.value
 	);
 }
 
@@ -162,13 +162,19 @@ export function useScreenFooterKeyboardClearance(): number {
  * container cannot animate on the UI thread, and the navbar's height is only
  * known after it lays out — so a spacer view whose height is an animated style
  * is what lets the reserve appear in the same frame as the measurement.
+ *
+ * `onScroll` is the caller's own, and it is composed with the screen's tracking
+ * rather than competing with it for the one prop. Pass either a plain callback
+ * or a `useAnimatedScrollHandler` result; the hook sorts them.
  */
-export function useScreenScrollInsets(mode: ScreenScrollInsetMode) {
+export function useScreenScrollInsets(mode: ScreenScrollInsetMode, onScroll?: ScreenScrollCallback | null) {
 	const { navbar, footer, scrollY, contentHeight, layoutHeight } = useScreenPart("a Screen scrollable");
 	const { bottom, top } = useSafeAreaInsets();
 	const keyboard = useReanimatedKeyboardAnimation();
+	const caller = classifyScrollHandler(onScroll);
+	const callerCallback = caller.kind === "js" ? caller.handler : undefined;
 
-	const scrollHandler = useAnimatedScrollHandler({
+	const trackingHandler = useAnimatedScrollHandler({
 		onScroll: (event) => {
 			scrollY.value = event.contentOffset.y;
 
@@ -179,8 +185,22 @@ export function useScreenScrollInsets(mode: ScreenScrollInsetMode) {
 			if (event.layoutMeasurement.height !== layoutHeight.value) {
 				layoutHeight.value = event.layoutMeasurement.height;
 			}
+
+			// Only `nativeEvent` is real: a worklet sees the native payload, not
+			// React Native's synthetic wrapper, so `persist()` and the rest of the
+			// wrapper do not exist. A caller needing more passes a worklet handler.
+			if (callerCallback) {
+				scheduleOnRN(callerCallback, { nativeEvent: event } as unknown as NativeSyntheticEvent<NativeScrollEvent>);
+			}
 		},
 	});
+
+	// A caller's `useAnimatedScrollHandler` runs beside the tracking on the UI
+	// thread rather than replacing it — one `onScroll` prop, two worklets.
+	const scrollHandler = useComposedEventHandler([
+		trackingHandler,
+		caller.kind === "worklet" ? (caller.handler as typeof trackingHandler) : null,
+	]);
 
 	const insetTopAnimatedStyle = useAnimatedStyle(() => {
 		return {
@@ -190,7 +210,7 @@ export function useScreenScrollInsets(mode: ScreenScrollInsetMode) {
 				safeAreaTop: top,
 			}),
 		};
-	}, [top]);
+	});
 
 	const insetBottomAnimatedStyle = useAnimatedStyle(() => {
 		return {
@@ -203,7 +223,7 @@ export function useScreenScrollInsets(mode: ScreenScrollInsetMode) {
 				safeAreaBottom: bottom,
 			}),
 		};
-	}, [mode, bottom]);
+	});
 
 	return { insetBottomAnimatedStyle, insetTopAnimatedStyle, scrollHandler };
 }

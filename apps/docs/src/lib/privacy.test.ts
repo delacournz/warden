@@ -138,8 +138,35 @@ describe("the privacy policy's claims", () => {
 		expect(EVERYTHING).toContain("github.com/delacournz/warden/releases");
 	});
 
-	/** The CLI claims to send no telemetry. Hold that to there being no analytics package in it. */
-	test("the CLI has no package that phones home", () => {
+	/**
+	 * The CLI sends anonymous usage data, so the policy has to say so and name the host from the code, the
+	 * switches that turn it off, and every property an event can carry.
+	 */
+	test("discloses the CLI's telemetry: its host, its switches and every property it sends", () => {
+		const client = readFileSync(join(REPO, "apps", "cli", "src", "telemetry", "client.ts"), "utf-8");
+		const host = /TELEMETRY_HOST = "([^"]+)"/.exec(client)?.[1];
+		const row = DISCLOSURES.find((disclosure) => disclosure.what.startsWith("Once per command"));
+
+		expect(host).toBe("telemetry.delacour.co.nz");
+		expect(row).toBeDefined();
+		expect((row as Disclosure).to).toContain(host as string);
+		expect(EVERYTHING).toContain("warden telemetry disable");
+		expect(EVERYTHING).toContain("DO_NOT_TRACK=1");
+		expect(EVERYTHING).toContain("WARDEN_TELEMETRY_DISABLED=1");
+		expect(EVERYTHING).not.toContain("collects no telemetry");
+		expect(EVERYTHING).not.toContain("sends nothing about you");
+	});
+
+	test("words every property the CLI's command event carries", () => {
+		const properties = read("..", "..", "cli", "src", "telemetry", "properties.ts");
+		const block = /PROPERTY_DISCLOSURE[^=]*= \{([^}]+)\}/.exec(properties)?.[1] ?? "";
+		const phrases = [...block.matchAll(/:\s*"([^"]+)"/g)].map((match) => match[1] as string);
+
+		expect(phrases.length).toBeGreaterThan(5);
+		for (const phrase of phrases) expect(EVERYTHING.toLowerCase()).toContain(phrase.toLowerCase());
+	});
+
+	test("the telemetry package is bundled into the CLI, and the CLI has no other package that phones home", () => {
 		const manifest = JSON.parse(readFileSync(join(REPO, "apps", "cli", "package.json"), "utf-8")) as {
 			dependencies?: Record<string, string>;
 		};
@@ -147,8 +174,8 @@ describe("the privacy policy's claims", () => {
 			PHONES_HOME.some((pattern) => pattern.test(name))
 		);
 
+		expect(manifest.dependencies?.["@delacournz/cli-telemetry"]).toBeDefined();
 		expect(phoning).toEqual([]);
-		expect(EVERYTHING).toContain("collects no telemetry");
 	});
 });
 

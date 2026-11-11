@@ -41,7 +41,17 @@ export function defaultBuildCommand(
 	if (platform === "ios") {
 		return `${IOS_NATIVE_PREPARE} && bunx expo run:ios ${configuration === "Release" ? "--configuration Release " : ""}${flags}`;
 	}
-	return `bunx expo run:android ${configuration === "Release" ? "--variant release " : ""}${flags}`;
+	return androidGradleCommand(configuration, framework);
+}
+
+/**
+ * Android build: prebuild a CNG checkout that has no `android/`, then Gradle alone. Never `expo run:android`: it has no
+ * build-only mode (its `--no-install` skips dependency install, not the app's) and installs the APK on whichever
+ * emulator is booted, warden's or not. warden installs the cached build itself.
+ */
+export function androidGradleCommand(configuration: BuildConfiguration, framework: AppFramework = "expo"): string {
+	const gradle = `cd android && ./gradlew app:assemble${configuration} -PreactNativeArchitectures=${ANDROID_HOST_ABI}`;
+	return framework === "react-native" ? gradle : `${ANDROID_NATIVE_PREPARE} && ${gradle}`;
 }
 
 /** What an iOS device build is signed with: the team (always) and, when set, the bundle id that replaces the project's. */
@@ -74,7 +84,7 @@ export function iosDeviceBuildCommand(
 	const xcodebuild = [
 		"RCT_NO_LAUNCH_PACKAGER=1 xcodebuild",
 		'-workspace "$ws"',
-		'-scheme "${ws%.xcworkspace}"',
+		`-scheme "\${ws%.xcworkspace}"`,
 		`-configuration ${configuration}`,
 		"-destination generic/platform=iOS",
 		`-derivedDataPath ${IOS_DEVICE_DERIVED_DATA}`,
@@ -108,8 +118,7 @@ export function simulatorBuildCommand(platform: Platform, framework: AppFramewor
 		}
 		return `${IOS_NATIVE_PREPARE} && SKIP_BUNDLING=1 bunx expo run:ios --configuration Release --no-install --no-bundler`;
 	}
-	const gradle = `cd android && ./gradlew app:assembleRelease -PreactNativeArchitectures=${ANDROID_HOST_ABI}`;
-	return framework === "react-native" ? gradle : `${ANDROID_NATIVE_PREPARE} && ${gradle}`;
+	return androidGradleCommand("Release", framework);
 }
 
 /**
@@ -143,6 +152,8 @@ export const EAS_TRIGGER_GRACE_MS = 3 * 60_000;
 
 /** Local native build timeout. */
 export const LOCAL_BUILD_TIMEOUT_MS = 60 * 60_000;
+/** How often a local build nobody watches says it is still running (`still building ios (6m 0s): …`). */
+export const BUILD_HEARTBEAT_MS = 60_000;
 /** Fingerprint command timeout. */
 export const FINGERPRINT_TIMEOUT_MS = 5 * 60_000;
 

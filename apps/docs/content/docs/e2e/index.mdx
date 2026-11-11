@@ -1,8 +1,36 @@
 ---
-title: Get started
-description: Take an Expo app with no warden setup to a passing spec, run by hand and then in parallel across leased simulators.
+title: "React Native E2E testing: get started"
+sidebarTitle: Get started
+description: React Native E2E testing for an Expo app. From no warden setup to a green warden e2e run on an iOS simulator or Android emulator in about five minutes.
 icon: FlaskConical
 ---
+
+<DemoReel
+  src="/demos/e2e/batch"
+  label="warden batch leasing five iOS simulators and running salient's end-to-end specs across them"
+  command="warden batch salient-e2e"
+  facts="37/37 passed · shown at 5× speed"
+/>
+
+Three commands from an Expo app to a passing end-to-end test on a leased simulator or emulator:
+
+```bash
+warden init --bundle-id com.example.app   # writes warden.config.ts and e2e/smoke.e2e.ts
+bun add -d @delacour/warden-e2e@<version> # run the exact line init prints
+warden e2e                                # leases a device, builds the app, runs the specs
+```
+
+The rest of this page walks through each one, then turns the smoke test into a real one.
+
+## Before you start
+
+| | iOS | Android |
+|---|---|---|
+| Machine | macOS with Xcode and an iOS simulator runtime | the Android SDK (`adb`, `emulator`) |
+| warden | installed ([Installation](/docs/getting-started/installation)), `warden doctor` green | same |
+| App | an Expo app | an Expo app |
+
+No bun install is needed for the specs: `warden e2e` runs them with the bun built into warden.
 
 ## Set up with your agent
 
@@ -13,78 +41,46 @@ Paste this into your coding agent. It sets up warden e2e, writes a real spec for
   text={`Set up warden e2e tests for this Expo app and write the first real spec.
 1. If warden is missing: install it with bunx @delacour/warden install if bun is installed (check with command -v bun), otherwise npx @delacour/warden install. Show me the diff before you approve it. If warden is not found afterwards, add ~/.local/bin to PATH. Then run warden doctor and fix what it reports.
 2. Run warden skill show and read it, including the specs and suites references. Follow its rules.
-3. Run warden init (add --bundle-id <id> if the app has none) and install every package it names.
-4. Add @delacour/warden-e2e as a dev dependency, at the version warden --version prints.
-5. Pick the app's main flow. Add testID and accessible to every element the flow touches.
-6. Write e2e/<flow>.e2e.ts with test and expect from @delacour/warden-e2e: open the app, act with screen.getByTestId(...), assert with expect(...).toBeVisible().
-7. Run warden e2e --count 3. If a spec fails, read screen-at-failure.txt and e2e-report.json in the batch dir and fix the cause, never weaken an assertion.
+3. Run warden init (add --bundle-id <id> if the app has none, --platform android for an Android suite) and run every install command it prints. They use this project's package manager and pin @delacour/warden-e2e to the right version.
+4. Pick the app's main flow. Add testID and accessible to every element the flow touches.
+5. Write e2e/<flow>.e2e.ts with test and expect from @delacour/warden-e2e: open the app, act with screen.getByTestId(...), assert with expect(...).toBeVisible().
+6. Run warden e2e. If a spec fails, read screen-at-failure.txt and e2e-report.json in the batch dir and fix the cause, never weaken an assertion.
 Report the spec you wrote, the testIDs you added and the result.`}
 />
 
 ## Or set up manually
 
-An e2e test here is a `*.e2e.ts` file that drives your app on a real simulator and asserts on what is on screen. `@delacour/warden-e2e` is the spec API (`test` and `expect` over `bun test`); `warden e2e` leases the devices, installs your app and runs the specs on all of them at once.
-
-This page goes from nothing to one meaningful spec running on several simulators. You need:
-
-- warden installed ([Installation](/docs/getting-started/installation)).
-- An Expo app, on macOS with Xcode and an iOS runtime.
-
-No bun install is needed: `warden e2e` runs the specs with the bun built into warden.
+An e2e test is a `*.e2e.ts` file that drives your app on a real simulator or emulator and asserts on what is on screen. Pick your platform once; every tab on this page follows it.
 
 <Steps>
 <Step>
 ### Scaffold
 
+<Tabs groupId="platform" persist items={["iOS", "Android"]}>
+<Tab value="iOS">
 ```bash
 warden init --bundle-id com.example.app
 ```
+</Tab>
+<Tab value="Android">
+```bash
+warden init --platform android --bundle-id com.example.app
+```
+</Tab>
+</Tabs>
 
-`--bundle-id` is only needed when the app has none yet; it is written to `app.json`. `init` writes `warden.config.ts` and `e2e/smoke.e2e.ts`. Existing files are kept (`--force` overwrites), and an app that already has specs gets no smoke spec. `--dry-run` prints the plan. It also prints the install commands for anything missing, such as `expo-dev-client`.
+`--bundle-id` is only needed when `app.json` has no id for the platform; it is written there. `init` writes `warden.config.ts` (one suite, `platform` set from `--platform`, default `ios`) and `e2e/smoke.e2e.ts`. Existing files are kept (`--force` overwrites), and an app that already has specs gets no smoke spec. `--dry-run` prints the plan.
 </Step>
 <Step>
 ### Install the spec package
 
+`init` installs nothing: it prints one install line per missing package, in your project's package manager (from the lockfile; bun without one). Run the `@delacour/warden-e2e` line as printed, e.g.:
+
 ```bash
-bun add -d @delacour/warden-e2e@<warden version>
+npm install -D @delacour/warden-e2e@0.16.0
 ```
 
-Use the version `warden --version` prints: the spec preload refuses any other.
-</Step>
-<Step>
-### Read the config
-
-```ts title="warden.config.ts"
-export default {
-	projects: [{ name: "my-app", bundleId: { ios: "com.example.app" } }],
-	e2e: {
-		"my-app": {
-			project: "my-app",
-			specsDir: "e2e",
-			platform: "ios",
-			isolate: "device",
-			count: 2,
-			app: true,
-			// no Expo dev menu, onboarding sheet or floating button over the app
-			metro: { launchArgs: ["-EXDevMenuShowsAtLaunch", "NO" /* … */] },
-		},
-	},
-};
-```
-
-A suite is a named recipe for one run:
-
-| Key | Meaning |
-|---|---|
-| `project` | which entry in `projects` to build and install |
-| `specsDir` | where the `*.e2e.ts` files live |
-| `platform` | `"ios"` here; see [Suites](/docs/e2e/suites) for Android |
-| `isolate: "device"` | one `bun test` process per device, specs sharded round-robin |
-| `count` | simulators to lease (`--count` overrides; `init` writes 2) |
-| `app: true` | install the `simulator` build kind: a Release build without a JS bundle, built once per native fingerprint, with your JS repacked into it |
-| `metro` | dev-server options; applies when you run with `--dev` |
-
-Every key is covered in [Suites](/docs/e2e/suites) and [Configuration](/docs/reference/configuration).
+It is pinned to the version `warden --version` prints: the spec runner refuses any other. `init` also names `expo-dev-client` when it is missing; that one is for `warden dev`, not for `warden e2e`.
 </Step>
 <Step>
 ### Add testIDs to your components
@@ -104,24 +100,12 @@ A missing id is fixed here, not with retries or longer timeouts.
 <Step>
 ### Write a spec
 
-`init` leaves `e2e/smoke.e2e.ts`:
-
-```ts title="e2e/smoke.e2e.ts"
-import { test } from "@delacour/warden-e2e";
-
-test.use({ launch: "none", systemAlerts: "dismiss" });
-
-test("the app opens", async ({ app }) => {
-	await app.open({ wait: "quiet" });
-});
-```
-
-`launch: "none"` skips the runner's own fresh `app.open()`, so the test opens the app itself. `systemAlerts: "dismiss"` answers a system prompt that appears over the app. Now add a test that does something:
+`init` leaves `e2e/smoke.e2e.ts`, which only opens the app. Add one that does something:
 
 ```ts title="e2e/todos.e2e.ts"
 import { expect, test } from "@delacour/warden-e2e";
 
-test.use({ launch: "none", systemAlerts: "dismiss" });
+test.use({ launch: "none" });
 
 test("adding a todo updates the count", async ({ app, screen }) => {
 	await app.open({ wait: { until: screen.getByTestId("todo-input") } });
@@ -134,60 +118,48 @@ test("adding a todo updates the count", async ({ app, screen }) => {
 });
 ```
 
-The pieces:
+The runner opens the app before every test and does not wait for a screen. `launch: "none"` skips that open so the test can open it and wait for the screen it names: `app.open({ wait: { until: locator } })` returns once that locator is visible, so the first tap lands.
 
-- **Fixtures.** `app` opens and closes the app, `screen` finds elements, `device` controls the simulator.
-- **Locators.** `screen.getByTestId(id)` is the stable one. Also `getByText`, `getByLabel`, `getByPlaceholder`, `getByValue` and `getByRole`. A locator is lazy: nothing is read until you act or assert.
-- **Actions.** `tap()`, `fill(text)`, `type`, `clear`, `press(key)`, `swipe`, `scrollTo`. Each waits for the element first.
-- **Assertions.** `expect(locator)` polls until it holds: `toBeVisible`, `toBeHidden`, `toHaveText`, `toHaveValue`, `toBeChecked`, `toHaveCount`, `toBeEnabled`, `toBeDisabled`; `.not` inverts.
-- **Open.** `app.open({ wait: { until: locator } })` returns once the screen you name is mounted, so the first tap lands.
-
-Prefer `getByTestId` over text: a text selector breaks when the copy changes. Full reference: [Write specs](/docs/e2e/specs).
+`screen.getByTestId(id)` is the stable locator; a locator is lazy and nothing is read until you act or assert. `expect(locator)` polls until it holds. Full reference: [Write specs](/docs/e2e/specs).
 </Step>
 <Step>
-### Run one spec by hand (optional)
-
-Claim a simulator, install your build on it, and point the spec at it:
+### Run it
 
 ```bash
-warden claim ios --json                       # -> udid
-WARDEN_UDID=<udid> WARDEN_BUNDLE_ID=com.example.app \
-  bun test --preload @delacour/warden-e2e/preload e2e/todos.e2e.ts
-warden release <leaseId>
+warden e2e
 ```
 
-`WARDEN_UDID` switches the runner on; without it the preload does nothing. Add `WARDEN_METRO_URL` for a dev client. A bare claim lasts 5 minutes. Details: [Write specs](/docs/e2e/specs#run-a-spec-by-hand).
-</Step>
-<Step>
-### Run the suite
+With one suite in the config the name is optional; the suite's `platform` picks iOS or Android. The first run of a native fingerprint builds the app, which takes minutes; later runs reuse the cache.
 
-```bash
-warden e2e              # the suite's own count
-warden e2e --count 3    # three simulators
+A green run ends like this on stderr:
+
+```text
+warden e2e: tests 2 passed · 0 failed · 0 skipped
+evidence in <batchDir>
+2/2 spec(s) passed — gate passed
+took <total> — setup <s> · tests <t> · teardown <d>
 ```
 
-With one suite in the config the name is optional. warden leases the simulators, installs the app, starts Metro when you pass `--dev`, and spreads the specs over the devices. The first run of a native fingerprint builds the app (minutes); later runs reuse the cache. A project without `@delacour/warden-e2e` fails before any device is claimed.
+Exit code `0` means every required spec passed. A project without `@delacour/warden-e2e` fails before any device is claimed.
 </Step>
 <Step>
-### Read the evidence when it fails
+### When it is red
 
-Every run writes a batch directory, `$WARDEN_HOME/batches/<id>` (`WARDEN_HOME` defaults to `~/.warden`).
-
-| File | What it tells you |
-|---|---|
-| `e2e-report.json` | verdict per spec and per test (`--json` prints it) |
-| `e2e/<worker>-<seq>/results.jsonl` | every test's status, duration and error |
-| `<spec>/<test>-<hash>/screen-at-failure.txt` | the accessibility tree when the test failed. Read this first: a query that found nothing is an element that is missing or not `accessible` |
-| `<spec>/<test>-<hash>/failure.png` | the screen at that moment |
-| `<spec>/<test>-<hash>/trace.jsonl` | every step and device call, with timings |
-
-The per-test folder sits under `e2e/<worker>-<seq>/`. Paths, log files and fixes for common failures: [Debugging](/docs/e2e/debugging).
+The run lists the failed specs and tests and prints `evidence in <batchDir>`. Open `screen-at-failure.txt` there first: it is the accessibility tree at the failure, and a query that found nothing is an element that is missing or not `accessible`. [Debugging](/docs/e2e/debugging) walks through a first failure and lists every evidence file.
 </Step>
 </Steps>
 
-## Let your agent write it
+## Run on more devices
 
-You do not have to type specs. Your agent drives the app with [`warden ui`](/docs/sims/ui) between `warden ui record start <name>` and `warden ui record stop`. `stop` writes the spec to `<specsDir>/<name>.e2e.ts`, lints it, merges the testIDs it used into a module, and runs it once on the same device. There is no intermediate file: the spec runner is the replay. Details: [Author specs by recording](/docs/e2e/author-specs).
+```bash
+warden e2e --count 5
+```
+
+`--count` leases that many devices and spreads the specs over them, one `bun test` process per device (the clip at the top is 37 specs on 5 simulators). Suite keys (`count`, `platform`, `app`, `metro` and the rest) are in [Suites](/docs/e2e/suites); one spec against a device you claimed yourself is [Run a spec by hand](/docs/e2e/specs#run-a-spec-by-hand).
+
+## Let your agent write specs
+
+Your agent drives the app with [`warden ui`](/docs/sims/ui) between `warden ui record start <name>` and `warden ui record stop`. `stop` writes `<specsDir>/<name>.e2e.ts`, lints it, merges the testIDs it used into a module and runs it once on the same device. Details: [Record specs](/docs/e2e/author-specs).
 
 If your agent does not know warden yet, see [Set up your agent](/docs/getting-started/agent-setup). Then paste:
 
@@ -205,11 +177,11 @@ Use warden to write an e2e spec for adding a todo in this app.
 <Cards>
 <Card title="How it works" href="/docs/e2e/how-it-works" description="What happens between warden e2e and a verdict." />
 <Card title="Write specs" href="/docs/e2e/specs" description="Locators, actions, matchers, app and device." />
-<Card title="Author specs by recording" href="/docs/e2e/author-specs" description="Turn a warden ui session into a spec." />
+<Card title="Record specs" href="/docs/e2e/author-specs" description="Turn a warden ui session into a spec." />
 <Card title="Accessibility testing" href="/docs/e2e/accessibility" description="Audits, reading order, announcements, TalkBack." />
 <Card title="Suites" href="/docs/e2e/suites" description="Devices, Metro, timeouts and passes." />
 <Card title="Affected" href="/docs/e2e/affected" description="Run only the specs a change can break." />
 <Card title="Debugging" href="/docs/e2e/debugging" description="Read the evidence and fix the failure." />
 <Card title="CI" href="/docs/e2e/ci" description="Run suites in your pipeline." />
-<Card title="Device conditions" href="/docs/sims/conditions" description="Network, location, clock, permissions, camera and more, inside a spec." />
+<Card title="Device conditions" href="/docs/e2e/conditions" description="Network, location, clock, permissions, camera and more, inside a spec." />
 </Cards>

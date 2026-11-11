@@ -125,6 +125,9 @@ struct PointRequest: Sendable {
 /// Why a read moved from `axbridge` to `ax`.
 struct Fallback: Sendable {
   var reason: String
+  /// What the bridge failure looked like (`fallback.stall` on the wire); nil for a fallback that was not a bridge
+  /// failure (an empty tree).
+  var stall: BridgeStallReport? = nil
 }
 
 struct AXOutcome<Value: Sendable>: Sendable {
@@ -135,11 +138,13 @@ struct AXOutcome<Value: Sendable>: Sendable {
 
 extension Session {
   /// Failures that mean "the in-guest bridge cannot answer right now", where the host `ax` reader still may.
+  /// A guest that stalls (`BridgeStalled`) or that idb reports as not answering is one of them.
   static func isBridgeFailure(_ error: any Error) -> Bool {
+    if error is BridgeStalled { return true }
     if let error = error as? AXBridgeError {
       switch error {
       case .bridgeUnavailable, .readerUnavailable, .frontmostUnresolved, .applicationUnavailable,
-        .applicationNotResponding, .guestDiedBeforeBinding, .guestFailure:
+        .applicationNotResponding, .guestDiedBeforeBinding, .guestFailure, .guestNotAnswering:
         return true
       default:
         return false
@@ -195,43 +200,43 @@ extension Session {
   }
 
   /// Runs `body` on the requested reader (default: the session's `--ax`, i.e. `axbridge`). With no explicit
-  /// `backend`, an `axbridge` read that fails with `bridgeUnavailable` / `applicationUnavailable` /
-  /// `applicationNotResponding` (or a bridge that never came up) is retried once on `ax` and a `log` event says so.
+  /// `backend`, an `axbridge` read that fails with a bridge failure (`bridgeUnavailable` / `applicationUnavailable` /
+  /// `applicationNotResponding` / a guest not answering), that stalls past `bridgeDeadline.readMs`, or a bridge that
+  /// never came up is retried once on `ax` and a `log` event says so. After a stall the bridge is skipped for
+  /// `bridgeDeadline.cooldownSeconds` (`Session.readAX`).
   func withAX<Value: Sendable>(
     backend requested: AXBackend?, op: String,
-    _ body: @Sendable (any UIAutomation) async throws -> Value
+    _ body: @escaping @Sendable (any UIAutomation) async throws -> Value
   ) async throws -> AXOutcome<Value> {
     let primary = requested ?? AXBackend(rawValue: axDefault) ?? .axbridge
-    if primary == .ax {
-      guard let reader = axHostReader else {
-        throw WireError(.axUnavailable, "the host accessibility (ax) reader could not be created")
-      }
-      return AXOutcome(value: try await body(reader), backend: .ax, fallback: nil)
-    }
+    let bridge = axBridgeReader.map { reader in { @Sendable in try await body(reader) } }
+    let host = axHostReader.map { reader in { @Sendable in try await body(reader) } }
+    return try await Session.readAX(
+      requested: primary == .ax ? .ax : requested, bridge: bridge, host: host,
+      recover: { pid in await self.recoverBridge(pid: pid) }, policy: bridgeDeadline, gate: bridgeStall,
+      warmth: bridgeWarmth, health: bridgeHealth, recovery: bridgeRecovery(), reaper: bridgeReaper,
+      now: { ProcessInfo.processInfo.systemUptime },
+      log: { OpLog.shared.log(.warn, $0, op: op) }, bridgeName: self.bridge.name,
+      guestAgeSeconds: { self.quiescence.wedge.guestAge() }, wedge: axWedgeRecovery)
+  }
 
-    var reason: String
-    if let reader = axBridgeReader {
-      do {
-        let value = try await Session.readRecovering(
-          read: { try await body(reader) },
-          recover: { pid in await self.recoverBridge(pid: pid) },
-          log: { OpLog.shared.log(.warn, $0, op: op) })
-        bridgeHealth.recordSuccess()
-        return AXOutcome(value: value, backend: .axbridge, fallback: nil)
-      } catch {
-        if Session.isBridgeFailure(error) { bridgeHealth.recordFailure(WireError.from(error).message) }
-        guard requested == nil, Session.isBridgeFailure(error), axHostReader != nil else { throw error }
-        reason = WireError.from(error).message
-      }
-    } else {
-      guard requested == nil, axHostReader != nil else {
-        throw WireError(.axUnavailable, "the axbridge reader is unavailable (bridge \(bridge.name))")
-      }
-      reason = "axbridge reader unavailable (bridge \(bridge.name))"
-    }
-    OpLog.shared.log(.warn, "axbridge -> ax fallback: \(reason)", op: op)
-    let value = try await body(axHostReader!)
-    return AXOutcome(value: value, backend: .ax, fallback: Fallback(reason: reason))
+  /// The recovery probe's liveness check: one hit-test at the middle of the screen through the bridge, which answers
+  /// a single element instead of the whole tree. Nil without a bridge.
+  func bridgeRecovery() -> BridgeRecovery? {
+    guard let reader = axBridgeReader else { return nil }
+    let screen = self.screen
+    let point = CGPoint(x: max(1, screen.width / 2), y: max(1, screen.height / 2))
+    return BridgeRecovery(
+      probe: bridgeProbe,
+      check: { _ = try await reader.hitTest(at: point, options: AccessibilityRequestOptions()) })
+  }
+
+  /// Starts a recovery probe in the background (no-op inside its back-off or without a bridge).
+  func probeBridge() {
+    guard let recovery = bridgeRecovery() else { return }
+    _ = Session.startProbe(
+      recovery, policy: bridgeDeadline, gate: bridgeStall, warmth: bridgeWarmth, health: bridgeHealth,
+      now: { ProcessInfo.processInfo.systemUptime }, log: { OpLog.shared.log(.info, $0, op: "probe") })
   }
 
   func buildOptions(interactiveOnly: Bool = false, maxDepth: Int? = nil, maxNodes: Int? = nil, document: AccessibilityScreenInfo?)
@@ -265,11 +270,20 @@ extension Session {
     var options = AccessibilityRequestOptions(format: .complete, keys: request.keys)
     options.filter = .all
     let readOptions = options
-    let query: AccessibilityElementQuery = request.pid.map { .application(pid: $0) } ?? .frontmost
-    var outcome = try await withAX(backend: request.backend, op: "snapshot") { reader in
-      try await reader.describe(query, options: readOptions).document
+    var target: PidTarget?
+    var outcome: AXOutcome<AccessibilityDocument>
+    if let pid = request.pid {
+      outcome = try await withAX(backend: request.backend, op: "snapshot") { reader in
+        try await reader.describe(.application(pid: pid), options: readOptions).document
+      }
+    } else {
+      let targeted = try await withFrontmostAX(backend: request.backend, op: "snapshot") { reader, query in
+        try await reader.describe(query, options: readOptions).document
+      }
+      outcome = targeted.outcome
+      target = targeted.target
     }
-    if request.backend == nil, outcome.backend == .axbridge, Session.isEmptyRoot(outcome.value) {
+    if request.backend == nil, target == nil, outcome.backend == .axbridge, Session.isEmptyRoot(outcome.value) {
       outcome = try await recoverEmptyRoot(first: outcome, options: readOptions)
     }
     let document = outcome.value
@@ -278,7 +292,14 @@ extension Session {
       document: document, backend: outcome.backend, screen: screen, interactiveOnly: request.interactiveOnly,
       maxDepth: request.maxDepth, maxNodes: request.maxNodes)
     if let fallback = outcome.fallback {
-      data["fallback"] = ["from": "axbridge", "to": "ax", "reason": .string(fallback.reason)]
+      var fields: [String: JSON] = [
+        "from": "axbridge", "to": .string(outcome.backend.rawValue), "reason": .string(fallback.reason),
+      ]
+      if let stall = fallback.stall { fields["stall"] = stall.json }
+      data["fallback"] = .object(fields)
+    }
+    if let target {
+      data["target"] = ["pid": .int(Int(target.pid)), "source": .string(target.source.rawValue)]
     }
     if request.raw, let encoded = try? JSONEncoder().encode(document),
       let raw = try? JSONDecoder().decode(JSON.self, from: encoded)
@@ -485,8 +506,36 @@ extension Session {
     let readOptions = options
     let screen = self.screen
     return try await Session.answerAlert(request, screen: screen) { backend in
-      guard let reader = backend == .ax ? self.axHostReader : self.axBridgeReader else { return nil }
-      return try await reader.describe(.frontmost, options: readOptions).document
+      if backend == .ax {
+        guard let reader = self.axHostReader else { return nil }
+        return try await reader.describe(.frontmost, options: readOptions).document
+      }
+      guard let reader = self.axBridgeReader else { return nil }
+      // the bridge is bounded like `withAX`, so a silent guest leaves the default read time for its `ax` half
+      if request.backend == nil,
+        self.bridgeStall.skipReason(
+          now: ProcessInfo.processInfo.systemUptime, cooldownSeconds: self.bridgeDeadline.cooldownSeconds) != nil
+      {
+        self.probeBridge()
+        return nil
+      }
+      let generation = self.bridgeWarmth.generation
+      let coldAtStart = self.bridgeWarmth.isCold
+      do {
+        let document = try await Session.bounded(
+          { try await reader.describe(.frontmost, options: readOptions).document },
+          deadlineMs: self.bridgeWarmth.deadlineMs(self.bridgeDeadline))
+        self.bridgeWarmth.noteSuccess(generation: generation)
+        self.bridgeStall.recordSuccess()
+        return document
+      } catch let stall as BridgeStalled {
+        Session.noteStall(
+          stall, generation: generation, coldAtStart: coldAtStart, gate: self.bridgeStall, warmth: self.bridgeWarmth,
+          reaper: self.bridgeReaper, now: { ProcessInfo.processInfo.systemUptime },
+          log: { OpLog.shared.log(.warn, $0, op: "alertButtons") })
+        self.bridgeHealth.recordFailure(stall.localizedDescription)
+        throw stall
+      }
     }
   }
 
@@ -625,11 +674,34 @@ extension Session {
 final class BundlePidMemory: @unchecked Sendable {
   private let lock = NSLock()
   private var pids: [String: pid_t] = [:]
+  private var launched: (bundleId: String, pid: pid_t)?
 
   func pid(for bundleId: String) -> pid_t? { lock.withLock { pids[bundleId] } }
 
   /// `nil` forgets the bundle.
   func remember(_ pid: pid_t?, for bundleId: String) {
     lock.withLock { pids[bundleId] = pid }
+  }
+
+  /// The pid `launch` last started (the frontmost-rescue candidate); a later `remember(nil)` of that bundle clears it.
+  func rememberLaunch(_ pid: pid_t, for bundleId: String) {
+    lock.withLock {
+      pids[bundleId] = pid
+      launched = (bundleId, pid)
+    }
+  }
+
+  func forgetLaunch(of bundleId: String) {
+    lock.withLock { if launched?.bundleId == bundleId { launched = nil } }
+  }
+
+  var lastLaunched: pid_t? { lock.withLock { launched?.pid } }
+
+  /// Every app was quit (backboardd restarted): no remembered pid is current.
+  func forgetAll() {
+    lock.withLock {
+      pids = [:]
+      launched = nil
+    }
   }
 }

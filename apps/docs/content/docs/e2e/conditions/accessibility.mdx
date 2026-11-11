@@ -1,0 +1,35 @@
+---
+title: Accessibility settings
+description: Test that layouts hold at the largest text size and reduced-motion paths run, by changing text size, bold text, contrast, reduce motion or the screen reader from a spec or a suite.
+icon: Accessibility
+---
+
+`device.a11y` changes the system accessibility settings the app renders with, so a spec can check that a screen still fits at the largest text size or takes its reduced-motion path.
+
+```ts
+await device.a11y({ textSize: "accessibility-large", boldText: true, reduceMotion: true });
+await app.open();
+await device.a11y(null); // defaults back
+```
+
+| Option | Takes |
+|---|---|
+| `textSize` | a category (`extra-small` … `accessibility-extra-extra-extra-large`) or a scale |
+| `boldText` | boolean |
+| `contrast` | `"increased"` or `"normal"` |
+| `reduceMotion` | boolean |
+| `screenReader` | boolean |
+
+It returns `{ applied, skipped, notes }`. An option the platform cannot set is reported `skipped`; a call where every option is skipped throws `E_UNSUPPORTED`. Which platform takes which option: [Accessibility settings on a simulator](/docs/sims/conditions/accessibility#per-platform).
+
+Auditing screens, reading order, announcements and driving TalkBack are in [Accessibility testing](/docs/e2e/accessibility).
+
+## In a suite
+
+```ts title="warden.config.ts"
+conditions: { a11y: { textSize: "accessibility-large", reduceMotion: true } },
+```
+
+The suite key takes `textSize`, `boldText`, `contrast` and `reduceMotion`.
+
+By hand with `warden ui a11y`: [Accessibility settings on a simulator](/docs/sims/conditions/accessibility).

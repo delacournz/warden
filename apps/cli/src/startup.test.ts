@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -9,9 +9,19 @@ const MARKER = "LOADED:";
 /**
  * Cold-start guard. Runs the CLI in a child `bun` with a preload that prints every module the process has
  * loaded (`require.cache` lists ESM modules too) when it exits, so we can assert what a command does NOT pull in.
+ * The child sees stub `xcrun`/`adb`/`emulator` first on PATH: a command that reaches the device sweep (`gc --json`)
+ * must never wait on the host's CoreSimulator or adb, which on a cold CI runner outlasts the test timeout.
  */
 let scratch = "";
 let preload = "";
+let stubBin = "";
+
+/** Answers every device tool at once with an empty machine: no sims, no runtimes, no emulators. */
+const STUBS: Record<string, string> = {
+	xcrun: `#!/bin/sh\ncase "$*" in *list*) echo '{"devices":{},"runtimes":[],"devicetypes":[],"pairs":{}}';; esac\nexit 0\n`,
+	adb: `#!/bin/sh\ncase "$1" in devices) printf 'List of devices attached\\n\\n';; esac\nexit 0\n`,
+	emulator: "#!/bin/sh\nexit 0\n",
+};
 
 beforeAll(() => {
 	scratch = mkdtempSync(join(tmpdir(), "warden-startup-"));
@@ -20,13 +30,25 @@ beforeAll(() => {
 		preload,
 		`process.on("exit", () => console.error("${MARKER}" + JSON.stringify(Object.keys(require.cache))));\n`
 	);
+	stubBin = join(scratch, "bin");
+	mkdirSync(stubBin);
+	for (const [name, body] of Object.entries(STUBS)) {
+		writeFileSync(join(stubBin, name), body);
+		chmodSync(join(stubBin, name), 0o755);
+	}
 });
+
+/** The child's env: temp home, stub device tools first on PATH, no Android SDK dir to find the real ones in. */
+function childEnv(home: string): Record<string, string | undefined> {
+	const { ANDROID_HOME: _home, ANDROID_SDK_ROOT: _root, ...rest } = process.env;
+	return { ...rest, PATH: `${stubBin}:${process.env.PATH ?? ""}`, WARDEN_HOME: home, NO_COLOR: "1", CI: "1" };
+}
 
 afterAll(() => rmSync(scratch, { recursive: true, force: true }));
 
 async function loadedBy(args: string[], home: string = join(scratch, "home")): Promise<string[]> {
 	const proc = Bun.spawn(["bun", "--preload", preload, resolve(SRC, "cli.ts"), ...args], {
-		env: { ...process.env, WARDEN_HOME: home, NO_COLOR: "1", CI: "1" },
+		env: childEnv(home),
 		stdout: "ignore",
 		stderr: "pipe",
 		stdin: "ignore",

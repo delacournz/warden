@@ -1,10 +1,18 @@
 ---
-title: How warden e2e works
-description: A spec file, a suite in warden.config.ts and one command, warden e2e, that leases devices, installs the build and runs the specs in parallel.
+title: How warden runs React Native E2E tests
+sidebarTitle: How it works
+description: React Native and Expo E2E tests in warden are a spec file, a suite in warden.config.ts and one command, warden e2e, that leases devices, installs the build and runs the specs in parallel.
 icon: FlaskConical
 ---
 
-An e2e test in warden is a `*.e2e.ts` file; `warden e2e <suite>` runs a suite of them across leased simulators or emulators and writes a report. Read this page first, then follow the links for each piece.
+<DemoReel
+  src="/demos/e2e/parallel"
+  label="warden e2e running the example app's specs on two leased iOS simulators at once"
+  command="warden e2e example"
+  facts="5/5 specs passed · 2 simulators · 55s wall time · shown at 1.3x speed"
+/>
+
+An e2e test in warden is a `*.e2e.ts` file; `warden e2e <suite>` runs a suite of them across leased simulators or emulators and writes a report. Read this page for the model; [Suites](/docs/e2e/suites) has the config and [Your first test](/docs/e2e) the walkthrough.
 
 ```bash
 warden e2e example-dev --all
@@ -32,17 +40,17 @@ A spec's id is its path under `specsDir` without the extension (`e2e/todos.e2e.t
 <Step>
 ### Lease N devices
 
-`--count N` (or the suite's `count`) claims N simulators or emulators from the machine-wide lease registry, queueing up to 30 minutes when none is free. warden never touches a device it did not create or lease ([Leases](/docs/sims/leases)).
+`--count N` (or the suite's `count`) claims N simulators or emulators from the machine-wide lease registry, queueing up to 30 minutes when none is free (`--no-wait` fails at once). warden never touches a device it did not create or lease ([Leases](/docs/sims/leases)).
 </Step>
 <Step>
 ### Install the build
 
-With `app: true` (or `--app`), each device gets the project's app: already installed, else cached, else EAS, else a local build, keyed on the Expo fingerprint ([App builds](/docs/sims/app-builds)).
+With `app: true` (or `--app`), each device gets the project's app: already installed, else cached, else EAS, else a local build, keyed on the native fingerprint ([App builds](/docs/sims/app-builds)).
 </Step>
 <Step>
-### Start Metro (dev-client suites)
+### Start Metro (`--dev`)
 
-With `metro: {}` warden leases a port, runs `expo start --dev-client` on it, and calls it ready only once that port is proven to serve this checkout. Every `app.open()` then launches against that Metro.
+With `--dev` and a `metro` block, warden leases a port, runs `expo start --dev-client` on it, and calls it ready only once that port is proven to serve this checkout. Every `app.open()` then launches against that Metro. Without `--dev`, `app: true` installs a repacked Release build and no Metro runs ([Build kinds](/docs/e2e/suites#build-kinds)).
 </Step>
 <Step>
 ### Run one `bun test` per device
@@ -77,7 +85,7 @@ Your agent drives the app by hand with [`warden ui`](/docs/sims/ui) on a simulat
 
 ## When a spec fails
 
-The failing test writes `failure.png`, `screen-at-failure.txt` (the full accessibility tree) and `trace.jsonl` next to its results. A retry (`--retry N`, or a test's own `retry`) reruns only the specs that did not pass. A spec fails when any test failed or timed out, or its process exited non-zero; a process that hangs past `jobTimeoutMs` per spec is killed (exit 124). On a failed run the devices stay booted so you can inspect them. See [Debugging](/docs/e2e/debugging).
+The failing test writes `failure.png`, `screen-at-failure.txt` and `trace.jsonl`; a failed run leaves its devices booted. Retries, verdicts and the file layout: [Debugging](/docs/e2e/debugging).
 
 ## Limits
 

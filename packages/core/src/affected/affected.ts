@@ -36,6 +36,8 @@ export type Suite = {
 	slim?: NonNullable<E2eSuiteConfig["slim"]>;
 	/** the suite's `biometrics`, else the top-level one (undefined: neither sets it) */
 	biometrics?: boolean;
+	/** iOS: the suite's simulators are cloned from a golden (`e2e.<suite>.golden: true`); off by default */
+	golden: boolean;
 	/** the suite's `reclaim`, else the top-level one (undefined: neither sets it) */
 	reclaim?: NonNullable<E2eSuiteConfig["reclaim"]>;
 	/** the suite's perf budgets over the top-level ones, per key (undefined: none set) */
@@ -135,6 +137,7 @@ function defaultSuite(
 		cwd: root,
 		projectRoot: root,
 		implicit: true,
+		golden: false,
 		...(headless !== undefined ? { headless } : {}),
 		...(slim !== undefined ? { slim } : {}),
 	});
@@ -198,6 +201,7 @@ function toSuite(name: string, config: E2eSuiteConfig, found: FoundConfig): Suit
 		source,
 		rootDir,
 		cwd: projectRoot ?? rootDir,
+		golden: config.golden === true,
 		...(projectRoot ? { projectRoot } : {}),
 		...(headless !== undefined ? { headless } : {}),
 		...(slim !== undefined ? { slim } : {}),

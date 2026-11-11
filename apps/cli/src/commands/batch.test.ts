@@ -308,6 +308,49 @@ describe("warden batch", () => {
 		expect(c.db.listLeases()).toEqual([]);
 	});
 
+	test("serve that dies at once fails the run even when the ready check passes (a stale server answers it)", async () => {
+		const c = setup(["ios", "--jobs", "a", "--serve", "s", "--serve-ready", "http://127.0.0.1:4599/health", "--", "x"]);
+		const h = harness({ ready: () => true, serveExitsAtStart: 1 });
+		const log = join(c.env.WARDEN_HOME ?? "", "batches", "b1", "logs", "serve.log");
+		h.files.set(log, "starting\nFailed to start server. Is port 4599 in use?\n");
+		expect(await createBatchCommand(h.deps).run(c)).toBe(1);
+		expect(h.jobs()).toEqual([]);
+		const err = c.stderr.join("\n");
+		expect(err).toContain("serve exited (1)");
+		expect(err).toContain("Failed to start server. Is port 4599 in use?");
+		expect(err).toContain("serve.log");
+		expect(c.db.listLeases()).toEqual([]);
+	});
+
+	test("a ready URL that answers before serve is spawned warns that something is already listening", async () => {
+		const c = setup(["ios", "--jobs", "a", "--serve", "s", "--serve-ready", "tcp:4599", "--", "x"]);
+		const h = harness({ ready: () => true });
+		expect(await createBatchCommand(h.deps).run(c)).toBe(0);
+		expect(c.stderr.join("\n")).toContain("something is already listening on 4599");
+	});
+
+	test("no warning when nothing answered the ready check before serve started", async () => {
+		const c = setup(["ios", "--jobs", "a", "--serve", "s", "--serve-ready", "tcp:4599", "--", "x"]);
+		let polls = 0;
+		const h = harness({ ready: () => ++polls >= 2 });
+		expect(await createBatchCommand(h.deps).run(c)).toBe(0);
+		expect(c.stderr.join("\n")).not.toContain("already listening");
+	});
+
+	test("serve that exits during the run fails it with `serve exited (code N)`, kills the jobs, runs no more", async () => {
+		const c = setup(["ios", "--jobs", "a,b", "--serve", "s", "--serve-ready", "tcp:4599", "--", "x"]);
+		let polls = 0;
+		const h = harness({ manual: true, jobsExitOnKill: true, ready: () => ++polls >= 2 });
+		const running = createBatchCommand(h.deps).run(c);
+		await waitFor(() => h.jobs().length > 0);
+		h.serve()?.finish(3);
+		expect(await running).toBe(1);
+		expect(c.stderr.join("\n")).toContain("serve exited (3) during the run");
+		expect(h.jobs()).toHaveLength(1);
+		expect(h.jobs()[0]?.kills).toContain("SIGTERM");
+		expect(c.db.listLeases()).toEqual([]);
+	});
+
 	test("serve ignoring SIGTERM gets SIGKILL", async () => {
 		const c = setup(["ios", "--jobs", "a", "--serve", "s", "--", "x"]);
 		const h = harness({ serveExitsOnKill: false });
@@ -701,7 +744,9 @@ describe("warden batch", () => {
 		const h = harness();
 		expect(await createBatchCommand(h.deps).run(c)).toBe(0);
 		expect(h.serve()?.cmd).toEqual(["sh", "-c", "api --port 3000"]);
-		expect(h.probes).toEqual([{ kind: "http", url: "http://127.0.0.1:3000/health" }]);
+		// once before serve is spawned (a stale listener), once for the ready wait
+		const health = { kind: "http", url: "http://127.0.0.1:3000/health" } as const;
+		expect(h.probes).toEqual([health, health]);
 		const job = h.jobs()[0];
 		expect(job?.cmd).toEqual(["run", "a", "--api", "http://127.0.0.1:3000"]);
 		expect(job?.opts.group).toBe(true);

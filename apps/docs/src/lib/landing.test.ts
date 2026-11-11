@@ -57,6 +57,22 @@ function flags(text: string): string[] {
 	return [...new Set([...text.matchAll(/(?<![\w-])--[a-z][a-z-]*/g)].map((m) => m[0]))];
 }
 
+describe("the landing's feature clips", () => {
+	const clips = LANDING.ON_THE_DEVICE.features.flatMap((f) => (f.clip ? [f.clip] : []));
+
+	test("there are some, each labelled", () => {
+		expect(clips.length).toBeGreaterThan(0);
+		expect(clips.filter((clip) => !clip.label.trim())).toEqual([]);
+	});
+
+	test("every clip has its mp4 and poster in public/", () => {
+		const missing = clips
+			.flatMap((clip) => [`${clip.src}.mp4`, `${clip.src}.jpg`])
+			.filter((file) => !existsSync(join(DOCS, "public", file)));
+		expect(missing).toEqual([]);
+	});
+});
+
 describe("the landing's claims", () => {
 	test("the code scan sees the commands and flags (a scan that finds nothing passes everything)", () => {
 		expect(commands(CODE)).toEqual(expect.arrayContaining(["claim", "ui", "e2e", "dev", "golden", "affected"]));
@@ -134,6 +150,38 @@ describe("the numbers it quotes", () => {
 			expect(read(source)).toMatch(code);
 		});
 	}
+});
+
+describe("what it ranks for", () => {
+	test("the lede names React Native or Expo and E2E tests", () => {
+		expect(LANDING.HERO.lede).toMatch(/^An AI agent toolkit/);
+		expect(LANDING.HERO.lede).toMatch(/React Native/);
+		expect(LANDING.HERO.lede).toMatch(/Expo/);
+		expect(LANDING.HERO.lede).toMatch(/E2E tests/);
+	});
+
+	test("a section title names React Native E2E tests", () => {
+		expect(LANDING.FIRST_PROMPT.title).toMatch(/React Native E2E test/);
+	});
+
+	test("the FAQ answers the questions people search", () => {
+		const questions = FAQS.map((faq) => faq.q);
+		expect(questions).toEqual(
+			expect.arrayContaining([
+				"How do I write end-to-end tests for a React Native app?",
+				"Does warden work with Expo?",
+				"How is warden different from Detox or Maestro?",
+				"Can an AI coding agent write and run my E2E tests?",
+			])
+		);
+	});
+
+	test("the Detox and Maestro answer is factual, with no figures or put-downs", () => {
+		const answer = FAQS.find((faq) => /Detox/.test(faq.q))?.a ?? "";
+		expect(answer).toMatch(/Detox/);
+		expect(answer).toMatch(/Maestro/);
+		expect(answer).not.toMatch(/\d+\s?(x|×|%|s\b|ms)|faster|slower|better|worse|best|worst/i);
+	});
 });
 
 describe("what it never says", () => {

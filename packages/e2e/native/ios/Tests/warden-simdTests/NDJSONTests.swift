@@ -78,6 +78,11 @@ final class NDJSONTests: XCTestCase {
     XCTAssertEqual(back["d"], .double(2.5))
   }
 
+  func testNonFiniteDoublesEncodeAsNull() throws {
+    let line = NDJSON.encodeLine(["nan": .double(.nan), "inf": .double(-.infinity), "d": .double(1.5)])
+    XCTAssertEqual(String(decoding: line, as: UTF8.self), "{\"d\":1.5,\"inf\":null,\"nan\":null}\n")
+  }
+
   func testSuccessResponseShape() throws {
     let json = Response.success(id: "1", data: ["ok": true]).json
     XCTAssertEqual(json, ["id": "1", "ok": true, "data": ["ok": true]])

@@ -578,6 +578,57 @@ const withClaimId = (args: LeaseArgs, claimPollMs?: number): LeaseArgs => ({
 	...(claimPollMs !== undefined ? { claimPollMs } : {}),
 });
 
+/** Names each installed app on stderr and exports the last one's path / hash to the run env. */
+function reportInstalledApps(
+	ctx: CommandContext,
+	name: string,
+	runs: Awaited<ReturnType<typeof runLegs>>,
+	env: Record<string, string | undefined>
+): void {
+	for (const app of runs.flatMap((r) => (r.install?.success ? r.install.data : []))) {
+		ctx.err(`warden ${name}: app ${app.result.source} on ${app.deviceId} [${app.result.hash}]`);
+		if (app.result.appPath) env.WARDEN_APP_PATH = app.result.appPath;
+		env.WARDEN_APP_HASH = app.result.hash;
+	}
+}
+
+/** One more leg claimed after the session started (an elastic worker); its lease ids join `leaseIds` and `drop` takes them out again. */
+async function claimMoreLeg(
+	ctx: CommandContext,
+	owner: Owner,
+	args: LeaseArgs,
+	pid: LeaseSessionDeps["pid"],
+	install: Parameters<typeof runLeg>[6],
+	leaseIds: string[],
+	reclaim: ClaimFlags["reclaim"],
+	o: MoreClaimOptions
+): AsyncResult<MoreClaim> {
+	const more: LeaseArgs = { ...args, aborted: o.aborted };
+	delete more.onLeased;
+	if (o.onLeased) more.onLeased = o.onLeased;
+	const run = await runLeg(ctx, owner, o.leg, o.flags, more, pid, install);
+	if (!run.claim.success) return run.claim;
+	const claimed = run.claim.data;
+	const ids = claimed.claimed.map((c) => c.lease.id);
+	if (run.install && !run.install.success) {
+		await args.beforeRelease?.();
+		await releaseDevices(ctx, ids, { touch: false });
+		return run.install;
+	}
+	leaseIds.push(...ids);
+	return ok({
+		outcome: claimed,
+		lost: run.lost ?? [],
+		drop: async () => {
+			for (const id of ids) {
+				const at = leaseIds.indexOf(id);
+				if (at >= 0) leaseIds.splice(at, 1);
+			}
+			await releaseDevices(ctx, ids, { reclaim: o.flags.reclaim ?? reclaim });
+		},
+	});
+}
+
 /**
  * Lease the ports, claim the devices and (with `--app`) ensure the app; on any failure nothing stays
  * leased. The ports come first (a bind probe, cheap) so `onPorts` can start the run's Metro while the
@@ -629,40 +680,17 @@ export async function claimAll(
 	const release = async () => {
 		await releaseDevices(ctx, leaseIds, { reclaim });
 	};
-	const claimMore = async (o: MoreClaimOptions): AsyncResult<MoreClaim> => {
-		const more: LeaseArgs = { ...args, aborted: o.aborted };
-		delete more.onLeased;
-		if (o.onLeased) more.onLeased = o.onLeased;
-		const run = await runLeg(
+	const claimMore = (o: MoreClaimOptions): AsyncResult<MoreClaim> =>
+		claimMoreLeg(
 			ctx,
 			owner,
-			o.leg,
-			o.flags,
-			more,
+			args,
 			deps.pid,
-			ensure && args.app ? { ensure, opts: args.app } : undefined
+			ensure && args.app ? { ensure, opts: args.app } : undefined,
+			leaseIds,
+			reclaim,
+			o
 		);
-		if (!run.claim.success) return run.claim;
-		const claimed = run.claim.data;
-		const ids = claimed.claimed.map((c) => c.lease.id);
-		if (run.install && !run.install.success) {
-			await args.beforeRelease?.();
-			await releaseDevices(ctx, ids, { touch: false });
-			return run.install;
-		}
-		leaseIds.push(...ids);
-		return ok({
-			outcome: claimed,
-			lost: run.lost ?? [],
-			drop: async () => {
-				for (const id of ids) {
-					const at = leaseIds.indexOf(id);
-					if (at >= 0) leaseIds.splice(at, 1);
-				}
-				await releaseDevices(ctx, ids, { reclaim: o.flags.reclaim ?? reclaim });
-			},
-		});
-	};
 	const env = childEnv(ctx.env, outcome, ports.data);
 	setRunEnv(env, args.legFlags ?? [args.flags]);
 	const failed = legsFailure(runs, outcome, lost);
@@ -671,11 +699,7 @@ export async function claimAll(
 		await release();
 		return failed;
 	}
-	for (const app of runs.flatMap((r) => (r.install?.success ? r.install.data : []))) {
-		ctx.err(`warden ${name}: app ${app.result.source} on ${app.deviceId} [${app.result.hash}]`);
-		if (app.result.appPath) env.WARDEN_APP_PATH = app.result.appPath;
-		env.WARDEN_APP_HASH = app.result.hash;
-	}
+	reportInstalledApps(ctx, name, runs, env);
 	return ok({
 		outcome,
 		claims,

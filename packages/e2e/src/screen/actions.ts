@@ -103,7 +103,8 @@ export function fieldValue(entry: NodeEntry): string {
 
 const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
-function graphemes(text: string): number {
+/** User-perceived characters in `text` (what a secure field shows one bullet for). */
+export function graphemes(text: string): number {
 	let count = 0;
 	for (const _ of segmenter.segment(text)) count += 1;
 	return count;
@@ -134,6 +135,16 @@ export function fieldContent(entry: NodeEntry): FieldContent {
 	}
 	const text = fieldValue(entry);
 	return text === "" ? { kind: "empty" } : { kind: "text", text };
+}
+
+/**
+ * What a fill read-back of a secure field says it holds, given the typed `text`: `text` when it shows one bullet per
+ * character of it (the only check a masked field allows), else its bullets (never the typed text, in a message).
+ */
+export function maskedReading(entry: NodeEntry, text: string): string {
+	const content = fieldContent(entry);
+	const count = content.kind === "dots" ? content.count : 0;
+	return count === graphemes(text) ? text : "\u2022".repeat(count);
 }
 
 /**

@@ -72,6 +72,26 @@ const stderrLog = (line: string): void => {
 	process.stderr.write(`${line}\n`);
 };
 
+/** The lease's network proxy and clock recorder, each unless the caller passed its own (`given`). */
+function leaseSeams(
+	env: E2eEnv,
+	deps: OpenDriverDeps,
+	given: {
+		networkProxy?: ReturnType<typeof leaseProxyFor>;
+		clockRecorder?: ReturnType<typeof leaseClockRecorderFor>;
+	}
+): {
+	networkProxy?: NonNullable<ReturnType<typeof leaseProxyFor>>;
+	clockRecorder?: NonNullable<ReturnType<typeof leaseClockRecorderFor>>;
+} {
+	const networkProxy = given.networkProxy ?? leaseProxyFor(env, deps);
+	const clockRecorder = given.clockRecorder ?? leaseClockRecorderFor(env, deps);
+	return {
+		...(networkProxy === undefined ? {} : { networkProxy }),
+		...(clockRecorder === undefined ? {} : { clockRecorder }),
+	};
+}
+
 /**
  * The Android opener's options: the env's serial and app package, the `state` store under `<wardenHome>/android`
  * (a caller's own `android.state` wins) that remembers the dump route that worked and the animation scales to put
@@ -81,12 +101,9 @@ const stderrLog = (line: string): void => {
 export function androidOptions(env: E2eEnv, deps: OpenDriverDeps, debug: boolean): AndroidDriverOptions {
 	const android: NonNullable<OpenDriverDeps["android"]> = deps.android ?? {};
 	const log = deps.log ?? (debug ? stderrLog : undefined);
-	const networkProxy = android.networkProxy ?? leaseProxyFor(env, deps);
-	const clockRecorder = android.clockRecorder ?? leaseClockRecorderFor(env, deps);
 	return {
 		...android,
-		...(networkProxy === undefined ? {} : { networkProxy }),
-		...(clockRecorder === undefined ? {} : { clockRecorder }),
+		...leaseSeams(env, deps, android),
 		serial: env.udid,
 		adb: android.adb ?? androidTools(process.env).adb,
 		exec: deps.exec ?? bunExec,
@@ -132,12 +149,9 @@ async function openHostDriver(env: E2eEnv, cmd: readonly string[]): DriverResult
 
 function openIos(env: E2eEnv, deps: OpenDriverDeps, debug: boolean): DriverResult<Driver> {
 	if (isPhysicalIosId(env.udid)) return openIosDeviceDriver(deviceOptions(env, deps, debug));
-	const networkProxy = deps.networkProxy ?? leaseProxyFor(env, deps);
-	const clockRecorder = deps.clockRecorder ?? leaseClockRecorderFor(env, deps);
 	return openIosDriver({
 		...deps,
-		...(networkProxy === undefined ? {} : { networkProxy }),
-		...(clockRecorder === undefined ? {} : { clockRecorder }),
+		...leaseSeams(env, deps, deps),
 		udid: env.udid,
 		bundleId: env.bundleId,
 		env,

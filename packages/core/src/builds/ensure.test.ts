@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { Exec, ExecResult } from "../exec";
 import { createGitFactsCache } from "../git-facts";
 import { openStore, type Store } from "../store";
@@ -29,6 +29,7 @@ import {
 import { computeCacheKey } from "./fingerprint";
 import { projectForKind } from "./kinds";
 import type { AppPhase } from "./resolve";
+import { readCachedSigning } from "./signing-key";
 
 let dir: string;
 let store: Store;
@@ -109,14 +110,18 @@ describe("ensureApp on a physical iPhone", () => {
 			read: async (path: string) => files.get(path) ?? "",
 			remove: async () => {},
 		};
+		/** applies one devicectl verb to the phone and writes its json output file */
+		const devicectl = (verb: string | undefined, out: string) => {
+			if (verb === "uninstall") apps = [];
+			if (verb === "install") apps = [{ bundleIdentifier: "com.x.app", bundleVersion: "7" }];
+			files.set(out, JSON.stringify({ result: verb === "info" ? { apps } : {} }));
+		};
 		const exec: Exec = async (cmd) => {
 			calls.push(cmd.join(" "));
 			if (cmd[0] === "plutil") return { exitCode: 0, stdout: "7\n", stderr: "" };
 			const out = cmd[cmd.indexOf("--json-output") + 1];
 			if (cmd[1] === "devicectl" && out !== undefined) {
-				if (cmd[3] === "uninstall") apps = [];
-				if (cmd[3] === "install") apps = [{ bundleIdentifier: "com.x.app", bundleVersion: "7" }];
-				files.set(out, JSON.stringify({ result: cmd[3] === "info" ? { apps } : {} }));
+				devicectl(cmd[3], out);
 				return { exitCode: 0, stdout: "", stderr: "" };
 			}
 			return { exitCode: 127, stdout: "", stderr: cmd.join(" ") };
@@ -544,6 +549,73 @@ describe("ensureApp", () => {
 		);
 		expect(res.success).toBe(true);
 		expect(phases).toEqual([{ phase: "building", platform: "ios", hash: "H" }, { phase: "ready" }]);
+	});
+
+	describe("a local build nobody watches", () => {
+		function heartbeatSetup() {
+			const root = join(dir, "app");
+			const products = join(root, "ios", "build", "Build", "Products", "Debug-iphonesimulator");
+			const timer = { tick: undefined as (() => void) | undefined, scheduled: 0 };
+			const exec: Exec = async (cmd, opts) => {
+				const joined = cmd.join(" ");
+				if (joined === "sh -c make-ios") {
+					opts?.onLine?.("› Compiling Pods/React-Core");
+					timer.tick?.();
+					fakeApp(products, "Built.app");
+					return { exitCode: 0, stdout: "", stderr: "" };
+				}
+				if (joined === "sh -c fp") return { exitCode: 0, stdout: '{"hash":"H"}', stderr: "" };
+				if (joined.startsWith("plutil -extract CFBundleIdentifier")) return BUNDLE_ID;
+				return { exitCode: 127, stdout: "", stderr: joined };
+			};
+			const project = testProject({ root, fingerprintCommand: "fp", build: { ios: "make-ios", android: "x" } });
+			const heartbeatSchedule = (fn: () => void) => {
+				timer.tick = fn;
+				timer.scheduled += 1;
+				return () => {};
+			};
+			return { exec, project, timer, heartbeatSchedule };
+		}
+
+		test("says it is a cache miss, then reports progress on a timer", async () => {
+			const s = heartbeatSetup();
+			const logs: string[] = [];
+			const res = await ensureApp(
+				input(s.exec, {
+					project: s.project,
+					deviceId: undefined,
+					build: true,
+					now: () => Date.now(),
+					log: (l) => logs.push(l),
+					heartbeatSchedule: s.heartbeatSchedule,
+				})
+			);
+			expect(res.success).toBe(true);
+			expect(s.timer.scheduled).toBe(1);
+			const miss = logs.findIndex((l) => l.startsWith("no cached ios build for H"));
+			const building = logs.findIndex((l) => l.startsWith("building ios locally"));
+			expect(miss).toBeGreaterThanOrEqual(0);
+			expect(miss).toBeLessThan(building);
+			expect(logs.some((l) => /^still building ios \(\d+s\): › Compiling Pods\/React-Core$/.test(l))).toBe(true);
+		});
+
+		test("no heartbeat when the caller streams the build output", async () => {
+			const s = heartbeatSetup();
+			const lines: string[] = [];
+			const res = await ensureApp(
+				input(s.exec, {
+					project: s.project,
+					deviceId: undefined,
+					build: true,
+					now: () => Date.now(),
+					buildOutput: (l) => lines.push(l),
+					heartbeatSchedule: s.heartbeatSchedule,
+				})
+			);
+			expect(res.success).toBe(true);
+			expect(s.timer.scheduled).toBe(0);
+			expect(lines).toEqual(["› Compiling Pods/React-Core"]);
+		});
 	});
 
 	test("a local build stamps the native fingerprint its native dir was prebuilt for", async () => {
@@ -1149,12 +1221,64 @@ describe("ensureKindBuild", () => {
 		expect(getInstall(store, "ios", "U1", "com.x.app")?.hash).toBe(`${FP}:dev`);
 	});
 
-	test("a flat legacy build of the same fingerprint is not the dev build", async () => {
+	test("a simulator base restored on disk without its row (a CI cache) is registered and used: no build", async () => {
+		const key = { kind: "simulator-base", nativeFp: FP } as const;
+		const app = fakeApp(simulatorBaseDir(env, KEY, "ios", FP));
+		const calls: string[] = [];
+		const logs: string[] = [];
+		const res = await ensureKindBuild(
+			kindInput(fpExec(calls), { key, deviceId: undefined, build: true, log: (line) => logs.push(line) })
+		);
+		expect(res).toEqual({
+			success: true,
+			data: { appPath: app, hash: `${FP}:base`, source: "cache", installed: false },
+		});
+		expect(calls.some((c) => c.startsWith("sh -c") && c !== "sh -c fp")).toBe(false);
+		expect(getBuild(store, KEY, "ios", `${FP}:base`)).toMatchObject({ kind: "simulator-base", source: "restored" });
+		expect(logs.join("\n")).toContain("restored");
+	});
+
+	test("a kind-less build of the same fingerprint is the dev build: aliased under the kind hash, no build", async () => {
+		const path = await seedCache(FP);
+		const calls: string[] = [];
+		const res = await ensureKindBuild(kindInput(fpExec(calls), { deviceId: undefined, build: true }));
+		expect(res).toEqual({
+			success: true,
+			data: { appPath: path, hash: `${FP}:dev`, source: "cache", installed: false },
+		});
+		expect(calls.some((c) => c.startsWith("sh -c") && c !== "sh -c fp")).toBe(false);
+		expect(getBuild(store, KEY, "ios", `${FP}:dev`)?.path).toBe(path);
+		expect(getBuild(store, KEY, "ios", FP)?.path).toBe(path);
+	});
+
+	test("an install recorded at the old kind-less hash is that build: no reinstall", async () => {
+		await seedCache(FP);
+		recordInstall(store, { platform: "ios", deviceId: "U1", bundleId: "com.x.app", hash: FP, installedAt: 1 });
+		const calls: string[] = [];
+		const res = await ensureKindBuild(kindInput(fpExec(calls)));
+		if (!res.success) throw new Error(res.error);
+		expect(res.data).toMatchObject({ hash: `${FP}:dev`, source: "installed", installed: true });
+		expect(calls.some((c) => c.startsWith("xcrun simctl install"))).toBe(false);
+	});
+
+	test("a legacy cache dir of the fingerprint is the dev build", async () => {
+		const legacy = join(dir, "legacy");
+		fakeApp(join(legacy, FP));
+		const project = testProject({ root: join(dir, "app"), fingerprintCommand: "fp", cacheDirs: [legacy] });
+		const res = await ensureKindBuild(kindInput(fpExec([]), { project, deviceId: undefined }));
+		if (!res.success) throw new Error(res.error);
+		expect(res.data).toMatchObject({ hash: `${FP}:dev`, source: "cache" });
+		expect(getBuild(store, KEY, "ios", `${FP}:dev`)).toMatchObject({ kind: "dev", source: "legacy" });
+	});
+
+	test("a kind-less build made with another command is not the dev build", async () => {
 		await seedCache(FP);
 		const calls: string[] = [];
-		const res = await ensureKindBuild(kindInput(fpExec(calls), { deviceId: undefined }));
+		const own = testProject({ root: join(dir, "app"), fingerprintCommand: "fp" });
+		const project = { ...own, build: { ...own.build, ios: "my-build" } };
+		const res = await ensureKindBuild(kindInput(fpExec(calls), { project, deviceId: undefined }));
 		expect(res.success).toBe(false);
-		expect(calls.some((c) => c.startsWith("sh -c"))).toBe(false);
+		expect(getBuild(store, KEY, "ios", `${FP}:dev`)).toBeUndefined();
 	});
 
 	test("a miss builds with the kind's command, verifies the build key and caches into the kind dir", async () => {
@@ -1173,6 +1297,27 @@ describe("ensureKindBuild", () => {
 			profile: "local:dev",
 		});
 		expect(calls.some((c) => c.includes("expo run:ios") && !c.includes("--configuration Release"))).toBe(true);
+	});
+
+	test("an Android build caches the keystore it was signed with beside the APK", async () => {
+		const root = join(dir, "app");
+		const app = join(root, "android", "app");
+		const exec = fpExec([], () => {
+			mkdirSync(join(app, "build", "outputs", "apk", "debug"), { recursive: true });
+			writeFileSync(join(app, "build", "outputs", "apk", "debug", "app-debug.apk"), "apk");
+			writeFileSync(join(app, "debug.keystore"), "the-keystore");
+			writeFileSync(
+				join(app, "build.gradle"),
+				"signingConfigs { debug { storeFile file('debug.keystore') storePassword 'android' keyAlias 'androiddebugkey' keyPassword 'android' } }\nbuildTypes { debug { signingConfig signingConfigs.debug } }"
+			);
+		});
+		const res = await ensureKindBuild(
+			kindInput(exec, { platform: "android", deviceId: undefined, build: true, now: () => Date.now() })
+		);
+		if (!res.success) throw new Error(res.error);
+		const cached = readCachedSigning(dirname(res.data.appPath));
+		expect(cached).toMatchObject({ alias: "androiddebugkey", storePass: "android", keyPass: "android" });
+		expect(cached && readFileSync(cached.path, "utf8")).toBe("the-keystore");
 	});
 
 	test("the simulator base builds the Release configuration with SKIP_BUNDLING into simulator/base", async () => {

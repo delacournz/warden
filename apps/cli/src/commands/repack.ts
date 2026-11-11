@@ -1,4 +1,4 @@
-import { type RepackResult, repackApp } from "@delacour/warden-core/builds/repack";
+import { type RepackReason, type RepackResult, repackApp } from "@delacour/warden-core/builds/repack";
 import type { Platform } from "@delacour/warden-core/types";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import { resolveOwner, resolvePlatform } from "../claim-flags";
@@ -21,6 +21,10 @@ export type RepackReport =
 			jsKey: string;
 			artifact: string;
 			bundleMs?: number;
+			/** `repacked` only: the fresh Android base embeds this JS, so its apk is the repack (no bundle ran) */
+			fromBase?: true;
+			/** why a cached repack was rebuilt (`repacked` only) */
+			reason?: RepackReason;
 	  }
 	| { result: "fallback"; platform: Platform; reason: string };
 
@@ -34,6 +38,8 @@ function report(platform: Platform, result: RepackResult): RepackReport {
 		jsKey: result.jsKey,
 		artifact: result.artifact,
 		...(result.bundleMs !== undefined ? { bundleMs: result.bundleMs } : {}),
+		...(result.kind === "repacked" && result.fromBase ? { fromBase: true as const } : {}),
+		...(result.reason ? { reason: result.reason } : {}),
 	};
 }
 
@@ -63,9 +69,14 @@ function text(ctx: CommandContext, r: RepackReport): string {
 	if (r.result === "fallback") {
 		return `${color.yellow("no repack")}: ${r.reason}\n${color.dim("`warden app ensure --kind simulator` builds the release kind instead")}`;
 	}
-	const took = r.bundleMs !== undefined ? ` in ${(r.bundleMs / 1000).toFixed(1)}s` : "";
+	const took =
+		r.result === "repacked" && r.fromBase
+			? " from the base build's bundle"
+			: r.bundleMs !== undefined
+				? ` in ${(r.bundleMs / 1000).toFixed(1)}s`
+				: "";
 	return [
-		`${color.green(r.result)}${r.result === "repacked" ? took : ""}: ${r.artifact}`,
+		`${color.green(r.result)}${r.result === "repacked" ? took : ""}${r.reason ? ` (${r.reason})` : ""}: ${r.artifact}`,
 		color.dim(`base ${r.baseHash} · jsKey ${r.jsKey} · hash ${r.hash}`),
 	].join("\n");
 }

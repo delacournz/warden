@@ -1,4 +1,4 @@
-import { type Device, expect, type Locator, test } from "@delacour/warden-e2e";
+import { beforeAll, type Device, describe, expect, type Locator, test } from "@delacour/warden-e2e";
 import { ids } from "./helpers/ids";
 import { pollUntil } from "./helpers/poll";
 import { openA11y, SPEC_OPTIONS } from "./helpers/steps";
@@ -57,41 +57,74 @@ test.afterEach(async ({ device }) => {
 	await device.a11y(null).catch(() => undefined);
 });
 
-test("reading order matches the golden list", async ({ app, device, screen }) => {
-	await openA11y(app, device, screen);
-	const spoken = await settledOrder(device);
-	const body = spoken.filter((t) => t !== "warden-example" && !t.startsWith("Back"));
-
-	expect(body.length).toBe(READING_ORDER.length);
-	READING_ORDER.forEach((prefix, index) => {
-		expect(body[index]).toContain(prefix);
+/**
+ * The good screen on one launch: reading order first (it expects the counter at 0), then names, the audit, the
+ * announce button and live region, and the OS settings the app reads. Each test's `device.a11y` change is put back
+ * when it ends.
+ */
+describe.serial("good screen", () => {
+	beforeAll(async ({ app, device, screen }) => {
+		await openA11y(app, device, screen);
+		await settledOrder(device);
 	});
-	expect(spoken.some((t) => t.startsWith("Welcome"))).toBe(false);
+
+	test("reading order matches the golden list", async ({ device }) => {
+		const spoken = await settledOrder(device);
+		const body = spoken.filter((t) => t !== "warden-example" && !t.startsWith("Back"));
+
+		expect(body.length).toBe(READING_ORDER.length);
+		READING_ORDER.forEach((prefix, index) => {
+			expect(body[index]).toContain(prefix);
+		});
+		expect(spoken.some((t) => t.startsWith("Welcome"))).toBe(false);
+	});
+
+	test("controls expose name, role, hint and the simulated phrase", async ({ screen, platform }) => {
+		await expect(screen.getByTestId(ids.a11y.switch)).toHaveAccessibleName("Sync over cellular");
+		await expect(screen.getByTestId(ids.a11y.switch)).toHaveRole("switch");
+		await expect(screen.getByTestId(ids.a11y.switch)).toAnnounce(/Sync over cellular, switch/);
+		await expect(screen.getByTestId(ids.a11y.hinted)).toHaveAccessibleName("Save changes");
+		await expect(screen.getByTestId(ids.a11y.hinted)).toHaveRole("button");
+		await expect(screen.getByTestId(ids.a11y.hinted)).toAnnounce(/Save changes, button/);
+		await expect(screen.getByTestId(ids.a11y.slider)).toHaveAccessibleName("Volume");
+		await expect(screen.getByTestId(ids.a11y.image)).toHaveAccessibleName("Starred item");
+		await expect(screen.getByTestId(ids.a11y.image)).toHaveRole("image");
+		if (platform === "ios")
+			await expect(screen.getByTestId(ids.a11y.hinted)).toHaveHint("Saves your changes to the cloud");
+	});
+
+	test("the good screen passes the audit", async ({ device }) => {
+		await expect(device).toPassA11yAudit();
+	});
+
+	/** The audit before it scrolls the screen to read every node, so the buttons are scrolled back into view. */
+	test("announce and live region", async ({ device, screen }) => {
+		await screen.getByTestId(ids.a11y.announce).scrollTo();
+		await screen.getByTestId(ids.a11y.announce).tap();
+		await expect(device).toHaveAnnounced("Saved");
+
+		const before = await device.announcements();
+		await screen.getByTestId(ids.a11y.increment).tap();
+		await expect(device).toHaveAnnounced("Count: 1", { since: before.cursor });
+		await expect(screen.getByTestId(ids.a11y.counter)).toHaveText("Count: 1");
+	});
+
+	test("screen reader and reduce motion flow into the app", async ({ device, screen }) => {
+		await expect(screen.getByTestId(ids.a11y.screenReader)).toHaveText("Screen reader: off");
+
+		await device.a11y({ screenReader: true });
+		await expectText(screen.getByTestId(ids.a11y.screenReader), "Screen reader: on");
+
+		await device.a11y({ reduceMotion: true });
+		await expectText(screen.getByTestId(ids.a11y.reduceMotion), "Reduce motion: on");
+	});
+
+	test("the settings a test changed are back off once it ended", async ({ screen }) => {
+		await expectText(screen.getByTestId(ids.a11y.screenReader), "Screen reader: off");
+	});
 });
 
-test("controls expose name, role, hint and the simulated phrase", async ({ app, device, screen, platform }) => {
-	await openA11y(app, device, screen);
-	await settledOrder(device);
-
-	await expect(screen.getByTestId(ids.a11y.switch)).toHaveAccessibleName("Sync over cellular");
-	await expect(screen.getByTestId(ids.a11y.switch)).toHaveRole("switch");
-	await expect(screen.getByTestId(ids.a11y.switch)).toAnnounce(/Sync over cellular, switch/);
-	await expect(screen.getByTestId(ids.a11y.hinted)).toHaveAccessibleName("Save changes");
-	await expect(screen.getByTestId(ids.a11y.hinted)).toHaveRole("button");
-	await expect(screen.getByTestId(ids.a11y.hinted)).toAnnounce(/Save changes, button/);
-	await expect(screen.getByTestId(ids.a11y.slider)).toHaveAccessibleName("Volume");
-	await expect(screen.getByTestId(ids.a11y.image)).toHaveAccessibleName("Starred item");
-	await expect(screen.getByTestId(ids.a11y.image)).toHaveRole("image");
-	if (platform === "ios")
-		await expect(screen.getByTestId(ids.a11y.hinted)).toHaveHint("Saves your changes to the cloud");
-});
-
-test("the good screen passes the audit", async ({ app, device, screen }) => {
-	await openA11y(app, device, screen);
-	await settledOrder(device);
-	await expect(device).toPassA11yAudit();
-});
-
+/** The `?bad=1` screen is a different screen state, opened fresh. */
 test("the bad screen fails with the known rules", async ({ app, device, screen, platform }) => {
 	await openA11y(app, device, screen, { bad: true });
 	await screen.getByTestId("a11y-bad-label").scrollTo();
@@ -133,30 +166,6 @@ test("extra-large text grows and nothing is clipped", async ({ app, device, scre
 		textSize: "accessibility-extra-large",
 	});
 	expect(result.issues).toEqual([]);
-});
-
-test("announce and live region", async ({ app, device, screen }) => {
-	await openA11y(app, device, screen);
-	await settledOrder(device);
-
-	await screen.getByTestId(ids.a11y.announce).tap();
-	await expect(device).toHaveAnnounced("Saved");
-
-	const before = await device.announcements();
-	await screen.getByTestId(ids.a11y.increment).tap();
-	await expect(device).toHaveAnnounced("Count: 1", { since: before.cursor });
-	await expect(screen.getByTestId(ids.a11y.counter)).toHaveText("Count: 1");
-});
-
-test("screen reader and reduce motion flow into the app", async ({ app, device, screen }) => {
-	await openA11y(app, device, screen);
-	await expect(screen.getByTestId(ids.a11y.screenReader)).toHaveText("Screen reader: off");
-
-	await device.a11y({ screenReader: true });
-	await expectText(screen.getByTestId(ids.a11y.screenReader), "Screen reader: on");
-
-	await device.a11y({ reduceMotion: true });
-	await expectText(screen.getByTestId(ids.a11y.reduceMotion), "Reduce motion: on");
 });
 
 test("TalkBack walks to the switch and toggles it", { platforms: ["android"], timeout: 240_000 }, async ({

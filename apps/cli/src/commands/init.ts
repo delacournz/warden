@@ -5,13 +5,23 @@ import { err, ok, type Result } from "@delacour/warden-types/result";
 import { z } from "zod";
 import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
-import { expoInstallCommand, missingPackages } from "../expo-app";
+import { devInstallCommand, expoInstallCommand, missingPackages } from "../expo-app";
 import { emit, note, reportError, success, warn } from "../output";
 import { currentBuild } from "../update/build-info";
 import { projectStart } from "./app";
 import { type InitApp, SMOKE_SPEC_SOURCE, wardenConfigSource } from "./init.data";
 
-type InitOpts = { project?: string; bundleId?: string; force?: true; dryRun?: true; json?: true };
+const PLATFORMS = ["ios", "android"] as const;
+type InitPlatform = (typeof PLATFORMS)[number];
+
+type InitOpts = {
+	project?: string;
+	bundleId?: string;
+	platform?: string;
+	force?: true;
+	dryRun?: true;
+	json?: true;
+};
 
 const APP_CONFIG_FILES = ["app.config.ts", "app.config.js", "app.config.mjs", "app.config.cjs"];
 const WARDEN_CONFIG_FILES = [
@@ -74,11 +84,13 @@ type Plan = {
 	appJson?: string;
 };
 
+const isPlatform = (value: string): value is InitPlatform => PLATFORMS.some((p) => p === value);
+
 const hasSpecs = (dir: string): boolean =>
 	existsSync(dir) && readdirSync(dir, { recursive: true }).some((entry) => TS_SPEC.test(String(entry)));
 
 /** What init would write for the app in `root`. */
-function plan(root: string, opts: InitOpts): Result<Plan> {
+function plan(root: string, opts: InitOpts, platform: InitPlatform): Result<Plan> {
 	const read = readAppJson(root);
 	if (!read.success) return read;
 	const updated = read.data ? withBundleId(read.data, opts.bundleId) : undefined;
@@ -88,12 +100,16 @@ function plan(root: string, opts: InitOpts): Result<Plan> {
 	const bundleId = { ...(ios ? { ios } : {}), ...(android ? { android } : {}) };
 	if (ios === undefined && android === undefined)
 		return err("the app has no bundle id yet — pass --bundle-id <id> (e.g. com.example.app; written to app.json)");
+	if (platform === "android" && android === undefined)
+		return err(
+			"the app has no Android package yet — pass --bundle-id <id> (e.g. com.example.app; written to app.json)"
+		);
 	const app: InitApp = { name: expo?.slug ?? expo?.name ?? basename(root), bundleId };
 	// a config in another format is the user's: never replaced by the .ts starter
 	const foreign = WARDEN_CONFIG_FILES.find((f) => f !== "warden.config.ts" && existsSync(join(root, f)));
 	const smoke = join(DEFAULT_SPECS_DIR, "smoke.e2e.ts");
 	const files = [
-		...(foreign ? [] : [{ path: "warden.config.ts", content: wardenConfigSource(app) }]),
+		...(foreign ? [] : [{ path: "warden.config.ts", content: wardenConfigSource(app, { platform }) }]),
 		...(hasSpecs(join(root, DEFAULT_SPECS_DIR)) ? [] : [{ path: smoke, content: SMOKE_SPEC_SOURCE }]),
 	].map((file) => ({ ...file, exists: existsSync(join(root, file.path)) }));
 	return ok({ app, files, ...(updated ? { appJson: `${JSON.stringify(updated, null, 2)}\n` } : {}) });
@@ -108,7 +124,14 @@ function installCommands(root: string): string[] {
 	const e2e = missingPackages(root, ["@delacour/warden-e2e"]);
 	return [
 		...(dev.length > 0 ? [expoInstallCommand(root, dev).join(" ")] : []),
-		...(e2e.length > 0 ? [`bun add -d ${e2e.map((name) => `${name}@${currentBuild().version}`).join(" ")}`] : []),
+		...(e2e.length > 0
+			? [
+					devInstallCommand(
+						root,
+						e2e.map((name) => `${name}@${currentBuild().version}`)
+					).join(" "),
+				]
+			: []),
 	];
 }
 
@@ -126,7 +149,9 @@ function init(ctx: CommandContext, opts: InitOpts): number {
 	const start = projectStart(ctx, opts.project);
 	if (!start.success) return fail(start.error);
 	const root = start.data;
-	const planned = plan(root, opts);
+	const platform = opts.platform ?? "ios";
+	if (!isPlatform(platform)) return fail(`--platform must be ios or android, got "${platform}"`);
+	const planned = plan(root, opts, platform);
 	if (!planned.success) return fail(planned.error);
 	const { files, appJson } = planned.data;
 	const dry = opts.dryRun === true;
@@ -152,7 +177,13 @@ function init(ctx: CommandContext, opts: InitOpts): number {
 	}
 	const install = installCommands(root);
 	for (const command of install) warn(ctx, `warden init: install first: ${command}`);
-	note(ctx, "warden init: next: warden dev (dev client + Metro on a leased simulator), warden e2e (the e2e/ specs)");
+	const steps = [
+		...(install.length > 0 ? ["install the packages named above"] : []),
+		"add testID and accessible to the views a spec taps or asserts on",
+		"warden e2e (runs the e2e/ specs; the first run builds the app)",
+	];
+	note(ctx, `warden init: next:\n${steps.map((step, i) => `  ${i + 1}. ${step}`).join("\n")}`);
+	note(ctx, "warden init: to try the app by hand first: warden dev");
 	if (opts.json) emit(ctx, true, { root, written, skipped, install }, "");
 	return 0;
 }
@@ -165,10 +196,11 @@ export const initCommand: Command = defineCommand({
 		cmd
 			.option("--project <dir>", "the Expo app's directory (default: cwd)")
 			.option("--bundle-id <id>", "bundle id / package for an app that has none yet (written to app.json)")
+			.option("--platform <platform>", "platform of the e2e suite: ios or android (default: ios)")
 			.option("--force", "overwrite files that already exist")
 			.option("--dry-run", "print what would be written, write nothing")
 			.option("--json", "machine-readable output")
-			.addHelpText("after", "\nExample:\n  warden init --bundle-id com.example.app")
+			.addHelpText("after", "\nExample:\n  warden init --bundle-id com.example.app\n  warden init --platform android")
 			.action((opts) => done(init(ctx, opts)));
 	},
 });

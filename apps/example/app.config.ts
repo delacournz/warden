@@ -31,6 +31,7 @@ const expoConfig: ExpoConfig = {
 				locationWhenInUsePermission: "The Location and Conditions screens show your position and a geofence.",
 			},
 		],
+		"expo-notifications",
 		[
 			"expo-camera",
 			{
@@ -57,16 +58,6 @@ const expoConfig: ExpoConfig = {
 			"expo-dev-client",
 			{
 				launchMode: "most-recent",
-			},
-		],
-		// Xcode 27's iOS SDK requires the UIScene lifecycle; the SDK 57 prebuild template has none, so an app built
-		// with it traps at launch (NoSceneLifecycleAdoption). The plugin adds the scene manifest and delegate.
-		[
-			"expo-build-properties",
-			{
-				ios: {
-					enableSceneSupport: true,
-				},
 			},
 		],
 	],

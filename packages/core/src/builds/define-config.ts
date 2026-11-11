@@ -609,7 +609,7 @@ export interface WardenE2eSuite {
 	 * `"idle"`: leave them booted, so the next run skips the 10-30 s boot, and let `warden gc` shut
 	 * them down once they have sat idle. A failed run always leaves them up. `--no-shutdown` wins.
 	 *
-	 * @default "always"
+	 * @default "always" locally, "idle" under `CI` / `GITHUB_ACTIONS` (the runner is thrown away)
 	 */
 	shutdown?: "always" | "idle" | undefined;
 	/**
@@ -717,6 +717,16 @@ export interface WardenE2eSuite {
 	count?: number | undefined;
 	/** Device profile (not with `devices`). */
 	profile?: string | undefined;
+	/**
+	 * iOS simulator runtime the run's devices boot on, and whose golden they clone: `latest`, `iOS-26-5` or `26.5`.
+	 * Pin it so the run (locally and on CI) sees one accessibility tree: values change between iOS releases.
+	 * A runtime that is not installed fails the run before any device is claimed, listing the installed ones; it never
+	 * falls back to another. Applies to every `devices` leg. Skipped on Android. `--runtime` overrides it.
+	 * `warden golden key --profile <profile> --runtime <runtime>` names the golden archive the run uses.
+	 *
+	 * @example "27.0"
+	 */
+	runtime?: string | undefined;
 	/** Ensure the app on every device first. */
 	app?: WardenAppOption | undefined;
 	/** Ports leased for the run (`<from>[:<span>]`), exported as `WARDEN_PORT_<i>` / `WARDEN_PORTS` to serve, setup and every spec process. */
@@ -751,6 +761,14 @@ export interface WardenE2eSuite {
 	 * `biometrics`. Default false.
 	 */
 	biometrics?: boolean | undefined;
+	/**
+	 * iOS: simulators the run creates are cloned from a golden image (a first-booted, settled simulator built once
+	 * per profile and runtime). Off: each is a fresh `simctl create` and first boot, and `warden ci cache --suite`
+	 * prints no golden group. Existing pool devices are reused either way; `WARDEN_GOLDEN=0` turns it off everywhere.
+	 *
+	 * @default false
+	 */
+	golden?: boolean | undefined;
 	/**
 	 * What happens to the state of the devices of this run when they are released: `"erase"` (iOS: shutdown +
 	 * `simctl erase`; Android: uninstalls the third-party apps), `"uninstall"` (removes the user-installed apps) or

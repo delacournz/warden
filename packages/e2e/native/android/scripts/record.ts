@@ -11,12 +11,13 @@
  * (`uiad-protocol.test.ts`, `uiad-client.test.ts`) replay that file, so the schemas are tested against what the server
  * really says. Re-run it when the Java side changes a reply.
  */
+import { readFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { androidTools } from "@delacour/warden-core/providers/android";
 import { atfDevicePath } from "../../../src/driver/android/atf-device";
-import { ATF_DEX } from "../../../src/driver/android/atf-dex.generated";
 import { main as buildMain } from "./build";
+import { ATF_CHECKED_IN_JAR } from "./build-atf";
 
 const ANDROID_DIR = resolve(import.meta.dir, "..");
 const DEVICE_DEX = "/data/local/tmp/warden-uiad-record.dex";
@@ -145,11 +146,11 @@ async function until(live: Live, record: Recorded, id: string, tries = 40): Prom
 	throw new Error(`${id} never appeared`);
 }
 
-/** Puts the bundled `warden-atf.jar` where the driver would (`audit` names it by path); returns that path. */
+/** Puts the checked-in `warden-atf.jar` where the driver would (`audit` names it by path); returns that path. */
 async function pushAtf(): Promise<string> {
 	const path = atfDevicePath();
 	const local = resolve(ANDROID_DIR, "dist/warden-atf-record.jar");
-	await writeFile(local, Buffer.from(ATF_DEX.base64, "base64"));
+	await writeFile(local, readFileSync(ATF_CHECKED_IN_JAR));
 	await shell(`mkdir -p ${path.slice(0, path.lastIndexOf("/"))}`);
 	const proc = Bun.spawn([adb, "-s", serial ?? "", "push", local, path], { stdout: "ignore", stderr: "ignore" });
 	await proc.exited;

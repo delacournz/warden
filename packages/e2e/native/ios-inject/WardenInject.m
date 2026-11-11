@@ -1,13 +1,14 @@
-// libwarden-inject: injected into an iOS-simulator app by `DYLD_INSERT_LIBRARIES` (SIMCTL_CHILD_*), only when a
-// network or clock condition is active for the lease. Without the env below it is never loaded, so a run with no
-// condition pays nothing.
+// libwarden-inject: injected into an iOS-simulator app by `DYLD_INSERT_LIBRARIES` (SIMCTL_CHILD_*), whenever warden
+// launches it with a condition active (network, clock, camera, software keyboard: the default, so nearly always).
+// Without the env below it is never loaded.
 //
 // Env (set by warden at launch):
 //   WARDEN_NET_PROXY=127.0.0.1:<port>   route NSURLSession HTTP+HTTPS through the lease's shaping proxy
-//   WARDEN_INJECT_STATE=<file>          control file, watched live: {"seq":n,"offline":bool,"clockOffsetMs":n,"clockFrozenMs":n?,"camera":{"back"?:{kind,path,loop},"front"?:…}}
+//   WARDEN_INJECT_STATE=<file>          control file, watched live: {"seq":n,"offline":bool,"clockOffsetMs":n,"clockFrozenMs":n?,"keyboard":"software"|"hardware"?,"camera":{"back"?:{kind,path,loop},"front"?:…}}
 //   WARDEN_CLOCK_OFFSET_MS=<n>          initial wall-clock offset (the state file overrides it)
 //   WARDEN_CLOCK_FROZEN_MS=<n>          initial frozen wall time, ms since the epoch (the state file overrides it)
 //   WARDEN_CAMERA=1                     fake the AVFoundation capture stack from the state file's `camera` feeds (see "camera")
+//   WARDEN_KEYBOARD=software|hardware   initial keyboard mode (the state file's `keyboard` overrides it live); see "keyboard"
 //   WARDEN_INJECT_DEBUG=1               log to stderr
 //
 // Control channel: the simulator shares the host filesystem, so the channel is a file. The host replaces
@@ -25,6 +26,14 @@
 // announcements (argument NSString or NSAttributedString), screen-changed and layout-changed are appended as JSON lines
 // {"kind":"announcement"|"screen-changed"|"layout-changed","text"?:s,"at":epoch ms} to `<file>.events` (append-only;
 // the host's cursor is a byte offset, and a line is only complete once it ends in a newline). Needs WARDEN_INJECT_STATE.
+//
+// Keyboard (KBD-2): HID typing makes iOS treat a hardware keyboard as attached and minimise the on-screen keyboard. In
+// `software` mode `-[UIKeyboardImpl isMinimized]` answers NO, so the keyboard stays up while warden types; `hardware`
+// answers YES (it never depends on whether iOS has seen a HID keyboard event). Every mode change runs `reloadInputViews` on the main thread, so the keyboard shows or hides at
+// once, no relaunch. The initial mode is `WARDEN_KEYBOARD`; a state file without a `keyboard` field leaves the mode as is.
+// A state with `"dismissKeyboard":true` resigns the first responder (a one-shot, like `a11yRead`): the keyboard goes away
+// without a Return that could submit the focused form.
+// Private API: re-verify on each iOS release (a missing class or selector makes the mode a no-op, never a crash).
 //
 // Covered: NSURLSession (default/ephemeral/background configurations and sessionWithConfiguration:*), network path
 // APIs (nw_path_get_status, nw_path_uses_interface_type, NWPathMonitor update handlers re-fired on change),
@@ -2088,6 +2097,49 @@ static void write_ack(long long seq) {
   [body writeToFile:ack atomically:YES encoding:NSUTF8StringEncoding error:nil];
 }
 
+#if TARGET_OS_IOS
+// 0 = unset (iOS decides: the original answer), 1 = software (never minimised), 2 = hardware (always minimised). Hardware
+// must not depend on whether iOS has seen a HID keyboard event in this process, so it forces YES instead of asking.
+static _Atomic int g_keyboard_mode = 0;
+
+static void keyboard_install_swizzle(void) {
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    Class c = NSClassFromString(@"UIKeyboardImpl");
+    SEL sel = NSSelectorFromString(@"isMinimized");
+    Method m = c ? class_getInstanceMethod(c, sel) : NULL;
+    if (!m) return;
+    BOOL (*orig)(id, SEL) = (void *)method_getImplementation(m);
+    method_setImplementation(m, imp_implementationWithBlock(^BOOL(id self_) {
+      int mode = atomic_load(&g_keyboard_mode);
+      if (mode == 1) return NO;
+      if (mode == 2) return YES;
+      return orig(self_, sel);
+    }));
+  });
+}
+
+static void keyboard_apply(NSString *mode) {
+  int next = [mode isEqualToString:@"software"] ? 1 : ([mode isEqualToString:@"hardware"] ? 2 : 0);
+  int was = atomic_exchange(&g_keyboard_mode, next);
+  keyboard_install_swizzle();
+  DLOG("keyboard=%s (was %d)", mode.UTF8String, was);
+  if (was == next) return;
+  dispatch_async(dispatch_get_main_queue(), ^{
+    [UIApplication.sharedApplication sendAction:NSSelectorFromString(@"reloadInputViews") to:nil from:nil forEvent:nil];
+  });
+}
+
+// `"dismissKeyboard":true` (one-shot): resign the first responder on the main thread. Unlike Return it cannot
+// trigger onSubmitEditing, so a spec dismissing a covering keyboard never submits a form.
+static void keyboard_dismiss(void) {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    [UIApplication.sharedApplication sendAction:@selector(resignFirstResponder) to:nil from:nil forEvent:nil];
+    DLOG("keyboard dismissed");
+  });
+}
+#endif
+
 static void apply_state_file(void) {
   NSData *data = [NSData dataWithContentsOfFile:g_state_path];
   if (!data) return;
@@ -2105,6 +2157,10 @@ static void apply_state_file(void) {
   if (frozen) atomic_store(&g_clock_frozen_ms, [state[@"clockFrozenMs"] longLongValue]);
   atomic_store(&g_clock_frozen, frozen ? 1 : 0);
   atomic_store(&g_applied_seq, seq);
+#if TARGET_OS_IOS
+  if ([state[@"keyboard"] isKindOfClass:[NSString class]]) keyboard_apply(state[@"keyboard"]);
+  if ([state[@"dismissKeyboard"] respondsToSelector:@selector(boolValue)] && [state[@"dismissKeyboard"] boolValue]) keyboard_dismiss();
+#endif
   if (g_camera_enabled) camera_apply([state[@"camera"] isKindOfClass:[NSDictionary class]] ? state[@"camera"] : @{});
   if ([state[@"a11yRead"] respondsToSelector:@selector(boolValue)] && [state[@"a11yRead"] boolValue]) write_a11y(seq);
   DLOG("state seq=%lld offline=%d clockOffsetMs=%lld frozen=%d", seq, offline, off, frozen);
@@ -2142,6 +2198,12 @@ __attribute__((constructor)) static void warden_inject_init(void) {
     }
     NSString *proxy = env[@"WARDEN_NET_PROXY"];
     if (proxy.length) install_proxy(proxy);
+#if TARGET_OS_IOS
+    if ([env[@"WARDEN_KEYBOARD"] isEqualToString:@"software"] || [env[@"WARDEN_KEYBOARD"] isEqualToString:@"hardware"]) {
+      atomic_store(&g_keyboard_mode, [env[@"WARDEN_KEYBOARD"] isEqualToString:@"software"] ? 1 : 2);
+      keyboard_install_swizzle();
+    }
+#endif
     NSString *state = env[@"WARDEN_INJECT_STATE"];
     if ([env[@"WARDEN_CAMERA"] isEqualToString:@"1"]) {
       g_camera_enabled = YES;

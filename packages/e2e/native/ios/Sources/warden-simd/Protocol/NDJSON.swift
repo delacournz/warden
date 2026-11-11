@@ -20,7 +20,7 @@ enum NDJSON {
     do {
       data = try encoder.encode(json)
     } catch {
-      // Only reachable for non-finite doubles; keep the stream well-formed rather than dropping the line.
+      // Non-finite doubles already encode as null (`JSON.encode`); keep the stream well-formed whatever else throws.
       let fallback = Response.failure(id: nil, error: WireError(.internal, "unencodable value: \(error)"))
       data = (try? encoder.encode(fallback.json)) ?? Data("{}".utf8)
     }

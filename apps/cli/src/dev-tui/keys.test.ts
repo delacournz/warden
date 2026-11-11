@@ -4,6 +4,7 @@ import {
 	createKeyParser,
 	ESC_TIMEOUT_MS,
 	EXPO_KEYS,
+	footerHint,
 	type Key,
 	type KeyTimers,
 	LIST_BINDINGS,
@@ -211,10 +212,23 @@ describe("Shift+PgUp / PgDn", () => {
 });
 
 describe("help text sources", () => {
+	test("every visible list key sits in a help section", () => {
+		const loose = LIST_BINDINGS.filter((b) => !b.hidden && b.group === undefined).map((b) => b.label);
+		expect(loose).toEqual([]);
+	});
+
+	test("the list hint drops action keys before the essentials when narrow", () => {
+		expect(footerHint("list")).toContain("r reload");
+		const narrow = footerHint("list", 50);
+		expect(narrow).not.toContain("r reload");
+		expect(narrow).toContain("q quit");
+		expect(narrow).toContain("? keys");
+	});
+
 	test("the key map lists warden's keys and Expo's", () => {
 		const labels = LIST_BINDINGS.filter((b) => !b.hidden).map((b) => b.label);
 		expect(labels).toContain("q ctrl-c");
-		expect(labels).toContain("?");
+		expect(labels).toContain("h");
 		expect(EXPO_KEYS.map((k) => k.label)).toEqual(["a", "i", "w", "j", "r", "m", "shift+m", "o", "?"]);
 	});
 });

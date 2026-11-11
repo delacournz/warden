@@ -2,7 +2,14 @@ import { join } from "node:path";
 import type { Exec } from "@delacour/warden-core/exec";
 import { type AsyncResult, err } from "@delacour/warden-types/result";
 import { HELPER_ASSET, HELPER_BINARY, HELPER_TARGET } from "../npm/helper";
-import { type ExtractAsset, type FetchedAsset, fetchReleaseAsset, releaseBaseUrl, tarExtract } from "./fetch-asset";
+import {
+	type ExtractAsset,
+	type FetchedAsset,
+	fetchReleaseAsset,
+	latestReleaseBaseUrl,
+	releaseBaseUrl,
+	tarExtract,
+} from "./fetch-asset";
 import type { Fetch } from "./npm-registry";
 
 /** Unpack the helper tarball into `destDir` (created or replaced). Injected so the download logic stays pure. */
@@ -17,8 +24,14 @@ export type FetchHelperInput = {
 	/** warden's version: selects release tag `v<version>` and `$WARDEN_HOME/simd/<version>/` */
 	version: string;
 	wardenHome: string;
+	/**
+	 * When release `v<version>` does not exist (404), take the latest release's helper instead. For builds from a
+	 * checkout, whose version can be ahead of every release (a version-bump branch). Never with `WARDEN_HELPER_URL`.
+	 */
+	fallbackToLatest?: boolean;
 };
 
+/** `release`: `version` = release `v<version>`; `latest` = the latest release, because `v<version>` has none. */
 export type FetchedHelper = FetchedAsset;
 
 /** `$WARDEN_HOME/simd/<version>`: the last place `locateHelper` looks. */
@@ -34,9 +47,15 @@ export function helperBaseUrl(env: Readonly<Record<string, string | undefined>>,
 	return releaseBaseUrl(env, "WARDEN_HELPER_URL", version);
 }
 
+/** The latest GitHub release's download directory: where `fallbackToLatest` looks. */
+export function latestHelperBaseUrl(env: Readonly<Record<string, string | undefined>>): string {
+	return latestReleaseBaseUrl(env);
+}
+
 /**
- * Download the helper tarball for this warden version, verify it against `SHA256SUMS`, and extract it into
- * `$WARDEN_HOME/simd/<version>/`. Nothing is extracted unless the checksum matches.
+ * Download the helper tarball for this warden version (or the latest release's, see `fallbackToLatest`), verify it
+ * against `SHA256SUMS`, and extract it into `$WARDEN_HOME/simd/<version>/`. Nothing is extracted unless the
+ * checksum matches.
  */
 export async function fetchHelper(input: FetchHelperInput): AsyncResult<FetchedHelper> {
 	const { env, platform, arch, version } = input;
@@ -45,6 +64,7 @@ export async function fetchHelper(input: FetchHelperInput): AsyncResult<FetchedH
 		fetch: input.fetch,
 		extract: input.extract,
 		base: helperBaseUrl(env, version),
+		fallbackBase: input.fallbackToLatest && !env.WARDEN_HELPER_URL ? latestHelperBaseUrl(env) : undefined,
 		asset: HELPER_ASSET,
 		dir: helperHomeDir(input.wardenHome, version),
 	});

@@ -18,7 +18,7 @@ import type {
 } from "../../driver.types";
 import { driverError } from "../../errors";
 import { physicalConditionOps } from "../../physical-conditions";
-import { type SettleDetail, settleByHash, snapshotHash } from "../../settle";
+import { hashFallbackQuietMs, type SettleDetail, settleByHash, snapshotHash } from "../../settle";
 import { noteSpanDetail } from "../../span-detail";
 import { KEY_USAGE } from "../ios-driver";
 import { normalizeElements, toSnapshot } from "../normalize";
@@ -148,7 +148,12 @@ export function createIosDeviceDriver(
 					if (!snap.success) throw new DriverFailure(snap.error);
 					return snapshotHash(snap.data);
 				},
-				{ quietMs: o.quietMs ?? DEFAULT_QUIET_MS, timeoutMs: o.timeoutMs ?? DEFAULT_SETTLE_TIMEOUT_MS, now, sleep }
+				{
+					quietMs: hashFallbackQuietMs(o.quietMs ?? DEFAULT_QUIET_MS),
+					timeoutMs: o.timeoutMs ?? DEFAULT_SETTLE_TIMEOUT_MS,
+					now,
+					sleep,
+				}
 			);
 			noteSpanDetail("via", "hash");
 			return { success: true, data: { ...outcome, via: "hash" } };
@@ -313,6 +318,11 @@ export function createIosDeviceDriver(
 		biometrics: async () =>
 			unsupported("biometrics", "Face ID / Touch ID cannot be simulated on a real sensor; use a simulator"),
 		...physicalConditionOps(`physical iPhone ${udid}`),
+		dismissKeyboard: async () => {
+			const pressed = await sendVoid("key", params({ usage: KEY_USAGE.Enter }));
+			return pressed.success ? { success: true, data: { via: "key" } } : pressed;
+		},
+		keyboardState: async () => unsupported("the keyboard mode", "the injected library runs in simulator apps only"),
 		typeText: (text) => sendVoid("typeText", { text }, deviceTypeTextBudgetMs(text)),
 		key: (key, modifiers) => sendVoid("key", params({ usage: KEY_USAGE[key], modifiers: modifiers && [...modifiers] })),
 		pressButton,
