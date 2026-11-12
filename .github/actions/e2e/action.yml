@@ -82,7 +82,7 @@ inputs:
     description: Save the build, repack and golden caches after a green run (true on the default branch, false on pull requests).
     default: "true"
   suite-timeout-minutes:
-    description: Minutes the suite may run before the action stops it (SIGINT, then SIGKILL after 60 s), so a hung run still prints its evidence and uploads the artifact. Keep it under the job timeout.
+    description: Minutes the suite may run before the action stops it (SIGINT, then SIGKILL after 60 s), so a hung run still prints its evidence and uploads the artifact. The app build runs before it in its own step (`warden e2e --build-only`) and is not counted. Keep the job timeout above a cold build plus this.
     default: "35"
   artifacts:
     description: "What the run leaves behind to collect: `all`, `none`, or a comma list of `report` (e2e-report.json), `batches` (~/.warden/batches: spec logs, results.jsonl, screen-at-failure.txt, metro.log), `logs` (~/.warden/logs: native build logs, plus the device helpers' ~/.warden/simd/*.log), `app` (app.tar of the .app / .apk builds the run used), `golden` (golden.tar of the golden simulator, exported to ~/warden-goldens first when it was built but not archived; GBs). Tarballs keep the executable bit and symlinks upload-artifact would lose. `all` is every group after a green run (less `golden` when it was restored from the cache: the cache holds it) and `report,batches,logs,golden` after a failed one. `logs` is always collected, whatever this says (even `none`). The `artifact-paths` output lists what was collected."
@@ -372,6 +372,43 @@ runs:
         if [ -n "$PROFILE" ]; then profile_args=(--profile "$PROFILE"); fi
         warden golden ensure ${profile_args[@]+"${profile_args[@]}"}
 
+    # The native build (a cold one is 15-35 min on a hosted runner) gets its own step, bounded only by the job timeout, so
+    # `suite-timeout-minutes` times the specs alone. `--build-only` builds what the run would install (same suite, specs,
+    # kind and bundle env), so the run finds it cached. A warden without the flag leaves the build to the run.
+    - name: Build the app
+      id: build
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        SUITE: ${{ inputs.suite }}
+        PROFILE: ${{ inputs.profile }}
+        EXTRA: ${{ inputs.args }}
+      run: |
+        set +e
+        set -uo pipefail
+        if ! warden e2e --help 2>/dev/null | grep -q -- '--build-only'; then
+          echo "::notice title=app built by the run::this warden has no \`e2e --build-only\`: the suite's timeout includes the build"
+          exit 0
+        fi
+        args=(e2e)
+        if [ -n "$SUITE" ]; then args+=("$SUITE"); fi
+        if [ -n "$PROFILE" ]; then args+=(--profile "$PROFILE"); fi
+        args+=(--build-only)
+        # shellcheck disable=SC2206
+        extra=($EXTRA)
+        started=$(date +%s)
+        echo "started=$started" >> "$GITHUB_OUTPUT"
+        warden "${args[@]}" ${extra[@]+"${extra[@]}"}
+        code=$?
+        ended=$(date +%s)
+        {
+          echo "ended=$ended"
+          echo "exit-code=$code"
+        } >> "$GITHUB_OUTPUT"
+        echo "warden e2e --build-only exited $code after $(( ended - started )) s"
+        if [ "$code" -ne 0 ]; then echo "::error title=app build failed::warden e2e --build-only exited $code; the suite was not run"; fi
+        exit 0
+
     - name: Run the suite
       id: run
       shell: bash
@@ -379,6 +416,7 @@ runs:
       env:
         SUITE: ${{ inputs.suite }}
         PROFILE: ${{ inputs.profile }}
+        BUILD_EXIT: ${{ steps.build.outputs.exit-code }}
         COUNT: ${{ inputs.count }}
         RETRY: ${{ inputs.retry }}
         EXTRA: ${{ inputs.args }}
@@ -389,6 +427,19 @@ runs:
         set +e
         set -uo pipefail
         case "$REPORT" in /*) report="$REPORT" ;; *) report="$WORKSPACE/$REPORT" ;; esac
+        if [ -n "${BUILD_EXIT:-}" ] && [ "$BUILD_EXIT" != 0 ]; then
+          now=$(date +%s)
+          {
+            echo "report-path=$report"
+            echo "exit-code=$BUILD_EXIT"
+            echo "passed=false"
+            echo "seconds=0"
+            echo "started=$now"
+            echo "ended=$now"
+          } >> "$GITHUB_OUTPUT"
+          echo "skipped: the app build failed (exit $BUILD_EXIT)"
+          exit 0
+        fi
         args=(e2e)
         if [ -n "$SUITE" ]; then args+=("$SUITE"); fi
         if [ -n "$PROFILE" ]; then args+=(--profile "$PROFILE"); fi
@@ -432,6 +483,7 @@ runs:
       env:
         JOB_TIMING_TOKEN: ${{ inputs.github-token }}
         ACTION_STARTED: ${{ steps.prepare.outputs.started }}
+        BUILD_STARTED: ${{ steps.build.outputs.started }}
         SUITE_STARTED: ${{ steps.run.outputs.started }}
         SUITE_ENDED: ${{ steps.run.outputs.ended }}
       run: bash "$GITHUB_ACTION_PATH/job-timing.sh"
@@ -443,7 +495,7 @@ runs:
       if: always()
       shell: bash
       env:
-        STARTED: ${{ steps.run.outputs.started }}
+        STARTED: ${{ steps.build.outputs.started || steps.run.outputs.started }}
         CCACHE_DIR: ${{ steps.keys.outputs.ccache-dir }}
         CCACHE_USED: ${{ steps.ccache-prep.outcome }}
       run: |

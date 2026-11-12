@@ -333,6 +333,32 @@ describe("action.yml artifacts", () => {
 		expect(print.run).toContain("ccache-writes=");
 	});
 
+	test("the app is built in its own step before the suite, so the suite's timeout times the specs alone", () => {
+		const steps = action.runs.steps;
+		const at = (id: string) => steps.findIndex((s) => s.id === id);
+		const build = steps[at("build")] as Step & { run?: string; env?: Record<string, string> };
+		expect(at("ccache-prep")).toBeLessThan(at("build"));
+		expect(at("import")).toBeLessThan(at("build"));
+		expect(at("build")).toBeLessThan(at("run"));
+		expect(build.run).toContain("--build-only");
+		// the run's own selection and kind: same suite, profile and args
+		expect(build.env).toMatchObject({
+			SUITE: `\${{ inputs.suite }}`,
+			PROFILE: `\${{ inputs.profile }}`,
+			EXTRA: `\${{ inputs.args }}`,
+		});
+		// never under the suite's watchdog
+		expect(build.run).not.toContain("SUITE_TIMEOUT");
+		// an older warden without the flag leaves the build to the run instead of failing
+		expect(build.run).toContain("grep -q -- '--build-only'");
+		const run = steps[at("run")] as Step & { run?: string; env?: Record<string, string> };
+		expect(run.env?.BUILD_EXIT).toBe(`\${{ steps.build.outputs.exit-code }}`);
+		expect(run.run).toContain("passed=false");
+		// the native build log is the build step's, not only the suite's
+		const print = steps[at("build-log")] as Step & { env?: Record<string, string> };
+		expect(print.env?.STARTED).toBe(`\${{ steps.build.outputs.started || steps.run.outputs.started }}`);
+	});
+
 	test("the cache export reuses the golden the collection archived", () => {
 		const steps = action.runs.steps;
 		const exportIndex = steps.findIndex((s) => s.id === "golden-export");
