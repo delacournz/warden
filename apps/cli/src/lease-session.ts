@@ -15,7 +15,14 @@ import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/r
 import { phaseTracker } from "./app-phase";
 import { selfCommand } from "./autogc";
 import { type ClaimFlags, claimWithFlags } from "./claim-flags";
-import { defaultAppDeps, type EnsureOptions, ensurePreparedApp, type PreparedApp, prepareApp } from "./commands/app";
+import {
+	defaultAppDeps,
+	type EnsureOptions,
+	ensureAppFor,
+	ensurePreparedApp,
+	type PreparedApp,
+	prepareApp,
+} from "./commands/app";
 import type { CommandContext } from "./context";
 import { releaseDevices } from "./device-lease";
 import {
@@ -45,6 +52,18 @@ export type RunEnsureApp = (
 	deviceId: string,
 	opts: EnsureOptions
 ) => AsyncResult<EnsureResult & { kindApp?: KindApp }>;
+
+/** Build (or find) the app `opts` asks for into the cache, on no device: what `warden e2e --build-only` runs. */
+export type BuildApp = (
+	ctx: CommandContext,
+	owner: Owner,
+	platform: Platform,
+	opts: EnsureOptions
+) => AsyncResult<EnsureResult & { kindApp?: KindApp }>;
+
+/** The real `BuildApp`: `ensureAppFor` with no device resolves the build into the cache and installs nothing. */
+export const buildAppIntoCache: BuildApp = (ctx, owner, platform, opts) =>
+	ensureAppFor(ctx, defaultAppDeps, owner, platform, undefined, opts);
 
 /** Effects a lease session needs (a subset of `RunDeps` / `BatchDeps`). */
 export type LeaseSessionDeps = {

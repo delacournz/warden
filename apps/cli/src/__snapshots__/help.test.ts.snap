@@ -648,6 +648,9 @@ Options:
   --required-only             only run specs with required: true
   --explain                   print why each spec was selected before running
   --dry-run                   select and explain, run nothing
+  --build-only                build (or find) the app the run would install into
+                              the cache, then stop: no device, no spec (a CI
+                              step before the timed run)
   --report <file>             also write e2e-report.json here
   --json-lines                stdout: one JSON event per line, each test as it
                               finishes, then the report (progress stays on
