@@ -4,15 +4,28 @@ name: e2e
 # in .github/actions/e2e. Separate from `ci` (the signoff escape hatch) so it never slows a PR that
 # touches nothing it covers: pull requests only run it for the paths below.
 #
-# Runs on pull requests into develop only (never on a push to develop or main). Caches: a pull request
-# saves its own after a green run (scoped to the PR, so its next push starts warm) and can restore
-# develop's. `workflow_dispatch` on develop seeds the shared entries every PR can restore.
+# Runs on pull requests into develop and on a push to develop (same paths; never main). Caches: a pull request
+# saves its own (scoped to the PR, so its next push starts warm) and can restore develop's, but never another
+# PR's. The push to develop is what saves the shared entries every PR restores: without it each new PR built
+# the app from source on a cold compiler cache (~33 min instead of ~13). `workflow_dispatch` on develop seeds
+# them by hand.
 #
 # Runner: the `runner` input (e.g. a self-hosted Mac label), else the repo variable WARDEN_E2E_RUNNER, else
 # `xcode-27` (GitHub's macOS 27 image, public preview; `macos-26` stops at Xcode 26.6, which can't build
 # warden-simd). Checkout and caches are GitHub's own actions, so any macOS label works.
 on:
   pull_request:
+    branches: [develop]
+    paths:
+      - apps/example/**
+      - apps/cli/**
+      - packages/core/**
+      - packages/e2e/**
+      - bun.lock
+      - package.json
+      - .github/actions/e2e/**
+      - .github/workflows/e2e.yml
+  push:
     branches: [develop]
     paths:
       - apps/example/**
@@ -57,15 +70,18 @@ permissions:
   # the action's `job timing` line reads this job's start from the jobs API.
   actions: read
 
-# One group per branch: a new push to a pull request cancels the run on its previous head.
+# One group per branch: a new push to a pull request cancels the run on its previous head. develop's runs queue
+# instead: a cancelled one would never save the caches it built.
 concurrency:
   group: e2e-${{ github.head_ref || github.ref_name }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   example:
     runs-on: ${{ inputs.runner || vars.WARDEN_E2E_RUNNER || 'xcode-27' }}
-    timeout-minutes: 50
+    # A cold native build (~35 min on a cold compiler cache) + the suite's 35 min + prep. The suite's own timeout
+    # (`suite-timeout-minutes`) times the specs only: the action builds the app in a step before it.
+    timeout-minutes: 85
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -160,4 +176,4 @@ jobs:
           retry: ${{ inputs.retry || '1' }}
           args: ${{ github.event_name == 'workflow_dispatch' && inputs.args || '--specs app/onboarding,app/settings,app/auth' }}
           warden-version: ${{ (inputs.warden-version || 'source') == 'source' && 'none' || inputs.warden-version }}
-          save-cache: ${{ github.event_name == 'pull_request' && 'true' || (inputs.save-cache && 'true') || 'false' }}
+          save-cache: ${{ github.event_name != 'workflow_dispatch' && 'true' || (inputs.save-cache && 'true') || 'false' }}
