@@ -351,6 +351,9 @@ describe("action.yml artifacts", () => {
 		expect(build.run).not.toContain("SUITE_TIMEOUT");
 		// an older warden without the flag leaves the build to the run instead of failing
 		expect(build.run).toContain("grep -q -- '--build-only'");
+		// read the help whole first: `--help | grep -q` under pipefail SIGPIPEs warden on an early match and reads as missing
+		expect(build.run).toContain("help=$(warden e2e --help 2>/dev/null || true)");
+		expect(build.run).not.toMatch(/--help[^\n]*\|\s*grep/);
 		const run = steps[at("run")] as Step & { run?: string; env?: Record<string, string> };
 		expect(run.env?.BUILD_EXIT).toBe(`\${{ steps.build.outputs.exit-code }}`);
 		expect(run.run).toContain("passed=false");

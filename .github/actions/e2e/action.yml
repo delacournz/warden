@@ -386,7 +386,9 @@ runs:
       run: |
         set +e
         set -uo pipefail
-        if ! warden e2e --help 2>/dev/null | grep -q -- '--build-only'; then
+        # read the help whole: piped into grep -q, an early match SIGPIPEs warden and pipefail reads it as missing
+        help=$(warden e2e --help 2>/dev/null || true)
+        if ! grep -q -- '--build-only' <<< "$help"; then
           echo "::notice title=app built by the run::this warden has no \`e2e --build-only\`: the suite's timeout includes the build"
           exit 0
         fi
