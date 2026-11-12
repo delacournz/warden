@@ -58,7 +58,7 @@ import { type LaunchPlan, specBundleId, specDevClientScheme, specLaunchArgs } fr
 import { annotations, commonFailure, githubTarget, stepSummary, testEvent, testTotals } from "../e2e/report-output";
 import { type E2eTiming, runTiming, timingLine } from "../e2e/timing";
 import { exitGate, type RunShape, type SpecVerdict, type Verdicts, verdicts } from "../e2e/verdicts";
-import { type AppFlagValues, withLeaseOptions } from "../lease-session";
+import { type AppFlagValues, buildAppIntoCache, withLeaseOptions } from "../lease-session";
 import { emit, note, reportError, success, warn } from "../output";
 import { canPrompt, pickPhysicalArgs, reportPick } from "../physical-pick";
 import { currentBuild } from "../update/build-info";
@@ -99,6 +99,8 @@ export type E2eOpts = ClaimFlagValues &
 		tui: boolean;
 		report?: string;
 		dryRun?: true;
+		/** `--build-only`: build the app the run would install into the cache, then stop (no device, no spec) */
+		buildOnly?: true;
 		/** false = `--no-shutdown` */
 		shutdown: boolean;
 		/** false = `--no-warm` (default true) */
@@ -483,6 +485,7 @@ type Plan = { affected: Affected; selection: Selection; specs: SelectedSpec[] };
 
 /** Affected specs for the one platform this run is for (warnings printed, `--explain` shown). */
 async function plan(ctx: CommandContext, suiteName: string | undefined, opts: E2eOpts): Promise<Result<Plan>> {
+	if (opts.buildOnly && opts.dryRun) return err("--build-only and --dry-run can't be combined");
 	const { color } = ctx.ui;
 	const affected = await runAffected(ctx, suiteName, opts);
 	if (!affected.success) return affected;
@@ -554,16 +557,11 @@ async function e2e(
 	}
 	const run = await preparedRun(ctx, deps, suite, selection.platform, specs, { ...opts, headless }, passed, kind.data);
 	if (!run.success) return fail(run.error);
-	// before any lease or build: a pinned runtime must be installed, never swapped for another
-	const missing = await missingRuntime(ctx, selection.platform, run.data);
-	if (missing !== undefined) return fail(missing);
-	// before any lease or build: several usable phones are asked about, or refused (ambiguous_device, exit 2)
-	const picked = await pickPhysicalArgs(ctx, resolveOwner(ctx), run.data.args, {
-		prompt: canPrompt(ctx, { json: jsonOut(opts) }),
-	});
-	if (picked.kind !== "ok") return reportPick(ctx, "e2e", picked);
+	if (opts.buildOnly) return buildOnly(ctx, deps, base, run.data.args.app, run.data.physical, opts);
+	const leasable = await leaseArgs(ctx, selection.platform, run.data, opts);
+	if (!leasable.ok) return leasable.exit;
 	const { shape, plan: jobs, argvOf, spec, physical } = run.data;
-	const { args } = picked;
+	const { args } = leasable;
 	const runs = shardRuns(jobs, { argvOf, readFile: deps.readFile });
 	const session = await runSession(
 		ctx,
@@ -593,6 +591,69 @@ async function e2e(
 	if (early !== undefined) return early;
 	printVerdict(ctx, report);
 	return result.ok ? 0 : 1;
+}
+
+/**
+ * The checks between the plan and the first lease or build: a pinned runtime must be installed (never swapped for
+ * another), and several usable phones are asked about, or refused (`ambiguous_device`, exit 2).
+ */
+async function leaseArgs(
+	ctx: CommandContext,
+	platform: Platform,
+	run: RunPlan,
+	opts: E2eOpts
+): Promise<{ ok: true; args: BatchArgs } | { ok: false; exit: number }> {
+	const missing = await missingRuntime(ctx, platform, run);
+	if (missing !== undefined) {
+		reportError(ctx, "e2e", missing);
+		return { ok: false, exit: 1 };
+	}
+	const picked = await pickPhysicalArgs(ctx, resolveOwner(ctx), run.args, {
+		prompt: canPrompt(ctx, { json: jsonOut(opts) }),
+	});
+	if (picked.kind !== "ok") return { ok: false, exit: reportPick(ctx, "e2e", picked) };
+	return { ok: true, args: picked.args };
+}
+
+/** What `warden e2e --build-only --json` prints: the app the run would install, `null` when the suite installs none. */
+export type E2eBuildReport = {
+	suite: string;
+	platform: Platform;
+	app: { path: string; hash: string; source: string } | null;
+};
+
+/**
+ * `--build-only`: build (or find) the app the run would install into the cache, with the same kind, variant and
+ * bundle env, then stop before any device or spec. A CI job runs it as its own step, so the suite's own timeout
+ * times the specs, not a cold native build.
+ */
+async function buildOnly(
+	ctx: CommandContext,
+	deps: BatchDeps,
+	base: { suite: string; platform: Platform },
+	app: BatchArgs["app"],
+	physical: boolean,
+	opts: E2eOpts
+): Promise<number> {
+	const report = (built: E2eBuildReport["app"]): E2eBuildReport => ({
+		suite: base.suite,
+		platform: base.platform,
+		app: built,
+	});
+	if (app === undefined) {
+		emit(ctx, opts.json === true, report(null), `warden e2e: suite "${base.suite}" installs no app — nothing to build`);
+		return 0;
+	}
+	const build = deps.buildApp ?? buildAppIntoCache;
+	const built = await build(ctx, resolveOwner(ctx), base.platform, physical ? { ...app, physical: true } : app);
+	if (!built.success) {
+		reportError(ctx, "e2e", `build failed: ${built.error}`);
+		return 1;
+	}
+	const { appPath, hash, source } = built.data;
+	if (!opts.json) success(ctx, `warden e2e: ${base.platform} app ready (${source}): ${appPath}`);
+	else emit(ctx, true, report({ path: appPath, hash, source }), "");
+	return 0;
 }
 
 /**
@@ -1041,6 +1102,10 @@ export function createE2eCommand(deps: BatchDeps): Command {
 				.option("--required-only", "only run specs with required: true")
 				.option("--explain", "print why each spec was selected before running")
 				.option("--dry-run", "select and explain, run nothing")
+				.option(
+					"--build-only",
+					"build (or find) the app the run would install into the cache, then stop: no device, no spec (a CI step before the timed run)"
+				)
 				.option("--report <file>", "also write e2e-report.json here")
 				.option(
 					"--json-lines",

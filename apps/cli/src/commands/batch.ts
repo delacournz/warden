@@ -83,6 +83,7 @@ import { defaultLeaseHealthDeps } from "../lease-health";
 import {
 	type AppFlagValues,
 	appPhaseProgress,
+	type BuildApp,
 	claimAll,
 	exitCodeOf,
 	type ForwardedSignal,
@@ -194,6 +195,8 @@ export type BatchDeps = LeaseSessionDeps & {
 	bundledE2e: (ctx: CommandContext) => AsyncResult<string>;
 	/** where the spec drivers' native helper lives next to this warden (`WARDEN_HELPER_DIR`) */
 	helperDir: () => string | undefined;
+	/** `warden e2e --build-only`: build the run's app into the cache, no device (default: `buildAppIntoCache`) */
+	buildApp?: BuildApp;
 };
 
 /** Commander option values of `warden batch`. */
