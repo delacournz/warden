@@ -16,11 +16,26 @@ function frontmatter(file: string): { title: string; description: string } {
 	return { title: field("title"), description: field("description") };
 }
 
-const PAGES = readdirSync(E2E).filter((file) => file.endsWith(".mdx"));
+/** The top-level e2e pages and the CI section's pages (`ci/index.mdx` is `/docs/e2e/ci`). */
+const PAGES = [
+	...readdirSync(E2E).filter((file) => file.endsWith(".mdx")),
+	...readdirSync(join(E2E, "ci"))
+		.filter((file) => file.endsWith(".mdx"))
+		.map((file) => `ci/${file}`),
+];
 
 describe("the e2e docs pages", () => {
 	test("the scan sees the pages", () => {
-		expect(PAGES).toEqual(expect.arrayContaining(["index.mdx", "specs.mdx", "ci.mdx", "suites.mdx"]));
+		expect(PAGES).toEqual(
+			expect.arrayContaining([
+				"index.mdx",
+				"specs.mdx",
+				"suites.mdx",
+				"ci/index.mdx",
+				"ci/github-actions.mdx",
+				"ci/eas-workflows.mdx",
+			])
+		);
 	});
 
 	for (const file of PAGES) {
@@ -36,7 +51,9 @@ describe("the e2e docs pages", () => {
 		});
 
 		test(`${file} keeps a result title within 60 characters`, () => {
-			expect(docsTitle(title, ["e2e", file.replace(/\.mdx$/, "")]).length).toBeLessThanOrEqual(60);
+			expect(docsTitle(title, ["e2e", ...file.replace(/(\/index)?\.mdx$/, "").split("/")]).length).toBeLessThanOrEqual(
+				60
+			);
 		});
 	}
 });

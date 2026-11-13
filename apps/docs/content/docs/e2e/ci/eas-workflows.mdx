@@ -1,0 +1,203 @@
+---
+title: React Native E2E tests on Expo Workflows
+sidebarTitle: Expo Workflows (EAS)
+description: Run React Native and Expo E2E tests (warden e2e) on an Expo Workflows macOS worker, reusing the EAS build for the native fingerprint and repacking only the JavaScript.
+---
+
+[Expo Workflows](https://docs.expo.dev/eas/workflows/introduction/) can run `warden e2e` on a macOS worker with an iOS Simulator. The workflow on this page reuses the EAS build that matches the app's native fingerprint (it builds one only when none matches), installs warden, repacks this commit's JavaScript into the build in seconds and runs the specs. No native build when only JavaScript changed.
+
+warden's own repository runs this workflow on its example app: [`apps/example/.eas/workflows/e2e.yml`](https://github.com/delacournz/warden/blob/develop/apps/example/.eas/workflows/e2e.yml).
+
+## Prerequisites
+
+- An Expo project linked to EAS (`eas init`), with `ios.bundleIdentifier` in the app config.
+- [Continuous Native Generation](https://docs.expo.dev/workflow/continuous-native-generation/): the `fingerprint` job hashes the generated native project.
+- `@delacour/warden-e2e` as a dev dependency, and a suite in `warden.config.ts` that installs the app (`app: true`). See [Suites](/docs/e2e/suites).
+
+```ts title="warden.config.ts"
+export default {
+  projects: [{ name: "my-app", bundleId: "com.example.app" }],
+  e2e: {
+    "my-app": {
+      project: "my-app",
+      specsDir: "e2e",
+      platform: "ios",
+      app: true,
+    },
+  },
+};
+```
+
+## Add a build profile
+
+Add a profile that makes a Release iOS Simulator build without the dev client:
+
+```json title="eas.json"
+{
+  "build": {
+    "e2e-ios-simulator": {
+      "environment": "preview",
+      "developmentClient": false,
+      "ios": {
+        "simulator": true,
+        "buildConfiguration": "Release"
+      }
+    }
+  }
+}
+```
+
+The e2e job hands this build to `warden builds import --kind simulator-base`, which files it as the base that warden repacks this checkout's JavaScript into. The import refuses a Debug or expo-dev-client build, a device build, a build with no `arm64` slice (EAS macOS workers are Apple silicon) and a build with another bundle id. The JavaScript bundle the build embeds is stripped from the cached copy, and every repack writes its own, so any build of the right native fingerprint will do. `EXPO_PUBLIC_*` values on the profile do not reach the specs: the repack inlines the suite's bundle env (`metro.env`, see [Build kinds](/docs/e2e/suites#build-kinds)).
+
+`environment: "preview"` makes the build read the same [EAS environment variables](https://docs.expo.dev/eas/environment-variables/) as the e2e job.
+
+## Create the workflow
+
+```yaml title=".eas/workflows/e2e.yml"
+name: e2e
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  # Hash the native project, then look for a finished build of the profile with that hash.
+  fingerprint:
+    type: fingerprint
+
+  get_ios_build:
+    needs: [fingerprint]
+    type: get-build
+    params:
+      platform: ios
+      profile: e2e-ios-simulator
+      fingerprint_hash: ${{ needs.fingerprint.outputs.ios_fingerprint_hash }}
+
+  # Build only when no build matches the fingerprint.
+  build_ios:
+    needs: [get_ios_build]
+    if: ${{ !needs.get_ios_build.outputs.build_id }}
+    type: build
+    params:
+      platform: ios
+      profile: e2e-ios-simulator
+
+  e2e_ios:
+    name: warden e2e (iOS)
+    after: [get_ios_build, build_ios]
+    if: ${{ always() && (needs.get_ios_build.outputs.build_id || needs.build_ios.outputs.build_id) }}
+    runs_on: macos-large
+    environment: preview
+    env:
+      WARDEN_GOLDEN: '0'
+    steps:
+      - uses: eas/checkout
+
+      - uses: eas/install_node_modules
+
+      # warden must match the @delacour/warden-e2e your specs import.
+      - name: Pick the warden version
+        id: warden
+        run: set-output version "$(node -p "require('./node_modules/@delacour/warden-e2e/package.json').version")"
+
+      - uses: eas/restore_cache
+        id: warden_cache
+        with:
+          key: warden-cli-darwin-arm64-${{ steps.warden.outputs.version }}
+          path: /Users/expo/.warden-cli
+
+      - name: Install warden
+        run: |
+          if [ ! -x "$HOME/.warden-cli/bin/warden" ]; then
+            npm install --global --prefix "$HOME/.warden-cli" "@delacour/warden@${{ steps.warden.outputs.version }}"
+          fi
+          set-env PATH "$HOME/.warden-cli/bin:$PATH"
+
+      - uses: eas/save_cache
+        if: ${{ steps.warden_cache.outputs.cache_hit != 'true' }}
+        with:
+          key: warden-cli-darwin-arm64-${{ steps.warden.outputs.version }}
+          path: /Users/expo/.warden-cli
+
+      - uses: eas/download_build
+        id: download_build
+        with:
+          build_id: ${{ needs.get_ios_build.outputs.build_id || needs.build_ios.outputs.build_id }}
+          extensions: [app]
+
+      - name: Use the EAS build as the simulator base
+        run: warden builds import "${{ steps.download_build.outputs.artifact_path }}" --kind simulator-base
+
+      - name: Repack this commit's JavaScript
+        run: warden e2e my-app --all --build-only
+
+      - name: Run the specs
+        run: warden e2e my-app --all --headless --report /Users/expo/warden-e2e/e2e-report.json
+
+      - uses: eas/upload_artifact
+        if: ${{ always() }}
+        with:
+          type: other
+          name: warden-e2e
+          ignore_error: true
+          path: |
+            /Users/expo/warden-e2e/**/*
+            /Users/expo/.warden/batches/**/*
+            /Users/expo/.warden/logs/**/*
+```
+
+What each part does:
+
+| Step | Why |
+|---|---|
+| `fingerprint` → `get-build` → `build` | A build of the profile for this native fingerprint is reused; `build_ios` runs only on a miss (a native change). |
+| `after:`, not `needs:` | When a build was found, `build_ios` is skipped, and a skipped job in `needs` would skip `e2e_ios` too. `after` waits for both, and the `if` runs the job when either produced a build. |
+| warden version | The spec preload exits 2 when the CLI and `@delacour/warden-e2e` differ, so the CLI is installed at the version in `node_modules`. The file path in `require` gets past the package's `exports`. |
+| `--prefix "$HOME/.warden-cli"` + cache | One directory holds the CLI, keyed on its version, so later runs skip the download. The `darwin-arm64` package carries the simulator helper beside the binary: nothing else to fetch. |
+| `set-env PATH` | Puts `warden` on `PATH` for the later steps; an `export` in one step does not reach the next. |
+| `WARDEN_GOLDEN: '0'` | Each simulator is a fresh `simctl create`. A hosted worker starts empty every run, so a [golden image](/docs/sims/golden-images) would be built and thrown away. |
+| `builds import --kind simulator-base` | Files the downloaded `.app` as the simulator base, under warden's own native fingerprint. |
+| `--build-only` | Repacks this commit's JavaScript into the base (the same kind and bundle env the run uses), then stops: no device, no spec. Keeps the bundle out of the spec run's timing. |
+| `--headless --report` | Simulators stay windowless; `e2e-report.json` lands in the upload directory. |
+| `upload_artifact` with `if: always()` | The evidence is uploaded on a failed run too. |
+
+`macos-large` (10 cores) is the worker size warden's own runs use; `macos-medium` works for one simulator. Add `--count 2` to run two simulators on `macos-large`, and `--retry 1` to rerun a failed spec once.
+
+## Run the workflow
+
+```sh
+eas workflow:run .eas/workflows/e2e.yml
+```
+
+The run page on expo.dev shows each job; the e2e job's log prints each failing spec and the path of its evidence. To pass the suite and arguments per run, declare `workflow_dispatch` inputs and use them as `${{ inputs.suite }}` in the `run` lines, then run with `-F suite=my-app -F args='--specs app/todos'` ([inputs](https://docs.expo.dev/eas/workflows/syntax/#onworkflow_dispatchinputs)).
+
+## Run on pull requests
+
+Link the GitHub repository to the Expo project (the Expo GitHub app), then add a [`pull_request`](https://docs.expo.dev/eas/workflows/syntax/#onpull_request) trigger:
+
+```yaml title=".eas/workflows/e2e.yml"
+on:
+  workflow_dispatch: {}
+  pull_request:
+    branches: [main]
+```
+
+To start the workflow from a GitHub Actions job instead, see [Start an EAS workflow from GitHub Actions](/docs/e2e/ci/github-actions#start-an-eas-workflow-from-github-actions).
+
+## Environment variables and secrets
+
+`environment: preview` on the e2e job reads the variables of the project's `preview` environment, the same ones the build profile reads. Store tokens there with the visibility set to Secret, for example `NPM_TOKEN` when `eas/install_node_modules` installs packages from a private registry. See [Environment variables in EAS](https://docs.expo.dev/eas/environment-variables/).
+
+## Read the results
+
+The run page's **Artifacts** section holds `warden-e2e`: `e2e-report.json`, the batch directories (`results.jsonl`, and per failed test `failure.png`, `screen-at-failure.txt`, `trace.jsonl`) and warden's logs. Read `screen-at-failure.txt` first: it is the full accessibility tree at the moment the test failed. See [Debugging](/docs/e2e/debugging).
+
+## Troubleshooting
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `build_ios` runs on every run | no build of the profile matches the fingerprint, or the last one failed | a native change needs one build; after it, runs reuse it. Check the profile name in `get_ios_build` and `build_ios` match |
+| `warden builds import` refuses the build | a Debug or dev-client build, a device build, no `arm64` slice, or another bundle id | use the profile above (`developmentClient: false`, `simulator: true`, `Release`); `--bundle-id` when the suite's id differs on purpose |
+| the spec run exits 2 before any spec | `warden` and `@delacour/warden-e2e` versions differ | install the CLI at the `node_modules` version, as in the workflow |
+| `npm install` fails for `@delacour/warden` | the version is not published (an unreleased local bump) | pin `@delacour/warden-e2e` to a released version |
+| `errSecMissingEntitlement` / `-34018` in the app | the simulator build has no `application-identifier` entitlement | `warden builds import` warns about it; Keychain calls need a build signed with entitlements |
+| `e2e_ios` is skipped | neither `get_ios_build` nor `build_ios` produced a build id | open the `build_ios` job: the build failed |

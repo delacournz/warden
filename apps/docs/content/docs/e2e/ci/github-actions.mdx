@@ -1,11 +1,10 @@
 ---
 title: React Native E2E tests in GitHub Actions
 sidebarTitle: GitHub Actions
-description: Run React Native and Expo E2E tests (warden e2e) in GitHub Actions on a macOS runner, install warden with the install action or npm, and gate a pull request on the affected specs.
-icon: Workflow
+description: Run React Native and Expo E2E tests (warden e2e) in GitHub Actions on a macOS runner, reuse an EAS build, install warden with the action or npm, and gate a pull request on the affected specs.
 ---
 
-`warden e2e` runs on a macOS GitHub Actions runner. The smallest workflow that works is the e2e action, which installs warden, restores the build and golden caches and uploads the evidence when a spec fails:
+`warden e2e` runs on a macOS GitHub Actions runner ([other CI](/docs/e2e/ci)). The smallest workflow that works is the e2e action, which installs warden, restores the build and golden caches and uploads the evidence when a spec fails:
 
 ```yaml title=".github/workflows/e2e.yml"
 name: e2e
@@ -333,6 +332,82 @@ Build the `.app` with ad-hoc signing and pass it in. `CODE_SIGNING_ALLOWED=NO` l
 | `warden: command not found` | `warden-version: none` without an earlier install | install warden first or leave the default |
 | `bun: command not found` after a blocked `setup-bun` | an allowlist blocks third-party actions | the action never uses one: leave `bun-version` empty or pin it |
 | cache never hits | the key moved: Xcode image, fingerprint or `js-inputs` changed | read the `Key the caches` step: it prints the fingerprint and golden name |
+
+## Reuse an EAS build
+
+When EAS Build already makes a Release simulator build of the app (an `eas.json` profile with `ios.simulator: true`, `ios.buildConfiguration: "Release"` and `developmentClient: false`; see [Expo Workflows](/docs/e2e/ci/eas-workflows#add-a-build-profile)), the runner can download the one for this native fingerprint instead of building it. Add an Expo access token as the `EXPO_TOKEN` repository secret, set up EAS CLI with `expo/expo-github-action`, and hand the `.app` to the e2e action:
+
+```yaml title=".github/workflows/e2e.yml"
+name: e2e
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  ios:
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - uses: expo/expo-github-action@v9
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Download the EAS build for this fingerprint
+        id: eas
+        run: |
+          set -euo pipefail
+          profile=e2e-ios-simulator
+          hash=$(eas fingerprint:generate --platform ios --build-profile "$profile" --json | jq -r .hash)
+          id=$(eas build:list --platform ios --build-profile "$profile" --fingerprint-hash "$hash" \
+            --status finished --simulator --limit 1 --json --non-interactive | jq -r '.[0].id // empty')
+          if [ -n "$id" ]; then
+            echo "app-path=$(eas build:download --build-id "$id" --json | jq -r .path)" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: delacournz/warden/.github/actions/e2e@v0.16.0
+        with:
+          suite: my-app
+          args: --base origin/main
+          install-command: ""
+          app-path: ${{ steps.eas.outputs.app-path }}
+```
+
+- `eas fingerprint:generate` hashes the native project the way EAS indexes builds (`@expo/fingerprint`), so it needs the dependencies installed first. It is not warden's fingerprint: `warden builds import` files the `.app` under warden's own.
+- `eas build:download --build-id <id> --json` prints `{ "path": … }`, the extracted `.app`.
+- No build for the fingerprint (a native change nobody built yet): `app-path` stays empty and the action builds the base on the runner, as without EAS.
+- `install-command: ""` because the dependencies are already installed for the fingerprint.
+
+Without the action, the same `.app` goes through `warden builds import "$APP" --kind simulator-base`, then `warden e2e my-app --build-only` (the repack) and `warden e2e my-app`.
+
+## Start an EAS workflow from GitHub Actions
+
+To run the specs on an EAS macOS worker instead of a GitHub runner, keep the job in [Expo Workflows](/docs/e2e/ci/eas-workflows) and start it from GitHub Actions:
+
+```yaml title=".github/workflows/e2e-eas.yml"
+name: e2e on EAS
+on:
+  pull_request:
+
+jobs:
+  eas:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: expo/expo-github-action@v9
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+      - run: eas workflow:run .eas/workflows/e2e.yml --wait -F suite=my-app
+```
+
+`--wait` keeps the step running until the EAS run finishes. A Linux runner is enough: the build and the simulator run on EAS. With the Expo GitHub app linked to the repository, an `on.pull_request` trigger in the EAS workflow does the same without a GitHub Actions job.
 
 ## Headless and cleanup
 

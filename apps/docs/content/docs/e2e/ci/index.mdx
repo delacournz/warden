@@ -1,0 +1,53 @@
+---
+title: React Native E2E tests in CI
+sidebarTitle: CI
+description: Run React Native and Expo E2E tests (warden e2e) in CI on a macOS machine, on GitHub Actions or Expo Workflows, reusing a prebuilt app so only the JavaScript is repacked.
+---
+
+import { Cloud, GitBranch, Workflow } from "lucide-react";
+
+`warden e2e` is the same command on a laptop and in CI. Any CI that gives you a macOS machine runs it; this section has ready workflows for GitHub Actions and Expo Workflows.
+
+## What every CI job does
+
+1. **A macOS machine with Xcode and an iOS Simulator runtime.** Android needs the Android SDK and an emulator image. The machine starts empty: warden creates the simulators it needs.
+2. **Install warden at the version your specs import.** The spec preload exits 2 when the `warden` CLI and the `@delacour/warden-e2e` dev dependency differ:
+
+   ```sh
+   npm install --global "@delacour/warden@$(node -p "require('./node_modules/@delacour/warden-e2e/package.json').version")"
+   ```
+
+   The macOS `arm64` package carries the simulator helper beside the binary. Cache the install per version to skip it on later runs.
+3. **Reuse a prebuilt app.** A suite with `app: true` installs a Release simulator build with this checkout's JavaScript repacked into it. Without a build, warden makes one on the machine (minutes). With a Release simulator `.app` from an earlier job or from EAS Build, import it and only the JavaScript is bundled (seconds):
+
+   ```sh
+   warden builds import path/to/App.app --kind simulator-base   # the native base, keyed on warden's fingerprint
+   warden e2e my-app --build-only                                # repack this checkout's JS into it
+   ```
+
+4. **Run the suite and keep the report.**
+
+   ```sh
+   warden e2e my-app --all --headless --report e2e-report.json
+   ```
+
+   It exits 0 when every required spec passed and 1 when one failed, so the job fails with it. `--base origin/main` instead of `--all` runs only the specs the diff needs ([Affected](/docs/e2e/affected)).
+5. **Upload the evidence, on a failed run too.** `e2e-report.json`, `~/.warden/batches` (per failed test `failure.png`, `screen-at-failure.txt`, `trace.jsonl`) and `~/.warden/logs`. `screen-at-failure.txt` is the full accessibility tree at the failure: read it first ([Debugging](/docs/e2e/debugging)).
+
+## Pick a setup
+
+| Setup | Where the specs run | Where the app is built | Page |
+|---|---|---|---|
+| GitHub Actions | a GitHub macOS runner | the same runner, cached between runs | [GitHub Actions](/docs/e2e/ci/github-actions) |
+| Expo Workflows | an EAS macOS worker | EAS Build, reused per native fingerprint | [Expo Workflows](/docs/e2e/ci/eas-workflows) |
+| GitHub Actions + EAS Build | a GitHub macOS runner | EAS Build, downloaded per native fingerprint | [Reuse an EAS build](/docs/e2e/ci/github-actions#reuse-an-eas-build) |
+
+<Cards className="lg:grid-cols-3">
+<Card icon={<GitBranch />} title="GitHub Actions" href="/docs/e2e/ci/github-actions">The e2e action: install, caches, golden image, artifacts and a pull-request gate.</Card>
+<Card icon={<Cloud />} title="Expo Workflows" href="/docs/e2e/ci/eas-workflows">Fingerprint, reuse or build on EAS, repack the JavaScript, run on an EAS macOS worker.</Card>
+<Card icon={<Workflow />} title="GitHub Actions + EAS" href="/docs/e2e/ci/github-actions#reuse-an-eas-build">Download the EAS build for the fingerprint, run on a GitHub runner.</Card>
+</Cards>
+
+## Headless and cleanup
+
+Simulators boot without a window, and under `CI` a passed run shuts down the simulators warden created while a failed run leaves them booted. See [Headless and cleanup](/docs/e2e/ci/github-actions#headless-and-cleanup).
