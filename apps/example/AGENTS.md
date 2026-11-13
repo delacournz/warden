@@ -96,6 +96,8 @@ bun run e2e:spec app/todos           # one spec
 WARDEN_UDID=<udid> WARDEN_BUNDLE_ID=nz.co.delacour.warden.example bun test --preload @delacour/warden-e2e/preload e2e/app/todos.e2e.ts   # by hand, on an installed build
 ```
 
+On EAS (`bunx eas-cli workflow:run .eas/workflows/e2e.yml [-F suite=conditions] [-F args='--specs app/todos']`): reuses the `bench` profile's EAS build for this native fingerprint (builds one on a miss), imports it with `warden builds import --kind simulator-base`, and `warden e2e` repacks this checkout's JS into it on a `macos-large` sim. Body in `scripts/eas-e2e.sh`, evidence in the `warden-e2e` artifact; `scripts/eas-e2e.test.ts` guards the profile / suite / script wiring. Needs `NPM_TOKEN` as a secret in the `preview` EAS environment.
+
 Never start Metro or export device env vars for a suite: `warden e2e <suite>` does both. By hand, the build must already be installed on the sim (`WARDEN_UDID`); add `WARDEN_PLATFORM=android` for an emulator and `WARDEN_METRO_URL` for a dev client.
 
 Failure output is written per test under `<batchDir>/e2e/<worker>-<seq>/<spec>/<title>-<hash>/` (`failure.png`, `screen-at-failure.txt`, `trace.jsonl`, `console.jsonl` / `network.jsonl` with a dev client) and indexed in `results.jsonl`; `warden e2e` prints the path of each failing spec. `screen-at-failure.txt` is the full accessibility tree, so read it first.

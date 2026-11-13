@@ -5,6 +5,7 @@
   },
   "build": {
     "bench": {
+      "environment": "preview",
       "distribution": "internal",
       "developmentClient": false,
       "env": {

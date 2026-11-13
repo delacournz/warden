@@ -1,0 +1,116 @@
+name: e2e
+
+# warden's iOS e2e suite on a hosted EAS macOS worker. Reuses an EAS build for the current native fingerprint
+# (any build of `profile`, e.g. one bench-build.yml made) and builds one only when none matches. The e2e job then
+# imports that .app as warden's `simulator-base` (`warden builds import --kind simulator-base`: its embedded JS is
+# stripped), `warden e2e --build-only` repacks this checkout's JS into it (seconds, no native build), then
+# `warden e2e` claims a simulator, installs and runs the specs. Body in apps/example/scripts/eas-e2e.sh.
+#
+# Needs NPM_TOKEN (classic PAT, read:packages) as a secret in the `preview` EAS environment: `bun install` pulls
+# @delacournz/* from GitHub Packages. The build job reads the same environment (eas.json `bench.environment`).
+#
+# Run: bunx eas-cli workflow:run .eas/workflows/e2e.yml
+#      bunx eas-cli workflow:run .eas/workflows/e2e.yml -F suite=conditions -F args='--all'
+#      bunx eas-cli workflow:run .eas/workflows/e2e.yml -F args='--specs app/onboarding,app/todos' -F helper=source
+
+on:
+  workflow_dispatch:
+    inputs:
+      suite:
+        type: string
+        description: warden.config.ts e2e suite (example, conditions, a11y, biometrics, camera)
+        default: example
+      args:
+        type: string
+        description: Extra `warden e2e` arguments (`--all`, `--specs <ids>`, ...)
+        default: --all
+      count:
+        type: number
+        description: Simulators in parallel
+        default: 1
+      retry:
+        type: number
+        description: Reruns of a failed spec
+        default: 1
+      profile:
+        type: string
+        description: eas.json build profile to reuse or build (a Release simulator build, no dev client)
+        default: bench
+      helper:
+        type: choice
+        description: warden-simd from the release matching this checkout (fast) or built from source (tests helper changes; needs a new enough Xcode on the image)
+        options:
+          - release
+          - source
+        default: release
+      max_minutes:
+        type: number
+        description: Hard stop for the suite, in minutes from job start
+        default: 45
+
+jobs:
+  # Fingerprint the native project, then look for an existing build of `profile` with that hash.
+  fingerprint:
+    type: fingerprint
+
+  get_ios_build:
+    needs: [fingerprint]
+    type: get-build
+    params:
+      platform: ios
+      profile: ${{ inputs.profile }}
+      fingerprint_hash: ${{ needs.fingerprint.outputs.ios_fingerprint_hash }}
+
+  # Build only when no build matches the fingerprint.
+  build_ios:
+    needs: [get_ios_build]
+    if: ${{ !needs.get_ios_build.outputs.build_id }}
+    type: build
+    params:
+      platform: ios
+      profile: ${{ inputs.profile }}
+
+  # `after`, not `needs`: build_ios is skipped when a build was found, and a skipped need would skip this job.
+  e2e_ios:
+    after: [get_ios_build, build_ios]
+    if: ${{ always() && (needs.get_ios_build.outputs.build_id || needs.build_ios.outputs.build_id) }}
+    runs_on: macos-large
+    environment: preview
+    env:
+      # No golden simulator in a non-GUI session; every sim is a fresh `simctl create`.
+      WARDEN_GOLDEN: '0'
+      WARDEN_SESSION_ID: eas-e2e
+      E2E_SUITE: ${{ inputs.suite }}
+      E2E_ARGS: ${{ inputs.args }}
+      E2E_COUNT: ${{ inputs.count }}
+      E2E_RETRY: ${{ inputs.retry }}
+      E2E_HELPER: ${{ inputs.helper }}
+      E2E_MAX_MINUTES: ${{ inputs.max_minutes }}
+    steps:
+      - uses: eas/checkout
+      - name: Job start
+        run: |
+          date +%s > "$HOME/job-start"
+          export PATH="$HOME/.bun/bin:$PATH"
+          bun --version || (curl -fsSL https://bun.sh/install | bash)
+      - uses: eas/download_build
+        id: download_build
+        with:
+          build_id: ${{ needs.get_ios_build.outputs.build_id || needs.build_ios.outputs.build_id }}
+          extensions: [app]
+      - name: Host facts
+        run: |
+          xcodebuild -version; sw_vers; sysctl -n hw.ncpu hw.memsize vm.loadavg
+          echo "build: ${{ needs.get_ios_build.outputs.build_id || needs.build_ios.outputs.build_id }} (${{ needs.get_ios_build.outputs.build_id && 'reused' || 'built in this run' }})"
+          echo "app: ${{ steps.download_build.outputs.artifact_path }}"
+      - name: warden e2e
+        # Expressions are interpolated in run, not in a step env, so the app path is passed inline.
+        run: E2E_APP="${{ steps.download_build.outputs.artifact_path }}" bash "$(git rev-parse --show-toplevel)/apps/example/scripts/eas-e2e.sh"
+      - uses: eas/upload_artifact
+        if: ${{ always() }}
+        with:
+          type: other
+          name: warden-e2e
+          ignore_error: true
+          path: |
+            /Users/expo/e2e-results/**/*
