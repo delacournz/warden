@@ -138,6 +138,11 @@ final class Uia {
 	/** Release the UiAutomation slot (`disconnect()`, `destroy()` on older images; both are hidden API). */
 	void close() {
 		if (ua != null) {
+			try {
+				liveTouch.cancel();
+			} catch (Throwable ignored) {
+				// a finger still down is dropped with the connection anyway
+			}
 			for (String name : new String[] {"disconnect", "destroy"}) {
 				try {
 					Method m = UiAutomation.class.getDeclaredMethod(name);
@@ -556,6 +561,14 @@ final class Uia {
 		if (!ok) throw new OpError("E_HID", "injectInputEvent refused the event", false);
 		lastInputMs = SystemClock.uptimeMillis();
 	}
+
+	/** Live touch (`touch.*`), injecting through this connection. */
+	final LiveTouch liveTouch = new LiveTouch(new LiveTouch.Injector() {
+		@Override
+		public void inject(MotionEvent event, boolean sync) throws OpError {
+			Uia.this.inject(event, sync);
+		}
+	});
 
 	private MotionEvent motion(long downTime, int action, float x, float y) {
 		MotionEvent e = MotionEvent.obtain(downTime, SystemClock.uptimeMillis(), action, x, y, 0);

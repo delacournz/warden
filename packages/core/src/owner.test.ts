@@ -127,3 +127,21 @@ describe("readGitInfo", () => {
 		expect(git.spawns).toHaveLength(1);
 	});
 });
+
+describe("detectOwner on a host", () => {
+	test("WARDEN_HOST_OWNER (set by __host-serve) wins over every other source", () => {
+		const owner = detectOwner({
+			env: { WARDEN_HOST_OWNER: '{"machineId":"m1","user":"chris"}', CI: "true", WARDEN_SESSION_ID: "s" },
+			pid: 1,
+			ppid: 2,
+			cwd: "/",
+			sessionId: "hook",
+		});
+		expect(owner).toEqual({ kind: "host", machineId: "m1", user: "chris" });
+	});
+
+	test("a malformed value is ignored", () => {
+		const owner = detectOwner({ env: { WARDEN_HOST_OWNER: "{}" }, pid: 1, ppid: 2, cwd: "/" });
+		expect(owner.kind).toBe("user");
+	});
+});

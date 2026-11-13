@@ -11,11 +11,13 @@ import type {
 	DriverError,
 	DriverResult,
 	KeyName,
+	Point,
 	Snapshot,
 } from "../driver.types";
 import type { ActsOnElements } from "../element-actions";
 import { driverError } from "../errors";
-import { socketTransport, type Transport } from "../ios/simd-transport";
+import { socketTransport, type Transport, type TransportFactory } from "../ios/simd-transport";
+import type { LiveTouch, TouchPointer } from "../live-touch";
 import type { AuditsNatively, NativeAuditResult } from "../native-audit";
 import type { DetectsAlerts } from "../observation-cache";
 import type { DrivesScreenReader } from "../screen-reader";
@@ -40,6 +42,8 @@ const DEFAULT_READY_TIMEOUT_MS = 2000;
 
 type RemoteA11y = Partial<ReadsA11y & ReadsA11yEvents & AuditsNatively & DrivesScreenReader & ActsOnElements>;
 
+const LIVE_TOUCH_OPS = ["touchDown", "touchMove", "touchUp", "touchCancel"] as const;
+
 /** A remote driver plus whichever optional capabilities the served one offers. */
 export type RemoteDriver = Driver &
 	Partial<
@@ -53,22 +57,30 @@ export type RemoteDriver = Driver &
 			ReadsA11yEvents &
 			AuditsNatively &
 			DrivesScreenReader &
-			ActsOnElements
+			ActsOnElements &
+			LiveTouch
 	>;
 
 export type RequestOptions = { timeoutMs?: number };
 
 export type RemoteClient = {
 	readonly ready: ReadyEvent;
-	/** a control op (`ping`, `shutdown`) or any op without arguments; `params` is accepted for the helper contract and unused */
+	/** a control op (`ping`, `shutdown`), a `stream.*` op, or any op that takes one params object (sent as its only argument) */
 	request(op: string, params?: Record<string, unknown>, opts?: RequestOptions): DriverResult<unknown>;
 	/** the `Driver` over this connection; its `close()` only disconnects (the host keeps the device open) */
 	driver(): RemoteDriver;
 	close(): Promise<void>;
 };
 
-export type ConnectRemoteOptions = {
-	socketPath: string;
+/**
+ * Where the served driver is: a `serveDriver` unix socket on this Mac, or any byte pipe (`stdioTransport` over
+ * `ssh … warden __driver-serve`); `label` names it in errors.
+ */
+export type RemoteTarget =
+	| { socketPath: string; transport?: undefined; label?: undefined }
+	| { transport: TransportFactory; label: string; socketPath?: undefined };
+
+export type ConnectRemoteOptions = RemoteTarget & {
 	readyTimeoutMs?: number;
 	requestTimeoutMs?: number;
 };
@@ -76,7 +88,7 @@ export type ConnectRemoteOptions = {
 type Pending = { resolve: (result: Result<unknown, DriverError>) => void; timer: ReturnType<typeof setTimeout> };
 
 /**
- * Connect to a `serveDriver` socket and wait for its `ready` event (protocol checked). Every request gets an id and a
+ * Connect to a served driver (socket or transport) and wait for its `ready` event (protocol checked). Every request gets an id and a
  * timeout (`E_TIMEOUT`); the connection closing fails what is in flight, and everything after, with `E_HELPER_CRASHED`
  * (a tap in flight may have landed: callers must not resend input on it).
  */
@@ -127,17 +139,25 @@ export async function connectRemoteDriver(options: ConnectRemoteOptions): Promis
 		);
 	};
 
-	const opened = await socketTransport({ socketPath: options.socketPath })({
+	const label = options.socketPath ?? options.label;
+	const factory = options.transport ?? socketTransport({ socketPath: options.socketPath });
+	const diagnostics: string[] = [];
+	const opened = await factory({
 		onLine,
-		onDiagnostic: () => undefined,
-		onClose: () =>
-			failAll(driverError("E_HELPER_CRASHED", `the driver host on ${options.socketPath} closed the connection`)),
+		onDiagnostic: (line) => {
+			diagnostics.push(line);
+			if (diagnostics.length > 5) diagnostics.shift();
+		},
+		onClose: () => {
+			const tail = diagnostics.length > 0 ? `: ${diagnostics.join(" | ")}` : "";
+			failAll(driverError("E_HELPER_CRASHED", `the driver host on ${label} closed the connection${tail}`));
+		},
 	});
 	if (!opened.success) return opened;
 	const transport: Transport = opened.data;
 
 	const timeout = setTimeout(
-		() => onReady({ success: false, error: driverError("E_TIMEOUT", `no ready event on ${options.socketPath}`) }),
+		() => onReady({ success: false, error: driverError("E_TIMEOUT", `no ready event on ${label}`) }),
 		options.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS
 	);
 	const ready = await readyPromise;
@@ -201,6 +221,16 @@ export async function connectRemoteDriver(options: ConnectRemoteOptions): Promis
 		const shot = await call<WireScreenshot>("screenshot", opts);
 		return shot.success ? { success: true, data: screenshotFromWire(shot.data) } : shot;
 	};
+
+	const liveTouchOf = (offered: ReadonlySet<string>): Partial<LiveTouch> =>
+		LIVE_TOUCH_OPS.every((op) => offered.has(op))
+			? {
+					touchDown: (point: Point, pointer?: TouchPointer) => call<void>("touchDown", point, pointer),
+					touchMove: (point: Point, pointer?: TouchPointer) => call<void>("touchMove", point, pointer),
+					touchUp: (point?: Point, pointer?: TouchPointer) => call<void>("touchUp", point, pointer),
+					touchCancel: () => call<void>("touchCancel"),
+				}
+			: {};
 
 	const a11yCapabilities = (offered: ReadonlySet<string>, platform: ReadyEvent["platform"]) => {
 		const out: RemoteA11y = {};
@@ -292,6 +322,7 @@ export async function connectRemoteDriver(options: ConnectRemoteOptions): Promis
 			offered.has("alertOn") ? { alertOn: (backend: AlertBackend) => call<AlertInfo | null>("alertOn", backend) } : {},
 			offered.has("isFrontmost") ? { isFrontmost: (bundleId: string) => call<boolean>("isFrontmost", bundleId) } : {},
 			a11yCapabilities(offered, hello.platform),
+			liveTouchOf(offered),
 			hello.alertIn === "android" ? { alertIn: (shot: Snapshot) => detectAlert(shot.flat) } : {}
 		);
 	};
@@ -300,7 +331,7 @@ export async function connectRemoteDriver(options: ConnectRemoteOptions): Promis
 		success: true,
 		data: {
 			ready: hello,
-			request: (op, _params, opts) => send(op, [], opts),
+			request: (op, params, opts) => send(op, params === undefined ? [] : [params], opts),
 			driver: buildDriver,
 			close,
 		},

@@ -68,6 +68,10 @@ export const ENV_NAMES = {
 	a11y: "WARDEN_A11Y",
 	/** JSON of the suite's `camera` with absolute paths (`{ back?: { path, loop }, front? }`): staged and fed before the first `app.open()` */
 	cameraFeeds: "WARDEN_CAMERA_FEEDS",
+	/** the warden host the device is on (`warden claim --host`); names it in errors */
+	host: "WARDEN_HOST",
+	/** JSON argv whose stdio serves the device's driver (`ssh … warden __driver-serve --lease <id>`); set with `WARDEN_HOST` */
+	hostDriver: "WARDEN_HOST_DRIVER",
 } as const;
 
 export const DEFAULT_TIMEOUT_MS = 120_000;
@@ -149,6 +153,8 @@ const schema = z.object({
 	biometrics: toggle.optional(),
 	a11yAudit: a11yAudit.optional(),
 	cameraFeeds: cameraFeeds.optional(),
+	host: z.string().min(1).optional(),
+	hostDriver: launchArgs.pipe(z.array(z.string()).min(1)).optional(),
 });
 
 export type E2eEnv = {
@@ -195,6 +201,10 @@ export type E2eEnv = {
 	leaseId?: string;
 	/** `WARDEN_NETPROXY_COMMAND`: argv that starts the shaping proxy; absent from source (`bun netproxy.main.ts`) */
 	netproxyCommand?: string[];
+	/** `WARDEN_HOST`: the warden host the device is on */
+	host?: string;
+	/** `WARDEN_HOST_DRIVER`: argv that serves the host device's driver on its stdio */
+	hostDriver?: string[];
 	/** `WARDEN_BIOMETRICS`: this is a biometrics device (profile `<p>+bio`); iOS enrollment does not survive a reboot or a spec's `unenroll` */
 	biometrics?: boolean;
 	/** `WARDEN_A11Y_AUDIT`: the suite's accessibility audit settings; absent = rules all, ignore none, minSeverity `error` */
@@ -250,6 +260,8 @@ function toEnv(v: Parsed, now: () => Date): E2eEnv {
 		...(v.conditions === undefined ? {} : { conditions: v.conditions }),
 		...(v.leaseId === undefined ? {} : { leaseId: v.leaseId }),
 		...(v.netproxyCommand === undefined ? {} : { netproxyCommand: v.netproxyCommand }),
+		...(v.host === undefined ? {} : { host: v.host }),
+		...(v.hostDriver === undefined ? {} : { hostDriver: v.hostDriver }),
 		...(v.biometrics === true ? { biometrics: true } : {}),
 		...(v.a11yAudit === undefined ? {} : { a11yAudit: v.a11yAudit }),
 		...(v.cameraFeeds === undefined ? {} : { cameraFeeds: v.cameraFeeds }),

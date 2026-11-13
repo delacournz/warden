@@ -44,7 +44,14 @@ export type LeaseEventPayloads = {
 	device_unhealthy: { platform: Platform; deviceId: string; reason?: string; consecutive?: number };
 	/** the monitor rebooted the device under the same lease after `attempts` tries, `durationMs` in all */
 	device_recovered: { platform: Platform; deviceId: string; attempts?: number; durationMs?: number };
+	/** `claim --host` took a device on another Mac: the local lease stands for `remoteLeaseId` there */
+	host_claimed: { host: string; platform: Platform; remoteLeaseId: string; deviceId: string; deviceName: string };
+	/** a host lease ended without a release: the host stopped answering, dropped the lease, or its session ended */
+	host_lost: { host: string; remoteLeaseId: string; reason: HostLostReason };
 };
+
+/** `unreachable` = 3 renewals in a row failed; `remote_gone` = the host no longer holds the lease; `host_expired` = the hosted Mac's session ended. */
+export type HostLostReason = "unreachable" | "remote_gone" | "host_expired";
 
 export type LeaseEventType = keyof LeaseEventPayloads;
 
@@ -61,6 +68,8 @@ export const LEASE_EVENT_TYPES: readonly LeaseEventType[] = [
 	"shutdown",
 	"device_unhealthy",
 	"device_recovered",
+	"host_claimed",
+	"host_lost",
 ];
 
 type EventBase = {

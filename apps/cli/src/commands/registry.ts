@@ -162,6 +162,13 @@ export const COMMANDS: readonly CommandEntry[] = [
 		load: async () => (await import("./repack")).repackCommand,
 	},
 	{
+		name: "host",
+		group: "Devices",
+		summary:
+			"drive another Mac's sims / emulators over ssh: add, setup, doctor, run, fetch, ls, rm (host side: grant, revoke)",
+		load: async () => (await import("./host")).hostCommand,
+	},
+	{
 		name: "ci",
 		group: "Builds",
 		summary: "CI helpers: cache prints the cache keys and paths a CI job saves between runs",
@@ -183,6 +190,48 @@ export const COMMANDS: readonly CommandEntry[] = [
 		summary: "resident Android driver host behind `warden ui` (internal)",
 		hidden: true,
 		load: async () => (await import("./android-host")).androidHostCommand,
+	},
+	{
+		name: "__driver-serve",
+		summary: "serve a leased device's driver on stdin/stdout for a remote warden (internal)",
+		hidden: true,
+		load: async () => (await import("./driver-serve")).driverServeCommand,
+	},
+	{
+		name: "__host-keepalive",
+		summary: "renew a host's leases while the local ones live; end them when the host can't back them (internal)",
+		hidden: true,
+		load: async () => (await import("./host-keepalive")).hostKeepaliveCommand,
+	},
+	{
+		name: "__host-recv",
+		summary: "receive an app build from a laptop into the host's uploads, checked against its hash (internal)",
+		hidden: true,
+		load: async () => (await import("./host-recv")).hostRecvCommand,
+	},
+	{
+		name: "__host-send",
+		summary: "send a perf session's files to the laptop that holds its device, as a tar on stdout (internal)",
+		hidden: true,
+		load: async () => (await import("./host-send")).hostSendCommand,
+	},
+	{
+		name: "__host-serve",
+		summary: "the forced command a warden host grant installs: runs one allowed warden command for a laptop (internal)",
+		hidden: true,
+		load: async () => (await import("./host-serve")).hostServeCommand,
+	},
+	{
+		name: "__host-tunnel",
+		summary: "hold a laptop's Metro forward open on this host while its ssh lives (internal)",
+		hidden: true,
+		load: async () => (await import("./host-tunnel")).hostTunnelCommand,
+	},
+	{
+		name: "__relay-dial",
+		summary: "run one command on a relayed host through warden-api, like ssh would (internal)",
+		hidden: true,
+		load: async () => (await import("./relay-dial")).relayDialCommand,
 	},
 	{
 		name: "__ios-runner-host",
@@ -298,5 +347,47 @@ export const COMMANDS: readonly CommandEntry[] = [
 		group: "Setup",
 		summary: "MCP server on stdio: Metro logs, app console, network, eval, tree, logpoints, profiles of `warden dev`",
 		load: async () => (await import("./mcp")).mcpCommand,
+	},
+	{
+		name: "view",
+		group: "Account",
+		summary: "watch and drive a device: hosted (the warden viewer window) or on a warden host (a browser tab)",
+		load: async () => (await import("./view")).viewCommand,
+	},
+	{
+		name: "login",
+		group: "Account",
+		summary: "log in to warden cloud (remote simulators) in the browser",
+		load: async () => (await import("./login")).loginCommand,
+	},
+	{
+		name: "logout",
+		group: "Account",
+		summary: "log out of warden cloud and forget the saved token",
+		load: async () => (await import("./logout")).logoutCommand,
+	},
+	{
+		name: "account",
+		group: "Account",
+		summary: "list warden cloud accounts, pick the default, or remove one",
+		load: async () => (await import("./account")).accountCommand,
+	},
+	{
+		name: "whoami",
+		group: "Account",
+		summary: "show the warden cloud account, organization, balance and remote-device status",
+		load: async () => (await import("./whoami")).whoamiCommand,
+	},
+	{
+		name: "billing",
+		group: "Account",
+		summary: "show the warden cloud balance and ledger, or top up credit",
+		load: async () => (await import("./billing")).billingCommand,
+	},
+	{
+		name: "org",
+		group: "Account",
+		summary: "list, create or switch warden cloud organizations, or link directories to one",
+		load: async () => (await import("./org")).orgCommand,
 	},
 ];

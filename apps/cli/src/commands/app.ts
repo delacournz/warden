@@ -24,6 +24,7 @@ import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/r
 import { parsePlatform, resolveOwner, resolvePlatform } from "../claim-flags";
 import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
+import type { HostLease } from "../hosts/claim";
 import { installModeOption, kindOption, legacyCleanOption, parseInstallFlags } from "../install-flags";
 import { emit, heading, reportError } from "../output";
 import { projectContextFor } from "../project-context";
@@ -424,6 +425,70 @@ function ensureFlags(
 	return ok({ install: install.data, ...(kind ? { kind: kind.data } : {}) });
 }
 
+/** `app ensure --lease <host lease>` (or `--udid`): resolve the build here, then send and install it on the host. */
+async function ensureHostCmd(
+	ctx: CommandContext,
+	deps: AppDeps,
+	owner: Owner,
+	lease: HostLease,
+	opts: EnsureOpts
+): Promise<number> {
+	const { color } = ctx.ui;
+	const { platform, host, id } = lease.resource;
+	if (opts.installMode !== undefined || opts.resetKeychain) {
+		return fail(ctx, "ensure", "--install-mode and --reset-keychain don't reach a host's device yet");
+	}
+	const kind = opts.kind === undefined ? undefined : parseKind(opts.kind);
+	if (kind && !kind.success) return fail(ctx, "ensure", kind.error);
+	if (!opts.json) heading(ctx, "app ensure", `${platform} · ${id} on ${host}`);
+	const { ensureOnHost } = await import("../hosts/app");
+	const res = await withSpinner(ctx, `ensuring the ${platform} app for ${host}…`, async (sctx, spinner) => {
+		const result = await ensureOnHost(sctx, lease, {
+			resolve: async () => {
+				const r = await ensureAppFor(sctx, deps, owner, platform, undefined, {
+					...projectOptions(opts),
+					...(kind?.success ? { kind: kind.data } : {}),
+					eas: opts.eas,
+					build: opts.build,
+				});
+				return r.success
+					? {
+							success: true,
+							data: { appPath: r.data.appPath, hash: r.data.hash, source: r.data.source, installed: r.data.installed },
+						}
+					: r;
+			},
+		});
+		if (result.success) spinner.succeed(`${platform} app installed on ${host}`);
+		else spinner.fail(`${platform} app not installed on ${host}`);
+		return result;
+	});
+	if (!res.success) return fail(ctx, "ensure", res.error);
+	const r = res.data;
+	emit(
+		ctx,
+		opts.json === true,
+		r,
+		`${color.green(r.source)}: ${r.appPath} ${color.dim(`[${r.hash}]`)} → installed on ${id} (${host})`
+	);
+	return 0;
+}
+
+/** `app ensure`: on a host's device when `--lease` / `--udid` names the caller's host lease, else here. */
+async function ensureEntry(
+	ctx: CommandContext,
+	deps: AppDeps,
+	platformArg: string | undefined,
+	opts: EnsureOpts
+): Promise<number> {
+	if (opts.install && (opts.lease !== undefined || opts.udid !== undefined)) {
+		const owner = resolveOwner(ctx);
+		const onHost = (await import("../hosts/app")).hostLeaseFor(ctx, owner, opts);
+		if (onHost) return ensureHostCmd(ctx, deps, owner, onHost, opts);
+	}
+	return ensureCmd(ctx, deps, platformArg, opts);
+}
+
 /** Fingerprint → installed / cache / EAS / local build, under a spinner (can take minutes). */
 async function ensureCmd(
 	ctx: CommandContext,
@@ -585,7 +650,7 @@ export function createAppCommand(deps: AppDeps): Command {
 				.option("--variant <name>", "use this projects[].variants build (dev, e2e…)")
 				.addOption(kindOption())
 				.option("--json", "machine-readable output")
-				.action(async (platform, opts) => done(await ensureCmd(ctx, deps, platform, opts)));
+				.action(async (platform, opts) => done(await ensureEntry(ctx, deps, platform, opts)));
 			cmd
 				.command("fingerprint")
 				.description("print the project's native fingerprint (both platforms by default)")

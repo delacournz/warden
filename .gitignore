@@ -20,3 +20,6 @@ packages/e2e/native/ios-runner/**/xcuserdata
 
 packages/e2e/native/android/.cache
 packages/e2e/native/android/dist-atf
+
+# Rust build outputs (each crate also ignores its own target/)
+crates/*/target

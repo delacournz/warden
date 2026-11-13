@@ -5,8 +5,9 @@ import { join } from "node:path";
 import { canReadA11yEvents } from "../a11y-events";
 import { canReadA11y } from "../a11y-read";
 import { el, failWith, fakeDriver, snapshotOf } from "../driver.testing";
-import type { Driver, DriverCapabilities } from "../driver.types";
+import type { Driver, DriverCapabilities, Point } from "../driver.types";
 import { canActOnElements } from "../element-actions";
+import { canLiveTouch, type TouchPointer } from "../live-touch";
 import { canAuditNatively } from "../native-audit";
 import { canDetectAlerts } from "../observation-cache";
 import { canDriveScreenReader } from "../screen-reader";
@@ -360,5 +361,109 @@ describe("remote driver", () => {
 	test("a driver without element actions offers none", async () => {
 		const remote = (await connect(await serve(fakeDriver({ screens: [screen], platform: "android" })))).driver();
 		expect(canActOnElements(remote)).toBe(false);
+	});
+});
+
+describe("stream ops (STRM-2)", () => {
+	function streamService(log: string[]) {
+		return {
+			start: async (params: Record<string, unknown>) => {
+				log.push(`start ${JSON.stringify(params)}`);
+				return { success: true as const, data: { path: "/tmp/s.sock", width: 540, height: 1212 } };
+			},
+			keyframe: async () => {
+				log.push("keyframe");
+				return { success: true as const, data: {} };
+			},
+			stats: async () => ({ success: true as const, data: { encoded: 3 } }),
+			stop: async () => {
+				log.push("stop");
+				return { success: true as const, data: { stopped: true } };
+			},
+		};
+	}
+
+	test("a host with a stream service says so and answers stream.start/keyframe/stats/stop with the params sent", async () => {
+		const log: string[] = [];
+		const driver = fakeDriver({ screens: [screen], platform: "android" });
+		const client = await connect(await serve(driver, { stream: streamService(log) }));
+		expect(client.ready.stream).toBe(true);
+		expect(await client.request("stream.start", { fps: 30, maxEdge: 960 })).toEqual({
+			success: true,
+			data: { path: "/tmp/s.sock", width: 540, height: 1212 },
+		});
+		expect((await client.request("stream.keyframe")).success).toBe(true);
+		expect(await client.request("stream.stats")).toEqual({ success: true, data: { encoded: 3 } });
+		expect(await client.request("stream.stop")).toEqual({ success: true, data: { stopped: true } });
+		expect(log).toEqual(['start {"fps":30,"maxEdge":960}', "keyframe", "stop"]);
+	});
+
+	test("without one, stream ops are E_UNSUPPORTED and the ready event says nothing", async () => {
+		const client = await connect(await serve(fakeDriver({ screens: [screen], platform: "android" })));
+		expect(client.ready.stream).toBeUndefined();
+		const answer = await client.request("stream.start", {});
+		expect(answer.success ? "" : answer.error.code).toBe("E_UNSUPPORTED");
+	});
+
+	test("stopping the host stops its stream", async () => {
+		const log: string[] = [];
+		const server = await serveDriver({
+			driver: fakeDriver({ screens: [screen], platform: "android" }),
+			socketPath: socketPath(),
+			stream: streamService(log),
+		});
+		await server.stop();
+		expect(log).toEqual(["stop"]);
+	});
+
+	test("stream ops do not queue behind a slow driver op", async () => {
+		const log: string[] = [];
+		const driver = fakeDriver({ screens: [screen], platform: "android" });
+		const slow: Driver = {
+			...driver,
+			tap: async () => {
+				await Bun.sleep(300);
+				return { success: true, data: undefined };
+			},
+		};
+		const client = await connect(await serve(slow, { stream: streamService(log) }));
+		const tap = client.driver().tap({ x: 1, y: 1 });
+		const started = Date.now();
+		await client.request("stream.keyframe");
+		expect(Date.now() - started).toBeLessThan(200);
+		await tap;
+	});
+});
+
+describe("live touch over the wire", () => {
+	test("offered when the served driver has it; each call reaches it with its point and pointer", async () => {
+		const calls: unknown[][] = [];
+		const done = async (...args: unknown[]) => {
+			calls.push(args);
+			return { success: true as const, data: undefined };
+		};
+		const served = Object.assign(fakeDriver({ screens: [screen], platform: "android" }), {
+			touchDown: (point: Point, pointer?: TouchPointer) => done("down", point, pointer),
+			touchMove: (point: Point, pointer?: TouchPointer) => done("move", point, pointer),
+			touchUp: (point?: Point, pointer?: TouchPointer) => done("up", point, pointer),
+			touchCancel: () => done("cancel"),
+		});
+		const remote = (await connect(await serve(served))).driver();
+		if (!canLiveTouch(remote)) throw new Error("no live touch");
+		await remote.touchDown({ x: 1, y: 2 }, 1);
+		await remote.touchMove({ x: 3, y: 4 });
+		await remote.touchUp(undefined, 1);
+		await remote.touchCancel();
+		expect(calls).toEqual([
+			["down", { x: 1, y: 2 }, 1],
+			["move", { x: 3, y: 4 }, undefined],
+			["up", undefined, 1],
+			["cancel"],
+		]);
+	});
+
+	test("not offered when the served driver lacks it", async () => {
+		const remote = (await connect(await serve(fakeDriver({ screens: [screen], platform: "android" })))).driver();
+		expect(canLiveTouch(remote)).toBe(false);
 	});
 });

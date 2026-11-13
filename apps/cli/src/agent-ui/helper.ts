@@ -14,7 +14,7 @@ import { dirname, join } from "node:path";
 import { installedBundleIds } from "@delacour/warden-core/builds/cache";
 import { parseDuration } from "@delacour/warden-core/duration";
 import { type PidAlive, processAlive } from "@delacour/warden-core/liveness";
-import { type Store, wardenHome } from "@delacour/warden-core/store";
+import { type Store, ownerKey as storeOwnerKey, wardenHome } from "@delacour/warden-core/store";
 import type { Owner } from "@delacour/warden-core/types";
 import type { ClockRecorder } from "@delacour/warden-e2e/driver/clock-recorder";
 import type { Driver, DriverError } from "@delacour/warden-e2e/driver/driver.types";
@@ -304,16 +304,9 @@ export type EnsureHelperOptions<C extends HelperClient = SimdClient> = {
 	deps?: HelperDeps<C>;
 };
 
-/** The same identity `sameOwner` compares: one agent session, one shell pid, one CI run. */
+/** The same identity `sameOwner` compares: one agent session, one shell pid, one CI run, one host laptop. */
 export function ownerKey(owner: Owner): string {
-	switch (owner.kind) {
-		case "agent":
-			return `agent:${owner.sessionId}`;
-		case "user":
-			return `user:${owner.pid}`;
-		case "ci":
-			return `ci:${owner.runId}`;
-	}
+	return storeOwnerKey(owner);
 }
 
 /** `WARDEN_SIMD_*` names that configure the client, not the helper process: left out of `simdEnvKey`. */

@@ -65,6 +65,9 @@ Devices:
   golden                        golden iOS images / Android snapshots new
                                 devices start from (fast boots): ensure | ls |
                                 prune | key | export | import
+  host                          drive another Mac's sims / emulators over ssh:
+                                add, setup, doctor, run, fetch, ls, rm (host
+                                side: grant, revoke)
 
 Builds:
   app                           fingerprint an Expo app and install the matching
@@ -76,6 +79,23 @@ Builds:
                                 paths a CI job saves between runs
   builds                        list, remove, prune (LRU) and import cached
                                 native app builds
+
+Account:
+  view [leaseId|remoteId]       watch and drive a device: hosted (the warden
+                                viewer window) or on a warden host (a browser
+                                tab)
+  login                         log in to warden cloud (remote simulators) in
+                                the browser
+  logout                        log out of warden cloud and forget the saved
+                                token
+  account                       list warden cloud accounts, pick the default, or
+                                remove one
+  whoami                        show the warden cloud account, organization,
+                                balance and remote-device status
+  billing                       show the warden cloud balance and ledger, or top
+                                up credit
+  org                           list, create or switch warden cloud
+                                organizations, or link directories to one
 
 Commands:
   ui                            drive a leased simulator / emulator (agents):
@@ -156,6 +176,12 @@ Options:
                            (implies --physical)
   --udid <udid...>         ios: claim these physical devices by CoreDevice UDID
                            (implies --physical)
+  --remote                 lease a hosted device from warden cloud (warden login
+                           first)
+  --view                   with --remote: open the device in the warden viewer
+                           and stay until it closes
+  --host <name>            claim on a warden host (warden host add) over ssh;
+                           the host allocates and boots
   --idempotency-key <key>  a repeat claim with this key (same owner, leases
                            alive) returns the same leases (env
                            WARDEN_IDEMPOTENCY_KEY)
@@ -325,6 +351,8 @@ Options:
                               (default off: \`warden dev enable devtools\`)
   --no-open                   don't open the dev client (Metro + the leases
                               only)
+  --host <name>               run on a device of this warden host: Metro stays
+                              here, reached over ssh -R
   --no-tui                    plain output: Metro on this terminal, no dashboard
                               (also WARDEN_TUI=0; --json and pipes are always
                               plain)
@@ -1492,6 +1520,7 @@ Usage: warden ls [options]
 list leases (resource, state, owner, repo/worktree, age, heartbeat)
 
 Options:
+  --hosts     only leases on warden hosts (claim --host)
   --json      machine-readable output
   -h, --help  display help for command"
 `;
@@ -2034,6 +2063,236 @@ Options:
   --force          repack even when this JS is already cached
   --json           machine-readable output
   -h, --help       display help for command"
+`;
+
+exports[`help output warden host --help (and nested subcommands) 1`] = `
+"$ warden host --help
+Usage: warden host [options] [command]
+
+drive another Mac's sims / emulators over ssh: add, setup, doctor, run, fetch,
+ls, rm (host side: grant, revoke)
+
+Options:
+  -h, --help                display help for command
+
+Commands:
+  add <name>                record a Mac to drive over ssh and pin its host key
+                            (first contact)
+  key                       print this laptop's warden key (made on first use),
+                            to grant on a host or pass to host attach
+  attach                    on a machine with no inbound ssh (a CI runner): a
+                            user-level sshd that lets one laptop key in
+  uplink                    on the host: keep an outbound link to warden-api so
+                            laptops reach it with no inbound at all
+  setup <name>              install this warden on the host (no sudo), fetch its
+                            helper, grant this laptop's key
+  doctor <name>             check a host: reachable, key accepted, same warden
+                            version, lease drift there
+  run <name> [args...]      run one allowed warden command on the host (perf,
+                            golden ls/ensure, builds ls, capacity, queue)
+  fetch <name> <kind> <id>  copy a perf session's files back from the host (into
+                            this machine's perf dir)
+  ls                        list hosts
+  rm <name>                 forget a host
+  grant                     on the host: let a laptop key in, through the forced
+                            warden __host-serve
+  revoke                    on the host: remove a laptop's grant and its
+                            authorized_keys line
+  grants                    on the host: list the laptops granted
+  help [command]            display help for command
+
+$ warden host add --help
+Usage: warden host add [options] <name>
+
+record a Mac to drive over ssh and pin its host key (first contact)
+
+Arguments:
+  name                   short name for the host
+
+Options:
+  --ssh <target>         user@host[:port]
+  --identity <file>      ssh key for the setup shell (default: ssh's own)
+  --proxy-command <cmd>  ssh ProxyCommand (cloudflared, tailscale nc, an SSM
+                         bridge)
+  --jump <host>          ssh jump host (ProxyJump), for a host with no inbound
+  --host-key <key>       pin this host key (\`ssh-ed25519 AAAA…\`) instead of
+                         trusting the first one seen
+  --granted              the host already grants this laptop's key (host
+                         attach): use it, no setup
+  --cloud                reach it through warden-api (warden host uplink there,
+                         or a hosted Mac), not ssh
+  --host-id <id>         with --cloud: which of the account's hosts (default:
+                         the one named <name>)
+  --json                 machine-readable output
+  -h, --help             display help for command
+
+$ warden host key --help
+Usage: warden host key [options]
+
+print this laptop's warden key (made on first use), to grant on a host or pass
+to host attach
+
+Options:
+  --json      machine-readable output
+  -h, --help  display help for command
+
+$ warden host attach --help
+Usage: warden host attach [options]
+
+on a machine with no inbound ssh (a CI runner): a user-level sshd that lets one
+laptop key in
+
+Options:
+  --grant <key>           the laptop's key (warden host key there): public key
+                          line or .pub file
+  --as <name>             the name to give this host on the laptop (default:
+                          "ci")
+  --listen <addr>         sshd listen address (default: "127.0.0.1")
+  --port <port>           sshd port (default: a free one)
+  --tailscale             listen on this machine's tailnet address (tailscale ip
+                          -4)
+  --advertise <addr>      the address the laptop dials (a userspace tailscaled's
+                          IP, a NAT); sshd stays on --listen
+  --jump <target>         dial out to this bastion (user@host) and forward its
+                          --jump-port here
+  --jump-port <port>      the bastion's loopback port that reaches this sshd
+  --jump-identity <file>  ssh key for the bastion
+  --for <duration>        stop after this long (default: until Ctrl-C / SIGTERM)
+  --json                  machine-readable output
+  -h, --help              display help for command
+
+$ warden host uplink --help
+Usage: warden host uplink [options]
+
+on the host: keep an outbound link to warden-api so laptops reach it with no
+inbound at all
+
+Options:
+  --api <url>          warden-api (default: $WARDEN_API_URL, else the hosted
+                       one)
+  --token-file <file>  the host token (default: $WARDEN_HOST_TOKEN)
+  -h, --help           display help for command
+
+$ warden host setup --help
+Usage: warden host setup [options] <name>
+
+install this warden on the host (no sudo), fetch its helper, grant this laptop's
+key
+
+Arguments:
+  name                      host name
+
+Options:
+  --setup-identity <file>   ssh key that opens a normal shell on the host
+                            (default: --identity)
+  --binary <file>           install this warden binary (a dev / local build)
+                            instead of the release
+  --install-dir <dir>       where warden goes on the host (default:
+                            ~/.local/bin)
+  --authorized-keys <file>  the host's authorized_keys (default:
+                            ~/.ssh/authorized_keys)
+  --golden                  also build the iOS golden image there (minutes)
+  --no-helper               skip fetching the iOS driver helper there
+  --json                    machine-readable output
+  -h, --help                display help for command
+
+$ warden host doctor --help
+Usage: warden host doctor [options] <name>
+
+check a host: reachable, key accepted, same warden version, lease drift there
+
+Arguments:
+  name        host name
+
+Options:
+  --json      machine-readable output
+  -h, --help  display help for command
+
+$ warden host run --help
+Usage: warden host run [options] <name> [args...]
+
+run one allowed warden command on the host (perf, golden ls/ensure, builds ls,
+capacity, queue)
+
+Arguments:
+  name        host name
+  args        the warden command and its flags, after --
+
+Options:
+  -h, --help  display help for command
+
+$ warden host fetch --help
+Usage: warden host fetch [options] <name> <kind> <id>
+
+copy a perf session's files back from the host (into this machine's perf dir)
+
+Arguments:
+  name         host name
+  kind         perf
+  id           the perf session id
+
+Options:
+  --out <dir>  put it here instead (default: $WARDEN_HOME/perf, where warden
+               perf report reads)
+  --json       machine-readable output
+  -h, --help   display help for command
+
+$ warden host ls --help
+Usage: warden host ls [options]
+
+list hosts
+
+Options:
+  --json      machine-readable output
+  -h, --help  display help for command
+
+$ warden host rm --help
+Usage: warden host rm [options] <name>
+
+forget a host
+
+Arguments:
+  name        host name
+
+Options:
+  --json      machine-readable output
+  -h, --help  display help for command
+
+$ warden host grant --help
+Usage: warden host grant [options]
+
+on the host: let a laptop key in, through the forced warden __host-serve
+
+Options:
+  --key <key>               the laptop's public key line or .pub file (comment
+                            warden:<machine>:<user>)
+  --machine <id>            machine id when the key comment has none
+  --user <name>             user name when the key comment has none
+  --authorized-keys <file>  default ~/.ssh/authorized_keys
+  --warden <path>           the warden the forced command runs (default: this
+                            one)
+  --json                    machine-readable output
+  -h, --help                display help for command
+
+$ warden host revoke --help
+Usage: warden host revoke [options]
+
+on the host: remove a laptop's grant and its authorized_keys line
+
+Options:
+  --key <key>               fingerprint (SHA256:…), public key line or .pub file
+  --authorized-keys <file>  default ~/.ssh/authorized_keys
+  --json                    machine-readable output
+  -h, --help                display help for command
+
+$ warden host grants --help
+Usage: warden host grants [options]
+
+on the host: list the laptops granted
+
+Options:
+  --json      machine-readable output
+  -h, --help  display help for command"
 `;
 
 exports[`help output warden ci --help (and nested subcommands) 1`] = `
@@ -4340,6 +4599,96 @@ Options:
   -h, --help                display help for command"
 `;
 
+exports[`help output warden __driver-serve --help (and nested subcommands) 1`] = `
+"$ warden __driver-serve --help
+Usage: warden __driver-serve [options]
+
+serve a leased device's driver on stdin/stdout for a remote warden (internal)
+
+Options:
+  --lease <id>
+  -h, --help    display help for command"
+`;
+
+exports[`help output warden __host-keepalive --help (and nested subcommands) 1`] = `
+"$ warden __host-keepalive --help
+Usage: warden __host-keepalive [options]
+
+renew a host's leases while the local ones live; end them when the host can't
+back them (internal)
+
+Options:
+  --host <name>
+  -h, --help     display help for command"
+`;
+
+exports[`help output warden __host-recv --help (and nested subcommands) 1`] = `
+"$ warden __host-recv --help
+Usage: warden __host-recv [options]
+
+receive an app build from a laptop into the host's uploads, checked against its
+hash (internal)
+
+Options:
+  --hash <sha256>
+  --name <name>
+  --check
+  --json
+  -h, --help       display help for command"
+`;
+
+exports[`help output warden __host-send --help (and nested subcommands) 1`] = `
+"$ warden __host-send --help
+Usage: warden __host-send [options]
+
+send a perf session's files to the laptop that holds its device, as a tar on
+stdout (internal)
+
+Options:
+  --perf <id>
+  -h, --help   display help for command"
+`;
+
+exports[`help output warden __host-serve --help (and nested subcommands) 1`] = `
+"$ warden __host-serve --help
+Usage: warden __host-serve [options]
+
+the forced command a warden host grant installs: runs one allowed warden command
+for a laptop (internal)
+
+Options:
+  --key <fingerprint>
+  --relay-owner <json>
+  -h, --help            display help for command"
+`;
+
+exports[`help output warden __host-tunnel --help (and nested subcommands) 1`] = `
+"$ warden __host-tunnel --help
+Usage: warden __host-tunnel [options]
+
+hold a laptop's Metro forward open on this host while its ssh lives (internal)
+
+Options:
+  --port <port>
+  --lease <id>
+  --json
+  -h, --help     display help for command"
+`;
+
+exports[`help output warden __relay-dial --help (and nested subcommands) 1`] = `
+"$ warden __relay-dial --help
+Usage: warden __relay-dial [options] [cmd...]
+
+run one command on a relayed host through warden-api, like ssh would (internal)
+
+Options:
+  --api <url>
+  --host-id <id>
+  --account <name>
+  --organization <id>
+  -h, --help           display help for command"
+`;
+
 exports[`help output warden __ios-runner-host --help (and nested subcommands) 1`] = `
 "$ warden __ios-runner-host --help
 Usage: warden __ios-runner-host [options]
@@ -4719,6 +5068,231 @@ MCP server on stdio: Metro logs, app console, network, eval, tree, logpoints,
 profiles of \`warden dev\`
 
 Options:
+  -h, --help  display help for command"
+`;
+
+exports[`help output warden view --help (and nested subcommands) 1`] = `
+"$ warden view --help
+Usage: warden view [options] [leaseId|remoteId]
+
+watch and drive a device: hosted (the warden viewer window) or on a warden host
+(a browser tab)
+
+Arguments:
+  leaseId|remoteId  remote or host lease, or hosted device id (default: your
+                    only one)
+
+Options:
+  --watch           read-only: no taps, swipes or typing
+  --detach          leave the window open and return (one 30 min token; the
+                    lease TTL applies)
+  --json            machine-readable output
+  -h, --help        display help for command"
+`;
+
+exports[`help output warden login --help (and nested subcommands) 1`] = `
+"$ warden login --help
+Usage: warden login [options]
+
+log in to warden cloud (remote simulators) in the browser
+
+Options:
+  --account <name>  save this login as a named account (default: default)
+  --api-url <url>   warden-api to log in to (default: $WARDEN_API_URL or
+                    https://api.warden.co.nz)
+  --org <org>       default organization for this login, slug or id (asks when
+                    you have several)
+  --no-browser      print the approval link instead of opening it
+  --json            machine-readable output
+  -h, --help        display help for command"
+`;
+
+exports[`help output warden logout --help (and nested subcommands) 1`] = `
+"$ warden logout --help
+Usage: warden logout [options]
+
+log out of warden cloud and forget the saved token
+
+Options:
+  --account <name>  log out of this account (default: the one this directory
+                    uses)
+  --all             log out of every account
+  --json            machine-readable output
+  -h, --help        display help for command"
+`;
+
+exports[`help output warden account --help (and nested subcommands) 1`] = `
+"$ warden account --help
+Usage: warden account [options] [command]
+
+list warden cloud accounts, pick the default, or remove one
+
+Options:
+  -h, --help      display help for command
+
+Commands:
+  list            list saved accounts (the default)
+  default <name>  make an account the default (used where no link or
+                  WARDEN_ACCOUNT applies)
+  rm <name>       log out of an account and forget it (= warden logout --account
+                  <name>)
+  help [command]  display help for command
+
+$ warden account list --help
+Usage: warden account list [options]
+
+list saved accounts (the default)
+
+Options:
+  --json      machine-readable output
+  -h, --help  display help for command
+
+$ warden account default --help
+Usage: warden account default [options] <name>
+
+make an account the default (used where no link or WARDEN_ACCOUNT applies)
+
+Arguments:
+  name        account name
+
+Options:
+  --json      machine-readable output
+  -h, --help  display help for command
+
+$ warden account rm --help
+Usage: warden account rm [options] <name>
+
+log out of an account and forget it (= warden logout --account <name>)
+
+Arguments:
+  name        account name
+
+Options:
+  --json      machine-readable output
+  -h, --help  display help for command"
+`;
+
+exports[`help output warden whoami --help (and nested subcommands) 1`] = `
+"$ warden whoami --help
+Usage: warden whoami [options]
+
+show the warden cloud account, organization, balance and remote-device status
+
+Options:
+  --json      machine-readable output
+  -h, --help  display help for command"
+`;
+
+exports[`help output warden billing --help (and nested subcommands) 1`] = `
+"$ warden billing --help
+Usage: warden billing [options]
+
+show the warden cloud balance and ledger, or top up credit
+
+Options:
+  --top-up [amount]  buy credit in USD ($10–$500) through Stripe Checkout; no
+                     amount = pick one
+  --limit <n>        ledger entries to show (default 10)
+  --no-browser       print the checkout link instead of opening it
+  --json             machine-readable output
+  -h, --help         display help for command"
+`;
+
+exports[`help output warden org --help (and nested subcommands) 1`] = `
+"$ warden org --help
+Usage: warden org [options] [command]
+
+list, create or switch warden cloud organizations, or link directories to one
+
+Options:
+  -h, --help      display help for command
+
+Commands:
+  list            list your organizations (the default)
+  use <org>       switch the active organization (remote devices are billed to
+                  it)
+  create [name]   create an organization (asks name and slug when omitted at a
+                  terminal)
+  link [org]      bill remote devices claimed in this directory (or repo remote)
+                  to an organization
+  unlink          remove the link for this directory (or repo remote)
+  links           list directory and remote links; * marks the one governing
+                  this directory
+  help [command]  display help for command
+
+$ warden org list --help
+Usage: warden org list [options]
+
+list your organizations (the default)
+
+Options:
+  --account <name>  saved account (default: the one for this directory)
+  --json            machine-readable output
+  -h, --help        display help for command
+
+$ warden org use --help
+Usage: warden org use [options] <org>
+
+switch the active organization (remote devices are billed to it)
+
+Arguments:
+  org               organization slug or id
+
+Options:
+  --account <name>  saved account (default: the one for this directory)
+  --json            machine-readable output
+  -h, --help        display help for command
+
+$ warden org create --help
+Usage: warden org create [options] [name]
+
+create an organization (asks name and slug when omitted at a terminal)
+
+Arguments:
+  name              organization name; the slug is made from it
+
+Options:
+  --slug <slug>     slug instead of the one made from the name (must be free)
+  --account <name>  saved account (default: the one for this directory)
+  --json            machine-readable output
+  -h, --help        display help for command
+
+$ warden org link --help
+Usage: warden org link [options] [org]
+
+bill remote devices claimed in this directory (or repo remote) to an
+organization
+
+Arguments:
+  org               organization slug or id (asks when omitted)
+
+Options:
+  --account <name>  saved account (default: the one for this directory)
+  --path <dir>      directory to link (default: the git toplevel, else the
+                    current directory)
+  --remote          link this checkout's git origin instead of a directory
+  --json            machine-readable output
+  -h, --help        display help for command
+
+$ warden org unlink --help
+Usage: warden org unlink [options]
+
+remove the link for this directory (or repo remote)
+
+Options:
+  --path <dir>  directory to unlink (default: the git toplevel, else the current
+                directory)
+  --remote      unlink this checkout's git origin
+  --json        machine-readable output
+  -h, --help    display help for command
+
+$ warden org links --help
+Usage: warden org links [options]
+
+list directory and remote links; * marks the one governing this directory
+
+Options:
+  --json      machine-readable output
   -h, --help  display help for command"
 `;
 

@@ -1,0 +1,255 @@
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:net";
+import { join } from "node:path";
+import { wardenHome } from "@delacour/warden-core/store";
+import { err, ok, type Result } from "@delacour/warden-types/result";
+import type { CommandContext } from "../context";
+import { selfCommand } from "../self-command";
+import { SERVE_LOG_ENV } from "./attach-log";
+import { type GrantOutcome, grantKey } from "./grant";
+import { shellQuote } from "./ssh";
+
+/**
+ * `warden host attach`, run on a machine with no inbound ssh of its own (a CI runner, a fresh hosted Mac): a
+ * user-level sshd (no sudo, keys only, only this user) whose one key is the laptop's, through the same forced
+ * `__host-serve` as `host grant`, reachable on the tailnet or through a bastion it dials out to (`ssh -N -R`).
+ */
+
+export const SSHD = "/usr/sbin/sshd";
+
+export type AttachJump = { target: string; remotePort: number; identity?: string };
+
+export type AttachOptions = {
+	/** the laptop's key (`warden host key` there): a public key line or a .pub file */
+	grant: string;
+	/** the name the laptop should give this host */
+	name: string;
+	/** sshd's listen address (`127.0.0.1`; the tailnet IP with `--tailscale`) */
+	listen: string;
+	/** the address the laptop uses (default: `listen`): a tailnet IP in front of a userspace tailscaled, a NAT */
+	advertise?: string;
+	/** sshd's port (default: a free one) */
+	port?: number;
+	jump?: AttachJump;
+	/** the warden argv the forced command runs (default: this one) */
+	warden?: readonly string[];
+};
+
+export type Attached = {
+	port: number;
+	/** sshd's public host key, for the laptop to pin */
+	hostKey: string;
+	/** the `warden host add …` line to run on the laptop */
+	add: string;
+	/** the laptop key granted, and the owner its comment names */
+	granted: GrantOutcome;
+	/** the JSON-lines file each `__host-serve` call through this sshd appends to (`attach-log.ts`) */
+	serveLog: string;
+	/** resolves when sshd (or the dial-out) exits */
+	exited: Promise<number>;
+	stop: () => Promise<void>;
+};
+
+export function sshdConfig(p: { listen: string; port: number; dir: string }): string {
+	return [
+		`ListenAddress ${p.listen}`,
+		`Port ${p.port}`,
+		`HostKey ${join(p.dir, "ssh_host_ed25519_key")}`,
+		`AuthorizedKeysFile ${join(p.dir, "authorized_keys")}`,
+		`PidFile ${join(p.dir, "sshd.pid")}`,
+		"UsePAM no",
+		"StrictModes no",
+		"PubkeyAuthentication yes",
+		"PasswordAuthentication no",
+		"KbdInteractiveAuthentication no",
+		"PermitRootLogin no",
+		"PermitUserEnvironment no",
+		"AllowAgentForwarding no",
+		"AllowTcpForwarding yes",
+		"X11Forwarding no",
+		"PermitTunnel no",
+		"ClientAliveInterval 15",
+		"ClientAliveCountMax 3",
+		"LogLevel INFO",
+		"",
+	].join("\n");
+}
+
+/** The dial-out to a bastion: its loopback `remotePort` forwards to this sshd. */
+export function dialArgv(jump: AttachJump, localPort: number): string[] {
+	return [
+		"ssh",
+		"-N",
+		"-T",
+		"-o",
+		"BatchMode=yes",
+		"-o",
+		"ExitOnForwardFailure=yes",
+		"-o",
+		"ServerAliveInterval=15",
+		"-o",
+		"ServerAliveCountMax=3",
+		"-o",
+		"StrictHostKeyChecking=accept-new",
+		...(jump.identity !== undefined ? ["-i", jump.identity, "-o", "IdentitiesOnly=yes"] : []),
+		"-R",
+		`${jump.remotePort}:127.0.0.1:${localPort}`,
+		jump.target,
+	];
+}
+
+export function attachAddLine(p: {
+	name: string;
+	user: string;
+	hostname: string;
+	port: number;
+	hostKey: string;
+	jump?: string;
+}): string {
+	return [
+		"warden host add",
+		p.name,
+		"--ssh",
+		`${p.user}@${p.hostname}:${p.port}`,
+		...(p.jump !== undefined ? ["--jump", p.jump] : []),
+		"--host-key",
+		shellQuote(p.hostKey),
+		"--granted",
+	].join(" ");
+}
+
+function freePort(host: string): Promise<number> {
+	return new Promise((resolve, reject) => {
+		const server = createServer();
+		server.once("error", reject);
+		server.listen(0, host, () => {
+			const address = server.address();
+			const port = typeof address === "object" && address !== null ? address.port : 0;
+			server.close(() => resolve(port));
+		});
+	});
+}
+
+/**
+ * The forced command's warden, with this `WARDEN_HOME` and the live log baked in (sshd hands sessions a clean env).
+ */
+function writeWrapper(dir: string, home: string, warden: readonly string[], serveLog: string): string {
+	const path = join(dir, "warden");
+	const cmd = warden.map(shellQuote).join(" ");
+	const env = `WARDEN_HOME=${shellQuote(home)} ${SERVE_LOG_ENV}=${shellQuote(serveLog)}`;
+	writeFileSync(path, `#!/bin/sh\nexec env ${env} ${cmd} "$@"\n`);
+	chmodSync(path, 0o755);
+	return path;
+}
+
+/** Wait for sshd's "Server listening" line, or its exit; keeps draining stderr after, a line at a time to `onLine`. */
+async function listening(
+	stderr: ReadableStream<Uint8Array>,
+	exited: Promise<number>,
+	onLine: (line: string) => void
+): Promise<Result<void>> {
+	const reader = stderr.getReader();
+	const decoder = new TextDecoder();
+	let seen = "";
+	const timeout = Bun.sleep(10_000).then(() => ({ done: true, value: undefined }));
+	const gone = exited.then(() => ({ done: true, value: undefined }));
+	for (;;) {
+		const next = await Promise.race([reader.read(), gone, timeout]);
+		if (next.done || next.value === undefined) return err(`sshd did not start: ${seen.trim() || "no output"}`);
+		seen += decoder.decode(next.value);
+		if (seen.includes("Server listening")) break;
+	}
+	void (async () => {
+		let partial = "";
+		for (;;) {
+			const next = await reader.read().catch(() => ({ done: true, value: undefined }));
+			if (next.done || next.value === undefined) return;
+			const lines = (partial + decoder.decode(next.value)).split("\n");
+			partial = lines.pop() ?? "";
+			for (const line of lines) onLine(line);
+		}
+	})();
+	return ok(undefined);
+}
+
+async function keygen(ctx: CommandContext, path: string): Promise<Result<string>> {
+	if (!existsSync(path)) {
+		const made = await ctx.exec(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "warden-attach", "-f", path]);
+		if (made.exitCode !== 0) return err(`ssh-keygen: ${made.stderr.trim()}`);
+	}
+	return ok(readFileSync(`${path}.pub`, "utf8").trim().split(" ").slice(0, 2).join(" "));
+}
+
+/**
+ * The user a user-level sshd lets in: the one it runs as. Asked of the OS: `USER` can be unset (launchd, turbo) and
+ * Bun's `os.userInfo()` then answers "unknown".
+ */
+export async function loginUser(ctx: CommandContext): Promise<Result<string>> {
+	const id = await ctx.exec(["id", "-un"]);
+	const name = id.stdout.trim();
+	return id.exitCode === 0 && name !== "" ? ok(name) : err(`id -un failed: ${id.stderr.trim() || "no output"}`);
+}
+
+/** Set up and start the sshd (and the dial-out); `stop` ends both. sshd's log lines go to `onSshdLine`. */
+export async function startAttach(
+	ctx: CommandContext,
+	opts: AttachOptions,
+	onSshdLine: (line: string) => void = () => {}
+): Promise<Result<Attached>> {
+	if (!existsSync(SSHD)) return err(`${SSHD} is missing: host attach needs OpenSSH's sshd`);
+	const home = wardenHome(ctx.env);
+	const dir = join(home, "attach");
+	mkdirSync(dir, { recursive: true, mode: 0o700 });
+	const hostKey = await keygen(ctx, join(dir, "ssh_host_ed25519_key"));
+	if (!hostKey.success) return hostKey;
+	const authorized = join(dir, "authorized_keys");
+	rmSync(authorized, { force: true });
+	const serveLog = join(dir, "serve.log");
+	rmSync(serveLog, { force: true });
+	const wrapper = writeWrapper(dir, home, opts.warden ?? selfCommand(), serveLog);
+	const granted = grantKey(ctx, { key: opts.grant, authorizedKeys: authorized, warden: wrapper }, ctx.now());
+	if (!granted.success) return granted;
+	const port = opts.port ?? (await freePort(opts.listen));
+	writeFileSync(join(dir, "sshd_config"), sshdConfig({ listen: opts.listen, port, dir }));
+	const sshd = Bun.spawn([SSHD, "-D", "-e", "-f", join(dir, "sshd_config")], {
+		stdin: "ignore",
+		stdout: "ignore",
+		stderr: "pipe",
+	});
+	const up = await listening(sshd.stderr, sshd.exited, onSshdLine);
+	if (!up.success) {
+		sshd.kill();
+		return up;
+	}
+	const dial = opts.jump
+		? Bun.spawn(dialArgv(opts.jump, port), { stdin: "ignore", stdout: "ignore", stderr: "inherit" })
+		: undefined;
+	const user = await loginUser(ctx);
+	if (!user.success) {
+		dial?.kill();
+		sshd.kill();
+		return user;
+	}
+	const add = attachAddLine({
+		name: opts.name,
+		user: user.data,
+		hostname: opts.jump ? "127.0.0.1" : (opts.advertise ?? opts.listen),
+		port: opts.jump ? opts.jump.remotePort : port,
+		hostKey: hostKey.data,
+		...(opts.jump ? { jump: opts.jump.target } : {}),
+	});
+	const exited = Promise.race([sshd.exited, ...(dial ? [dial.exited] : [])]);
+	return ok({
+		port,
+		hostKey: hostKey.data,
+		add,
+		granted: granted.data,
+		serveLog,
+		exited,
+		stop: async () => {
+			dial?.kill();
+			sshd.kill();
+			await Promise.all([sshd.exited, dial?.exited]);
+		},
+	});
+}

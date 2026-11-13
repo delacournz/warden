@@ -193,6 +193,18 @@ export const MIGRATIONS: readonly string[] = [
 		PRIMARY KEY (owner_key, key)
 	);
 	CREATE INDEX claim_keys_claim ON claim_keys(claim_id);`,
+	`CREATE TABLE hosts (
+		name TEXT PRIMARY KEY,
+		json TEXT NOT NULL,
+		added_at INTEGER NOT NULL
+	);
+	CREATE TABLE host_grants (
+		fingerprint TEXT PRIMARY KEY,
+		machine_id TEXT NOT NULL,
+		user TEXT NOT NULL,
+		public_key TEXT NOT NULL,
+		added_at INTEGER NOT NULL
+	);`,
 ];
 
 /** A queued claim that has not refreshed within this long is dead (its waiter polls every few seconds). */
@@ -206,6 +218,8 @@ export function ownerKey(owner: Owner): string {
 			return `user:${owner.pid}`;
 		case "ci":
 			return `ci:${owner.runId}`;
+		case "host":
+			return `host:${owner.machineId}`;
 	}
 }
 
