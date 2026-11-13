@@ -1,4 +1,5 @@
 import type { Element, Rect, ScreenInfo, Snapshot } from "../driver/driver.types";
+import { NOT_SHOWING_HINT_TRAIT, SHOWING_HINT_TRAIT } from "../driver/hint-state";
 import { type QueryRole, resolveRole, type SpelledValue } from "./roles";
 import { normalizeText } from "./text";
 
@@ -33,8 +34,10 @@ export type NodeEntry = {
 	placeholder: string | undefined;
 	/**
 	 * A text input whose shown text is its placeholder. iOS reports the placeholder as the value of an empty field and
-	 * Android as the text of an empty edit field, so the field holds nothing. It cannot be told from one holding exactly
-	 * the placeholder's text (focus, traits and every other attribute read the same), so that field reads as empty too.
+	 * Android as the text of an empty edit field, so the field holds nothing. Where the driver says (Android's server:
+	 * `showing-hint` / `not-showing-hint` traits) that answer is exact. Otherwise it cannot be told from one holding
+	 * exactly the placeholder's text (focus, traits and every other attribute read the same), so that field reads as
+	 * empty too.
 	 */
 	showsPlaceholder: boolean;
 	states: NodeStates;
@@ -102,6 +105,17 @@ function intersectsScreen(frame: Rect, screen: ScreenInfo): boolean {
 	return frame.x < screen.width && frame.y < screen.height && frame.x + frame.width > 0 && frame.y + frame.height > 0;
 }
 
+/**
+ * Whether a text input with a placeholder shows it: what the driver knows (`showing-hint` / `not-showing-hint`, Android's
+ * server), else whether its shown text is the placeholder's (iOS, the Android dump), which reads a field holding exactly
+ * the placeholder's text as empty.
+ */
+function showsItsPlaceholder(traits: ReadonlySet<string>, shown: string | undefined, placeholder: string): boolean {
+	if (traits.has(SHOWING_HINT_TRAIT)) return true;
+	if (traits.has(NOT_SHOWING_HINT_TRAIT)) return false;
+	return shown === placeholder;
+}
+
 /** Roles that hold typed text: the only ones whose shown text can be a placeholder. */
 function isTextInput(role: QueryRole): boolean {
 	return role === "textbox" || role === "searchbox";
@@ -141,7 +155,8 @@ export function indexSnapshot(snapshot: Snapshot): NodeIndex {
 		const rawValue = spelled === undefined ? element.value : spelled.value;
 		const placeholder = nonEmpty(element.placeholder);
 		const shown = nonEmpty(rawValue) ?? nonEmpty(element.text);
-		const showsPlaceholder = isTextInput(role) && placeholder !== undefined && shown === placeholder;
+		const showsPlaceholder =
+			isTextInput(role) && placeholder !== undefined && showsItsPlaceholder(traits, shown, placeholder);
 		const value = secure || showsPlaceholder ? undefined : nonEmpty(rawValue);
 		const name = nonEmpty(element.label) ?? (showsPlaceholder ? undefined : nonEmpty(element.text));
 		const hidden = element.hidden === true || parent?.states.hidden === true;

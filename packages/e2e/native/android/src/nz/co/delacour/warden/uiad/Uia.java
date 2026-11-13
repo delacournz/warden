@@ -370,6 +370,16 @@ final class Uia {
 		return sb.append(']');
 	}
 
+	/**
+	 * `"showingHint":true|false` of an editable node: whether `getText()` is its hint (an empty field) or what it holds,
+	 * even when that equals the hint. Written both ways, unlike a flag, so its absence means unknown.
+	 */
+	private static boolean hintState(StringBuilder sb, boolean first, boolean showing) {
+		if (!first) sb.append(',');
+		sb.append("\"showingHint\":").append(showing);
+		return false;
+	}
+
 	/** One node as JSON, with the attribute set `uiautomator dump` writes (names kept close to the XML). */
 	private void dump(Walk walk, AccessibilityNodeInfo node) {
 		StringBuilder sb = walk.sb;
@@ -382,6 +392,7 @@ final class Uia {
 		first = Json.field(sb, first, "text", node.getText());
 		first = Json.field(sb, first, "desc", node.getContentDescription());
 		if (Build.VERSION.SDK_INT >= 26) first = Json.field(sb, first, "hint", node.getHintText());
+		if (Build.VERSION.SDK_INT >= 26 && node.isEditable()) first = hintState(sb, first, node.isShowingHintText());
 		Rect r = visibleBounds(walk, node);
 		if (!first) sb.append(',');
 		sb.append("\"bounds\":[").append(r.left).append(',').append(r.top).append(',').append(r.right).append(',').append(r.bottom).append(']');
