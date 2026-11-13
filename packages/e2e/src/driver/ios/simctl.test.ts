@@ -18,11 +18,13 @@ import {
 	screenshotArgv,
 	simctlFailure,
 	statusBarOverrideArgv,
+	TYPING_AID_KEYS,
 } from "./simctl";
 
 const UDID = "UDID-1";
 const BUNDLE = "nz.co.delacour.warden.example";
 const automationPlist = "/devices/UDID-1/data/Library/Preferences/com.apple.Accessibility.plist";
+const keyboardPlist = "/devices/UDID-1/data/Library/Preferences/com.apple.keyboard.preferences.plist";
 
 function harness(handlers: Parameters<typeof fakeExec>[0]) {
 	const calls: ExecCall[] = [];
@@ -386,6 +388,43 @@ describe("createSimctl", () => {
 		]);
 		await h.simctl.enableAutomation();
 		expect(joined(h.calls).some((line) => line.includes("AutomationEnabled -bool true"))).toBe(true);
+	});
+
+	test("disableTypingAids turns autocorrect, prediction and spell check off on a sim that has them on", async () => {
+		const h = harness([["xcrun simctl spawn", {}]]);
+		expect((await h.simctl.disableTypingAids()).success).toBe(true);
+		expect(h.calls.slice(0, 3).map((call) => call.cmd)).toEqual(
+			TYPING_AID_KEYS.map((key) => ["plutil", "-extract", key, "raw", "-o", "-", keyboardPlist])
+		);
+		expect(joined(h.calls).slice(3).sort()).toEqual(
+			TYPING_AID_KEYS.map(
+				(key) => `xcrun simctl spawn ${UDID} defaults write com.apple.keyboard.preferences ${key} -bool NO`
+			).sort()
+		);
+	});
+
+	test("disableTypingAids writes only the keys the plist does not already have off", async () => {
+		const h = harness([
+			["plutil -extract KeyboardAutocorrection", { stdout: "false\n" }],
+			["plutil -extract KeyboardPrediction", { stdout: "true\n" }],
+			["xcrun simctl spawn", {}],
+		]);
+		await h.simctl.disableTypingAids();
+		const writes = joined(h.calls).filter((line) => line.startsWith("xcrun"));
+		expect(writes.some((line) => line.includes("KeyboardAutocorrection"))).toBe(false);
+		expect(writes.some((line) => line.includes("KeyboardPrediction -bool NO"))).toBe(true);
+		expect(writes.some((line) => line.includes("KeyboardCheckSpelling -bool NO"))).toBe(true);
+	});
+
+	test("disableTypingAids spawns nothing in the sim when every key is already off", async () => {
+		const h = harness([["plutil", { stdout: "false\n" }]]);
+		expect((await h.simctl.disableTypingAids()).success).toBe(true);
+		expect(joined(h.calls).filter((line) => line.startsWith("xcrun"))).toEqual([]);
+	});
+
+	test("disableTypingAids fails when a write fails", async () => {
+		const h = harness([["xcrun simctl spawn", { exitCode: 1, stderr: "Could not write domain" }]]);
+		expect((await h.simctl.disableTypingAids()).success).toBe(false);
 	});
 
 	test("screenshot with a path writes it; without one reads back PNG bytes and cleans up", async () => {

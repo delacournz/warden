@@ -149,7 +149,7 @@ warden builds import App.app --kind dev              # a Debug simulator .app as
 warden builds path ios --kind dev                    # where the dev build is cached (exit 2 on a miss)
 ```
 
-`--kind simulator-base` takes a Release simulator `.app` built outside warden (another CI job's `xcodebuild … -configuration Release -sdk iphonesimulator`) and files it as the base the `simulator` kind repacks, keyed on warden's own native fingerprint of the project (`warden app fingerprint ios --kind simulator`). It checks the `.app` first (simulator build, a slice for this Mac, the project's bundle id, no Debug or dev-client payload) and leaves an embedded `main.jsbundle` out of the cached copy. See [CI](/docs/e2e/ci#reuse-a-prebuilt-app-and-the-golden).
+`--kind simulator-base` takes a Release simulator `.app` built outside warden (another CI job's `xcodebuild … -configuration Release -sdk iphonesimulator`) and files it as the base the `simulator` kind repacks, keyed on warden's own native fingerprint of the project (`warden app fingerprint ios --kind simulator`). It checks the `.app` first (simulator build, a slice for this Mac, the project's bundle id, no Debug or dev-client payload) and leaves an embedded `main.jsbundle` out of the cached copy. See [CI](/docs/e2e/ci/github-actions#reuse-a-prebuilt-app-and-the-golden).
 
 `--kind dev` files a Debug simulator `.app` as the dev build under `<nativeFp>:dev` (`--hash <nativeFp>` or `<nativeFp>:dev`, default warden's own fingerprint). It refuses another app, a device build, a missing slice for this Mac, and a Release build (an embedded `main.jsbundle`). `warden builds path ios --kind dev` prints the cached path without building anything and exits 2 on a miss.
 

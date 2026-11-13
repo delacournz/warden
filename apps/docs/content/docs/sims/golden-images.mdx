@@ -57,7 +57,7 @@ warden golden export ~/warden-goldens --profile iphone-17   # save: <dir>/<name>
 - An archive for another Xcode build, runtime build, device type or recipe is skipped with the reason, as is one whose migration record or `AutomationEnabled` preference is missing; a golden already on the machine is left as it is. Nothing is an error: the next claim builds the golden as it would without an archive.
 - `export` builds the golden first when there is none, and replaces an older archive of the same name. It refuses (exit 1) a golden that was still busy when its first boot's settle wait ran out (`not settled after 300s … using it anyway`): that golden stays usable on the machine, but is never cached for other runners. `warden golden prune --all --yes` deletes it, and the next claim builds a new one. `--allow-unsettled` exports it anyway (`--json` reports `"unsettled": true`): on a runner too small to ever settle a golden (a 3-core hosted macOS runner stays at 150–200 % CPU), every run would otherwise build that same unsettled golden again. Android snapshots live inside their AVD and are not covered: `key`, `export` and `import` refuse `--platform android`.
 
-A GitHub Actions workflow is in [CI](/docs/e2e/ci#reuse-a-prebuilt-app-and-the-golden).
+A GitHub Actions workflow is in [CI](/docs/e2e/ci/github-actions#reuse-a-prebuilt-app-and-the-golden).
 
 ## Android: warden's quick-boot snapshot
 

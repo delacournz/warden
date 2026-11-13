@@ -7,8 +7,13 @@ export type ShimDeps = {
 	platform: string;
 	arch: string;
 	env: Record<string, string | undefined>;
-	/** `require.resolve("<name>/package.json")` from the shim; throws when the package isn't installed */
-	resolvePackageJson: (name: string) => string;
+	/** the directory of the shim file as it was run (`<prefix>/bin` when a cache copied it out of its package) */
+	scriptDir: string;
+	/**
+	 * `require.resolve("<name>/package.json")` from the shim, or from `paths` when given; throws when the package
+	 * isn't installed
+	 */
+	resolvePackageJson: (name: string, paths?: readonly string[]) => string;
 };
 
 const SOURCE_HINT = "build from source instead: https://github.com/delacournz/warden#install";
@@ -19,11 +24,15 @@ export function locateBinary(deps: ShimDeps): Result<string> {
 	const target = releaseTarget(deps.platform, deps.arch);
 	if (!target.success) return err(`${NPM_PACKAGE}: ${target.error} — ${SOURCE_HINT}`);
 	const name = platformPackageName(target.data);
-	try {
-		return ok(join(dirname(deps.resolvePackageJson(name)), "bin", "warden"));
-	} catch {
-		return err(
-			`${NPM_PACKAGE}: ${name} is not installed. It's an optional dependency; reinstall without --omit=optional / --no-optional (e.g. \`npm i -g ${NPM_PACKAGE}\`), or ${SOURCE_HINT}`
-		);
+	// Beside the shim's real path first. A cache that stores files, not symlinks (EAS Workflows' eas/save_cache), turns
+	// npm's `<prefix>/bin/warden` link into a copy that resolves from `<prefix>/bin`: look in the global install too.
+	const searches = [undefined, [join(deps.scriptDir, "..", "lib", "node_modules", NPM_PACKAGE)]];
+	for (const paths of searches) {
+		try {
+			return ok(join(dirname(deps.resolvePackageJson(name, paths)), "bin", "warden"));
+		} catch {}
 	}
+	return err(
+		`${NPM_PACKAGE}: ${name} is not installed. It's an optional dependency; reinstall without --omit=optional / --no-optional (e.g. \`npm i -g ${NPM_PACKAGE}\`), or ${SOURCE_HINT}`
+	);
 }
