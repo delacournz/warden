@@ -9,7 +9,7 @@ import {
 } from "@delacour/warden-e2e/driver/settle";
 import { indexSnapshot, type NodeEntry } from "@delacour/warden-e2e/screen/nodes";
 import { resolve } from "@delacour/warden-e2e/screen/query";
-import { isListed, renderEntryLine, renderHeader, renderSnapshot } from "@delacour/warden-e2e/screen/render";
+import { type KeyboardFold, renderEntryLine, renderHeader, renderSnapshot } from "@delacour/warden-e2e/screen/render";
 import { isInteractiveRole } from "@delacour/warden-e2e/screen/roles";
 import { type ParsedSelector, selectorToQuery } from "@delacour/warden-e2e/screen/selector";
 import { ok, type Result } from "@delacour/warden-types/result";
@@ -35,6 +35,8 @@ export type SnapshotRequest = {
 	settle?: { budgetMs: number };
 	/** `--a11y`: merge the screen-reader facts (iOS: the injected library's read) and print the hint / actions / focus columns */
 	a11y?: boolean;
+	/** `--keys`: with `-i`, list the on-screen keyboard's keys instead of one `[keyboard]` line */
+	keys?: boolean;
 };
 
 /** One element of the `--json` result (`result.elements`): what a line shows, structured. */
@@ -53,6 +55,8 @@ export type ElementJson = {
 	a11y?: ElementA11y;
 	/** an interactive element without a testID (only set while a recording is active) */
 	noId?: true;
+	/** the folded on-screen keyboard (`role: "keyboard"`, `-i` without `--keys`): how many keys it leaves out */
+	keys?: number;
 };
 
 export const NO_ID_MARK = "[no-id]";
@@ -86,6 +90,23 @@ function pruneDepth(snapshot: Snapshot, levels: number): Snapshot {
 		level >= levels ? [] : elements.map((element) => ({ ...element, children: cut(element.children, level + 1) }));
 	const elements = cut(snapshot.elements, 0);
 	return { ...snapshot, elements, flat: preorder(elements) };
+}
+
+/**
+ * The folded keyboard as one element: the keyboard's frame, the return key's ref and name (pressing the ref presses
+ * return; none when there is no return key), and the number of keys left out.
+ */
+function keyboardJson(fold: KeyboardFold, refs: RefTable): ElementJson {
+	const returnKey = fold.returnKey;
+	const ref = returnKey === undefined ? undefined : refs.byId.get(returnKey.element.id);
+	return {
+		...(ref !== undefined ? { ref } : {}),
+		role: "keyboard",
+		...(returnKey?.name !== undefined ? { name: returnKey.name } : {}),
+		enabled: !fold.keyboard.states.disabled,
+		frame: fold.keyboard.element.frame,
+		keys: fold.keys,
+	};
 }
 
 export function elementJson(entry: NodeEntry, ref: string | undefined, withA11y = false): ElementJson {
@@ -207,11 +228,12 @@ export async function takeSnapshot(
 		interactiveOnly: request.interactiveOnly,
 		refs: refs.byId,
 		...(request.a11y ? { a11y: true } : {}),
+		...(request.keys ? { keys: true } : {}),
 		...(request.all ? {} : { maxLines: DEFAULT_MAX_LINES }),
 	});
-	const entries = indexSnapshot(view).entries;
-	const listed = (request.interactiveOnly ? entries.filter(isListed) : entries).slice(0, rendered.shown);
-	const unmarked = (entry: NodeEntry): boolean => lacksMarkedId(request, entry);
+	const listed = rendered.entries;
+	const fold = rendered.keyboard;
+	const unmarked = (entry: NodeEntry): boolean => entry !== fold?.keyboard && lacksMarkedId(request, entry);
 	const lines = rendered.lines.map((line, at) => {
 		const entry = listed[at];
 		return entry !== undefined && unmarked(entry) ? `${line} ${NO_ID_MARK}` : line;
@@ -230,10 +252,14 @@ export async function takeSnapshot(
 			style: "cli",
 		}),
 		lines,
-		elements: listed.map((entry) => ({
-			...elementJson(entry, refs.byId.get(entry.element.id), request.a11y === true),
-			...(unmarked(entry) ? { noId: true as const } : {}),
-		})),
+		elements: listed.map((entry) =>
+			fold !== undefined && entry === fold.keyboard
+				? keyboardJson(fold, refs)
+				: {
+						...elementJson(entry, refs.byId.get(entry.element.id), request.a11y === true),
+						...(unmarked(entry) ? { noId: true as const } : {}),
+					}
+		),
 		hints: missingIdHints(missing),
 		total: rendered.total,
 		shown: rendered.shown,

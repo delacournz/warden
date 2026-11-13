@@ -60,7 +60,8 @@ generation 4 · axbridge · 393×852@3x · 5 of 41 elements
 Line: `@eN [role] "name" id=<testID> value="..." <states> (x,y w×h)`. States: `enabled`/`disabled`, `hittable`, `checked`/`unchecked`, `selected`, `focused`, `secure`, `hidden`, `expanded`/`collapsed`.
 
 - While a recording is active, `snapshot -i` appends `[no-id]` to interactive elements with no testID (`noId: true` in `--json`) and a hint. Add `testID` + `accessible` in the component, reload, `record undo`, redo by `id=`.
-- `-i` = interactive elements plus anything with a testID. Cap 200 lines (`--all` removes it). `--depth n` = first n levels.
+- `-i` = interactive elements plus anything with a testID, minus 0×0 non-hittable elements without one. Cap 200 lines (`--all` removes it). `--depth n` = first n levels.
+- `-i` folds the iOS on-screen keyboard into one line: `@e126 [keyboard] return="go" visible (0,546 402×328) 33 keys (--keys)`. The ref is the return key's (`press @e126` presses go/next/return), the frame the keyboard's; no return key = no ref. `--json`: one element `{ role: "keyboard", ref?, name?: <return key>, frame, keys }`. `--keys` (or a snapshot without `-i`) lists every key. To get the keyboard out of the way, see `keyboard` under Device settings. Android: the IME is its own window and never in the snapshot.
 - The generation bumps on `snapshot`, `find`, any `--settle`, a matching `wait`, and `scroll --until`. Older refs then fail: exit 4 `stale_ref`, snapshot again.
 - A ref older than 30 s, or any ref with `--verify`, is re-checked against a fresh snapshot (same id, else role + name, else position). Prefer `id=` selectors for anything you touch twice.
 
@@ -70,7 +71,7 @@ Line: `@eN [role] "name" id=<testID> value="..." <states> (x,y w×h)`. States: `
 |---|---|---|
 | `status` | | device, lease, helper, recording in progress (name, target, step count), conditions set on the lease (`conditions network 3g · location 37.3,-122`) |
 | `close` | `[--app [bundleId]] [--release]` | stops this device's helper; `--app` quits the app (default: the one `open` launched); `--release` frees the lease |
-| `snapshot` | `[-i\|--interactive] [--all] [--depth n] [--settle [ms]] [--a11y]` | `--settle` ends with a `-`/`+` diff and `= N unchanged`. `--a11y` adds `hint="…"`, `actions=[…]`, `a11y-focused`, `not-important`, `live=…` per line (`--json`: `a11y` per element); iOS needs `open --a11y` or it warns |
+| `snapshot` | `[-i\|--interactive] [--keys] [--all] [--depth n] [--settle [ms]] [--a11y]` | `--settle` ends with a `-`/`+` diff and `= N unchanged`. `--a11y` adds `hint="…"`, `actions=[…]`, `a11y-focused`, `not-important`, `live=…` per line (`--json`: `a11y` per element); iOS needs `open --a11y` or it warns. `--keys`: with `-i`, list the keyboard's keys instead of one `[keyboard]` line |
 | `find` | `<selector>` | matches with fresh `@eN` |
 | `open` | `<bundleId\|url> [--relaunch] [--metro url] [--args ...] [--kind dev\|simulator\|release] [--project dir] [--a11y] [--settle]` | URL on iOS accepts the "Open in ...?" sheet; running app is attached, not restarted. `--kind` installs that build first (`simulator` = the cached sim build with this worktree's JS repacked in, seconds; no Metro, so no `--metro`), relaunches when the build changed, and reports `kind` / `jsKey` (a repack fallback adds `fallbackReason`). Without `--kind` nothing is installed |
 | `press` / `tap` | `<@eN\|selector\|x y> [--verify] [--settle]` | |

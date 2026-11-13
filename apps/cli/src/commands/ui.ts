@@ -54,6 +54,7 @@ export function createUiCommand(deps: UiDeps): Command {
 					.option("--settle [ms]", "wait for a quiet screen (default budget 3000 ms), then print a +/-/= diff")
 					.option("--depth <n>", "only the first n levels of the tree")
 					.option("--a11y", "add hint, actions, a11y-focused and live-region facts (iOS: needs `open --a11y`)")
+					.option("--keys", "with -i: list the on-screen keyboard's keys (default: one [keyboard] line)")
 			).action(async (opts) => {
 				const { uiSnapshot } = await import("../agent-ui/snapshot-command");
 				done(await uiSnapshot(ctx, deps, opts));

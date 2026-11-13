@@ -16,6 +16,8 @@ export type SnapshotOptionValues = UiOptionValues & {
 	depth?: string;
 	/** `--a11y`: add hint / actions / focus / live-region columns (iOS: needs `open --a11y`) */
 	a11y?: true;
+	/** `--keys`: with `-i`, list the on-screen keyboard's keys instead of one `[keyboard]` line */
+	keys?: true;
 };
 
 export function positiveInt(name: string, raw: string): Result<number, UiError> {
@@ -31,6 +33,7 @@ function parseRequest(opts: SnapshotOptionValues, recording: boolean): Result<Sn
 		all: opts.all === true,
 		...(recording ? { markMissingIds: true } : {}),
 		...(opts.a11y === true ? { a11y: true } : {}),
+		...(opts.keys === true ? { keys: true } : {}),
 	};
 	if (opts.depth !== undefined) {
 		const depth = positiveInt("--depth", opts.depth);
@@ -45,7 +48,7 @@ function parseRequest(opts: SnapshotOptionValues, recording: boolean): Result<Sn
 	return ok(request);
 }
 
-/** `warden ui snapshot [-i] [--all] [--settle [ms]] [--depth n]`: the screen as `@eN` lines; bumps the generation. */
+/** `warden ui snapshot [-i [--keys]] [--all] [--settle [ms]] [--depth n]`: the screen as `@eN` lines; bumps the generation. */
 export function uiSnapshot(ctx: CommandContext, deps: UiDeps, opts: SnapshotOptionValues): Promise<number> {
 	return runUi(ctx, deps, "snapshot", opts, async (device, env) => {
 		const request = parseRequest(opts, readState(ctx, device.udid).recording !== undefined);
