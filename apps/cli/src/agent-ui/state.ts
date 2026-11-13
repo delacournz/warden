@@ -77,6 +77,8 @@ export type UiState = {
 export type StoredSnapshot = {
 	generation: number;
 	takenAt: number;
+	/** the device's input count (`readInputs`) when it was stored; absent in files from an older warden (= 0) */
+	inputs?: number;
 	hash: string;
 	snapshot: Snapshot;
 };
@@ -128,6 +130,7 @@ const elementSchema: z.ZodType<Element> = z.lazy(() =>
 const storedSnapshotSchema = z.object({
 	generation: z.number(),
 	takenAt: z.number(),
+	inputs: z.number().optional(),
 	hash: z.string(),
 	snapshot: z.object({
 		platform: z.enum(["ios", "android"]),
@@ -272,6 +275,26 @@ export function commitGeneration<T>(
 		const generation = readState(ctx, udid).generation + 1;
 		store.setMeta(generationKey(udid), String(generation));
 		return write(generation);
+	});
+}
+
+const inputsKey = (udid: string): string => `ui_inputs:${udid}`;
+
+/**
+ * How many inputs (taps, typing, swipes, keys, launches: any driver call that is not a read) `warden ui` has sent to
+ * the device. A stored snapshot records the count it was taken at, so an `@eN` from before a later input is re-checked
+ * before it is acted on (the screen may have moved under it: a keyboard came up, a list scrolled).
+ */
+export function readInputs(ctx: Partial<Pick<CommandContext, "store">>, udid: string): number {
+	const stored = Number(ctx.store?.().getMeta(inputsKey(udid)));
+	return Number.isFinite(stored) ? stored : 0;
+}
+
+/** Count one input to the device (store meta row `ui_inputs:<udid>`, incremented under the store's transaction). */
+export function noteInput(ctx: Pick<CommandContext, "store">, udid: string): void {
+	const store = ctx.store();
+	store.transaction(() => {
+		store.setMeta(inputsKey(udid), String(readInputs(ctx, udid) + 1));
 	});
 }
 

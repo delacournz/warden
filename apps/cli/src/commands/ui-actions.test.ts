@@ -70,6 +70,56 @@ describe("press / tap", () => {
 		expect(h.driver.callsOf("tap")).toHaveLength(0);
 	});
 
+	test("after an input moved it: a recent @ref is re-checked and the current frame tapped", async () => {
+		const moved = snapshotOf([
+			el("window", {
+				children: [
+					el("text", { label: "Welcome" }),
+					el("textfield", { label: "Email", id: "email", value: "a@b.co" }),
+					el("button", { label: "Sign in", id: "sign-in-submit", frame: { x: 0, y: 40, width: 390, height: 44 } }),
+					el("keyboard", { frame: { x: 0, y: 120, width: 390, height: 300 } }),
+				],
+			}),
+		]);
+		const h = harness([snapshotOf(LOGIN)], { capabilities: { cheapHitTest: true } });
+		await h.run("snapshot");
+		h.driver.set(moved);
+		expect(await h.run("press", "@e3")).toBe(0);
+		expect(await h.run("press", "@e4", "--json")).toBe(0);
+		expect(h.driver.callsOf("tap").at(-1)).toEqual({ method: "tap", point: { x: 195, y: 62 } });
+		expect(doc(h.c).result).toMatchObject({ verified: true, target: { ref: "@e4", point: { x: 195, y: 62 } } });
+	});
+
+	test("after an input: a recent @ref still in place costs one hit-test, no snapshot", async () => {
+		const h = harness([snapshotOf(LOGIN)], { capabilities: { cheapHitTest: true } });
+		await h.run("snapshot");
+		await h.run("press", "@e3");
+		const before = h.driver.callsOf("snapshot").length;
+		expect(await h.run("press", "@e4", "--json")).toBe(0);
+		expect(h.driver.callsOf("snapshot")).toHaveLength(before);
+		expect(h.driver.callsOf("elementAtPoint")).toHaveLength(1);
+		expect(h.driver.callsOf("tap").at(-1)).toEqual({ method: "tap", point: SIGN_IN });
+	});
+
+	test("after an input removed it: stale_ref, exit 4, no second tap", async () => {
+		const h = harness([snapshotOf(LOGIN)]);
+		await h.run("snapshot");
+		h.driver.set(snapshotOf([el("text", { label: "Welcome back" })]));
+		expect(await h.run("press", "@e3")).toBe(0);
+		expect(await h.run("press", "@e4", "--json")).toBe(4);
+		expect(doc(h.c).error).toMatchObject({ code: "stale_ref", hint: "run `warden ui snapshot` again" });
+		expect(h.driver.callsOf("tap")).toHaveLength(1);
+	});
+
+	test("a snapshot after the input makes its refs fresh again: no re-check", async () => {
+		const h = harness([snapshotOf(LOGIN)], { capabilities: { cheapHitTest: true } });
+		await h.run("snapshot");
+		await h.run("press", "@e3");
+		await h.run("snapshot");
+		expect(await h.run("press", "@e4")).toBe(0);
+		expect(h.driver.callsOf("elementAtPoint")).toHaveLength(0);
+	});
+
 	test("--verify re-checks a recent @ref too", async () => {
 		const h = harness([snapshotOf(LOGIN)]);
 		await h.run("snapshot");

@@ -21,7 +21,7 @@ Every stop to read output is a model turn. Batch the steps you already know in o
 | Do | Why |
 |---|---|
 | Target by `id=<testID>` (`press id=welcome-next`), not `@eN`, in a chain | a selector is matched against a fresh snapshot on every call, so it lands after the layout moved |
-| Use an `@eN` only for the next action after the snapshot that printed it | a recent `@eN` (< 30 s, no `--verify`) taps the frame stored with that snapshot, without looking again. After a `fill` opens the keyboard or a `press` moves the screen, it taps where the element was |
+| Use an `@eN` only for the next action after the snapshot that printed it | a recent `@eN` (< 30 s, no `--verify`, no input since) taps the frame stored with that snapshot. After any `press`/`fill`/… it is re-checked first, and a moved, duplicated or keyboard-covered target fails `stale_ref` (exit 4) instead of landing; `id=` just works |
 | Never carry an `@eN` across a `snapshot`, `find`, `--settle`, matched `wait` or `scroll --until` | each stores a new generation numbered from scratch: an old `@eN` names whatever holds that number now, or `stale_ref` (exit 4) when nothing does |
 | Chain known steps with `&&` in ONE Bash call | a failing step exits non-zero and stops the chain; its stderr names the step |
 | `wait <sel>` on the destination instead of `snapshot` after each step | `wait` polls (100 ms for 1 s, then 250 ms, up to `--timeout`, default 5000) and prints the matched line. `press <sel>` looks once: a target that is still animating in fails `target_not_found` |
@@ -92,6 +92,7 @@ Line: `@eN [role] "name" id=<testID> value="..." <states> (x,y w×h)`. States: `
 - While a recording is active, `snapshot -i` appends `[no-id]` to interactive elements with no testID (`noId: true` in `--json`) and a hint. Add `testID` + `accessible` in the component, reload, `record undo`, redo by `id=`.
 - `-i` = interactive elements plus anything with a testID. Cap 200 lines (`--all` removes it). `--depth n` = first n levels.
 - The generation bumps on `snapshot`, `find`, any `--settle`, a matching `wait`, and `scroll --until`, and refs are numbered from scratch: an older `@eN` resolves against the new snapshot (another element, or exit 4 `stale_ref` when the number is gone). Snapshot again before using a ref.
+- Ref lifetime: a ref is used as stored only until the next input to the device (any `press`, `fill`, `type`, `key`, `scroll`, `gesture`, `open`, `rotate`…, also from another call that failed half-way). After one, the ref is re-checked before it is acted on: iOS hit-tests its old centre (~10 ms; same role, id, label, frame = tap it there), else a fresh snapshot finds it by id, else role + name (+ its index among equal ones) and the CURRENT frame is tapped. Gone, now matching more or fewer elements than before, or under the keyboard: exit 4 `stale_ref`, nothing is tapped. `snapshot` / `find` / `--settle` after the input make refs fresh again.
 - A ref older than 30 s, or any ref with `--verify`, is re-checked against a fresh snapshot (same id, else role + name, else position). Prefer `id=` selectors for anything you touch twice.
 
 ## Subcommands

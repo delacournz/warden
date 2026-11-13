@@ -74,7 +74,7 @@ A line is `@ref [role] "name" id=<testID> value="…" <states> (x,y w×h)`. Stat
 
 Actions take a **target**: an `@eN` ref, a selector, or screen coordinates `x y` (points). Coordinates are for canvas content with no accessibility node; everything else should be a selector.
 
-**Refs.** `@eN` comes from the latest snapshot of this device. A ref older than 30 s, or any ref with `--verify`, is re-checked against a fresh snapshot first (same id, else same role and name, else same position in the tree). When the element is no longer there the call fails with `stale_ref` (exit 4): take a new snapshot.
+**Refs.** `@eN` comes from the latest snapshot of this device. Once anything has been sent to the device since that snapshot (a press, a fill that brought the keyboard up, a scroll), a ref is re-checked before it is used: on iOS one hit-test at its old position (about 10 ms), otherwise a fresh snapshot that finds it by id, else by role and name, and the press lands on its current frame. A ref older than 30 s, or any ref with `--verify`, is re-checked against a fresh snapshot first (same id, else same role and name, else same position in the tree). When the element is no longer there, now matches more or fewer elements than before, or sits under the keyboard, the call fails with `stale_ref` (exit 4) and nothing is tapped: take a new snapshot.
 
 **Selectors** are `key=value` words joined by spaces:
 
