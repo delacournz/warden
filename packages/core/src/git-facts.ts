@@ -1,4 +1,5 @@
-import { isAbsolute, resolve } from "node:path";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import type { Exec } from "./exec";
 
 /** What warden asks git about a directory: the checkout, the shared git dir and the branch. */
@@ -117,13 +118,107 @@ function* probe(cwd: string): Generator<readonly string[], GitFacts | undefined,
 	return facts(cwd, topOut, commonOut, branch.exitCode === 0 ? branch.stdout.trim() : "");
 }
 
-export type GitFactsSyncOptions = { run?: GitSyncRun; cache?: GitFactsCache };
+/** Env that changes how git finds the repo: with any of them set, only git itself answers. */
+const DISCOVERY_ENV = [
+	"GIT_DIR",
+	"GIT_WORK_TREE",
+	"GIT_COMMON_DIR",
+	"GIT_CEILING_DIRECTORIES",
+	"GIT_DISCOVERY_ACROSS_FILESYSTEM",
+] as const;
 
-/** Sync read for call sites that cannot await (`resolveOwner`). One git spawn per cwd per cache lifetime. */
+type Env = Record<string, string | undefined>;
+
+function readText(path: string): string | undefined {
+	try {
+		return readFileSync(path, "utf8");
+	} catch {
+		return undefined;
+	}
+}
+
+function real(path: string): string | undefined {
+	try {
+		return realpathSync(path);
+	} catch {
+		return undefined;
+	}
+}
+
+/** `<dir>/.git`: absent (`null`), the git dir it is or points to, or `undefined` when it is neither. */
+function gitDirAt(dir: string): string | null | undefined {
+	const dotGit = join(dir, ".git");
+	let isDir: boolean;
+	try {
+		isDir = statSync(dotGit).isDirectory();
+	} catch {
+		return null;
+	}
+	if (isDir) return dotGit;
+	const pointer = /^gitdir:\s*(.+?)\s*$/m.exec(readText(dotGit) ?? "")?.[1];
+	return pointer === undefined ? undefined : resolve(dir, pointer);
+}
+
+/** The branch HEAD names, `""` when detached, `undefined` for a HEAD this reader does not know. */
+function headBranch(head: string): string | undefined {
+	const ref = /^ref:\s*(\S+)\s*$/.exec(head.trim())?.[1];
+	if (ref !== undefined) return branchOf(ref);
+	return /^[0-9a-f]{40}([0-9a-f]{24})?$/.test(head.trim()) ? "" : undefined;
+}
+
+/** Facts of the checkout at `toplevel` whose git dir is `found`; `undefined` hands the question to git. */
+function checkoutAt(toplevel: string, found: string, cwd: string): GitFacts | undefined {
+	const gitDir = real(found);
+	if (gitDir === undefined || cwd === gitDir || cwd.startsWith(gitDir + sep)) return undefined;
+	const head = readText(join(gitDir, "HEAD"));
+	const branch = head === undefined ? undefined : headBranch(head);
+	if (branch === undefined) return undefined;
+	const pointer = readText(join(gitDir, "commondir"))?.trim();
+	const commonDir = pointer ? real(resolve(gitDir, pointer)) : gitDir;
+	if (commonDir === undefined) return undefined;
+	const config = readText(join(commonDir, "config")) ?? "";
+	if (/^\s*(worktree\s*=|bare\s*=\s*true)/im.test(config) || existsSync(join(gitDir, "config.worktree")))
+		return undefined;
+	return { toplevel, commonDir, branch };
+}
+
+/**
+ * Git facts read straight from the checkout's files (`.git`, `HEAD`, `commondir`), no spawn: ~0.1 ms against the
+ * ~8 ms a `git rev-parse` costs every warden command. Answers only for a plain checkout or linked worktree, with the
+ * same realpath'd toplevel and common dir git prints; `undefined` (not "no repo") whenever git should be asked:
+ * no `.git` found, discovery env set, `core.worktree`, a bare repo, a cwd inside the git dir, an odd HEAD.
+ */
+export function readGitFactsFromDisk(cwd: string, env: Env = process.env): GitFacts | undefined {
+	if (DISCOVERY_ENV.some((key) => env[key] !== undefined)) return undefined;
+	const start = real(cwd);
+	if (start === undefined) return undefined;
+	for (let dir = start; ; dir = dirname(dir)) {
+		const found = gitDirAt(dir);
+		if (found === undefined) return undefined;
+		if (found !== null) return checkoutAt(dir, found, start);
+		if (dirname(dir) === dir) return undefined;
+	}
+}
+
+export type GitFactsSyncOptions = {
+	run?: GitSyncRun;
+	cache?: GitFactsCache;
+	/** read a plain checkout's files instead of spawning git (default true) */
+	fromDisk?: boolean;
+	/** for the git discovery env (`GIT_DIR`, …); default `process.env` */
+	env?: Env;
+};
+
+/** Sync read for call sites that cannot await (`resolveOwner`). A plain checkout spawns nothing; else one git spawn per cwd per cache lifetime. */
 export function readGitFactsSync(cwd: string, options: GitFactsSyncOptions = {}): GitFacts | undefined {
 	const cache = options.cache ?? sharedGitFacts;
 	const hit = cache.fresh(cwd);
 	if (hit) return hit.facts;
+	const disk = options.fromDisk === false ? undefined : readGitFactsFromDisk(cwd, options.env);
+	if (disk !== undefined) {
+		remember(cache, cwd, disk);
+		return disk;
+	}
 	const run = options.run ?? bunGitSync;
 	const script = probe(cwd);
 	let step = script.next();
@@ -133,6 +228,8 @@ export function readGitFactsSync(cwd: string, options: GitFactsSyncOptions = {})
 }
 
 async function readAsync(exec: Exec, cwd: string): Promise<GitFacts | undefined> {
+	const disk = readGitFactsFromDisk(cwd);
+	if (disk !== undefined) return disk;
 	const script = probe(cwd);
 	let step = script.next();
 	while (!step.done) {

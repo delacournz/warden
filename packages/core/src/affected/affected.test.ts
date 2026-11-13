@@ -241,7 +241,7 @@ describe("computeAffected", () => {
 		expect(res.data.cwd).toBe(dir);
 	});
 
-	test("computeAffected asks git for the toplevel once, through the facts cache (also across calls)", async () => {
+	test("computeAffected reads the toplevel from the checkout's files: no rev-parse, across calls", async () => {
 		write("src/settings/form.tsx", "export const changed = 1;\n");
 		const spawns: string[] = [];
 		const exec: Exec = (cmd, opts) => {
@@ -254,7 +254,7 @@ describe("computeAffected", () => {
 			expect(res.success).toBe(true);
 		}
 		const facts = "rev-parse --show-toplevel --git-common-dir --symbolic-full-name HEAD";
-		expect(spawns.filter((s) => s === facts)).toHaveLength(1);
+		expect(spawns.filter((s) => s === facts)).toHaveLength(0);
 		expect(spawns.filter((s) => s === "rev-parse --show-toplevel")).toHaveLength(0);
 		expect(spawns.filter((s) => s.startsWith("diff "))).toHaveLength(2);
 	});
@@ -275,7 +275,7 @@ describe("computeAffected", () => {
 		}
 	});
 
-	test("findSuite asks git once per cwd, however often it is called", async () => {
+	test("findSuite spawns no git for a plain checkout, however often it is called", async () => {
 		const spawns: string[] = [];
 		const counting: Exec = (cmd, opts) => {
 			spawns.push(cmd.join(" "));
@@ -286,7 +286,7 @@ describe("computeAffected", () => {
 			const res = await findSuite(counting, dir, undefined, git);
 			expect(res.success).toBe(true);
 		}
-		expect(spawns).toEqual(["git rev-parse --show-toplevel --git-common-dir --symbolic-full-name HEAD"]);
+		expect(spawns).toEqual([]);
 	});
 });
 
