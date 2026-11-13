@@ -115,7 +115,7 @@ Line: `@eN [role] "name" id=<testID> value="..." <states> (x,y w×h)`. States: `
 - Android: fingerprint only. `match` / `fail` / `status` work; `enroll` / `unenroll` fail `E_UNSUPPORTED` (enrollment is baked into the `+bio` golden snapshot: claim with `--biometrics`, see suites.md).
 - Never add an app-side bypass: drive the real `LAContext` / `BiometricPrompt` flow.
 
-`screen ...` = the device (orientation, appearance, screenshot, video); `gesture ...` = touch. `screen rotate landscape-left` turns the device, `gesture rotate @e3 45` turns two fingers. The old top-level `rotate` `appearance` `screenshot` `video` `swipe` `longpress` are removed (unknown command). Max 2 fingers. Bad scale/degrees/`--path` = `usage` (exit 1); unsupported device = `failed`, `details.driver: E_UNSUPPORTED` (exit 1).
+`screen ...` = the device (orientation, appearance, screenshot, video); `gesture ...` = touch. `screen rotate landscape-left` turns the device, `gesture rotate @e3 45` turns two fingers. After `screen rotate`, snapshot frames, screenshots and `press x y` are in the app's interface space: an app that rotates reads landscape (e.g. 874×402), a portrait-locked one still reads portrait. Take coordinates from a fresh snapshot, never rotate them yourself. `screen rotate` (and `device.orientation(set)`) returns once the rotation animation is over (~0.7 s), so the next tap lands. The old top-level `rotate` `appearance` `screenshot` `video` `swipe` `longpress` are removed (unknown command). Max 2 fingers. Bad scale/degrees/`--path` = `usage` (exit 1); unsupported device = `failed`, `details.driver: E_UNSUPPORTED` (exit 1).
 
 ## Network, location and clock (`network`, `location`, `clock`)
 

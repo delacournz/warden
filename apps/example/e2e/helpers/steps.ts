@@ -109,6 +109,16 @@ export async function openGestures(
 	await openDeepLink(device, screen, "warden-example://gestures", ids.gestures.screen);
 }
 
+/** Fresh launch, then the landscape tap targets through their deep link. */
+export async function openLandscape(
+	app: Pick<App, "open">,
+	device: Pick<Device, "openLink">,
+	screen: Screen
+): Promise<void> {
+	await launch(app, screen);
+	await openDeepLink(device, screen, "warden-example://landscape", ids.landscape.screen);
+}
+
 /** Fresh launch, then the conditions screen through its deep link (it has no sign-in gate). */
 export async function openConditions(
 	app: Pick<App, "open">,

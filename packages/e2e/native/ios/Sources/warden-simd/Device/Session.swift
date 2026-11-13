@@ -96,6 +96,7 @@ final class Session: @unchecked Sendable {
   /// The pid each bundle id last resolved to, for `frontmost`.
   let bundlePids = BundlePidMemory()
   let orientationMemory = OrientationMemory()
+  let interfaceMemory = InterfaceMemory()
 
   init(
     udid: String, simulator: Simulator, hid: SimulatorHIDSession, hidTransport: String, axDefault: String,
@@ -187,7 +188,8 @@ final class Session: @unchecked Sendable {
     await hid.close()
   }
 
-  /// Screen size in portrait-up points (the AX frame space) and scale.
+  /// Screen size in portrait-up points and scale. AX frames and HID points are in the interface space, which swaps
+  /// these axes while the frontmost app draws landscape (`InterfaceOrientation`).
   var screen: (width: Double, height: Double, scale: Double) {
     guard let info = simulator.screenInfo, info.scale > 0 else { return (0, 0, 0) }
     let scale = Double(info.scale)
@@ -252,6 +254,15 @@ extension WireError {
     if let error = error as? SimulatorApplicationLaunchError { return from(launch: error) }
     if let error = error as? SimulatorLaunchCtlError { return from(launchCtl: error) }
     if let error = error as? SimulatorLifecycleError { return from(lifecycle: error) }
+    if let display = error as? SimulatorDisplayError {
+      // a read during a rotation: the display settles within the rotation animation, so the caller looks again
+      switch display {
+      case .changed, .transitioning:
+        return WireError(.internal, display.localizedDescription, retryable: true, detail: ["reason": "display_changing"])
+      default:
+        return WireError(.internal, display.localizedDescription)
+      }
+    }
     if error is SimulatorHIDError {
       return WireError(.hid, error.localizedDescription, detail: ["kind": "SimulatorHIDError"])
     }

@@ -9,7 +9,10 @@ import Foundation
 // request params, resolves units, and sends the events through a `HIDGate` so only one event stream is in flight at a
 // time (other ops stay concurrent); `InputOps.ops` wires an engine to a `Session`.
 
-/// `unit` on the HID ops: `pt` is portrait-up points (the AX frame space, default), `norm` is 0...1 of the screen.
+/// `unit` on the HID ops: `pt` is points in the frontmost app's interface space (the AX frame space, default), `norm`
+/// is 0...1 of the screen as that interface draws it. HID touches land in that space whichever way the device is
+/// turned (a rotated app reads landscape, a portrait-locked one on a turned device still reads portrait), so no unit
+/// is ever rotated: only `norm` needs to know which way the interface is drawn, to scale by the right axes.
 enum CoordinateUnit: String, Sendable {
   case pt
   case norm
@@ -19,7 +22,7 @@ struct ScreenGeometry: Equatable, Sendable {
   /// Portrait-up size in points.
   let width: Double
   let height: Double
-  /// Landscape swaps the axes the normalized fractions are applied to.
+  /// The interface is drawn landscape: swaps the axes the normalized fractions are applied to.
   let landscape: Bool
 
   var oriented: (width: Double, height: Double) {
@@ -42,6 +45,26 @@ struct ScreenGeometry: Equatable, Sendable {
       return CGPoint(x: x * size.width, y: y * size.height)
     }
   }
+}
+
+/// Which way the frontmost app's interface is drawn. The device orientation is not the answer: a portrait-locked app on
+/// a turned device stays portrait, a landscape-only app on an upright one is landscape. The framebuffer is drawn the way
+/// the interface is, so its aspect decides; the device orientation is the fallback when no capture could be taken.
+enum InterfaceOrientation {
+  static func isLandscape(
+    framebuffer: () async -> CGSize?, device: () async -> SimulatorDeviceOrientation?
+  ) async -> Bool {
+    if let size = await framebuffer(), size.width > 0, size.height > 0, size.width != size.height {
+      return size.width > size.height
+    }
+    switch await device() {
+    case .landscapeLeft?, .landscapeRight?: return true
+    default: return false
+    }
+  }
+
+  /// A tiny capture: only its aspect is read.
+  static let probeScale = 0.02
 }
 
 /// Pure event composition. Durations are seconds here, milliseconds on the wire.
@@ -305,6 +328,7 @@ struct InputParams {
 struct InputEnvironment: Sendable {
   var send: @Sendable (SimulatorHIDEvent) async throws -> Void
   var screen: @Sendable () -> (width: Double, height: Double)
+  /// The frontmost app's interface is drawn landscape (`InterfaceOrientation`), not the device orientation.
   var isLandscape: @Sendable () async -> Bool
   var shake: @Sendable () async throws -> Void
   var gate: HIDGate = HIDGate()
@@ -360,7 +384,7 @@ struct PacedKeyEvents: AsyncSequence, Sendable {
 struct InputEngine: Sendable {
   let environment: InputEnvironment
 
-  /// The screen in `unit`; landscape is read once here (only `norm` needs it).
+  /// The screen in `unit`; the interface orientation is read once here (only `norm` needs it).
   private func geometry(_ unit: CoordinateUnit) async -> ScreenGeometry {
     let size = environment.screen()
     let landscape = unit == .norm ? await environment.isLandscape() : false
@@ -564,10 +588,17 @@ enum InputOps {
       },
       screen: { (session.screen.width, session.screen.height) },
       isLandscape: {
-        switch try? await simulator.orientation.current() {
-        case .landscapeLeft, .landscapeRight: return true
-        default: return false
-        }
+        await InterfaceOrientation.isLandscape(
+          framebuffer: {
+            try? await simulator.screenshot.take(
+              configuration: ScreenshotConfiguration(
+                encoding: .png, scale: .factor(InterfaceOrientation.probeScale))
+            ).size
+          },
+          device: {
+            if let read = try? await simulator.orientation.current() { return read }
+            return session.orientationMemory.last
+          })
       },
       shake: { try await simulator.hardware.shake() },
       gate: gates.gate(for: session.udid),

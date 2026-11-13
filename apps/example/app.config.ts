@@ -6,7 +6,8 @@ const expoConfig: ExpoConfig = {
 	owner: "delacour",
 	scheme: "warden-example",
 	version: "0.0.0",
-	orientation: "portrait",
+	// Turns with the device, so `app/landscape` can tap a landscape interface; every other spec keeps the device upright.
+	orientation: "default",
 	userInterfaceStyle: "automatic",
 	platforms: ["ios", "android"],
 	ios: {

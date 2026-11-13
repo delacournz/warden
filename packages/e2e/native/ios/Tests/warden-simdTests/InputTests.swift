@@ -73,6 +73,97 @@ final class InputTests: XCTestCase {
   func testNormUnitsSwapAxesInLandscape() throws {
     let geometry = ScreenGeometry(width: 390, height: 844, landscape: true)
     XCTAssertEqual(try geometry.points(x: 1, y: 1, unit: .norm), CGPoint(x: 844, y: 390))
+    XCTAssertEqual(try geometry.points(x: 0.25, y: 0.5, unit: .norm), CGPoint(x: 211, y: 195))
+    XCTAssertEqual(try geometry.points(x: 0, y: 0, unit: .norm), CGPoint(x: 0, y: 0))
+  }
+
+  /// HID touches land in the frontmost app's interface space (the AX frame and framebuffer space), whichever way the
+  /// device is turned, so `pt` is never rotated: measured on an iOS 27 sim (DTUHID) in all four combinations below.
+  func testPointUnitsAreNeverRotated() throws {
+    for landscape in [false, true] {
+      let geometry = ScreenGeometry(width: 390, height: 844, landscape: landscape)
+      XCTAssertEqual(try geometry.points(x: 700, y: 30, unit: .pt), CGPoint(x: 700, y: 30))
+    }
+  }
+
+  // MARK: interface orientation
+
+  func testInterfaceFollowsTheFramebufferOverTheDevice() async {
+    let cases: [(CGSize, SimulatorDeviceOrientation?, Bool)] = [
+      // a portrait-locked app on a turned device: the bug this guards
+      (CGSize(width: 1206, height: 2622), .landscapeLeft, false),
+      (CGSize(width: 1206, height: 2622), .landscapeRight, false),
+      // a rotating app turned with the device
+      (CGSize(width: 2622, height: 1206), .landscapeLeft, true),
+      (CGSize(width: 2622, height: 1206), .landscapeRight, true),
+      // a landscape-only app on an upright device
+      (CGSize(width: 2622, height: 1206), .portrait, true),
+      (CGSize(width: 1206, height: 2622), .portraitUpsideDown, false),
+    ]
+    for (framebuffer, device, expected) in cases {
+      let asked = Recorder()
+      let landscape = await InterfaceOrientation.isLandscape(
+        framebuffer: { framebuffer },
+        device: {
+          await asked.record(.delay(0))
+          return device
+        })
+      XCTAssertEqual(landscape, expected, "\(framebuffer) \(String(describing: device))")
+      XCTAssertEqual(asked.events.count, 0, "a framebuffer answer never reads the device")
+    }
+  }
+
+  func testInterfaceFallsBackToTheDeviceWithoutAFramebuffer() async {
+    let cases: [(CGSize?, SimulatorDeviceOrientation?, Bool)] = [
+      (nil, .landscapeLeft, true),
+      (nil, .landscapeRight, true),
+      (nil, .portrait, false),
+      (nil, .portraitUpsideDown, false),
+      (nil, .faceUp, false),
+      (nil, nil, false),
+      (CGSize(width: 0, height: 0), .landscapeLeft, true),
+      (CGSize(width: 500, height: 500), .landscapeRight, true),
+    ]
+    for (framebuffer, device, expected) in cases {
+      let landscape = await InterfaceOrientation.isLandscape(framebuffer: { framebuffer }, device: { device })
+      XCTAssertEqual(landscape, expected, "\(String(describing: framebuffer)) \(String(describing: device))")
+    }
+  }
+
+  func testNormTapInEveryInterfaceOrientation() async throws {
+    for landscape in [false, true] {
+      let recorder = Recorder()
+      _ = try await call(engine(recorder, landscape: landscape), "tap", ["x": 0.25, "y": 0.75, "unit": "norm"])
+      let point = landscape ? CGPoint(x: 211, y: 292.5) : CGPoint(x: 97.5, y: 633)
+      XCTAssertEqual(
+        recorder.events,
+        [.composite([.touch(direction: .down, x: point.x, y: point.y), .touch(direction: .up, x: point.x, y: point.y)])],
+        "landscape \(landscape)")
+    }
+  }
+
+  func testPointTapIsNotRotatedInLandscape() async throws {
+    let recorder = Recorder()
+    _ = try await call(engine(recorder, landscape: true), "tap", ["x": 700, "y": 30])
+    XCTAssertEqual(
+      recorder.events, [.composite([.touch(direction: .down, x: 700, y: 30), .touch(direction: .up, x: 700, y: 30)])])
+  }
+
+  func testPointOpsNeverAskForTheOrientation() async throws {
+    let recorder = Recorder()
+    let asked = Recorder()
+    let engine = InputEngine(
+      environment: InputEnvironment(
+        send: { await recorder.record($0) },
+        screen: { (390, 844) },
+        isLandscape: {
+          await asked.record(.delay(0))
+          return true
+        },
+        shake: {}))
+    _ = try await call(engine, "tap", ["x": 10, "y": 20])
+    _ = try await call(engine, "swipe", ["from": ["x": 1, "y": 2], "to": ["x": 3, "y": 4]])
+    XCTAssertEqual(asked.events.count, 0)
   }
 
   func testNormOutsideZeroToOneIsBadRequest() {
