@@ -144,6 +144,14 @@
 			"url": "https://warden.co.nz/schemas/warden.dev/1.json",
 			"output": "json",
 			"summary": "the one ready line once device, app and Metro are up"
+		},
+		{
+			"command": "pods install",
+			"schema": "warden.pods.install",
+			"version": 1,
+			"url": "https://warden.co.nz/schemas/warden.pods.install/1.json",
+			"output": "json",
+			"summary": "how the pods were installed: restored from the cache, installed and cached, up to date, or installed uncached"
 		}
 	]
 }

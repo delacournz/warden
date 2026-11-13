@@ -151,6 +151,23 @@ Removed: `warmRunners` (use `warmDrivers`).
 - A project's `fingerprint.include: "native+js"` / `fingerprint.jsInputs` belong to the kind-less flow (variants, `warden app ensure` with no `--kind`): `--kind dev|simulator` warns once on stderr that they are ignored. Move them into `kinds.simulator.jsInputs`.
 - `warden builds ls` shows each build's kind, base (native fingerprint), jsKey, worktree and branch.
 
+### Pods cache (`warden pods`)
+
+`warden pods install` is `pod install` through a machine-wide cache under `$WARDEN_HOME/pods/<key>/`. The key hashes the `pod` and Xcode versions, host arch, project path, `Podfile` + `Podfile.properties.json`, the native deps (Expo fingerprint, or the autolinked pods and local podspecs for bare RN) and the Podfile's env (`RCT_*`, `USE_FRAMEWORKS`, `USE_CCACHE`, `EX_DEV_CLIENT_*`, `EXPO_USE_*`). Same key anywhere on the Mac = a hit: the stored install is APFS-cloned into this checkout (blocks shared, ~0 extra disk), the checkout root rewritten in the few text files that hold it, lockfile checksums recomputed, `Podfile.lock` = `Pods/Manifest.lock` checked.
+
+| Outcome (`--json` `outcome`) | Line | Meaning |
+|---|---|---|
+| `hit` | `✓ pods restored <key> (0.8s)` | restored from the cache; no `pod install` (and for Expo no prebuild) |
+| `miss` | `✓ pods installed and cached <key> (31s)` | ran the real install, stored it (`stored: true`); `stored: false` + `storeError` = installed fine, not cached |
+| `up-to-date` | `· pods up to date` | this checkout already holds this key |
+| `uncached` | `! pods installed, not cached: <reason>` | `--no-cache`, or the key could not be computed: plain install |
+
+- Run it in the project root (`--project-directory` = the ios dir, default `ios`). Expo with a git-ignored `ios/` (CNG): a miss runs `expo prebuild --platform ios --clean --no-install` itself, so `warden pods install` alone leaves a ready `ios/`; `"prebuild": "warden pods install"` works. Committed `ios/` (bare RN): `cd ios && pod install` becomes `warden pods install`. Pod output streams to stderr; stdout is the status line or one JSON document (`warden.pods.install`).
+- A restore or store failure never fails the install: it falls back to a real `pod install`. Never symlink a shared `Pods/` between worktrees (absolute paths inside).
+- `pods ls` (key, mode `cng|committed`, project, size, last used, created; `--json`) · `pods rm <key…>` (prefix of at least 6 characters; a key being installed is refused) · `pods prune [--max-size 10G] [--older-than 30d] [--dry-run]` (unused-too-long first, then LRU; installs in progress stay). Sizes are apparent: worktrees cloned from an entry share its blocks. `warden gc` also prunes entries unused for 30 days.
+- `WARDEN_PODS_CACHE=0` makes warden's own iOS builds (`warden dev`, `app ensure`, `e2e`) run a plain `pod install` instead of the cache.
+
+
 ## CI: reuse a prebuilt base and the golden
 
 A fresh runner otherwise builds the simulator base (a Release `xcodebuild`) and the iOS golden (~4 min first boot) every run.

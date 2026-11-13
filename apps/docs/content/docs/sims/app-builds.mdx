@@ -116,6 +116,36 @@ Trade-offs:
 
 A build lock stops two agents from downloading or building the same hash twice.
 
+## Share CocoaPods across worktrees
+
+Each worktree has its own `Pods/` sandbox (about 1.4 GB on a React Native app, with absolute paths baked in), so a new worktree repeats `pod install` and, for Expo, `expo prebuild`. `warden pods install` keeps one stored copy per set of pods under `$WARDEN_HOME/pods` and restores it into any checkout with an APFS clone (blocks shared, so extra worktrees cost almost no disk), rewriting the checkout path in the few text files that hold it.
+
+Expo, with a git-ignored `ios/`:
+
+```json
+{ "scripts": { "prebuild": "warden pods install" } }
+```
+
+On a miss it runs `expo prebuild --platform ios --clean --no-install` and `pod install`, then stores the result; on a hit it restores the whole `ios/` and skips both. With a committed `ios/` (or Expo with checked-in native code), keep your own prebuild and add the step after it: `expo prebuild --platform ios --no-install && warden pods install`.
+
+Bare React Native: replace `cd ios && pod install` with `warden pods install` (`--project-directory ios` is the default).
+
+The key covers the `pod` and Xcode versions, host architecture, the project path, `Podfile` and `Podfile.properties.json`, the native dependencies (Expo fingerprint, or the autolinked pods and local podspecs) and the environment variables the Podfile reads (`RCT_*`, `USE_FRAMEWORKS`, `USE_CCACHE`, `EX_DEV_CLIENT_*`, `EXPO_USE_*`). Anything that could change the result is in it, so a hit is the same install you would get from running it.
+
+What it saves, measured on a React Native + Expo app (CocoaPods 1.16.2):
+
+| | Time |
+|---|---|
+| `pod install`, first on the machine for this React Native build (downloads, artifact extraction) | 160 s |
+| `pod install`, caches warm, fresh worktree | 31 s |
+| `warden pods install`, miss (`expo prebuild --clean` + `pod install` + store) | 83 s |
+| `warden pods install`, hit in another worktree (key 1.1 s, clone 1.0 s, path rewrite 0.06 s) | 2.9 s |
+| `warden pods install`, already up to date | 1.9 s |
+
+Against a warm install that is about 30 s plus the prebuild per new worktree; against a cold one about 2.5 minutes. The larger win is disk and the number of worktrees: N worktrees cost about one 1.4 GB sandbox, not N. A restored checkout built with `xcodebuild` without ever running its own `pod install`.
+
+`warden dev`, `warden app ensure` and `warden e2e` use the same cache for their own iOS builds. `WARDEN_PODS_CACHE=0` turns that off; `warden pods install --no-cache` skips it for one run. Manage entries with `warden pods ls | rm | prune` (see the [CLI reference](/docs/reference/cli#warden-pods-install--ls--rm--prune)); `warden gc` removes entries unused for 30 days.
+
 ## Project detection
 
 With no config, warden detects a single project from `app.json` / `app.config.*` (pass `--bundle-id` for a dynamic config). For monorepos or custom commands, add a [`warden.config.ts`](/docs/reference/configuration).
