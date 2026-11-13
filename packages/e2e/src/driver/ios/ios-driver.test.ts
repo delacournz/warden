@@ -17,10 +17,12 @@ import {
 	BRIDGE_COLD_DEADLINE_MS,
 	COLD_READ_TIMEOUT_MS,
 	coldReadTimeoutMs,
+	injectDylibFor,
 	KEY_USAGE,
 	type OpenIosDriverOptions,
 	openIosDriver,
 } from "./ios-driver";
+import { TYPING_AID_KEYS } from "./simctl";
 import { type FakeSimdReply, type FakeSimdRequest, fakeSimd } from "./simd.testing";
 import { spawnSimd } from "./simd-client";
 import { bunSpawn } from "./simd-transport";
@@ -297,9 +299,10 @@ describe("openIosDriver", () => {
 		expect(driver.capabilities).toMatchObject({ nativeSettle: true, unicodeText: true, alerts: true });
 	});
 
-	test("opening costs no xcrun call once the sim's plist has AutomationEnabled", async () => {
+	test("opening costs no xcrun call once the sim's plists have AutomationEnabled and the typing aids off", async () => {
 		const { calls } = await open(() => ({ data: null }), { devicesRoot: "/devices" }, [
 			["plutil -extract AutomationEnabled", { stdout: "true\n" }],
+			["plutil -extract Keyboard", { stdout: "false\n" }],
 		]);
 		expect(joined(calls).filter((line) => line.startsWith("xcrun"))).toEqual([]);
 	});
@@ -307,8 +310,35 @@ describe("openIosDriver", () => {
 	test("opening writes AutomationEnabled once when the plist lacks it", async () => {
 		const { calls } = await open(() => ({ data: null }), { devicesRoot: "/devices" }, [
 			["plutil -extract AutomationEnabled", { exitCode: 1, stderr: "no such key" }],
+			["plutil -extract Keyboard", { stdout: "false\n" }],
 		]);
 		expect(joined(calls).filter((line) => line.includes("defaults write"))).toHaveLength(1);
+	});
+
+	test("opening turns the keyboard's autocorrect, prediction and spell check off, so typed text reads back as typed", async () => {
+		const { calls } = await open(() => ({ data: null }), { devicesRoot: "/devices" });
+		const writes = joined(calls).filter((line) => line.includes("defaults write com.apple.keyboard.preferences"));
+		expect(writes.sort()).toEqual(
+			TYPING_AID_KEYS.map(
+				(key) => `xcrun simctl spawn ${UDID} defaults write com.apple.keyboard.preferences ${key} -bool NO`
+			).sort()
+		);
+	});
+
+	test("a typing-aid failure is logged, not fatal", async () => {
+		const calls: ExecCall[] = [];
+		const helper = fakeSimd(() => ({ data: null }));
+		const lines: string[] = [];
+		const result = await openIosDriver({
+			udid: UDID,
+			exec: fakeExec([["xcrun simctl spawn UDID-1 defaults write com.apple.Accessibility", {}]], calls),
+			spawn: helper.spawn,
+			helperPath: "/opt/warden-simd",
+			log: (line) => lines.push(line),
+		});
+		expect(result.success).toBe(true);
+		if (result.success) opened.push(result.data);
+		expect(lines.some((line) => line.includes("typing aids"))).toBe(true);
 	});
 
 	test("an AutomationEnabled failure is logged, not fatal", async () => {
@@ -2333,5 +2363,35 @@ describe("socket that does not answer (20-1)", () => {
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}
+	});
+});
+
+describe("injectDylibFor", () => {
+	const fetched = "/w/simd/9.9.9/libwarden-inject.dylib";
+	const base = {
+		udid: UDID,
+		exec: fakeExec([]),
+		execPath: "/usr/local/bin/bun",
+		importDir: "/nowhere/src/driver/ios",
+		wardenHome: "/w",
+		exists: (path: string) => path === fetched,
+	};
+
+	test("finds the dylib `warden doctor --fetch-helper` staged under $WARDEN_HOME/simd/<WARDEN_VERSION>", () => {
+		// a spec process run by a source warden: execPath is bun, so only the version names the fetched helper dir
+		const found = injectDylibFor({
+			...base,
+			env: { simd: undefined, simdSocket: undefined, helperDir: undefined, wardenVersion: "9.9.9" },
+		});
+		expect(found).toEqual({ success: true, data: fetched });
+	});
+
+	test("an explicit version still wins over WARDEN_VERSION", () => {
+		const found = injectDylibFor({
+			...base,
+			version: "1.0.0",
+			env: { simd: undefined, simdSocket: undefined, helperDir: undefined, wardenVersion: "9.9.9" },
+		});
+		expect(found.success).toBe(false);
 	});
 });

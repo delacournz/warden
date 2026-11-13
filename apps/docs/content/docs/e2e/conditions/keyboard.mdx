@@ -33,6 +33,10 @@ On iOS, a tap on a target the keyboard covers first scrolls it into view or dism
 
 The mode goes back to the suite's `conditions.keyboard` (else `software`) when the test ends.
 
+## Typing aids are off
+
+On an iOS Simulator, warden turns off autocorrect, predictive text and spell check (`com.apple.keyboard.preferences`) when it starts driving the device, so text a spec types reads back exactly as typed. Without this, a fresh simulator can rewrite a word as the next space goes in (`Buy` + ` milk` read back as `But milk`). Autocapitalization stays on. The settings stay on the simulator.
+
 ## In a suite
 
 ```ts title="warden.config.ts"
