@@ -1,0 +1,527 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"type": "object",
+	"properties": {
+		"schemaVersion": {
+			"type": "number",
+			"const": 1
+		},
+		"suite": {
+			"type": "string"
+		},
+		"platform": {
+			"type": "string",
+			"enum": [
+				"ios",
+				"android"
+			]
+		},
+		"base": {
+			"type": "string"
+		},
+		"isolate": {
+			"type": "string",
+			"enum": [
+				"device",
+				"spec"
+			]
+		},
+		"ok": {
+			"type": "boolean"
+		},
+		"headless": {
+			"type": "boolean"
+		},
+		"batchDir": {
+			"type": "string"
+		},
+		"specs": {
+			"type": "array",
+			"items": {
+				"type": "object",
+				"properties": {
+					"id": {
+						"type": "string"
+					},
+					"file": {
+						"type": "string"
+					},
+					"required": {
+						"type": "boolean"
+					},
+					"reasons": {
+						"type": "array",
+						"items": {
+							"oneOf": [
+								{
+									"type": "object",
+									"properties": {
+										"kind": {
+											"type": "string",
+											"const": "run-all"
+										},
+										"file": {
+											"type": "string"
+										},
+										"pattern": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"kind",
+										"file",
+										"pattern"
+									],
+									"additionalProperties": false
+								},
+								{
+									"type": "object",
+									"properties": {
+										"kind": {
+											"type": "string",
+											"const": "path"
+										},
+										"file": {
+											"type": "string"
+										},
+										"pattern": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"kind",
+										"file",
+										"pattern"
+									],
+									"additionalProperties": false
+								},
+								{
+									"type": "object",
+									"properties": {
+										"kind": {
+											"type": "string",
+											"const": "import"
+										},
+										"file": {
+											"type": "string"
+										},
+										"chain": {
+											"type": "array",
+											"items": {
+												"type": "string"
+											}
+										}
+									},
+									"required": [
+										"kind",
+										"file",
+										"chain"
+									],
+									"additionalProperties": false
+								},
+								{
+									"type": "object",
+									"properties": {
+										"kind": {
+											"type": "string",
+											"const": "spec-file"
+										},
+										"file": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"kind",
+										"file"
+									],
+									"additionalProperties": false
+								},
+								{
+									"type": "object",
+									"properties": {
+										"kind": {
+											"type": "string",
+											"const": "always"
+										},
+										"pattern": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"kind",
+										"pattern"
+									],
+									"additionalProperties": false
+								},
+								{
+									"type": "object",
+									"properties": {
+										"kind": {
+											"type": "string",
+											"const": "unmapped"
+										}
+									},
+									"required": [
+										"kind"
+									],
+									"additionalProperties": false
+								},
+								{
+									"type": "object",
+									"properties": {
+										"kind": {
+											"type": "string",
+											"const": "all"
+										}
+									},
+									"required": [
+										"kind"
+									],
+									"additionalProperties": false
+								},
+								{
+									"type": "object",
+									"properties": {
+										"kind": {
+											"type": "string",
+											"const": "requested"
+										},
+										"pattern": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"kind",
+										"pattern"
+									],
+									"additionalProperties": false
+								},
+								{
+									"type": "object",
+									"properties": {
+										"kind": {
+											"type": "string",
+											"const": "unmatched"
+										},
+										"file": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"kind",
+										"file"
+									],
+									"additionalProperties": false
+								}
+							]
+						}
+					},
+					"leg": {
+						"type": "string"
+					},
+					"verdict": {
+						"type": "string",
+						"enum": [
+							"passed",
+							"failed",
+							"not-run"
+						]
+					},
+					"attempts": {
+						"type": "number"
+					},
+					"tests": {
+						"type": "array",
+						"items": {
+							"type": "object",
+							"properties": {
+								"title": {
+									"type": "array",
+									"items": {
+										"type": "string"
+									}
+								},
+								"status": {
+									"type": "string",
+									"enum": [
+										"passed",
+										"failed",
+										"skipped",
+										"timed-out"
+									]
+								},
+								"durationMs": {
+									"type": "number"
+								},
+								"error": {
+									"type": "string"
+								},
+								"line": {
+									"type": "number"
+								},
+								"artifacts": {
+									"type": "string"
+								},
+								"perf": {
+									"type": "string"
+								},
+								"kind": {
+									"type": "string",
+									"const": "perf_budget"
+								}
+							},
+							"required": [
+								"title",
+								"status",
+								"durationMs"
+							],
+							"additionalProperties": false
+						}
+					},
+					"device": {
+						"type": "object",
+						"properties": {
+							"udid": {
+								"type": "string"
+							},
+							"name": {
+								"type": "string"
+							}
+						},
+						"required": [
+							"udid",
+							"name"
+						],
+						"additionalProperties": false
+					},
+					"log": {
+						"type": "string"
+					},
+					"screenshot": {
+						"type": "string"
+					}
+				},
+				"required": [
+					"id",
+					"file",
+					"required",
+					"reasons",
+					"verdict",
+					"attempts"
+				],
+				"additionalProperties": false
+			}
+		},
+		"only": {
+			"type": "array",
+			"items": {
+				"type": "string"
+			}
+		},
+		"setup": {
+			"type": "array",
+			"items": {
+				"type": "object",
+				"properties": {
+					"worker": {
+						"type": "number"
+					},
+					"udid": {
+						"type": "string"
+					},
+					"ok": {
+						"type": "boolean"
+					},
+					"exitCode": {
+						"type": "number"
+					},
+					"log": {
+						"type": "string"
+					},
+					"slim": {
+						"anyOf": [
+							{
+								"type": "object",
+								"properties": {
+									"jobs": {
+										"type": "number"
+									}
+								},
+								"required": [
+									"jobs"
+								],
+								"additionalProperties": false
+							},
+							{
+								"type": "object",
+								"properties": {
+									"error": {
+										"type": "string"
+									}
+								},
+								"required": [
+									"error"
+								],
+								"additionalProperties": false
+							}
+						]
+					},
+					"error": {
+						"type": "string"
+					}
+				},
+				"required": [
+					"worker",
+					"udid",
+					"ok"
+				],
+				"additionalProperties": false
+			}
+		},
+		"warm": {
+			"type": "array",
+			"items": {
+				"type": "object",
+				"properties": {
+					"worker": {
+						"type": "number"
+					},
+					"udid": {
+						"type": "string"
+					},
+					"ok": {
+						"type": "boolean"
+					},
+					"error": {
+						"type": "string"
+					},
+					"axRecovery": {
+						"oneOf": [
+							{
+								"type": "object",
+								"properties": {
+									"outcome": {
+										"type": "string",
+										"const": "recovered"
+									}
+								},
+								"required": [
+									"outcome"
+								],
+								"additionalProperties": false
+							},
+							{
+								"type": "object",
+								"properties": {
+									"outcome": {
+										"type": "string",
+										"const": "rebooted"
+									}
+								},
+								"required": [
+									"outcome"
+								],
+								"additionalProperties": false
+							},
+							{
+								"type": "object",
+								"properties": {
+									"outcome": {
+										"type": "string",
+										"const": "failed"
+									},
+									"error": {
+										"type": "string"
+									},
+									"stage": {
+										"type": "string",
+										"enum": [
+											"log",
+											"restart",
+											"reboot"
+										]
+									}
+								},
+								"required": [
+									"outcome",
+									"error"
+								],
+								"additionalProperties": false
+							}
+						]
+					},
+					"dropped": {
+						"type": "boolean",
+						"const": true
+					},
+					"quarantined": {
+						"type": "boolean",
+						"const": true
+					}
+				},
+				"required": [
+					"worker",
+					"udid",
+					"ok"
+				],
+				"additionalProperties": false
+			}
+		},
+		"error": {
+			"type": "object",
+			"properties": {
+				"code": {
+					"type": "string"
+				},
+				"message": {
+					"type": "string"
+				},
+				"udid": {
+					"type": "string"
+				}
+			},
+			"required": [
+				"code",
+				"message",
+				"udid"
+			],
+			"additionalProperties": false
+		},
+		"timing": {
+			"type": "object",
+			"properties": {
+				"totalMs": {
+					"type": "number"
+				},
+				"setupMs": {
+					"type": "number"
+				},
+				"testsMs": {
+					"type": "number"
+				},
+				"teardownMs": {
+					"type": "number"
+				}
+			},
+			"required": [
+				"totalMs",
+				"setupMs",
+				"testsMs",
+				"teardownMs"
+			],
+			"additionalProperties": false
+		}
+	},
+	"required": [
+		"schemaVersion",
+		"suite",
+		"platform",
+		"isolate",
+		"ok",
+		"headless",
+		"specs"
+	],
+	"additionalProperties": false,
+	"$id": "https://warden.co.nz/schemas/warden.e2e.report/1.json",
+	"title": "warden.e2e.report"
+}

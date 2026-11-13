@@ -1,0 +1,159 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"type": "object",
+	"properties": {
+		"ok": {
+			"type": "boolean",
+			"const": false
+		},
+		"schemaVersion": {
+			"type": "number",
+			"const": 1
+		},
+		"command": {
+			"type": "string"
+		},
+		"error": {
+			"anyOf": [
+				{
+					"type": "object",
+					"properties": {
+						"code": {
+							"type": "string",
+							"enum": [
+								"usage",
+								"failed"
+							]
+						},
+						"message": {
+							"type": "string"
+						}
+					},
+					"required": [
+						"code",
+						"message"
+					],
+					"additionalProperties": false
+				},
+				{
+					"type": "object",
+					"properties": {
+						"message": {
+							"type": "string"
+						},
+						"code": {
+							"type": "string",
+							"const": "ambiguous_device"
+						},
+						"hint": {
+							"type": "string"
+						},
+						"details": {
+							"type": "object",
+							"propertyNames": {
+								"type": "string"
+							},
+							"additionalProperties": {}
+						}
+					},
+					"required": [
+						"message",
+						"code",
+						"hint",
+						"details"
+					],
+					"additionalProperties": false
+				},
+				{
+					"type": "object",
+					"properties": {
+						"message": {
+							"type": "string"
+						},
+						"code": {
+							"type": "string",
+							"const": "device_locked"
+						},
+						"hint": {
+							"type": "string"
+						}
+					},
+					"required": [
+						"message",
+						"code",
+						"hint"
+					],
+					"additionalProperties": false
+				},
+				{
+					"type": "object",
+					"properties": {
+						"message": {
+							"type": "string"
+						},
+						"code": {
+							"type": "string",
+							"const": "NO_CAPACITY"
+						},
+						"capacityReason": {
+							"type": "string",
+							"enum": [
+								"ram-budget",
+								"cpu-budget",
+								"memory-pressure",
+								"host-load"
+							]
+						},
+						"hint": {
+							"type": "string"
+						}
+					},
+					"required": [
+						"message",
+						"code",
+						"capacityReason",
+						"hint"
+					],
+					"additionalProperties": false
+				},
+				{
+					"type": "object",
+					"properties": {
+						"message": {
+							"type": "string"
+						},
+						"code": {
+							"type": "string",
+							"enum": [
+								"NO_DEVICE",
+								"QUEUE_TIMEOUT",
+								"REQUESTER_LIMIT",
+								"RUNTIME_MISSING",
+								"HEALTH_FAILED",
+								"LEASE_LOST"
+							]
+						},
+						"hint": {
+							"type": "string"
+						}
+					},
+					"required": [
+						"message",
+						"code",
+						"hint"
+					],
+					"additionalProperties": false
+				}
+			]
+		}
+	},
+	"required": [
+		"ok",
+		"schemaVersion",
+		"command",
+		"error"
+	],
+	"additionalProperties": false,
+	"$id": "https://warden.co.nz/schemas/warden.failure/1.json",
+	"title": "warden.failure"
+}

@@ -1,5 +1,7 @@
 import type { Platform } from "@delacour/warden-core/types";
 import type { CommandContext } from "../context";
+import type { UiResults } from "../contracts/ui.schema";
+import { SCHEMA_VERSIONS } from "../contracts/versions";
 
 /**
  * Exit codes of `warden ui`: 0 ok · 1 failed/usage · 2 lease · 3 engine unavailable · 4 stale ref ·
@@ -81,20 +83,39 @@ export type UiError = {
 
 export type UiDeviceInfo = { udid: string; platform: Platform; name?: string };
 
+/** The `result` a verb reports: typed (and published) for the verbs in `contracts/ui.schema.ts`, `unknown` for the rest. */
+export type UiResultOf<C extends string> = C extends keyof UiResults ? UiResults[C] : unknown;
+
+/** The success envelope of `warden ui <C> --json`. */
+export type UiOkJson<C extends string = string> = {
+	ok: true;
+	/** the `warden.ui` contract version (`https://warden.co.nz/schemas/warden.ui.<command>/<N>.json`) */
+	schemaVersion: typeof UI_SCHEMA_VERSION;
+	command: C;
+	device: UiDeviceInfo;
+	generation?: number;
+	durationMs: number;
+	/** the caller's `warden dev` lease this call used beside it (shared, not taken over; `close --release` keeps it) */
+	attachedTo?: string;
+	result: UiResultOf<C>;
+	warnings?: string[];
+};
+
+export type UiFailJson = {
+	ok: false;
+	schemaVersion: typeof UI_SCHEMA_VERSION;
+	command: string;
+	device?: UiDeviceInfo;
+	error: UiError;
+};
+
 /** `--json` envelope: exactly one document on stdout, success or failure. */
-export type UiJson =
-	| {
-			ok: true;
-			command: string;
-			device: UiDeviceInfo;
-			generation?: number;
-			durationMs: number;
-			/** the caller's `warden dev` lease this call used beside it (shared, not taken over; `close --release` keeps it) */
-			attachedTo?: string;
-			result: unknown;
-			warnings?: string[];
-	  }
-	| { ok: false; command: string; device?: UiDeviceInfo; error: UiError };
+export type UiJson<C extends string = string> = UiOkJson<C> | UiFailJson;
+
+/** A versioned verb's document, discriminated on `command` (narrow it and `result` is that verb's). */
+export type KnownUiJson = { [C in keyof UiResults]: UiOkJson<C> }[keyof UiResults] | UiFailJson;
+
+export const UI_SCHEMA_VERSION = SCHEMA_VERSIONS["warden.ui"];
 
 export function exitCodeFor(error: UiError): UiExitCode {
 	return UI_ERROR_EXIT[error.code];
@@ -127,9 +148,9 @@ export type UiReport = {
 	label?: string;
 };
 
-export type UiSuccess = {
+export type UiSuccess<R = unknown> = {
 	device: UiDeviceInfo;
-	result: unknown;
+	result: R;
 	/** the human rendering (stdout, no trailing newline) */
 	text: string;
 	generation?: number;
@@ -143,8 +164,9 @@ export type UiSuccess = {
 /** Print a success (JSON envelope, or `text` on stdout; warnings on stderr in text mode) and return exit 0 (or `success.exit`). */
 export function reportOk(ctx: CommandContext, report: UiReport, success: UiSuccess): UiExitCode {
 	if (report.json) {
-		const doc: UiJson = {
+		const doc: UiOkJson = {
 			ok: true,
+			schemaVersion: UI_SCHEMA_VERSION,
 			command: report.command,
 			device: success.device,
 			...(success.generation !== undefined ? { generation: success.generation } : {}),
@@ -164,7 +186,13 @@ export function reportOk(ctx: CommandContext, report: UiReport, success: UiSucce
 /** Print a failure (JSON envelope on stdout, or a red line on stderr) and return its exit code. */
 export function reportError(ctx: CommandContext, report: UiReport, error: UiError, device?: UiDeviceInfo): UiExitCode {
 	if (report.json) {
-		const doc: UiJson = { ok: false, command: report.command, ...(device ? { device } : {}), error };
+		const doc: UiFailJson = {
+			ok: false,
+			schemaVersion: UI_SCHEMA_VERSION,
+			command: report.command,
+			...(device ? { device } : {}),
+			error,
+		};
 		ctx.out(JSON.stringify(doc));
 	} else {
 		ctx.err(ctx.ui.color.red(`warden ${report.label ?? `ui ${report.command}`}: ${errorText(error)}`));

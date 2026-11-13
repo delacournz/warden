@@ -17,7 +17,7 @@ import type { CommandContext } from "../context";
 import { recordTarget } from "./act";
 import type { UiDevice } from "./device";
 import { driverUiError, type UiDeps } from "./driver";
-import { type UiError, type UiErrorCode, type UiSuccess, uiError } from "./output";
+import { type UiError, type UiErrorCode, type UiResultOf, type UiSuccess, uiError } from "./output";
 import { appendRecorded, evidenceOf, type RecordStep } from "./record";
 import { runUi, type UiOptionValues, type UiRunEnv } from "./run";
 import { type ElementJson, elementJson, storeSnapshot } from "./snapshot";
@@ -271,7 +271,7 @@ async function waitOutcome(
 	device: UiDevice,
 	plan: WaitPlan,
 	hit: WaitHit
-): Promise<Result<UiSuccess, UiError>> {
+): Promise<Result<UiSuccess<UiResultOf<"wait">>, UiError>> {
 	const { entry, snapshot, waitedMs } = hit;
 	const { generation, refs } = storeSnapshot(ctx, device.udid, snapshot);
 	const ref = entry ? refs.byId.get(entry.element.id) : undefined;
@@ -392,7 +392,7 @@ type IsAnswer = {
 };
 
 /** The `is` result: exit 0 when true, 1 when false, with the same JSON either way. */
-function isOutcome(device: UiDevice, answer: IsAnswer): UiSuccess {
+function isOutcome(device: UiDevice, answer: IsAnswer): UiSuccess<UiResultOf<"is">> {
 	const { entry, matched, state, waitedMs, reason } = answer;
 	return {
 		device: deviceInfo(device),
@@ -415,7 +415,7 @@ async function runIs(
 	words: string[],
 	env: UiRunEnv,
 	device: UiDevice
-): Promise<Result<UiSuccess, UiError>> {
+): Promise<Result<UiSuccess<UiResultOf<"is">>, UiError>> {
 	const { selector: source, last: state } = splitLast(words);
 	const usage = `is needs a selector and a state: ${IS_STATES.join("|")}`;
 	if (!oneOf(IS_STATES, state)) return { success: false, error: uiError("usage", usage) };
@@ -476,7 +476,7 @@ export function uiGet(ctx: CommandContext, deps: UiDeps, words: string[], opts: 
 }
 
 /** `get <selector> count`: how many elements match (0 is a valid answer). */
-function countOutcome(device: UiDevice, count: number, waitedMs: number): UiSuccess {
+function countOutcome(device: UiDevice, count: number, waitedMs: number): UiSuccess<UiResultOf<"get">> {
 	return {
 		device: deviceInfo(device),
 		result: { matched: count > 0, property: "count", value: count, waitedMs },
@@ -487,11 +487,11 @@ function countOutcome(device: UiDevice, count: number, waitedMs: number): UiSucc
 /** `get <selector> <property>`: the property's value, as JSON and as the bare text. */
 function propertyOutcome(
 	device: UiDevice,
-	prop: GetProp,
+	prop: Exclude<GetProp, "count">,
 	entry: NodeEntry,
 	value: ReturnType<typeof propertyOf>,
 	waitedMs: number
-): UiSuccess {
+): UiSuccess<UiResultOf<"get">> {
 	return {
 		device: deviceInfo(device),
 		result: { matched: true, property: prop, value, element: elementJson(entry, undefined), waitedMs },
@@ -506,7 +506,7 @@ async function runGet(
 	words: string[],
 	env: UiRunEnv,
 	device: UiDevice
-): Promise<Result<UiSuccess, UiError>> {
+): Promise<Result<UiSuccess<UiResultOf<"get">>, UiError>> {
 	const { selector: source, last: prop } = splitLast(words);
 	const usage = `get needs a selector and a property: ${GET_PROPS.join("|")}`;
 	if (!oneOf(GET_PROPS, prop)) return { success: false, error: uiError("usage", usage) };

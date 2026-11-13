@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { Owner } from "@delacour/warden-core/types";
+import { expectContract } from "../contracts/contracts.testing";
 import { fakeSimctl, OWNER_ENV } from "../simctl.testing";
 import { scriptedUi, type TestContext, testContext } from "../testing";
 import { releaseCommand } from "./release";
@@ -32,6 +33,7 @@ describe("warden release", () => {
 		expect(await releaseCommand.run(c)).toBe(0);
 		expect(c.db.listLeases().map((l) => l.id)).toEqual([b.id]);
 		expect(JSON.parse(c.stdout.join("\n")).released).toEqual([a.id]);
+		expectContract("warden.release", JSON.parse(c.stdout.join("\n")), { name: "by-id" });
 	});
 
 	test("--udid, --mine, --session", async () => {
@@ -89,6 +91,7 @@ describe("warden release", () => {
 		const out = JSON.parse(c.stdout.join("\n"));
 		expect(out.shutdown).toEqual(["U1"]);
 		expect(out.notes.join(" ")).toContain("FOREIGN");
+		expectContract("warden.release", out, { name: "quarantined-with-notes" });
 		expect(c.db.listDevices("ios")[0]?.lastUsedAt).toBe(c.now());
 	});
 

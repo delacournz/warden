@@ -1,0 +1,149 @@
+{
+	"base": "https://warden.co.nz/schemas",
+	"contracts": [
+		{
+			"command": "*",
+			"schema": "warden.failure",
+			"version": 1,
+			"url": "https://warden.co.nz/schemas/warden.failure/1.json",
+			"output": "json",
+			"summary": "any failed `--json` run that printed nothing else"
+		},
+		{
+			"command": "claim",
+			"schema": "warden.claim",
+			"version": 1,
+			"url": "https://warden.co.nz/schemas/warden.claim/1.json",
+			"output": "json",
+			"summary": "the leases claimed"
+		},
+		{
+			"command": "release",
+			"schema": "warden.release",
+			"version": 1,
+			"url": "https://warden.co.nz/schemas/warden.release/1.json",
+			"output": "json",
+			"summary": "what was released, shut down or quarantined"
+		},
+		{
+			"command": "ui snapshot",
+			"schema": "warden.ui.snapshot",
+			"version": 1,
+			"url": "https://warden.co.nz/schemas/warden.ui.snapshot/1.json",
+			"output": "json",
+			"summary": "the screen as elements with `@eN` refs"
+		},
+		{
+			"command": "ui press",
+			"schema": "warden.ui.press",
+			"version": 1,
+			"url": "https://warden.co.nz/schemas/warden.ui.press/1.json",
+			"output": "json",
+			"summary": "a tap on a ref, selector or point"
+		},
+		{
+			"command": "ui tap",
+			"schema": "warden.ui.tap",
+			"version": 1,
+			"url": "https://warden.co.nz/schemas/warden.ui.tap/1.json",
+			"output": "json",
+			"summary": "alias of `press`"
+		},
+		{
+			"command": "ui fill",
+			"schema": "warden.ui.fill",
+			"version": 1,
+			"url": "https://warden.co.nz/schemas/warden.ui.fill/1.json",
+			"output": "json",
+			"summary": "text typed into a field"
+		},
+		{
+			"command": "ui wait",
+			"schema": "warden.ui.wait",
+			"version": 1,
+			"url": "https://warden.co.nz/schemas/warden.ui.wait/1.json",
+			"output": "json",
+			"summary": "an element, text or a still screen waited for"
+		},
+		{
+			"command": "ui is",
+			"schema": "warden.ui.is",
+			"version": 1,
+			"url": "https://warden.co.nz/schemas/warden.ui.is/1.json",
+			"output": "json",
+			"summary": "a yes/no state check (exit 0 or 1, same document)"
+		},
+		{
+			"command": "ui get",
+			"schema": "warden.ui.get",
+			"version": 1,
+			"url": "https://warden.co.nz/schemas/warden.ui.get/1.json",
+			"output": "json",
+			"summary": "one property of an element, or a count"
+		},
+		{
+			"command": "ui open",
+			"schema": "warden.ui.open",
+			"version": 1,
+			"url": "https://warden.co.nz/schemas/warden.ui.open/1.json",
+			"output": "json",
+			"summary": "an app launched or a URL opened"
+		},
+		{
+			"command": "ui close",
+			"schema": "warden.ui.close",
+			"version": 1,
+			"url": "https://warden.co.nz/schemas/warden.ui.close/1.json",
+			"output": "json",
+			"summary": "the session ended (helper, app, lease)"
+		},
+		{
+			"command": "e2e",
+			"schema": "warden.e2e.report",
+			"version": 1,
+			"url": "https://warden.co.nz/schemas/warden.e2e.report/1.json",
+			"output": "json",
+			"summary": "the run's report (`--json`)"
+		},
+		{
+			"command": "e2e",
+			"schema": "warden.e2e.event",
+			"version": 1,
+			"url": "https://warden.co.nz/schemas/warden.e2e.event/1.json",
+			"output": "json-lines",
+			"summary": "one event per line: each test as it finishes, then the report"
+		},
+		{
+			"command": "e2e",
+			"schema": "warden.e2e.report",
+			"version": 1,
+			"url": "https://warden.co.nz/schemas/warden.e2e.report/1.json",
+			"output": "file:e2e-report.json",
+			"summary": "the report written into the batch dir"
+		},
+		{
+			"command": "e2e",
+			"schema": "warden.e2e.result",
+			"version": 1,
+			"url": "https://warden.co.nz/schemas/warden.e2e.result/1.json",
+			"output": "file:results.jsonl",
+			"summary": "one test result per line, written by the spec runtime per attempt"
+		},
+		{
+			"command": "app ensure",
+			"schema": "warden.app.ensure",
+			"version": 1,
+			"url": "https://warden.co.nz/schemas/warden.app.ensure/1.json",
+			"output": "json",
+			"summary": "the app build resolved and installed"
+		},
+		{
+			"command": "dev",
+			"schema": "warden.dev",
+			"version": 1,
+			"url": "https://warden.co.nz/schemas/warden.dev/1.json",
+			"output": "json",
+			"summary": "the one ready line once device, app and Metro are up"
+		}
+	]
+}

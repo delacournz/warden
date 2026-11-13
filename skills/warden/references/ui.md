@@ -44,7 +44,7 @@ Every call heartbeats your lease. Another live session's lease: `device_foreign`
 | `--physical` | with `--claim` and no device named: claim a connected phone (`warden claim --physical`) instead of an emulator |
 | `--timeout <ms>` | per-command deadline (default 5000) |
 | `--force` | drive the device while your running `warden e2e` / `batch` / `run` holds it (else exit 2 `device_busy`); it disturbs that run. Not needed for your own `warden dev` |
-| `--json` | one JSON document on stdout |
+| `--json` | one JSON document on stdout: `{ ok, schemaVersion, command, device, generation?, durationMs, result, warnings? }` or `{ ok: false, schemaVersion, command, error: { code, message, hint? } }`; `snapshot`, `press`/`tap`, `fill`, `wait`, `is`, `get`, `open`, `close` publish `https://warden.co.nz/schemas/warden.ui.<verb>/1.json` |
 
 Actions also take `--settle [ms]`: wait for a quiet screen (500 ms unchanged, budget 3000 ms), then print what changed.
 

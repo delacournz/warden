@@ -9,7 +9,7 @@ import { type ActionOptionValues, finishAction, parseSettle } from "./act";
 import { deviceFacade, viaFacade } from "./controls";
 import { sharedNote, type UiDevice } from "./device";
 import { fromDriver, type UiDeps } from "./driver";
-import { type UiError, type UiSuccess, uiError } from "./output";
+import { type UiError, type UiResultOf, type UiSuccess, uiError } from "./output";
 import { runUi, type UiRunEnv } from "./run";
 import { readState, updateState } from "./state";
 
@@ -138,7 +138,7 @@ type OpenRun = {
 };
 
 /** `open <url>`: hand the link to the system (accepting iOS's "Open in …?" sheet). */
-async function openUrl(run: OpenRun): Promise<Result<UiSuccess, UiError>> {
+async function openUrl(run: OpenRun): Promise<Result<UiSuccess<UiResultOf<"open">>, UiError>> {
 	const { ctx, deps, env, device, driver, settle, what } = run;
 	const facade = deviceFacade(ctx, deps, device, driver, env.timeoutMs);
 	const opened = await viaFacade(() => facade.openLink(what));
@@ -210,7 +210,7 @@ async function installRequestedKind(run: OpenRun): Promise<Result<KindInstall | 
 }
 
 /** `open <bundleId>`: launch (or attach to) the app and remember it, and the Metro URL, in `state.json`. */
-async function openBundle(run: OpenRun): Promise<Result<UiSuccess, UiError>> {
+async function openBundle(run: OpenRun): Promise<Result<UiSuccess<UiResultOf<"open">>, UiError>> {
 	const { ctx, deps, env, device, driver, settle, what, opts } = run;
 	const kinded = await installRequestedKind(run);
 	if (!kinded.success) return kinded;

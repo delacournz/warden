@@ -25,6 +25,8 @@ import { maybeAutoGc } from "../autogc";
 import { type ClaimFlagValues, parseClaimFlags, parsePlatform, resolveOwner, withClaimOptions } from "../claim-flags";
 import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
+import type { DevJson } from "../contracts/dev.schema";
+import { SCHEMA_VERSIONS } from "../contracts/versions";
 import type { Broker, BrokerOptions } from "../dev-broker/broker";
 import type { BrokerResult } from "../dev-broker/broker.types";
 import {
@@ -903,9 +905,17 @@ async function runMetro(ui: DevUi, deps: DevDeps, opts: DevOpts, r: Running): Pr
 			actions
 		);
 		// one line, not `emit`'s indented document: warden dev keeps running, so readers take the first stdout line
-		if (json)
-			ctx.out(JSON.stringify({ udid: deviceId, port, metroUrl: metro.data.url, leaseIds, source: r.project.source }));
-		else
+		if (json) {
+			const ready: DevJson = {
+				schemaVersion: SCHEMA_VERSIONS["warden.dev"],
+				udid: deviceId,
+				port,
+				metroUrl: metro.data.url,
+				leaseIds,
+				source: r.project.source,
+			};
+			ctx.out(JSON.stringify(ready));
+		} else
 			ui.ready({
 				platform: r.platform,
 				deviceId,

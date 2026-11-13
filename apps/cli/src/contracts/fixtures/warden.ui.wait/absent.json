@@ -1,0 +1,20 @@
+{
+	"ok": false,
+	"schemaVersion": 1,
+	"command": "wait",
+	"device": {
+		"udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+		"platform": "ios",
+		"name": "sim"
+	},
+	"error": {
+		"code": "wait_target_absent",
+		"message": "id=nope did not appear within 50 ms",
+		"hint": "`warden ui snapshot -i` shows what is on screen; --timeout <ms> waits longer",
+		"details": {
+			"matched": false,
+			"waitedMs": 50,
+			"reason": "wait_target_absent"
+		}
+	}
+}

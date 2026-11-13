@@ -1,0 +1,58 @@
+{
+	"schemaVersion": 1,
+	"suite": "mobile",
+	"platform": "ios",
+	"isolate": "spec",
+	"ok": false,
+	"headless": false,
+	"batchDir": "/tmp/warden/batches/b1",
+	"specs": [
+		{
+			"id": "chats",
+			"file": "/repo/specs/chats.e2e.ts",
+			"required": true,
+			"reasons": [
+				{
+					"kind": "import",
+					"file": "src/chat/lazy.tsx",
+					"chain": ["src/app/(app)/chats.tsx", "src/chat/list.tsx", "src/chat/lazy.tsx"]
+				}
+			],
+			"attempts": 1,
+			"verdict": "failed",
+			"tests": [
+				{
+					"title": ["opens"],
+					"status": "passed",
+					"durationMs": 1250
+				},
+				{
+					"title": ["sends"],
+					"status": "failed",
+					"durationMs": 1250,
+					"error": "snapshot failed: x",
+					"line": 22
+				}
+			],
+			"device": {
+				"udid": "U1",
+				"name": "warden-iphone-17-1"
+			},
+			"log": "/tmp/warden/batches/b1/logs/0-0-chats.log",
+			"screenshot": "/tmp/warden/batches/b1/logs/0-0-chats.png"
+		}
+	],
+	"warm": [
+		{
+			"worker": 0,
+			"udid": "U1",
+			"ok": true
+		}
+	],
+	"timing": {
+		"totalMs": 0,
+		"setupMs": 0,
+		"testsMs": 0,
+		"teardownMs": 0
+	}
+}

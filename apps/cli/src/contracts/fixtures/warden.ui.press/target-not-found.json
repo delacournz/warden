@@ -1,0 +1,15 @@
+{
+	"ok": false,
+	"schemaVersion": 1,
+	"command": "press",
+	"device": {
+		"udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+		"platform": "ios",
+		"name": "sim"
+	},
+	"error": {
+		"code": "target_not_found",
+		"message": "id=nope matched nothing",
+		"hint": "run `warden ui snapshot -i` to see what is on screen"
+	}
+}

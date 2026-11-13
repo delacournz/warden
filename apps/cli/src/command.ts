@@ -5,6 +5,7 @@ import {
 	type HelpConfiguration,
 } from "@commander-js/extra-typings";
 import type { CommandContext, FailureExtra } from "./context";
+import { SCHEMA_VERSIONS } from "./contracts/versions";
 import type { Finished } from "./telemetry/tracker";
 import { SYMBOLS, type Ui } from "./ui";
 
@@ -88,6 +89,8 @@ function usageError(ui: Ui, argv: readonly string[], names: ReadonlySet<string>,
  */
 export type JsonFailure = {
 	ok: false;
+	/** the `warden.failure` contract version */
+	schemaVersion: (typeof SCHEMA_VERSIONS)["warden.failure"];
 	command: string;
 	error: { code: "usage" | "failed"; message: string } | ({ message: string } & FailureExtra);
 };
@@ -169,7 +172,7 @@ export async function runProgram(
 	if (code !== 0 && json && !wrote) {
 		const command = commandPath(program, argv);
 		const error = failure ?? { code: "failed", message: `warden ${command} exited ${code}` };
-		const doc: JsonFailure = { ok: false, command, error };
+		const doc: JsonFailure = { ok: false, schemaVersion: SCHEMA_VERSIONS["warden.failure"], command, error };
 		ctx.out(JSON.stringify(doc));
 	}
 	if (acted) await ctx.tracker?.finish(outcomeOf(code));

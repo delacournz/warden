@@ -28,8 +28,8 @@ export function parseSettle(raw: true | string | undefined): Result<number | und
 }
 
 /** What one action reports: the `--json` result is this, plus the settle verdict. */
-export type ActionDone = {
-	action: string;
+export type ActionDone<A extends string = string, E extends object = Record<string, unknown>> = {
+	action: A;
 	/** one line for humans */
 	text: string;
 	target?: RecordTarget;
@@ -39,10 +39,21 @@ export type ActionDone = {
 	/** text typed into a secure field: the recording only names it (`WARDEN_UI_SECRET_*`), never stores it */
 	secret?: string;
 	/** more `--json` fields (`direction`, `swipes`, `path`, …) */
-	extra?: Record<string, unknown>;
+	extra?: E;
 };
 
-function settledJson(taken: TakenSnapshot): Record<string, unknown> {
+/** `--settle`: the quiet screen, how long it took and its diff against the previous generation. */
+export type SettledJson = { quiet: boolean; waitedMs: number; diff: NonNullable<TakenSnapshot["diff"]> | null };
+
+/** The `--json` result of a finished action: its own fields (`extra`) beside the ones every action has. */
+export type ActionResult<A extends string, E extends object> = {
+	action: A;
+	target?: RecordTarget;
+	settled?: SettledJson;
+	verified?: boolean | "unconfirmed";
+} & E;
+
+function settledJson(taken: TakenSnapshot): SettledJson {
 	return {
 		quiet: taken.settle?.quiet ?? true,
 		waitedMs: taken.settle?.waitedMs ?? 0,
@@ -74,7 +85,7 @@ async function recordAction(
 	env: UiRunEnv,
 	device: UiDevice,
 	settleBudget: number | undefined,
-	done: ActionDone
+	done: ActionDone<string, object>
 ): Promise<void> {
 	const evidence = done.target ? evidenceOf(done.target) : undefined;
 	const route = await routeAfter(ctx, deps, env, device, done.action);
@@ -90,13 +101,16 @@ async function recordAction(
 }
 
 /** The `--json` result object of a finished action. */
-function actionResult(done: ActionDone, taken: TakenSnapshot | undefined): Record<string, unknown> {
+function actionResult<A extends string, E extends object>(
+	done: ActionDone<A, E>,
+	taken: TakenSnapshot | undefined
+): ActionResult<A, E> {
 	return {
 		action: done.action,
 		...(done.target ? { target: done.target } : {}),
 		...(taken ? { settled: settledJson(taken) } : {}),
 		...(done.verified !== undefined ? { verified: done.verified } : {}),
-		...done.extra,
+		...(done.extra as E),
 	};
 }
 
@@ -105,15 +119,15 @@ function actionResult(done: ActionDone, taken: TakenSnapshot | undefined): Recor
  * generation, so `@eN` refs from before are replaced), the step is appended to the active recording
  * (unless `--no-record`), and the result is shaped for text and `--json`.
  */
-export async function finishAction(
+export async function finishAction<A extends string, E extends object = Record<never, never>>(
 	ctx: CommandContext,
 	deps: UiDeps,
 	env: UiRunEnv,
 	device: UiDevice,
 	driver: Driver,
 	settleBudget: number | undefined,
-	done: ActionDone
-): Promise<Result<UiSuccess, UiError>> {
+	done: ActionDone<A, E>
+): Promise<Result<UiSuccess<ActionResult<A, E>>, UiError>> {
 	const settled = await settleAfter(ctx, deps, driver, device.udid, settleBudget);
 	if (!settled.success) return settled;
 	const taken = settled.data;

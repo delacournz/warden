@@ -1,0 +1,12 @@
+{
+	"schemaVersion": 1,
+	"released": ["l_cb6bf3df83f0", "l_f446f3ee3b7f"],
+	"shutdown": ["U1"],
+	"deleted": [],
+	"quarantined": [],
+	"unknown": [],
+	"notes": [
+		"left warden-iphone-17-FOREIGN (FOREIGN) running: it was already running when leased",
+		"couldn't close the simulator window (`osascript (close windows)` exited 127: \t} | \treturn \"\"; | } [\"warden-iphone-17-U1\"])"
+	]
+}

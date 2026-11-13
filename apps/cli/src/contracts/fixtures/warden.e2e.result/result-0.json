@@ -1,0 +1,11 @@
+{
+	"file": "/repo/specs/chats.e2e.ts",
+	"title": ["opens"],
+	"status": "passed",
+	"durationMs": 1250,
+	"startedAt": 1000,
+	"device": {
+		"udid": "A",
+		"platform": "ios"
+	}
+}

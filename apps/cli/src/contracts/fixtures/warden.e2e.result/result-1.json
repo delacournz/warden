@@ -1,0 +1,15 @@
+{
+	"file": "/repo/specs/chats.e2e.ts",
+	"title": ["sends"],
+	"status": "failed",
+	"durationMs": 1250,
+	"startedAt": 1000,
+	"device": {
+		"udid": "A",
+		"platform": "ios"
+	},
+	"error": {
+		"message": "snapshot failed: x",
+		"stack": "E2eError: snapshot failed: no frontmost application\n    at <anonymous> (/x/node_modules/@delacour/warden-e2e/chunk.mjs:1760:30)\n    at <anonymous> (/repo/specs/chats.e2e.ts:22:11)"
+	}
+}

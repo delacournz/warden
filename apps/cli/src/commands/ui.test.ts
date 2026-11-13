@@ -52,6 +52,7 @@ describe("warden ui status", () => {
 		expect(await uiCommand.run(c)).toBe(2);
 		expect(json(c)).toEqual({
 			ok: false,
+			schemaVersion: 1,
 			command: "status",
 			error: { code: "device_foreign", message: blockMessage(UDID, "ios", other) },
 		});
@@ -221,7 +222,12 @@ describe("warden ui on a device a live warden process holds (refuse unless --for
 	test("--json: one failure document with code device_busy", async () => {
 		const h = harness(() => snap(), { lease: RUN, pidAlive: () => true });
 		expect(await h.run("press", "id=sign-in-submit", "--json")).toBe(2);
-		expect(doc(h.c)).toEqual({ ok: false, command: "press", error: { code: "device_busy", message: busy } });
+		expect(doc(h.c)).toEqual({
+			ok: false,
+			schemaVersion: 1,
+			command: "press",
+			error: { code: "device_busy", message: busy },
+		});
 		expect(h.opens.count).toBe(0);
 	});
 

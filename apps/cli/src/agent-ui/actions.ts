@@ -303,7 +303,7 @@ function fillDone(
 	secure: boolean,
 	verified: boolean | "unconfirmed" | undefined,
 	via: FillVia
-): ActionDone {
+): ActionDone<"fill", { characters: number; secure?: true }> {
 	const shown = secure ? `${[...text].length} characters (secure)` : JSON.stringify(text);
 	return {
 		action: "fill",
@@ -312,7 +312,7 @@ function fillDone(
 		...(verified !== undefined ? { verified } : {}),
 		args: { ...(secure ? { secure: true } : { text }), ...(via === "paste" ? { via } : {}) },
 		...(secure ? { secret: text } : {}),
-		extra: { characters: [...text].length, ...(secure ? { secure: true } : {}) },
+		extra: { characters: [...text].length, ...(secure ? { secure: true as const } : {}) },
 	};
 }
 
