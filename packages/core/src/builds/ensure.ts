@@ -396,6 +396,14 @@ async function buildHere(
 			...(project.compilerCache === false ? { compilerCache: false } : {}),
 			...(input.git ? { git: input.git } : {}),
 			prebuildStamp: prebuildStamp(input.store, project.root, platform),
+			pods: {
+				store: input.store,
+				now: input.now,
+				pid: input.pid,
+				pidAlive: input.pidAlive,
+				sleep: input.sleep,
+				owner: input.owner,
+			},
 		});
 	} finally {
 		live.close();

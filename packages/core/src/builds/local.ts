@@ -12,12 +12,19 @@ import { dirname, join, relative, sep } from "node:path";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import { type Exec, type ExecResult, execError } from "../exec";
 import { type GitFactsCache, readGitFacts } from "../git-facts";
+import type { PodsDeps, PodsInstallOptions, PodsOutcome } from "../pods/pods.types";
+import { podsInstall } from "../pods/pods-install";
 import { wardenHome as resolveWardenHome } from "../store";
 import type { Platform } from "../types";
 import { readXcode } from "../xcode";
 import { formatBuildIssues, readBuildIssues } from "../xcresult";
 import type { BuildConfiguration } from "./builds.defaults";
-import { IOS_DEVICE_RESULT_BUNDLE, LOCAL_BUILD_TIMEOUT_MS, PROBE_TIMEOUT_MS } from "./builds.defaults";
+import {
+	IOS_DEVICE_RESULT_BUNDLE,
+	LOCAL_BUILD_TIMEOUT_MS,
+	PROBE_TIMEOUT_MS,
+	WARDEN_PODS_CACHE_ENV,
+} from "./builds.defaults";
 import { compilerCacheEnv } from "./compiler-cache";
 import type { Project } from "./config";
 import { formatBuildFailure, parseBuildDiagnostics } from "./diagnostics";
@@ -192,6 +199,11 @@ export function derivedDataDir(env: Record<string, string | undefined>): string 
 	return join(env.HOME ?? "~", "Library", "Developer", "Xcode", "DerivedData");
 }
 
+/** What `podsInstall` needs beyond the build's own exec / env / log; `install` is the seam tests replace. */
+export type LocalPodsDeps = Omit<PodsDeps, "exec" | "env" | "log"> & {
+	install?: (deps: PodsDeps, opts: PodsInstallOptions) => AsyncResult<PodsOutcome>;
+};
+
 export type LocalBuildDeps = {
 	exec: Exec;
 	project: Project;
@@ -212,6 +224,8 @@ export type LocalBuildDeps = {
 	git?: GitFactsCache;
 	/** the native fingerprint the git-ignored (CNG) native dir was last prebuilt at; absent = never regenerate it */
 	prebuildStamp?: PrebuildStamp;
+	/** the machine-wide CocoaPods cache (iOS builds whose command runs `pod install`); absent = never used */
+	pods?: LocalPodsDeps;
 	/** log `still building <platform> (<elapsed>): <last output line>` every `everyMs` while the build runs; absent = silent */
 	heartbeat?: BuildHeartbeat;
 };
@@ -394,6 +408,50 @@ async function dropStaleNativeDir(deps: LocalBuildDeps, native: string): Promise
 	rmSync(nativeDir, { recursive: true, force: true });
 }
 
+/** a build command that runs `pod install` itself (warden's defaults do, behind a `Manifest.lock` guard) */
+const RUNS_POD_INSTALL = /\bpod\s+install\b/;
+
+function podsLine(outcome: PodsOutcome): string {
+	const secs = `${(outcome.ms / 1000).toFixed(1)}s`;
+	switch (outcome.kind) {
+		case "hit":
+			return `pods: restored ${outcome.key} in ${secs}`;
+		case "miss":
+			return outcome.stored
+				? `pods: installed + cached ${outcome.key} (${secs})`
+				: `pods: installed ${outcome.key} (${secs}), not cached${outcome.storeError ? `: ${outcome.storeError}` : ""}`;
+		case "up-to-date":
+			return "pods: up to date";
+		case "uncached":
+			return `pods: not cached: ${outcome.reason}`;
+	}
+}
+
+/**
+ * iOS: restore (or install and snapshot) the Pods sandbox from the shared cache before the build command, so its own
+ * `pod install` guard finds `Podfile.lock == Pods/Manifest.lock` and does nothing. Never fails the build: an error or
+ * throw is a warning, and the command's guard runs a real `pod install`.
+ */
+async function preparePods(deps: LocalBuildDeps): Promise<void> {
+	const { pods, project, platform } = deps;
+	if (!pods || platform !== "ios" || deps.env[WARDEN_PODS_CACHE_ENV] === "0") return;
+	if (!RUNS_POD_INSTALL.test(project.build[platform])) return;
+	const { install = podsInstall, ...rest } = pods;
+	try {
+		const res = await install(
+			{ ...rest, exec: deps.exec, env: deps.env, log: deps.log },
+			{
+				projectRoot: project.root,
+				framework: project.framework === "expo" ? "expo" : "react-native",
+				...(project.prebuiltReactNative === false ? { prebuiltReactNative: false as const } : {}),
+			}
+		);
+		deps.log(res.success ? podsLine(res.data) : `pods: cache skipped (${res.error}); the build installs pods itself`);
+	} catch (e) {
+		deps.log(`pods: cache skipped (${e instanceof Error ? e.message : String(e)}); the build installs pods itself`);
+	}
+}
+
 /** `setInterval`, unref'd so a stuck timer never keeps the process alive. */
 function intervalTimer(fn: () => void, ms: number): () => void {
 	const id = setInterval(fn, ms);
@@ -522,7 +580,9 @@ export async function runLocalBuild(deps: LocalBuildDeps): AsyncResult<LocalBuil
 	const derivedData = derivedDataDir(deps.env);
 	const snapshot = snapshotArtifacts(project.root, platform, derivedData, project.buildConfiguration, project.target);
 	await dropStaleNativeDir(deps, deps.native ?? deps.hash);
+	// before the pods restore: a CNG hit creates ios/, which `prebuildMovedKey` must still read as the build's own prebuild
 	const before = await beforeBuild(deps);
+	await preparePods(deps);
 	deps.log(`building ${platform} locally: ${command} (in ${project.root})`);
 	const argv = ["sh", "-c", command];
 	const caching = await cacheEnv(deps);

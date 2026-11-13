@@ -12,13 +12,15 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { err, ok } from "@delacour/warden-types/result";
 import type { Exec, ExecResult } from "../exec";
 import { createGitFactsCache } from "../git-facts";
+import type { PodsInstallOptions } from "../pods/pods.types";
 import { IOS_DEVICE_RESULT_BUNDLE } from "./builds.defaults";
 import { fakeApp, testProject } from "./builds.testing";
 import { releaseKey } from "./fingerprint";
 import { combineKey, jsInputsHash } from "./js-inputs";
-import { artifactCandidates, locateArtifact, runLocalBuild, snapshotArtifacts } from "./local";
+import { artifactCandidates, type LocalPodsDeps, locateArtifact, runLocalBuild, snapshotArtifacts } from "./local";
 
 let dir: string;
 beforeEach(() => {
@@ -1155,5 +1157,141 @@ describe("runLocalBuild: a stale CNG native dir is regenerated before the build"
 		const { result, written } = s.run("h0");
 		expect((await result).success).toBe(false);
 		expect(written).toEqual([]);
+	});
+});
+
+describe("runLocalBuild pods cache", () => {
+	const podsDeps = {
+		store: {} as never,
+		now: () => 0,
+		pid: 1,
+		pidAlive: () => true,
+		sleep: async () => {},
+		owner: { kind: "ci", runId: "r" } as const,
+	};
+
+	function podsSetup(
+		build: string,
+		opts: {
+			install?: LocalPodsDeps["install"];
+			env?: Record<string, string>;
+			withPods?: boolean;
+			platform?: "ios" | "android";
+		} = {}
+	) {
+		const root = join(dir, "app");
+		const platform = opts.platform ?? "ios";
+		mkdirSync(join(root, platform), { recursive: true });
+		const calls: PodsInstallOptions[] = [];
+		const logs: string[] = [];
+		const install: LocalPodsDeps["install"] =
+			opts.install ??
+			(async (_d, o) => {
+				calls.push(o);
+				return ok({ kind: "hit" as const, key: "k1", mode: "cng" as const, ms: 800 });
+			});
+		const exec: Exec = async (cmd) => {
+			if (cmd[2]?.startsWith("do-build")) {
+				const out =
+					platform === "ios"
+						? join(root, "ios", "build", SIM)
+						: join(root, "android", "app", "build", "outputs", "apk", "debug");
+				if (platform === "ios") fakeApp(out);
+				else {
+					mkdirSync(out, { recursive: true });
+					writeFileSync(join(out, "app-debug.apk"), "apk");
+				}
+				return { exitCode: 0, stdout: "", stderr: "" };
+			}
+			if (cmd[0] === "plutil" || cmd[0] === "git")
+				return { exitCode: cmd[0] === "git" ? 0 : 1, stdout: "", stderr: "" };
+			return { exitCode: 0, stdout: '{"hash":"h1"}', stderr: "" };
+		};
+		const project = testProject({ root, fingerprintCommand: "fp", build: { ios: build, android: build } });
+		const run = () =>
+			runLocalBuild({
+				exec,
+				project,
+				platform,
+				hash: "h1",
+				env: { HOME: "/nope", ...(opts.env ?? {}) },
+				log: (l) => logs.push(l),
+				...(opts.withPods === false ? {} : { pods: { ...podsDeps, install } }),
+			});
+		return { run, calls, logs };
+	}
+	const POD = "do-build # pod install";
+
+	test("ios command with pod install → podsInstall runs, outcome logged", async () => {
+		const s = podsSetup(POD);
+		{
+			const r = await s.run();
+			expect(r.success ? "ok" : r.error).toBe("ok");
+		}
+		expect(s.calls).toHaveLength(1);
+		expect(s.calls[0]?.framework).toBe("expo");
+		expect(s.logs).toContain("pods: restored k1 in 0.8s");
+	});
+
+	test("not called for android, a command without pod install, WARDEN_PODS_CACHE=0, or no pods dep", async () => {
+		for (const s of [
+			podsSetup(POD, { platform: "android" }),
+			podsSetup("do-build"),
+			podsSetup(POD, { env: { WARDEN_PODS_CACHE: "0" } }),
+			podsSetup(POD, { withPods: false }),
+		]) {
+			{
+				const r = await s.run();
+				expect(r.success ? "ok" : r.error).toBe("ok");
+			}
+			expect(s.calls).toHaveLength(0);
+		}
+	});
+
+	test("podsInstall err or throw → warning, build still runs", async () => {
+		for (const install of [
+			async () => err("boom"),
+			async (): Promise<never> => {
+				throw new Error("kaboom");
+			},
+		] as const) {
+			const s = podsSetup(POD, { install });
+			{
+				const r = await s.run();
+				expect(r.success ? "ok" : r.error).toBe("ok");
+			}
+			expect(s.logs.some((l) => l.startsWith("pods: cache skipped"))).toBe(true);
+		}
+	});
+
+	test("a pods restore that creates ios/ is still the build's own prebuild (key may move)", async () => {
+		const root = join(dir, "app");
+		const install: LocalPodsDeps["install"] = async () => {
+			mkdirSync(join(root, "ios"), { recursive: true });
+			return ok({ kind: "hit" as const, key: "k1", mode: "cng" as const, ms: 1 });
+		};
+		rmSync(root, { recursive: true, force: true });
+		mkdirSync(root, { recursive: true });
+		let n = 0;
+		const exec: Exec = async (cmd) => {
+			if (cmd[2]?.startsWith("do-build")) {
+				fakeApp(join(root, "ios", "build", SIM));
+				return { exitCode: 0, stdout: "", stderr: "" };
+			}
+			if (cmd[0] === "plutil") return { exitCode: 1, stdout: "", stderr: "" };
+			if (cmd[0] === "git") return { exitCode: 0, stdout: "", stderr: "" };
+			n++;
+			return { exitCode: 0, stdout: JSON.stringify({ hash: n === 1 ? "h1" : "h2" }), stderr: "" };
+		};
+		const res = await runLocalBuild({
+			exec,
+			project: testProject({ root, fingerprintCommand: "fp", build: { ios: POD, android: POD } }),
+			platform: "ios",
+			hash: "h1",
+			env: { HOME: "/nope" },
+			log: () => {},
+			pods: { ...podsDeps, install },
+		});
+		expect(res.success ? "ok" : res.error).toBe("ok");
 	});
 });
