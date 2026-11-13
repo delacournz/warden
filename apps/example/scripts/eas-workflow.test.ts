@@ -1,5 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { accessSync, constants } from "node:fs";
 import { join } from "node:path";
 import config from "../warden.config";
 
@@ -105,11 +104,32 @@ describe("EAS e2e workflow", () => {
 		expect(Object.keys(config.e2e ?? {})).toContain(String(suite));
 	});
 
-	test("runner script exists and is executable", async () => {
-		const workflow = await loadWorkflow();
-		const runs = (job(workflow, "e2e_ios").steps ?? []).map((step) => step.run ?? "").join("\n");
-		expect(runs).toContain("apps/example/scripts/eas-e2e.sh");
-		expect(() => accessSync(join(APP_DIR, "scripts/eas-e2e.sh"), constants.X_OK)).not.toThrow();
+	test("installs warden at the spec API's version and caches it per version", async () => {
+		const steps = job(await loadWorkflow(), "e2e_ios").steps ?? [];
+		const pick = steps.find((step) => step.id === "warden");
+		expect(pick?.run).toContain("@delacour/warden-e2e/package.json");
+
+		const key = `warden-cli-darwin-arm64-${expr("steps.warden.outputs.version")}`;
+		const restore = steps.find((step) => step.uses === "eas/restore_cache");
+		const save = steps.find((step) => step.uses === "eas/save_cache");
+		expect(restore?.with?.key).toBe(key);
+		expect(save?.with?.key).toBe(key);
+		expect(save?.with?.path).toBe(restore?.with?.path);
+		expect(save?.if).toBe(expr(`steps.${restore?.id}.outputs.cache_hit != 'true'`));
+
+		const install = steps.find((step) => step.run?.includes("npm install --global"));
+		expect(install?.run).toContain(`@delacour/warden@${expr("steps.warden.outputs.version")}`);
+		expect(install?.run).toContain("set-env PATH");
+	});
+
+	test("runs warden directly: import the EAS build, repack, then the specs", async () => {
+		const runs = (job(await loadWorkflow(), "e2e_ios").steps ?? []).flatMap((step) => (step.run ? [step.run] : []));
+		const at = (needle: string) => runs.findIndex((run) => run.includes(needle));
+		expect(at("warden builds import")).toBeGreaterThan(-1);
+		expect(runs[at("warden builds import")]).toContain("--kind simulator-base");
+		expect(at("--build-only")).toBeGreaterThan(at("warden builds import"));
+		expect(at("--report")).toBeGreaterThan(at("--build-only"));
+		expect(runs.some((run) => run.includes(".sh"))).toBe(false);
 	});
 
 	test("the reused profile pulls env vars from the same EAS environment as the e2e job", async () => {
