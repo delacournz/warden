@@ -76,6 +76,8 @@ Builds:
                                 paths a CI job saves between runs
   builds                        list, remove, prune (LRU) and import cached
                                 native app builds
+  pods                          CocoaPods install shared across worktrees:
+                                install, list, remove, prune
 
 Commands:
   ui                            drive a leased simulator / emulator (agents):
@@ -4537,6 +4539,81 @@ Options:
   --bundle-id <id>       override the bundle id / package
   --json                 machine-readable output
   -h, --help             display help for command"
+`;
+
+exports[`help output warden pods --help (and nested subcommands) 1`] = `
+"$ warden pods --help
+Usage: warden pods [options] [command]
+
+CocoaPods install shared across worktrees: install, list, remove, prune
+
+Options:
+  -h, --help             display help for command
+
+Commands:
+  install [pod-args...]  pod install through the machine-wide cache: same pods
+                         anywhere on this Mac restore in seconds (Expo: prebuild
+                         too); pass pod args after --
+  ls                     list cached pods installs (the default)
+  rm|remove <key...>     remove cached pods by key (or a unique prefix of at
+                         least 6 characters)
+  prune                  remove cached pods unused for --older-than, then
+                         least-recently-used until they fit --max-size (installs
+                         in progress stay); sizes are apparent: blocks are
+                         shared with the worktrees cloned from an entry
+  help [command]         display help for command
+
+$ warden pods install --help
+Usage: warden pods install [options] [pod-args...]
+
+pod install through the machine-wide cache: same pods anywhere on this Mac
+restore in seconds (Expo: prebuild too); pass pod args after --
+
+Arguments:
+  pod-args                   extra arguments for \`pod install\`, after --
+
+Options:
+  --project-directory <dir>  the ios dir, relative to the project (default: ios)
+  --no-cache                 run a plain pod install: don't restore from or
+                             store to the cache
+  --json                     machine-readable output
+  -h, --help                 display help for command
+
+$ warden pods ls --help
+Usage: warden pods ls [options]
+
+list cached pods installs (the default)
+
+Options:
+  --json      machine-readable output
+  -h, --help  display help for command
+
+$ warden pods rm --help
+Usage: warden pods rm|remove [options] <key...>
+
+remove cached pods by key (or a unique prefix of at least 6 characters)
+
+Arguments:
+  key         key or unique prefix, as \`warden pods ls\` shows it
+
+Options:
+  --dry-run   only show what would be removed
+  --json      machine-readable output
+  -h, --help  display help for command
+
+$ warden pods prune --help
+Usage: warden pods prune [options]
+
+remove cached pods unused for --older-than, then least-recently-used until they
+fit --max-size (installs in progress stay); sizes are apparent: blocks are
+shared with the worktrees cloned from an entry
+
+Options:
+  --max-size <size>        size limit, e.g. 10G (default: 10G)
+  --older-than <duration>  unused for this long, e.g. 30d (default: 30d)
+  --dry-run                only show what would be removed
+  --json                   machine-readable output
+  -h, --help               display help for command"
 `;
 
 exports[`help output warden hook --help (and nested subcommands) 1`] = `

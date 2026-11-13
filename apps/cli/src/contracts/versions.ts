@@ -14,6 +14,7 @@ export const SCHEMA_VERSIONS = {
 	"warden.e2e.result": 1,
 	"warden.app.ensure": 1,
 	"warden.dev": 1,
+	"warden.pods.install": 1,
 } as const;
 
 export type SchemaName = keyof typeof SCHEMA_VERSIONS;

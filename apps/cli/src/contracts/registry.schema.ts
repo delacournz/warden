@@ -4,6 +4,7 @@ import { claimSchema } from "./claim.schema";
 import { failureSchema } from "./common.schema";
 import { devSchema } from "./dev.schema";
 import { e2eEventSchema, e2eReportSchema, e2eResultSchema } from "./e2e.schema";
+import { podsInstallSchema } from "./pods.schema";
 import { releaseSchema } from "./release.schema";
 import { type UiResultCommand, uiCommandSchema } from "./ui.schema";
 import { SCHEMA_VERSIONS, type SchemaName } from "./versions";
@@ -88,6 +89,13 @@ export const CONTRACTS: readonly Contract[] = [
 		"the app build resolved and installed"
 	),
 	entry("dev", "warden.dev", "warden.dev", devSchema, "the one ready line once device, app and Metro are up"),
+	entry(
+		"pods install",
+		"warden.pods.install",
+		"warden.pods.install",
+		podsInstallSchema,
+		"how the pods were installed: restored from the cache, installed and cached, up to date, or installed uncached"
+	),
 ];
 
 /** The distinct published schemas (`e2e-report.json` and `e2e --json` share one). */

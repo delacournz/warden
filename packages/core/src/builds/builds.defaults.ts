@@ -184,3 +184,6 @@ export const CCACHE_DIR_NAME = "ccache";
 export const XCODE_COMPILATION_CACHE_MIN_MAJOR = 26;
 /** Timeout for the quick `git` / `xcodebuild -version` probes before a build. */
 export const PROBE_TIMEOUT_MS = 10_000;
+
+/** `WARDEN_PODS_CACHE=0`: never use the shared CocoaPods cache; the build command's own `pod install` runs. */
+export const WARDEN_PODS_CACHE_ENV = "WARDEN_PODS_CACHE";

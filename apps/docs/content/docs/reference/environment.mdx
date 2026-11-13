@@ -28,6 +28,7 @@ Every environment variable warden reads, and the ones `warden run`, `batch` and 
 | `WARDEN_TUI=0` | `warden dev`: plain output instead of the dashboard, like `--no-tui` ([dashboard](/docs/sims/dev#dashboard)) |
 | `WARDEN_AUTO_GC=0` | turn off background auto-gc |
 | `WARDEN_MAX_CACHE_SIZE` | build cache cap (e.g. `50G`, default `20G`) for `warden gc` (`--max-cache-size`), `warden builds prune` (`--max-size`) and auto-gc, which runs when the cache is over it |
+| `WARDEN_PODS_CACHE` | `0` makes warden's own iOS builds run a plain `pod install` instead of the [pods cache](/docs/sims/app-builds#share-cocoapods-across-worktrees) |
 | `ANDROID_HOME`, `ANDROID_SDK_ROOT` | Android SDK location (`adb`, `emulator`); without them warden falls back to `PATH` and cannot build the Android snapshot |
 | `NO_COLOR`, `FORCE_COLOR` | output colour (a non-empty `NO_COLOR` turns it off) |
 | `WARDEN_A11Y=1` | iOS: launch apps with the injected accessibility library (hint, actions, order, announcements); same as `warden ui open --a11y`, `warden e2e --a11y` or an `a11y` key on the suite ([Accessibility](/docs/e2e/accessibility)) |
