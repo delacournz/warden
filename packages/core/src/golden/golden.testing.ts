@@ -24,6 +24,8 @@ export type FakeHost = {
 	xcodePlist: boolean;
 	/** udids whose `com.apple.Accessibility.plist` has no `AutomationEnabled` ("all": every device) */
 	automationMissing: "all" | string[];
+	/** udids whose `AutomationEnabled` is the integer 1 (how a booted simulator rewrites it), not `<true/>` */
+	automationAsInteger: string[];
 	/** udids whose Accessibility plist does not exist yet: `plutil -replace` fails until `-create` runs */
 	plistMissing: string[];
 	/** args of every `plutil -replace` / `-create` */
@@ -115,6 +117,13 @@ function plistEdit(host: FakeHost, args: string[], udid: string): ReturnType<typ
 	return host.plistMissing.includes(udid) ? fail("No such file") : ok();
 }
 
+/** `plutil -extract AutomationEnabled raw` on a fake sim: missing, `true`, or the integer 1 a booted sim rewrites it to. */
+function automationRead(host: FakeHost, udid: string): ExecResult {
+	const missing = host.automationMissing === "all" || host.automationMissing.includes(udid);
+	if (missing) return fail("Could not extract value, error: No value at that key path");
+	return ok(host.automationAsInteger.includes(udid) ? "1\n" : "true\n");
+}
+
 function hostTools(host: FakeHost): Record<string, Handler> {
 	const polls = new Map<string, number>();
 	let cpuIndex = 0;
@@ -127,10 +136,7 @@ function hostTools(host: FakeHost): Record<string, Handler> {
 			const udid = /Devices\/([^/]+)\/data/.exec(args[args.length - 1] ?? "")?.[1] ?? "";
 			const edit = plistEdit(host, args, udid);
 			if (edit) return edit;
-			if (args.includes("AutomationEnabled")) {
-				const missing = host.automationMissing === "all" || host.automationMissing.includes(udid);
-				return missing ? fail("Could not extract value, error: No value at that key path") : ok("true\n");
-			}
+			if (args.includes("AutomationEnabled")) return automationRead(host, udid);
 			const seen = (polls.get(udid) ?? 0) + 1;
 			polls.set(udid, seen);
 			return seen > host.migrationPolls
@@ -151,7 +157,10 @@ function hostTools(host: FakeHost): Record<string, Handler> {
 /** Stateful fake of `xcrun simctl`, `xcodebuild`, `plutil`, `launchctl`, `ps` for golden tests. */
 export function fakeHost(
 	init: Partial<
-		Pick<FakeHost, "sims" | "migrationPolls" | "cpu" | "xcodePlist" | "automationMissing" | "plistMissing">
+		Pick<
+			FakeHost,
+			"sims" | "migrationPolls" | "cpu" | "xcodePlist" | "automationMissing" | "automationAsInteger" | "plistMissing"
+		>
 	> = {}
 ): FakeHost {
 	let next = 1;
@@ -162,6 +171,7 @@ export function fakeHost(
 		cpu: init.cpu ?? [10],
 		xcodePlist: init.xcodePlist ?? true,
 		automationMissing: init.automationMissing ?? [],
+		automationAsInteger: init.automationAsInteger ?? [],
 		plistMissing: init.plistMissing ?? [],
 		plistEdits: [],
 		exec: async (cmd) => {

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { nodeResetFs, type ResetFs, resetAppData } from "@delacour/warden-core/builds/install";
 import type { LatLon, LocationCondition } from "@delacour/warden-core/conditions/conditions.types";
 import { type Exec, type ExecResult, execError } from "@delacour/warden-core/exec";
+import { plistBool } from "@delacour/warden-core/plist";
 import { formatCoord } from "../../conditions/geo";
 import { loadGpxPoints } from "../../conditions/location-plan";
 import { IOS_SCENARIO_NAMES } from "../../conditions/location-scenarios.data";
@@ -154,7 +155,7 @@ export const defaultDevicesRoot = (): string => join(homedir(), "Library", "Deve
 export const automationPlistPath = (devicesRoot: string, udid: string): string =>
 	join(devicesRoot, udid, "data", "Library", "Preferences", "com.apple.Accessibility.plist");
 
-/** `plutil -extract AutomationEnabled raw -o - <plist>` prints `true` once the default is written. */
+/** `plutil -extract AutomationEnabled raw -o - <plist>` prints `true` (or `1`) once the default is written. */
 export const automationReadArgv = (plist: string): string[] => [
 	"plutil",
 	"-extract",
@@ -555,14 +556,14 @@ export function createSimctl(deps: SimctlDeps): Simctl {
 			// the default survives helper and sim restarts, so after the first open it is already there
 			const plist = automationPlistPath(deps.devicesRoot ?? defaultDevicesRoot(), udid);
 			const current = await exec(automationReadArgv(plist), { timeoutMs: PLIST_READ_MS }).catch(() => undefined);
-			if (current?.exitCode === 0 && current.stdout.trim() === "true") return ok(undefined);
+			if (current?.exitCode === 0 && plistBool(current.stdout) === true) return ok(undefined);
 			return runVoid(automationArgv(udid));
 		},
 		disableTypingAids: async () => {
 			const plist = keyboardPlistPath(deps.devicesRoot ?? defaultDevicesRoot(), udid);
 			const isOff = async (key: TypingAidKey): Promise<boolean> => {
 				const read = await exec(plistBoolReadArgv(plist, key), { timeoutMs: PLIST_READ_MS }).catch(() => undefined);
-				return read?.exitCode === 0 && read.stdout.trim() === "false";
+				return read?.exitCode === 0 && plistBool(read.stdout) === false;
 			};
 			const off = await Promise.all(TYPING_AID_KEYS.map(isOff));
 			const on = TYPING_AID_KEYS.filter((_, i) => !off[i]);

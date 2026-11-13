@@ -381,6 +381,21 @@ describe("createSimctl", () => {
 		expect(joined(h.calls).some((line) => line.includes("xcrun"))).toBe(false);
 	});
 
+	test("enableAutomation spawns nothing when the plist holds the integer 1 (how the sim stores it)", async () => {
+		const h = harness([["plutil", { stdout: "1\n" }]]);
+		expect((await h.simctl.enableAutomation()).success).toBe(true);
+		expect(joined(h.calls).some((line) => line.includes("xcrun"))).toBe(false);
+	});
+
+	test("a plist that holds the integer 0 still gets the write", async () => {
+		const h = harness([
+			["plutil", { stdout: "0\n" }],
+			["xcrun simctl spawn", {}],
+		]);
+		await h.simctl.enableAutomation();
+		expect(joined(h.calls).some((line) => line.includes("AutomationEnabled -bool true"))).toBe(true);
+	});
+
 	test("a plist that says false still gets the write", async () => {
 		const h = harness([
 			["plutil", { stdout: "false\n" }],
@@ -414,6 +429,12 @@ describe("createSimctl", () => {
 		expect(writes.some((line) => line.includes("KeyboardAutocorrection"))).toBe(false);
 		expect(writes.some((line) => line.includes("KeyboardPrediction -bool NO"))).toBe(true);
 		expect(writes.some((line) => line.includes("KeyboardCheckSpelling -bool NO"))).toBe(true);
+	});
+
+	test("disableTypingAids counts a key stored as the integer 0 as off", async () => {
+		const h = harness([["plutil", { stdout: "0\n" }]]);
+		await h.simctl.disableTypingAids();
+		expect(joined(h.calls).some((line) => line.startsWith("xcrun"))).toBe(false);
 	});
 
 	test("disableTypingAids spawns nothing in the sim when every key is already off", async () => {
