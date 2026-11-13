@@ -1,0 +1,71 @@
+---
+title: JSON output
+description: The versioned --json contract, schemaVersion rules and the published JSON Schemas.
+icon: Braces
+---
+
+Every `warden` command takes `--json`: stdout holds exactly one JSON document, and everything else goes to stderr. The outputs below are versioned contracts. Each object carries `schemaVersion`, and each has a JSON Schema (draft 2020-12) you can validate against.
+
+## schemaVersion rules
+
+- `schemaVersion` is an integer at the top level of every versioned object.
+- It only goes up for a breaking change: a field removed, renamed or given another type. A new optional field is not a breaking change, so the version stays and old readers keep working.
+- When a version goes up, the old schema stays published beside the new one.
+- A top-level array is never wrapped in an object to carry the field. Its version lives in the [index](https://warden.co.nz/schemas/index.json) only.
+- `results.jsonl` lines carry no `schemaVersion`. The spec runtime that writes them ships apart from the CLI, so the index holds their version.
+
+## The `warden ui` envelope
+
+Every `warden ui <verb> --json` prints one envelope. The verb's own fields are under `result`:
+
+```json
+{
+  "ok": true,
+  "schemaVersion": 1,
+  "command": "press",
+  "device": { "udid": "0A1B…", "platform": "ios", "name": "warden-iphone-17-1" },
+  "generation": 4,
+  "durationMs": 212,
+  "result": { "action": "press", "target": { "ref": "@e3", "point": { "x": 195, "y": 410 } } },
+  "warnings": []
+}
+```
+
+A failure is `{"ok":false,"schemaVersion":1,"command":"press","device":{…},"error":{"code":"stale_ref","message":"…","hint":"…"}}`. The exit code maps from `error.code` (`stale_ref` → 4, `device_not_leased` → 2, …). `warden ui is` prints the same document whether the answer is true (exit 0) or false (exit 1).
+
+## Any other failure
+
+A failed `--json` run that printed nothing of its own prints the failure envelope:
+
+```json
+{ "ok": false, "schemaVersion": 1, "command": "claim", "error": { "code": "NO_DEVICE", "message": "…", "hint": "…" } }
+```
+
+`code` is `usage` (an unknown option, a missing argument), `failed`, `ambiguous_device`, `device_locked`, or a claim error (`NO_DEVICE`, `NO_CAPACITY` with `capacityReason`, `QUEUE_TIMEOUT`, …). The exit code is unchanged.
+
+## Published schemas
+
+| Command | Schema | Output |
+|---|---|---|
+| any failure | [`warden.failure`](https://warden.co.nz/schemas/warden.failure/1.json) | stdout |
+| `warden claim` | [`warden.claim`](https://warden.co.nz/schemas/warden.claim/1.json) | stdout |
+| `warden release` | [`warden.release`](https://warden.co.nz/schemas/warden.release/1.json) | stdout |
+| `warden ui snapshot` | [`warden.ui.snapshot`](https://warden.co.nz/schemas/warden.ui.snapshot/1.json) | stdout |
+| `warden ui press` / `tap` | [`warden.ui.press`](https://warden.co.nz/schemas/warden.ui.press/1.json) · [`warden.ui.tap`](https://warden.co.nz/schemas/warden.ui.tap/1.json) | stdout |
+| `warden ui fill` | [`warden.ui.fill`](https://warden.co.nz/schemas/warden.ui.fill/1.json) | stdout |
+| `warden ui wait` | [`warden.ui.wait`](https://warden.co.nz/schemas/warden.ui.wait/1.json) | stdout |
+| `warden ui is` | [`warden.ui.is`](https://warden.co.nz/schemas/warden.ui.is/1.json) | stdout |
+| `warden ui get` | [`warden.ui.get`](https://warden.co.nz/schemas/warden.ui.get/1.json) | stdout |
+| `warden ui open` | [`warden.ui.open`](https://warden.co.nz/schemas/warden.ui.open/1.json) | stdout |
+| `warden ui close` | [`warden.ui.close`](https://warden.co.nz/schemas/warden.ui.close/1.json) | stdout |
+| `warden e2e --json` | [`warden.e2e.report`](https://warden.co.nz/schemas/warden.e2e.report/1.json) | stdout, and `<batchDir>/e2e-report.json` |
+| `warden e2e --json-lines` | [`warden.e2e.event`](https://warden.co.nz/schemas/warden.e2e.event/1.json) | one event per line |
+| e2e attempt results | [`warden.e2e.result`](https://warden.co.nz/schemas/warden.e2e.result/1.json) | `<attempt>/results.jsonl` |
+| `warden app ensure` | [`warden.app.ensure`](https://warden.co.nz/schemas/warden.app.ensure/1.json) | stdout |
+| `warden dev --json` | [`warden.dev`](https://warden.co.nz/schemas/warden.dev/1.json) | first stdout line |
+
+The URL pattern is `https://warden.co.nz/schemas/<schema>/<version>.json`. [`index.json`](https://warden.co.nz/schemas/index.json) lists every contract with its command and output. The other commands' `--json` output is not versioned yet; its shape can change in a minor release.
+
+## Validate a document
+
+Any JSON Schema draft 2020-12 validator takes these files. Each schema rejects a field it does not list, so a validator also catches a reader that drifted from the contract.
