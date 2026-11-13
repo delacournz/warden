@@ -1,9 +1,16 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { bunExec, type Exec, type ExecResult } from "./exec";
-import { createGitFactsCache, type GitSyncRun, readGitFacts, readGitFactsSync } from "./git-facts";
+import {
+	bunGitSync,
+	createGitFactsCache,
+	type GitSyncRun,
+	readGitFacts,
+	readGitFactsFromDisk,
+	readGitFactsSync,
+} from "./git-facts";
 
 const COMBINED = "git rev-parse --show-toplevel --git-common-dir --symbolic-full-name HEAD";
 
@@ -262,5 +269,88 @@ describe("against real git", () => {
 		} finally {
 			rmSync(plain, { recursive: true, force: true });
 		}
+	});
+});
+
+describe("read from disk (no git spawn)", () => {
+	const git = (cwd: string, ...args: string[]) =>
+		bunExec(["git", "-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false", ...args], { cwd });
+	/** What git itself answers, with the disk path off. */
+	const viaGit = (cwd: string) =>
+		readGitFactsSync(cwd, { cache: createGitFactsCache(), fromDisk: false, run: bunGitSync });
+	/** A sync read that records every git spawn. */
+	const spied = (cwd: string, env: Record<string, string | undefined> = {}) => {
+		const spawns: string[] = [];
+		const run: GitSyncRun = (dir, args) => {
+			spawns.push(args.join(" "));
+			return bunGitSync(dir, args);
+		};
+		return { facts: readGitFactsSync(cwd, { cache: createGitFactsCache(), run, env }), spawns };
+	};
+
+	async function withRepos(body: (root: string) => Promise<void>): Promise<void> {
+		const root = realpathSync(mkdtempSync(join(tmpdir(), "warden-git-disk-")));
+		try {
+			await git(root, "init", "-q", "-b", "trunk", "main");
+			await body(root);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	}
+
+	test("same facts as git: root, subdir, linked worktree, unborn, detached", async () => {
+		await withRepos(async (root) => {
+			const main = join(root, "main");
+			mkdirSync(join(main, "a", "b"), { recursive: true });
+			expect(readGitFactsFromDisk(main, {})).toEqual(viaGit(main));
+			await git(main, "commit", "-q", "--allow-empty", "-m", "first");
+			await git(main, "worktree", "add", "-q", join(root, "wt"), "-b", "feature/x");
+			mkdirSync(join(root, "wt", "src"));
+			for (const cwd of [main, join(main, "a", "b"), join(root, "wt"), join(root, "wt", "src")]) {
+				expect(readGitFactsFromDisk(cwd, {})).toEqual(viaGit(cwd));
+			}
+			expect(readGitFactsFromDisk(join(root, "wt"), {})).toMatchObject({
+				commonDir: join(main, ".git"),
+				branch: "feature/x",
+			});
+			await git(main, "checkout", "-q", "--detach");
+			expect(readGitFactsFromDisk(main, {})).toEqual(viaGit(main));
+			expect(readGitFactsFromDisk(main, {})?.branch).toBe("");
+		});
+	});
+
+	test("a symlinked cwd reads as its real checkout, like git's toplevel", async () => {
+		await withRepos(async (root) => {
+			symlinkSync(join(root, "main"), join(root, "link"));
+			expect(readGitFactsFromDisk(join(root, "link"), {})).toMatchObject({
+				toplevel: join(root, "main"),
+				commonDir: join(root, "main", ".git"),
+			});
+		});
+	});
+
+	test("a checkout is read without spawning git", async () => {
+		await withRepos(async (root) => {
+			const { facts, spawns } = spied(join(root, "main"));
+			expect(facts).toMatchObject({ toplevel: join(root, "main"), branch: "trunk" });
+			expect(spawns).toEqual([]);
+		});
+	});
+
+	test("anything unusual is left to git: inside .git, GIT_* env, core.worktree, a plain directory", async () => {
+		await withRepos(async (root) => {
+			const main = join(root, "main");
+			expect(readGitFactsFromDisk(join(main, ".git"), {})).toBeUndefined();
+			expect(readGitFactsFromDisk(main, { GIT_DIR: join(main, ".git") })).toBeUndefined();
+			expect(readGitFactsFromDisk(main, { GIT_CEILING_DIRECTORIES: root })).toBeUndefined();
+			expect(spied(join(main, ".git")).spawns).not.toEqual([]);
+			expect(spied(root).spawns).not.toEqual([]);
+			await git(main, "config", "core.worktree", main);
+			expect(readGitFactsFromDisk(main, {})).toBeUndefined();
+		});
+	});
+
+	test("a missing directory is left to git", () => {
+		expect(readGitFactsFromDisk("/nonexistent-warden-git-facts", {})).toBeUndefined();
 	});
 });

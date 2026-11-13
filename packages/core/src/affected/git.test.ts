@@ -86,13 +86,12 @@ describe("changedFiles git spawns", () => {
 		return { spawns, exec };
 	}
 
-	test("a cold cache costs one rev-parse (the facts), then merge-base, diff and ls-files", async () => {
+	test("a cold cache reads the facts from disk, then spawns merge-base, diff and ls-files", async () => {
 		const { spawns, exec } = counting();
 		const res = await changedFiles(exec, dir, "main", createGitFactsCache());
 		if (!res.success) throw new Error(res.error);
 		expect(res.data.top).toBe(dir);
-		expect(spawns.map((s) => s.split(" ")[0])).toEqual(["rev-parse", "merge-base", "diff", "ls-files"]);
-		expect(spawns[0]).toBe("rev-parse --show-toplevel --git-common-dir --symbolic-full-name HEAD");
+		expect(spawns.map((s) => s.split(" ")[0])).toEqual(["merge-base", "diff", "ls-files"]);
 	});
 
 	test("facts a caller already read are not asked for again", async () => {
