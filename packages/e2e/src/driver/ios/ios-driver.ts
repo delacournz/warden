@@ -1271,21 +1271,30 @@ function iosNetworkFactory(
 				bundleId: ctx.lastBundle,
 				...(o.injectFs ? { fs: o.injectFs } : {}),
 			}),
-			dylib: () =>
-				locateInjectDylib({
-					env: { [INJECT_DYLIB_ENV]: process.env[INJECT_DYLIB_ENV], WARDEN_HELPER_DIR: o.env?.helperDir },
-					execPath: o.execPath ?? process.execPath,
-					importDir: o.importDir ?? import.meta.dir,
-					wardenHome,
-					exists: o.exists ?? existsSync,
-					realpath: o.realpath ?? realpathSync,
-					...(o.version ? { version: o.version } : {}),
-				}),
+			dylib: () => injectDylibFor(o),
 			isRunning: (bundleId) => simctl.isRunning(bundleId),
 			lastBundle: ctx.lastBundle,
 			relaunch: ctx.relaunch,
 			...(o.debug ? { debug: true } : {}),
 		});
+}
+
+/**
+ * `libwarden-inject.dylib` for `o`. The version falls back to `WARDEN_VERSION` like `locateHelper` does: a spec process
+ * run by a source warden has bun as its `execPath`, so only the version names the helper dir `warden doctor
+ * --fetch-helper` filled; without it every app launched without the dylib and `device.keyboard` did nothing.
+ */
+export function injectDylibFor(o: OpenIosDriverOptions): Result<string, DriverError> {
+	const version = o.version ?? o.env?.wardenVersion;
+	return locateInjectDylib({
+		env: { [INJECT_DYLIB_ENV]: process.env[INJECT_DYLIB_ENV], WARDEN_HELPER_DIR: o.env?.helperDir },
+		execPath: o.execPath ?? process.execPath,
+		importDir: o.importDir ?? import.meta.dir,
+		wardenHome: o.wardenHome ?? resolveWardenHome(),
+		exists: o.exists ?? existsSync,
+		realpath: o.realpath ?? realpathSync,
+		...(version ? { version } : {}),
+	});
 }
 
 /** The keyboard mode layer of `o`: its own handle on the device's state file. */
@@ -1299,16 +1308,7 @@ function iosKeyboardFor(o: OpenIosDriverOptions, now: () => number, sleep: (ms: 
 			...(o.bundleId ? { bundleId: () => o.bundleId } : {}),
 			...(o.injectFs ? { fs: o.injectFs } : {}),
 		}),
-		dylib: () =>
-			locateInjectDylib({
-				env: { [INJECT_DYLIB_ENV]: process.env[INJECT_DYLIB_ENV], WARDEN_HELPER_DIR: o.env?.helperDir },
-				execPath: o.execPath ?? process.execPath,
-				importDir: o.importDir ?? import.meta.dir,
-				wardenHome,
-				exists: o.exists ?? existsSync,
-				realpath: o.realpath ?? realpathSync,
-				...(o.version ? { version: o.version } : {}),
-			}),
+		dylib: () => injectDylibFor(o),
 		...(o.debug ? { debug: true } : {}),
 	});
 }
@@ -1325,16 +1325,7 @@ function iosA11yFor(o: OpenIosDriverOptions, now: () => number, sleep: (ms: numb
 			...(o.injectFs ? { fs: o.injectFs } : {}),
 		}),
 		...(o.injectFs ? { fs: o.injectFs } : {}),
-		dylib: () =>
-			locateInjectDylib({
-				env: { [INJECT_DYLIB_ENV]: process.env[INJECT_DYLIB_ENV], WARDEN_HELPER_DIR: o.env?.helperDir },
-				execPath: o.execPath ?? process.execPath,
-				importDir: o.importDir ?? import.meta.dir,
-				wardenHome,
-				exists: o.exists ?? existsSync,
-				realpath: o.realpath ?? realpathSync,
-				...(o.version ? { version: o.version } : {}),
-			}),
+		dylib: () => injectDylibFor(o),
 		requested: () => o.a11y ?? process.env.WARDEN_A11Y === "1",
 		...(o.debug ? { debug: true } : {}),
 	});

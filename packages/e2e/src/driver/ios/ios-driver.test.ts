@@ -17,6 +17,7 @@ import {
 	BRIDGE_COLD_DEADLINE_MS,
 	COLD_READ_TIMEOUT_MS,
 	coldReadTimeoutMs,
+	injectDylibFor,
 	KEY_USAGE,
 	type OpenIosDriverOptions,
 	openIosDriver,
@@ -2362,5 +2363,35 @@ describe("socket that does not answer (20-1)", () => {
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}
+	});
+});
+
+describe("injectDylibFor", () => {
+	const fetched = "/w/simd/9.9.9/libwarden-inject.dylib";
+	const base = {
+		udid: UDID,
+		exec: fakeExec([]),
+		execPath: "/usr/local/bin/bun",
+		importDir: "/nowhere/src/driver/ios",
+		wardenHome: "/w",
+		exists: (path: string) => path === fetched,
+	};
+
+	test("finds the dylib `warden doctor --fetch-helper` staged under $WARDEN_HOME/simd/<WARDEN_VERSION>", () => {
+		// a spec process run by a source warden: execPath is bun, so only the version names the fetched helper dir
+		const found = injectDylibFor({
+			...base,
+			env: { simd: undefined, simdSocket: undefined, helperDir: undefined, wardenVersion: "9.9.9" },
+		});
+		expect(found).toEqual({ success: true, data: fetched });
+	});
+
+	test("an explicit version still wins over WARDEN_VERSION", () => {
+		const found = injectDylibFor({
+			...base,
+			version: "1.0.0",
+			env: { simd: undefined, simdSocket: undefined, helperDir: undefined, wardenVersion: "9.9.9" },
+		});
+		expect(found.success).toBe(false);
 	});
 });
