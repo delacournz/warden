@@ -193,6 +193,18 @@ export const MIGRATIONS: readonly string[] = [
 		PRIMARY KEY (owner_key, key)
 	);
 	CREATE INDEX claim_keys_claim ON claim_keys(claim_id);`,
+	`CREATE TABLE pods_cache (
+		key TEXT PRIMARY KEY,
+		mode TEXT NOT NULL,
+		root TEXT NOT NULL,
+		project_rel TEXT NOT NULL,
+		size_bytes INTEGER NOT NULL,
+		created_at INTEGER NOT NULL,
+		last_used_at INTEGER NOT NULL,
+		pod_version TEXT NOT NULL,
+		xcode_version TEXT NOT NULL
+	);
+	CREATE INDEX pods_cache_last_used ON pods_cache(last_used_at);`,
 ];
 
 /** A queued claim that has not refreshed within this long is dead (its waiter polls every few seconds). */
