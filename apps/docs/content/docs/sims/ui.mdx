@@ -62,7 +62,7 @@ A line is `@ref [role] "name" id=<testID> value="…" placeholder="…" <states>
 
 | Command | Use |
 |---|---|
-| `snapshot [-i\|--interactive] [--all] [--depth n] [--a11y]` | the screen. `-i` filters to interactive elements and `testID`s; the default caps at 200 lines (`--all` removes the cap); `--depth n` keeps the first `n` levels; `--a11y` adds `hint`, `actions`, `a11y-focused`, `not-important` and `live` per line ([Accessibility](/docs/e2e/accessibility)) |
+| `snapshot [-i\|--interactive] [--keys] [--all] [--depth n] [--a11y]` | the screen. `-i` filters to interactive elements and `testID`s (and leaves out 0×0 elements that are neither hittable nor carry a `testID`); with the iOS keyboard up it prints one `@eN [keyboard] return="go" visible (0,546 402×328) 33 keys (--keys)` line instead of every key, where `@eN` is the return key (`press @eN` presses it); `--keys` lists the keys again; the default caps at 200 lines (`--all` removes the cap); `--depth n` keeps the first `n` levels; `--a11y` adds `hint`, `actions`, `a11y-focused`, `not-important` and `live` per line ([Accessibility](/docs/e2e/accessibility)) |
 | `snapshot --settle [ms]` | wait for a quiet screen (the tree hash is unchanged for 500 ms, so a navigation push is never caught mid-transition; default budget 3000 ms), then print what changed against the previous snapshot as `-` / `+` lines and a `= N unchanged` count |
 | `find <selector…>` | only the elements matching a [selector](#targets-and-selectors), each with a fresh `@eN` |
 | `screen screenshot [path]` | a PNG; default `$WARDEN_HOME/ui/<udid>/shots/NNN.png` |
@@ -74,7 +74,7 @@ A line is `@ref [role] "name" id=<testID> value="…" placeholder="…" <states>
 
 Actions take a **target**: an `@eN` ref, a selector, or screen coordinates `x y` (points). Coordinates are for canvas content with no accessibility node; everything else should be a selector.
 
-**Refs.** `@eN` comes from the latest snapshot of this device. A ref older than 30 s, or any ref with `--verify`, is re-checked against a fresh snapshot first (same id, else same role and name, else same position in the tree). When the element is no longer there the call fails with `stale_ref` (exit 4): take a new snapshot.
+**Refs.** `@eN` comes from the latest snapshot of this device. Once anything has been sent to the device since that snapshot (a press, a fill that brought the keyboard up, a scroll), a ref is re-checked before it is used: on iOS one hit-test at its old position (about 10 ms), otherwise a fresh snapshot that finds it by id, else by role and name, and the press lands on its current frame. A ref older than 30 s, or any ref with `--verify`, is re-checked against a fresh snapshot first (same id, else same role and name, else same position in the tree). When the element is no longer there, now matches more or fewer elements than before, or sits under the keyboard, the call fails with `stale_ref` (exit 4) and nothing is tapped: take a new snapshot.
 
 **Selectors** are `key=value` words joined by spaces:
 

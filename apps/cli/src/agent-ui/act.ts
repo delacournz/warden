@@ -11,7 +11,7 @@ import { appendRecorded, attachEvidence, evidenceOf, type RecordStep, type Recor
 import type { UiOptionValues, UiRunEnv } from "./run";
 import { settleLines, type TakenSnapshot, takeSnapshot } from "./snapshot";
 import { positiveInt } from "./snapshot-command";
-import { readLastSnapshot } from "./state";
+import { readInputs, readLastSnapshot } from "./state";
 import { parseTarget, type ResolvedTarget, resolveTarget, type Target } from "./target";
 
 /** Options of every action that can wait for the screen to settle afterwards. */
@@ -158,7 +158,13 @@ export async function pointAt(
 	target: Target,
 	verify: boolean
 ): Promise<Result<ResolvedTarget, UiError>> {
-	return resolveTarget(target, { lastSnapshot: readLastSnapshot(ctx, udid), now: ctx.now(), verify, driver });
+	return resolveTarget(target, {
+		lastSnapshot: readLastSnapshot(ctx, udid),
+		inputs: readInputs(ctx, udid),
+		now: ctx.now(),
+		verify,
+		driver,
+	});
 }
 
 /** How a resolved target is reported: `ref`, the selector text, the screen point. */

@@ -29,6 +29,8 @@ export const elementSchema = z.strictObject({
 	frame: rectSchema,
 	a11y: elementA11ySchema.optional(),
 	noId: z.literal(true).optional(),
+	/** `snapshot -i` without `--keys`: the on-screen keyboard folded into this one element (`role: "keyboard"`), the keys it leaves out */
+	keys: z.number().optional(),
 });
 
 const diffEntrySchema = z.strictObject({ kind: z.enum(["+", "-"]), line: z.string(), ref: z.string().optional() });

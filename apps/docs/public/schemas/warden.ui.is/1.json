@@ -155,6 +155,9 @@
 								"noId": {
 									"type": "boolean",
 									"const": true
+								},
+								"keys": {
+									"type": "number"
 								}
 							},
 							"required": [

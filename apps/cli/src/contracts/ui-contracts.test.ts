@@ -44,6 +44,34 @@ describe("warden ui --json contracts", () => {
 		expect(await h.run("wait", "text", "ada@example.com", "--timeout", "50", "--json")).not.toBe(0);
 	});
 
+	test("snapshot -i with the on-screen keyboard folded into one element", async () => {
+		const h = harness([
+			snapshotOf([
+				el("window", {
+					children: [
+						el("textfield", { label: "Email", id: "email", hittable: true, focused: true }),
+						el("keyboard", {
+							id: "inputView",
+							frame: { x: 0, y: 573, width: 390, height: 271 },
+							children: [
+								el("button", { label: "q", hittable: true, frame: { x: 5, y: 597, width: 39, height: 54 } }),
+								el("button", {
+									label: "go",
+									id: "Go",
+									hittable: true,
+									frame: { x: 301, y: 759, width: 89, height: 54 },
+								}),
+							],
+						}),
+					],
+				}),
+			]),
+		]);
+		expect(await h.run("snapshot", "-i", "--json")).toBe(0);
+		expectContract("warden.ui.snapshot", doc(h.c), { name: "keyboard" });
+		expect(doc(h.c).result.elements.at(-1)).toMatchObject({ role: "keyboard", name: "go", keys: 2 });
+	});
+
 	test("press by ref and by selector with --settle", async () => {
 		const h = harness([snapshotOf(LOGIN)]);
 		expect(await h.run("snapshot", "-i", "--json")).toBe(0);
