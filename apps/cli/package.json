@@ -1,6 +1,6 @@
 {
 	"name": "@delacour/warden",
-	"version": "0.16.0",
+	"version": "0.17.0",
 	"description": "AI agent toolkit for React Native and Expo: every coding agent gets its own iOS simulator or Android emulator to drive, debug, profile and E2E test the app, with devices, ports and app builds leased machine-wide",
 	"homepage": "https://warden.co.nz",
 	"license": "MIT",

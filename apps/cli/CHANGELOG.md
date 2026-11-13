@@ -1,5 +1,74 @@
 # @delacour/warden
 
+## 0.17.0
+
+### Minor Changes
+
+- [#264](https://github.com/delacournz/warden/pull/264) [`97a9732`](https://github.com/delacournz/warden/commit/97a9732a25b70c2298b97cfa2a8fb74592bc7b7f) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - New `warden e2e --build-only`: builds (or finds) the app the run would install into the cache, with the same suite, specs, kind, variant and bundle env, then stops before any device or spec. Exit 1 when the build fails; `--json` prints `{suite, platform, app}` (`app: null` when the suite installs no app). Not with `--dry-run`
+  - The `delacournz/warden/.github/actions/e2e` action builds the app with it in a step of its own before the suite, so `suite-timeout-minutes` times the specs only: a cold native build no longer runs the suite out of time. A failed build skips the suite. The `job timing` line adds an `app build` span
+
+- [#269](https://github.com/delacournz/warden/pull/269) [`f7c0836`](https://github.com/delacournz/warden/commit/f7c0836f30c7be7da88c00175d8561684ed49043) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - New `@delacour/warden/expo-build-cache`: set `buildCacheProvider: { plugin: "@delacour/warden/expo-build-cache" }` in the app config and plain `expo run:ios` (Debug, simulator) reuses the dev build in warden's cache instead of running `xcodebuild`, and files its own build there after a miss. Projects with a variant, a custom build command or `native+js` fingerprinting, Release runs, device runs and Android are left to Expo
+  - New `warden builds path <ios|android> [--kind dev] [--hash <fp>] [--json]` prints where the cached dev build is without building or downloading anything; exit 2 when nothing is cached
+  - `warden builds import <App.app> --kind dev [--hash <fp>[:dev]]` files a Debug simulator `.app` as the project's dev build, the one `warden dev` and `warden app ensure --kind dev` share
+
+- [#262](https://github.com/delacournz/warden/pull/262) [`c38e09a`](https://github.com/delacournz/warden/commit/c38e09a2e10201ccb865afe0703a78cf305a9699) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - `warden init --platform ios|android` writes the e2e suite's platform (default `ios`); an Android suite needs an Android package, so pass `--bundle-id` when `app.json` has none. A bad value is an error.
+  - `warden init` prints the `@delacour/warden-e2e` install for the project's package manager (`bun add -d`, `pnpm add -D`, `yarn add -D` or `npm install -D`, from the lockfile; bun without one).
+  - `warden init` ends with the next steps in order, and the starter spec explains `launch: "none"` and `systemAlerts: "dismiss"`.
+
+- [#266](https://github.com/delacournz/warden/pull/266) [`6845940`](https://github.com/delacournz/warden/commit/6845940466767f7f2e9e1a95391ecc15bbf5a77f) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - iOS Simulators driven by warden (`warden e2e`, `warden ui`) have autocorrect, predictive text and spell check turned off, so text a spec types reads back as typed: a fresh simulator could autocorrect `Buy` + ` milk` to `But milk`. Autocapitalization is left on.
+
+- [#267](https://github.com/delacournz/warden/pull/267) [`d49016b`](https://github.com/delacournz/warden/commit/d49016bd8b7f276944a9b3fe70dae87bbe54f660) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - `--json` output now carries `schemaVersion` on `warden claim`, `warden release`, `warden dev`, `warden app ensure`, `warden e2e` (the report, every `--json-lines` event and `e2e-report.json`), the `warden ui` envelope and every failure envelope. It goes up only for a breaking change.
+  - JSON Schemas for those outputs are published at `https://warden.co.nz/schemas/<schema>/<version>.json`, with `index.json` listing each one, the command that prints it and where. `warden ui snapshot`, `press`, `tap`, `fill`, `wait`, `is`, `get`, `open` and `close` each have one for their `result`.
+
+- [#268](https://github.com/delacournz/warden/pull/268) [`e47d14f`](https://github.com/delacournz/warden/commit/e47d14f82fb209615a67f8090b63f85217384b1e) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - New `warden pods install [--project-directory <dir>] [--no-cache] [-- <pod args>]`: `pod install` through a machine-wide cache. The same pods anywhere on the Mac restore into a new worktree by APFS clone in seconds with almost no extra disk (Expo: prebuild is skipped too). `--json` prints a `warden.pods.install` document.
+  - New `warden pods ls`, `warden pods rm <key…>` and `warden pods prune [--max-size 10G] [--older-than 30d]` manage the cache.
+  - warden's own iOS builds restore cached pods; `WARDEN_PODS_CACHE=0` opts out.
+  - `warden gc` prunes pods cache entries unused for 30 days.
+
+- [#271](https://github.com/delacournz/warden/pull/271) [`5e5eda6`](https://github.com/delacournz/warden/commit/5e5eda6fcdada0d2815f731fe0ee7cdf62b5d32d) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - `warden ui snapshot -i` folds the iOS on-screen keyboard into one line, `@eN [keyboard] return="go" visible (x,y w×h) N keys (--keys)`, instead of ~40 key lines. The ref is the return key's, so `press @eN` presses go/next/return. In `--json` it is one element with `role: "keyboard"`, the return key's `name` and a new optional `keys` count.
+  - New `--keys` flag on `warden ui snapshot`: with `-i`, lists every key again. A snapshot without `-i` is unchanged.
+  - `snapshot -i` and spec failure excerpts leave out 0×0 elements that are neither hittable nor carry a testID (the keyboard's `Padding-*` buttons).
+
+### Patch Changes
+
+- [#273](https://github.com/delacournz/warden/pull/273) [`b666166`](https://github.com/delacournz/warden/commit/b6661665de428f14541d52678aca913ec6007378) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - Android: an edit field holding exactly its hint's text now reads as filled, not empty: `warden ui snapshot` prints its `value=`, `get … value` and the spec matchers return the text. The on-device server now says whether a field shows its hint, so an empty field and a filled one are told apart exactly; with no answer (the `uiautomator dump` fallback, an older server) the field still reads as empty when its text equals the hint.
+
+- [#266](https://github.com/delacournz/warden/pull/266) [`6845940`](https://github.com/delacournz/warden/commit/6845940466767f7f2e9e1a95391ecc15bbf5a77f) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - `device.perf` works in specs run by an installed `warden` binary: the `warden perf` it starts no longer runs as bun and fails with `error: Script not found "perf"`.
+
+- [#260](https://github.com/delacournz/warden/pull/260) [`bb3aab6`](https://github.com/delacournz/warden/commit/bb3aab68ffc5deaddf8787405d3fe01c55f0faf9) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - The e2e action runs `warden doctor` after it installs ccache, so a native build cache miss no longer warns that ccache is not on PATH.
+
+- [#266](https://github.com/delacournz/warden/pull/266) [`6845940`](https://github.com/delacournz/warden/commit/6845940466767f7f2e9e1a95391ecc15bbf5a77f) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - iOS specs find warden's injected library in the helper directory `warden doctor --fetch-helper` fills (`$WARDEN_HOME/simd/<version>`) when warden runs from source, so `device.keyboard`, network and clock conditions and the screen-reader reads work there instead of silently doing nothing.
+
+- [#274](https://github.com/delacournz/warden/pull/274) [`755869e`](https://github.com/delacournz/warden/commit/755869e0fc0774f90bae63eefa1442bc6ca2e055) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - iOS `warden ui fill` and the spec `fill` type the first attempt at quick key pacing when the field is read back afterwards, and retype at the normal pacing if it does not match: on the example app a 15-character email fills in ~0.6 s instead of ~0.85 s and 60 characters in ~1.3 s instead of ~2.5 s. Secure fields, `--secure`, `--no-verify`, `type` and `clear` keep the normal pacing. Setting any `WARDEN_SIMD_PACE_MS` / `WARDEN_SIMD_HOLD_MS` / `WARDEN_SIMD_REPEAT_GAP_MS` / `WARDEN_SIMD_LEAD_MS` turns the quick attempt off.
+  - iOS: a secure field that holds text is emptied with select-all and one Backspace, then checked to show no bullets (any left are backspaced one by one), instead of one Backspace request per bullet: re-filling a 9-character password takes ~0.8 s instead of ~1.7 s.
+
+- [#250](https://github.com/delacournz/warden/pull/250) [`dcc7a0e`](https://github.com/delacournz/warden/commit/dcc7a0e8ead75b6d189aa325846193b73fdbe94c) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - `warden mcp` exits when its client closes stdin or dies: it also stops on SIGTERM/SIGINT/SIGHUP and a broken stdout, and checks its parent every 2 s, so a killed client no longer leaves an orphaned `warden mcp` behind
+
+- [#265](https://github.com/delacournz/warden/pull/265) [`921cbfc`](https://github.com/delacournz/warden/commit/921cbfcb0a24ae7746057400c197ee261a59085e) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - iOS: a tap, swipe, drag, pinch or gesture sent in normalized (`norm`) coordinates now scales by the way the app's interface is drawn, not the way the device is turned, so it lands on a portrait-locked app on a rotated simulator and on a landscape-only app on an upright one. Point coordinates (`warden ui press`, refs, spec taps) were already right in every orientation and are unchanged.
+  - iOS: a snapshot of an app turned to landscape reports the landscape screen size, so elements on its right half are `hittable` and visible to specs (they were treated as off screen, and `tap` waited for them until it timed out).
+  - iOS: a read taken while the simulator is still rotating (`Simulator display changed during the operation`) is retryable, so `expect` and `tap` look again instead of failing at once.
+  - iOS: `warden ui screen rotate` and `device.orientation(set)` return once the rotation animation is over (about 0.7 s), so a tap right after them is no longer dropped.
+  - iOS: a hit-test on a landscape app measures the element against the landscape screen, so elements on the right half count as on screen.
+  - The warden skill says that after `screen rotate`, snapshot frames, screenshots and `press x y` are in the app's interface space and that a rotation returns once it has finished.
+
+- [#266](https://github.com/delacournz/warden/pull/266) [`6845940`](https://github.com/delacournz/warden/commit/6845940466767f7f2e9e1a95391ecc15bbf5a77f) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - The npm `warden` command works after a CI cache restores it as a copy instead of a symlink (EAS Workflows' `eas/save_cache` stores files, not links): it finds `@delacour/warden-<platform>` under `<prefix>/lib/node_modules/@delacour/warden` instead of failing with `@delacour/warden-<platform> is not installed`.
+
+- [#266](https://github.com/delacournz/warden/pull/266) [`6845940`](https://github.com/delacournz/warden/commit/6845940466767f7f2e9e1a95391ecc15bbf5a77f) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - The warden skill points agents at the new CI docs: `/docs/e2e/ci/github-actions` for the GitHub Actions composite action and `/docs/e2e/ci/eas-workflows` for running `warden e2e` on Expo Workflows with a reused EAS build.
+
+- [#270](https://github.com/delacournz/warden/pull/270) [`1cd9d23`](https://github.com/delacournz/warden/commit/1cd9d231df502f0c4c31f8caf7b24e7f999b2b9d) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - The `warden` skill teaches agents to drive `warden ui` in fewer turns: target `id=<testID>` instead of `@eN` in chains, batch known steps in one shell call with `&&`, `wait` on the destination instead of snapshotting after every step, and snapshot once at the end. It now says that a recent `@eN` taps the frame its snapshot stored (so it misses after a `fill` opens the keyboard), that a newer snapshot renumbers refs, and that `warden ui get` / `is` take a selector plus a property or state
+
+- [#273](https://github.com/delacournz/warden/pull/273) [`b666166`](https://github.com/delacournz/warden/commit/b6661665de428f14541d52678aca913ec6007378) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - `warden ui snapshot` no longer reports an empty text field's placeholder as its value: iOS and Android show the placeholder (iOS) or hint (Android) as an empty field's value, which read as filled. Text inputs now print `placeholder="…"` (and `placeholder` in `--json`), and `value=` only when the field holds something else.
+  - `warden ui get … value`, `wait text`, `text=` / `value=` selectors and the spec matchers `toHaveValue` / `toHaveText` read a field showing its placeholder as empty. A field holding exactly its placeholder's text reads the same (the platforms report it identically); `fill` with that text still confirms.
+  - iOS: React Native inputs now carry their placeholder on the default accessibility reader too (it left them out), so `getByPlaceholder` finds them. Each field costs one extra lookup (~10 ms) the first time it is seen.
+
+- [#272](https://github.com/delacournz/warden/pull/272) [`8b3c021`](https://github.com/delacournz/warden/commit/8b3c02182ea6c6765b25dd462582928d38dc035b) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - `warden ui press` / `fill` / `gesture` on an `@eN` taken before another input (a fill that brought the keyboard up, a press, a scroll) re-check the ref first and act on its current frame, instead of tapping where it used to be (which could type a key on the keyboard). On iOS an unmoved ref costs one hit-test (~10 ms); a ref that is gone, now matches more or fewer elements, or sits under the keyboard fails with `stale_ref` (exit 4) and nothing is tapped.
+
+- [#251](https://github.com/delacournz/warden/pull/251) [`2a6631b`](https://github.com/delacournz/warden/commit/2a6631bb33bd3669ce850457092101a5a6d7b054) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - iOS runner builds (`warden ui` on an iPhone, the Simulator runner behind `audit`) and local iOS device app builds write an `.xcresult` bundle; `build_failed` / `local build failed` now name the first 5 compiler or signing errors with file:line, and the bundle's path.
+  - `E_XCODEBUILD_EXITED` from the iPhone runner and `E_HELPER_CRASHED` from the Simulator runner carry the test failure message (with file:line) from the bundle instead of only the last log lines, plus the bundle path (`detail.resultBundle` on `E_HELPER_CRASHED`).
+  - Only the last 3 bundles per runner cache and device are kept; an unreadable bundle falls back to the log tail as before.
+- Updated dependencies []:
+  - @delacour/warden-e2e@0.17.0
+
 ## 0.16.0
 
 ### Minor Changes
