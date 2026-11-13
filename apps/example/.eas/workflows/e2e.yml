@@ -84,14 +84,16 @@ jobs:
           key: warden-cli-darwin-arm64-${{ steps.warden.outputs.version }}
           path: /Users/expo/.warden-cli
 
-      # The darwin-arm64 package carries the simulator helper (warden-simd) beside the binary: nothing else to fetch.
+      # The darwin-arm64 package carries the native binary with the simulator helper (warden-simd) beside it: put that
+      # dir on PATH, not npm's bin/warden link, which eas/save_cache stores as a copy that warden 0.16.0 cannot resolve.
       - name: Install warden
         run: |
-          if [ ! -x "$HOME/.warden-cli/bin/warden" ]; then
+          BIN="$HOME/.warden-cli/lib/node_modules/@delacour/warden/node_modules/@delacour/warden-darwin-arm64/bin"
+          if [ ! -x "$BIN/warden" ]; then
             npm install --global --prefix "$HOME/.warden-cli" "@delacour/warden@${{ steps.warden.outputs.version }}"
           fi
-          set-env PATH "$HOME/.warden-cli/bin:$PATH"
-          "$HOME/.warden-cli/bin/warden" --version
+          set-env PATH "$BIN:$PATH"
+          "$BIN/warden" --version
 
       - uses: eas/save_cache
         if: ${{ steps.warden_cache.outputs.cache_hit != 'true' }}

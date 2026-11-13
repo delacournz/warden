@@ -107,10 +107,11 @@ jobs:
 
       - name: Install warden
         run: |
-          if [ ! -x "$HOME/.warden-cli/bin/warden" ]; then
+          BIN="$HOME/.warden-cli/lib/node_modules/@delacour/warden/node_modules/@delacour/warden-darwin-arm64/bin"
+          if [ ! -x "$BIN/warden" ]; then
             npm install --global --prefix "$HOME/.warden-cli" "@delacour/warden@${{ steps.warden.outputs.version }}"
           fi
-          set-env PATH "$HOME/.warden-cli/bin:$PATH"
+          set-env PATH "$BIN:$PATH"
 
       - uses: eas/save_cache
         if: ${{ steps.warden_cache.outputs.cache_hit != 'true' }}
@@ -149,8 +150,9 @@ What each part does:
 | `fingerprint` → `get-build` → `build` | A build of the profile for this native fingerprint is reused; `build_ios` runs only on a miss (a native change). |
 | `after:`, not `needs:` | When a build was found, `build_ios` is skipped, and a skipped job in `needs` would skip `e2e_ios` too. `after` waits for both, and the `if` runs the job when either produced a build. |
 | warden version | The spec preload exits 2 when the CLI and `@delacour/warden-e2e` differ, so the CLI is installed at the version in `node_modules`. The file path in `require` gets past the package's `exports`. |
-| `--prefix "$HOME/.warden-cli"` + cache | One directory holds the CLI, keyed on its version, so later runs skip the download. The `darwin-arm64` package carries the simulator helper beside the binary: nothing else to fetch. |
-| `set-env PATH` | Puts `warden` on `PATH` for the later steps; an `export` in one step does not reach the next. |
+| `--prefix "$HOME/.warden-cli"` + cache | One directory holds the CLI, keyed on its version, so later runs skip the download. |
+| `BIN` = the `warden-darwin-arm64` package's `bin` | The native binary, with the simulator helper beside it: nothing else to fetch. `eas/save_cache` stores files, not symlinks, so npm's `bin/warden` link comes back as a copy that warden 0.16.0 and earlier cannot resolve; the package's own `bin` has no links. |
+| `set-env PATH` | Puts `$BIN` (so `warden`) on `PATH` for the later steps; an `export` in one step does not reach the next. |
 | `WARDEN_GOLDEN: '0'` | Each simulator is a fresh `simctl create`. A hosted worker starts empty every run, so a [golden image](/docs/sims/golden-images) would be built and thrown away. |
 | `builds import --kind simulator-base` | Files the downloaded `.app` as the simulator base, under warden's own native fingerprint. |
 | `warden e2e` | Repacks this commit's JavaScript into the imported base (seconds, logged as `simulator repack <jsKey>`), then claims a simulator, installs and runs the specs. |

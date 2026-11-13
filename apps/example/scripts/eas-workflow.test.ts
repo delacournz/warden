@@ -119,7 +119,9 @@ describe("EAS e2e workflow", () => {
 
 		const install = steps.find((step) => step.run?.includes("npm install --global"));
 		expect(install?.run).toContain(`@delacour/warden@${expr("steps.warden.outputs.version")}`);
-		expect(install?.run).toContain("set-env PATH");
+		// The native bin dir, not npm's bin/warden link: eas/save_cache restores that link as a copy.
+		expect(install?.run).toContain("@delacour/warden-darwin-arm64/bin");
+		expect(install?.run).toContain('set-env PATH "$BIN:$PATH"');
 	});
 
 	test("runs warden directly: import the EAS build, then the specs", async () => {
