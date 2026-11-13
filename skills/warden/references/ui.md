@@ -84,10 +84,13 @@ Every subcommand also takes `--no-record`: while a `record` is active, this call
 
 ```text
 generation 4 · axbridge · 393×852@3x · 5 of 41 elements
-@e1 [textbox] "Add a todo" id=todo-input value="" enabled hittable (24,118 345×48)
+@e1 [textbox] "Add a todo" id=todo-input placeholder="What needs doing?" enabled hittable (24,118 345×48)
+@e2 [textbox] "Email" id=sign-in-email value="grace@example.com" placeholder="ada@example.com" enabled hittable (21,210 360×42)
 ```
 
-Line: `@eN [role] "name" id=<testID> value="..." <states> (x,y w×h)`. States: `enabled`/`disabled`, `hittable`, `checked`/`unchecked`, `selected`, `focused`, `secure`, `hidden`, `expanded`/`collapsed`.
+Line: `@eN [role] "name" id=<testID> value="..." placeholder="..." <states> (x,y w×h)`. States: `enabled`/`disabled`, `hittable`, `checked`/`unchecked`, `selected`, `focused`, `secure`, `hidden`, `expanded`/`collapsed`.
+
+- Text inputs print `placeholder="…"` (iOS placeholder, Android hint; `placeholder` in `--json`). No `value=` = the field is empty: iOS and Android report the placeholder as an empty field's value, so warden drops a value equal to the placeholder. `get … value` prints `""`, `wait text` / `text=` never match a placeholder. On iOS a field holding exactly its placeholder's text reads as empty too (it reports it identically); `fill` still confirms it. Android is exact when warden-uiad answers (it says whether the field shows its hint): such a field prints `value=`; on the `uiautomator dump` fallback it reads as empty like iOS.
 
 - While a recording is active, `snapshot -i` appends `[no-id]` to interactive elements with no testID (`noId: true` in `--json`) and a hint. Add `testID` + `accessible` in the component, reload, `record undo`, redo by `id=`.
 - `-i` = interactive elements plus anything with a testID, minus 0×0 non-hittable elements without one. Cap 200 lines (`--all` removes it). `--depth n` = first n levels.

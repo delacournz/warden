@@ -46,6 +46,8 @@ export type ElementJson = {
 	name?: string;
 	id?: string;
 	value?: string;
+	/** a text input's placeholder (iOS) / hint (Android); a field showing it has no `value` */
+	placeholder?: string;
 	enabled: boolean;
 	hittable?: boolean;
 	selected?: boolean;
@@ -118,6 +120,9 @@ export function elementJson(entry: NodeEntry, ref: string | undefined, withA11y 
 		...(entry.name !== undefined ? { name: entry.name } : {}),
 		...(element.identifier ? { id: element.identifier } : {}),
 		...(entry.value !== undefined ? { value: entry.value } : {}),
+		...(entry.placeholder !== undefined && (entry.role === "textbox" || entry.role === "searchbox")
+			? { placeholder: entry.placeholder }
+			: {}),
 		enabled: !states.disabled,
 		...(element.hittable !== undefined ? { hittable: element.hittable } : {}),
 		...(states.selected ? { selected: true } : {}),

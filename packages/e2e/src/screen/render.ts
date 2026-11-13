@@ -98,7 +98,10 @@ export function a11yWords(entry: NodeEntry): string[] {
 	return words;
 }
 
-/** `@e3 [button] "Sign in" id=sign-in-submit value="…" enabled hittable (24,332 345×48)`; `indent` is in levels. */
+/**
+ * `@e3 [button] "Sign in" id=sign-in-submit value="…" enabled hittable (24,332 345×48)`; `indent` is in levels. A text
+ * input adds `placeholder="…"`; one showing its placeholder has no `value=` (it holds nothing).
+ */
 export function renderEntryLine(
 	entry: NodeEntry,
 	options: { ref?: string; indent?: number; a11y?: boolean } = {}
@@ -107,6 +110,9 @@ export function renderEntryLine(
 	if (options.ref !== undefined) parts.push(options.ref);
 	parts.push(...head(entry));
 	if (entry.value !== undefined) parts.push(`value=${quote(entry.value, MAX_VALUE)}`);
+	if (entry.placeholder !== undefined && (entry.role === "textbox" || entry.role === "searchbox")) {
+		parts.push(`placeholder=${quote(entry.placeholder, MAX_VALUE)}`);
+	}
 	parts.push(...stateWords(entry));
 	const { x, y, width, height } = entry.element.frame;
 	parts.push(`(${Math.round(x)},${Math.round(y)} ${Math.round(width)}×${Math.round(height)})`);

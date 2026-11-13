@@ -53,12 +53,12 @@ Between `warden ui record start <name>` and `record stop`, every action and quer
 ```text
 $ warden ui snapshot -i --udid $UDID
 generation 4 · axbridge · 393×852@3x · 5 of 41 elements
-@e1 [textbox] "Add a todo" id=todo-input value="" enabled hittable (24,118 345×48)
+@e1 [textbox] "Add a todo" id=todo-input placeholder="What needs doing?" enabled hittable (24,118 345×48)
 @e2 [button] "Add" id=todo-add enabled hittable (24,176 345×48)
 @e3 [checkbox] "Write specs" id=todo-1 unchecked enabled hittable (24,244 345×56)
 ```
 
-A line is `@ref [role] "name" id=<testID> value="…" <states> (x,y w×h)`. States are `enabled`/`disabled`, `hittable`, `checked`/`unchecked`, `selected`, `focused`, `secure`, `hidden`, `expanded`/`collapsed`; the frame is `(x,y w×h)` in the screen units the header reports. The header says how many elements are shown and whether the backend truncated the tree.
+A line is `@ref [role] "name" id=<testID> value="…" placeholder="…" <states> (x,y w×h)`. A text input with no `value=` is empty: iOS and Android report an empty field's placeholder as its value, so warden prints it as `placeholder="…"` only. States are `enabled`/`disabled`, `hittable`, `checked`/`unchecked`, `selected`, `focused`, `secure`, `hidden`, `expanded`/`collapsed`; the frame is `(x,y w×h)` in the screen units the header reports. The header says how many elements are shown and whether the backend truncated the tree.
 
 | Command | Use |
 |---|---|

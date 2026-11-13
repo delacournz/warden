@@ -29,6 +29,12 @@ export type UiadNode = {
 	text?: string;
 	desc?: string;
 	hint?: string;
+	/**
+	 * An editable node's `isShowingHintText()` (API 26+): `true` = empty, `text` is the hint; `false` = `text` is what it
+	 * holds, even when that equals the hint. Absent = unknown (not editable, an older server); unlike the flags, `false`
+	 * is written.
+	 */
+	showingHint?: boolean;
 	bounds: readonly [number, number, number, number];
 	clickable?: boolean;
 	longClickable?: boolean;
@@ -127,6 +133,7 @@ export function readNode(value: unknown, path = "elements"): UiadNode | string {
 	const wrong =
 		copyFields(node, value, STRING_FIELDS, "string", path) ??
 		copyFields(node, value, FLAG_FIELDS, "boolean", path) ??
+		copyFields(node, value, ["showingHint"], "boolean", path) ??
 		copyFields(node, value, ["order"], "number", path);
 	if (wrong !== undefined) return wrong;
 	const extra = readA11yFields(node, value, path);

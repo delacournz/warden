@@ -317,9 +317,10 @@ extension Session {
     }
     let document = outcome.value
     let readMs = Session.milliseconds(since: started)
+    let placeholders = await missingPlaceholders(in: document, backend: outcome.backend)
     var data = Session.renderSnapshot(
       document: document, backend: outcome.backend, screen: screen, interactiveOnly: request.interactiveOnly,
-      maxDepth: request.maxDepth, maxNodes: request.maxNodes)
+      maxDepth: request.maxDepth, maxNodes: request.maxNodes, placeholders: placeholders)
     if !document.elements.isEmpty {
       let size = Session.interfaceScreen(screen, roots: document.elements)
       interfaceMemory.remember(landscape: size.width > size.height)
@@ -402,14 +403,14 @@ extension Session {
   /// The `snapshot` payload minus timing and diagnostics: pure, so fixtures can drive it without a simulator.
   static func renderSnapshot(
     document: AccessibilityDocument, backend: AXBackend, screen: (width: Double, height: Double, scale: Double),
-    interactiveOnly: Bool, maxDepth: Int? = nil, maxNodes: Int? = nil
+    interactiveOnly: Bool, maxDepth: Int? = nil, maxNodes: Int? = nil, placeholders: [PlaceholderKey: String] = [:]
   ) -> [String: JSON] {
     let screen = interfaceScreen(screen, roots: document.elements)
-    let built = ElementBuilder.build(
-      document.elements,
-      options: buildOptions(
-        screen: screen, interactiveOnly: interactiveOnly, maxDepth: maxDepth, maxNodes: maxNodes,
-        document: document.screen))
+    var options = buildOptions(
+      screen: screen, interactiveOnly: interactiveOnly, maxDepth: maxDepth, maxNodes: maxNodes,
+      document: document.screen)
+    options.placeholders = placeholders
+    let built = ElementBuilder.build(document.elements, options: options)
     var data: [String: JSON] = [
       "backend": .string(backend.rawValue),
       "screen": screenJSON(screen),
@@ -505,9 +506,14 @@ extension Session {
     let size = Session.interfaceScreen(
       screen, hitAt: point, frame: ElementBuilder.rect(ElementBuilder.flat(node.frame)),
       rememberedLandscape: interfaceMemory.landscape)
-    var element = ElementBuilder.convert(
-      node.reportingChildren(), path: "hit", depth: 0,
-      options: Session.buildOptions(screen: size, document: response.screen))
+    var built = Session.buildOptions(screen: size, document: response.screen)
+    // a hit-test asks no further reader: it only reuses what an earlier snapshot learned about this field
+    if outcome.backend == .axbridge, PlaceholderFill.isCandidate(node),
+      case let .placeholder(text) = placeholderMemory.lookup(PlaceholderKey(node))
+    {
+      built.placeholders = [PlaceholderKey(node): text]
+    }
+    var element = ElementBuilder.convert(node.reportingChildren(), path: "hit", depth: 0, options: built)
     element.children = []
     return element.json
   }

@@ -65,6 +65,30 @@ describe("renderEntryLine", () => {
 		);
 	});
 
+	test("a field showing its placeholder prints placeholder=, not value=", () => {
+		const fields = indexSnapshot(
+			snap([
+				el("textfield", {
+					label: "Email",
+					identifier: "sign-in-email",
+					value: "ada@example.com",
+					placeholder: "ada@example.com",
+					frame: { x: 21, y: 210, width: 360, height: 42 },
+				}),
+				el("textfield", {
+					label: "Email",
+					value: "grace@example.com",
+					placeholder: "ada@example.com",
+					frame: { x: 21, y: 260, width: 360, height: 42 },
+				}),
+			])
+		).entries;
+		expect(fields.map((entry) => renderEntryLine(entry))).toEqual([
+			'[textbox] "Email" id=sign-in-email placeholder="ada@example.com" enabled (21,210 360×42)',
+			'[textbox] "Email" value="grace@example.com" placeholder="ada@example.com" enabled (21,260 360×42)',
+		]);
+	});
+
 	test("without a ref the line starts at the role", () => {
 		expect(renderEntryLine(byId("0.0"))).toBe('[text] "Welcome back" enabled (24,120 200×24)');
 	});

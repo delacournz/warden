@@ -282,6 +282,29 @@ describe("fill", () => {
 		expect(h.driver.callsOf("elementAtPoint")).toHaveLength(3);
 	});
 
+	test("filling exactly the placeholder's text verifies: the field reads the same as an empty one", async () => {
+		let typed = "";
+		const screen = (value: string) =>
+			snapshotOf([
+				el("window", {
+					children: [el("textfield", { label: "Email", id: "email", value: value || "Email", placeholder: "Email" })],
+				}),
+			]);
+		const h = harness([screen("")], {
+			selectAll: true,
+			onCall: (call, driver) => {
+				if (call.method === "typeText") {
+					typed += call.text;
+					driver.set(screen(typed));
+				}
+				return undefined;
+			},
+		});
+		expect(await h.run("fill", "id=email", "Email", "--json")).toBe(0);
+		expect(h.driver.callsOf("typeText")).toHaveLength(1);
+		expect(doc(h.c).result).toMatchObject({ verified: true });
+	});
+
 	test("the retry after a field did not take the text backspaces per character, not by select-all", async () => {
 		const h = harness([typingScreen("old")], { selectAll: true });
 		expect(await h.run("fill", "id=email", "new", "--json")).toBe(1);

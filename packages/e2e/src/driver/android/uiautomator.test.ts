@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { Element } from "../driver.types";
+import { NOT_SHOWING_HINT_TRAIT, SHOWING_HINT_TRAIT } from "../hint-state";
 import { interactiveFilter, parseUiautomatorXml, UiautomatorParseError } from "./uiautomator";
 import {
 	REAL_DEV_LAUNCHER_DUMP,
@@ -44,6 +45,12 @@ describe("parseUiautomatorXml (synthetic form)", () => {
 		expect(login.label).toBe('Log in & "go" <now>\nplease');
 		expect(login.text).toBeUndefined();
 		expect(login.value).toBeUndefined();
+	});
+
+	test("the dump has no hint state: an edit field gets neither hint trait and keeps its text", () => {
+		const email = byIdentifier(flat, "email-input");
+		expect(email.traits).not.toContain(SHOWING_HINT_TRAIT);
+		expect(email.traits).not.toContain(NOT_SHOWING_HINT_TRAIT);
 	});
 
 	test("bounds -> frame, normFrame, tapPoint", () => {

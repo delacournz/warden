@@ -2,7 +2,7 @@ import type { Driver, KeyName, Point, Rect, ScreenInfo } from "@delacour/warden-
 import { typeText } from "@delacour/warden-e2e/driver/typing";
 import {
 	contentPath,
-	fieldValue,
+	fieldShows,
 	focusPoint,
 	type SwipeDirection,
 	screenRect,
@@ -182,16 +182,17 @@ async function readBack(
 }
 
 /**
- * What the field shows now, or undefined when it cannot be found. First a hit-test at the field (≈10 ms; a full
+ * What the field shows now (placeholder and all: typing exactly the placeholder's text reads the same as an empty
+ * field, so only what is shown can be compared), or undefined when it cannot be found. First a hit-test at the field (≈10 ms; a full
  * snapshot takes 300-1000 ms and starves the app of the very key events being read back), then a snapshot.
  */
 async function readField(driver: Driver, wanted: NodeEntry): Promise<Result<string | undefined, UiError>> {
 	const hit = await hitTestField(driver, wanted);
-	if (hit.ok && hit.entry) return ok(fieldValue(hit.entry));
+	if (hit.ok && hit.entry) return ok(fieldShows(hit.entry));
 	const fresh = await driver.snapshot();
 	if (!fresh.success) return { success: false, error: driverUiError(fresh.error) };
 	const found = findInFresh(wanted, indexSnapshot(fresh.data));
-	return ok(found ? fieldValue(found) : undefined);
+	return ok(found ? fieldShows(found) : undefined);
 }
 
 type FillPlan = {
