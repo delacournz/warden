@@ -4,7 +4,9 @@ name: e2e
 #
 # 1. Reuse an EAS build for the current native fingerprint (any build of `profile`, e.g. one bench-build.yml made);
 #    build one only when none matches.
-# 2. Install warden (cached per version) at the version of @delacour/warden-e2e the specs import.
+# 2. Put warden on PATH: by default this checkout's own CLI (so a warden change is tested before it is released) with
+#    the released simulator helper; `-F warden=npm` installs the published CLI at the @delacour/warden-e2e version
+#    instead (cached per version), the setup the docs teach.
 # 3. `warden builds import --kind simulator-base` files the downloaded .app as the base (its embedded JS is stripped),
 #    then `warden e2e` repacks this checkout's JS into it (seconds, no native build), claims a simulator, installs and
 #    runs the specs.
@@ -15,6 +17,7 @@ name: e2e
 # Run: bunx eas-cli workflow:run .eas/workflows/e2e.yml
 #      bunx eas-cli workflow:run .eas/workflows/e2e.yml -F suite=conditions
 #      bunx eas-cli workflow:run .eas/workflows/e2e.yml -F args='--specs app/onboarding,app/todos'
+#      bunx eas-cli workflow:run .eas/workflows/e2e.yml -F warden=npm
 
 on:
   workflow_dispatch:
@@ -31,6 +34,11 @@ on:
         type: string
         description: eas.json build profile to reuse or build (a Release simulator build, no dev client)
         default: bench
+      warden:
+        type: choice
+        description: source = this checkout's CLI; npm = the published release at the @delacour/warden-e2e version
+        options: [source, npm]
+        default: source
 
 defaults:
   tools:
@@ -73,13 +81,28 @@ jobs:
 
       - uses: eas/install_node_modules
 
+      # A shim like `bun run cli:link`, so specs run against this checkout's @delacour/warden-e2e too. The CLI's
+      # package version names the released helper (warden-simd) to fetch; a helper change still needs a release.
+      - name: Run warden from this checkout
+        if: ${{ inputs.warden == 'source' }}
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          printf '#!/bin/sh\nexec bun "%s/apps/cli/src/cli.ts" "$@"\n' "$(cd ../.. && pwd)" > "$HOME/.local/bin/warden"
+          chmod +x "$HOME/.local/bin/warden"
+          set-env PATH "$HOME/.local/bin:$PATH"
+          export PATH="$HOME/.local/bin:$PATH"
+          warden --version
+          warden doctor --fetch-helper
+
       # The CLI must match the @delacour/warden-e2e the specs import (the preload exits 2 on a mismatch).
       - name: Pick the warden version
         id: warden
+        if: ${{ inputs.warden == 'npm' }}
         run: set-output version "$(bun -p "require('@delacour/warden-e2e/package.json').version")"
 
       - uses: eas/restore_cache
         id: warden_cache
+        if: ${{ inputs.warden == 'npm' }}
         with:
           key: warden-cli-darwin-arm64-${{ steps.warden.outputs.version }}
           path: /Users/expo/.warden-cli
@@ -87,6 +110,7 @@ jobs:
       # The darwin-arm64 package carries the native binary with the simulator helper (warden-simd) beside it: put that
       # dir on PATH, not npm's bin/warden link, which eas/save_cache stores as a copy that warden 0.16.0 cannot resolve.
       - name: Install warden
+        if: ${{ inputs.warden == 'npm' }}
         run: |
           BIN="$HOME/.warden-cli/lib/node_modules/@delacour/warden/node_modules/@delacour/warden-darwin-arm64/bin"
           if [ ! -x "$BIN/warden" ]; then
@@ -96,7 +120,7 @@ jobs:
           "$BIN/warden" --version
 
       - uses: eas/save_cache
-        if: ${{ steps.warden_cache.outputs.cache_hit != 'true' }}
+        if: ${{ inputs.warden == 'npm' && steps.warden_cache.outputs.cache_hit != 'true' }}
         with:
           key: warden-cli-darwin-arm64-${{ steps.warden.outputs.version }}
           path: /Users/expo/.warden-cli

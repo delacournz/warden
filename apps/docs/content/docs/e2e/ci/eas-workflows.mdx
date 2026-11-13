@@ -6,7 +6,7 @@ description: Run React Native and Expo E2E tests (warden e2e) on an Expo Workflo
 
 [Expo Workflows](https://docs.expo.dev/eas/workflows/introduction/) can run `warden e2e` on a macOS worker with an iOS Simulator. The workflow on this page reuses the EAS build that matches the app's native fingerprint (it builds one only when none matches), installs warden, repacks this commit's JavaScript into the build in seconds and runs the specs. No native build when only JavaScript changed.
 
-warden's own repository runs this workflow on its example app: [`apps/example/.eas/workflows/e2e.yml`](https://github.com/delacournz/warden/blob/develop/apps/example/.eas/workflows/e2e.yml).
+warden's own repository runs this workflow on its example app: [`apps/example/.eas/workflows/e2e.yml`](https://github.com/delacournz/warden/blob/develop/apps/example/.eas/workflows/e2e.yml). It runs warden from that checkout by default, to test changes before they are released; `-F warden=npm` runs the npm install on this page.
 
 ## Prerequisites
 

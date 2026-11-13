@@ -5,7 +5,7 @@ import config from "../warden.config";
 /**
  * Guards `.eas/workflows/e2e.yml` against drifting from what it runs: the EAS build profile it reuses must be one
  * `warden builds import --kind simulator-base` accepts (a Release simulator build, no dev client), the suite it runs
- * must exist in `warden.config.ts`, and the runner script it calls must be there and executable.
+ * must exist in `warden.config.ts`, and warden is called directly (this checkout's by default, or the npm release).
  */
 
 const APP_DIR = join(import.meta.dir, "..");
@@ -104,6 +104,27 @@ describe("EAS e2e workflow", () => {
 		expect(Object.keys(config.e2e ?? {})).toContain(String(suite));
 	});
 
+	test("runs this checkout's warden by default, so a warden change is tested before it is released", async () => {
+		const workflow = await loadWorkflow();
+		const input = workflow.on.workflow_dispatch.inputs.warden;
+		expect(input?.default).toBe("source");
+		expect(input?.options).toEqual(["source", "npm"]);
+
+		const steps = job(workflow, "e2e_ios").steps ?? [];
+		const source = steps.find((step) => step.run?.includes("apps/cli/src/cli.ts"));
+		expect(source?.if).toBe(expr("inputs.warden == 'source'"));
+		expect(source?.run).toContain("warden doctor --fetch-helper");
+		expect(source?.run).toContain("set-env PATH");
+	});
+
+	test("the npm install and its cache only run for warden: npm", async () => {
+		const steps = job(await loadWorkflow(), "e2e_ios").steps ?? [];
+		const npmOnly = expr("inputs.warden == 'npm'");
+		expect(steps.find((step) => step.id === "warden")?.if).toBe(npmOnly);
+		expect(steps.find((step) => step.uses === "eas/restore_cache")?.if).toBe(npmOnly);
+		expect(steps.find((step) => step.run?.includes("npm install --global"))?.if).toBe(npmOnly);
+	});
+
 	test("installs warden at the spec API's version and caches it per version", async () => {
 		const steps = job(await loadWorkflow(), "e2e_ios").steps ?? [];
 		const pick = steps.find((step) => step.id === "warden");
@@ -115,7 +136,7 @@ describe("EAS e2e workflow", () => {
 		expect(restore?.with?.key).toBe(key);
 		expect(save?.with?.key).toBe(key);
 		expect(save?.with?.path).toBe(restore?.with?.path);
-		expect(save?.if).toBe(expr(`steps.${restore?.id}.outputs.cache_hit != 'true'`));
+		expect(save?.if).toBe(expr(`inputs.warden == 'npm' && steps.${restore?.id}.outputs.cache_hit != 'true'`));
 
 		const install = steps.find((step) => step.run?.includes("npm install --global"));
 		expect(install?.run).toContain(`@delacour/warden@${expr("steps.warden.outputs.version")}`);
