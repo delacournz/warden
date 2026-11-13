@@ -89,16 +89,24 @@ export function isOnScreen(point: Point, screen: ScreenInfo): boolean {
 }
 
 /**
- * What a text field holds. Secure fields hold nothing readable; iOS reports the placeholder as the value of an empty
- * field; Android keeps an input's text in `text`.
+ * What a text field holds. Secure fields hold nothing readable; a field showing its placeholder holds nothing (iOS
+ * reports the placeholder as the value of an empty field, Android as the text of an empty edit field: see
+ * `NodeEntry.showsPlaceholder`); Android keeps an input's text in `text`.
  */
 export function fieldValue(entry: NodeEntry): string {
-	if (entry.secure) return "";
+	if (entry.secure || entry.showsPlaceholder) return "";
+	return fieldShows(entry);
+}
+
+/**
+ * What a text field shows, placeholder and all: what a fill compares against the typed text, since a field holding
+ * exactly its placeholder's text reads the same as an empty one.
+ */
+export function fieldShows(entry: NodeEntry): string {
 	const { element } = entry;
-	const own = entry.value ?? (entry.role === "textbox" || entry.role === "searchbox" ? element.text : undefined);
-	if (own === undefined || own === "") return "";
-	if (element.placeholder !== undefined && own === element.placeholder && entry.states.focused !== true) return "";
-	return own;
+	const textInput = entry.role === "textbox" || entry.role === "searchbox";
+	if (entry.showsPlaceholder) return entry.placeholder ?? "";
+	return entry.value ?? (textInput ? (element.text ?? "") : "");
 }
 
 const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });

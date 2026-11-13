@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { snapshotOf } from "@delacour/warden-e2e/driver/driver.testing";
+import { el, snapshotOf } from "@delacour/warden-e2e/driver/driver.testing";
 import { cleanupHarnesses, doc, harness, LOGIN } from "../commands/ui.testing";
 import { expectContract } from "./contracts.testing";
 
@@ -14,6 +14,34 @@ describe("warden ui --json contracts", () => {
 		expect(doc(h.c).schemaVersion).toBe(1);
 		expect(await h.run("snapshot", "--settle", "--json")).toBe(0);
 		expectContract("warden.ui.snapshot", doc(h.c), { name: "settled" });
+	});
+
+	test("a field showing its placeholder: placeholder, no value, in text and --json; get/wait read it as empty", async () => {
+		const screen = snapshotOf([
+			el("window", {
+				children: [
+					el("textfield", { label: "Email", id: "email", value: "ada@example.com", placeholder: "ada@example.com" }),
+					el("textfield", { label: "Name", id: "name", value: "Grace", placeholder: "Your name" }),
+				],
+			}),
+		]);
+		const h = harness([screen]);
+		expect(await h.run("snapshot", "-i", "--json")).toBe(0);
+		expectContract("warden.ui.snapshot", doc(h.c), { name: "placeholder" });
+		const [email, name] = doc(h.c).result.elements;
+		expect(email).toMatchObject({ id: "email", placeholder: "ada@example.com" });
+		expect(email).not.toHaveProperty("value");
+		expect(name).toMatchObject({ id: "name", value: "Grace", placeholder: "Your name" });
+		h.c.stdout.length = 0;
+		expect(await h.run("snapshot", "-i")).toBe(0);
+		const text = h.c.stdout.join("\n");
+		expect(text).toContain('[textbox] "Email" id=email placeholder="ada@example.com" enabled');
+		expect(text).toContain('[textbox] "Name" id=name value="Grace" placeholder="Your name" enabled');
+		h.c.stdout.length = 0;
+		expect(await h.run("get", "id=email", "value")).toBe(0);
+		expect(h.c.stdout.join("")).toBe("");
+		h.c.stdout.length = 0;
+		expect(await h.run("wait", "text", "ada@example.com", "--timeout", "50", "--json")).not.toBe(0);
 	});
 
 	test("press by ref and by selector with --settle", async () => {

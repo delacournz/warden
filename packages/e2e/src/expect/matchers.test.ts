@@ -420,6 +420,14 @@ describe("toHaveValue", () => {
 		await that(screen.getByTestId("field")).toHaveValue("");
 	});
 
+	test("a field showing its placeholder is empty, and its placeholder is not its text", async () => {
+		const { driver } = fieldFixture({ placeholder: "ada@example.com" });
+		const { screen, that } = setup(driver);
+		await that(screen.getByTestId("field")).toHaveValue("");
+		await that(screen.getByTestId("field")).not.toHaveText("ada@example.com", { timeout: 100 });
+		await that(screen.getByPlaceholder("ada@example.com")).toBeVisible();
+	});
+
 	test("secure fields are never judged", async () => {
 		const { driver } = fieldFixture({ secure: true, value: "hunter2" });
 		const { screen, that } = setup(driver);

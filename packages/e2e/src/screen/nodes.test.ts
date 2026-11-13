@@ -82,6 +82,66 @@ describe("names, values, secure", () => {
 		expect(placeholder?.value).toBeUndefined();
 	});
 
+	test("a text field showing its placeholder holds nothing, focused or not; the placeholder is kept", () => {
+		const [idle, focused] = indexSnapshot(
+			snap([
+				el("textfield", { id: "a", value: "ada@example.com", placeholder: "ada@example.com" }),
+				el("textfield", { id: "b", value: "ada@example.com", placeholder: "ada@example.com", focused: true }),
+			])
+		).entries;
+		for (const entry of [idle, focused]) {
+			expect(entry?.value).toBeUndefined();
+			expect(entry?.placeholder).toBe("ada@example.com");
+			expect(entry?.showsPlaceholder).toBe(true);
+			expect(entry?.subtreeText).toBe("");
+		}
+	});
+
+	test("a text field holding other text keeps its value next to its placeholder", () => {
+		const entry = indexSnapshot(
+			snap([el("textfield", { value: "grace@example.com", placeholder: "ada@example.com", label: "Email" })])
+		).entries[0];
+		expect(entry?.value).toBe("grace@example.com");
+		expect(entry?.placeholder).toBe("ada@example.com");
+		expect(entry?.showsPlaceholder).toBe(false);
+		expect(entry?.subtreeText).toBe("Email grace@example.com");
+	});
+
+	test("an Android edit field showing its hint has neither a value nor a name from it", () => {
+		const [hinted, typed] = indexSnapshot(
+			snap(
+				[
+					el("textfield", {
+						id: "a",
+						rawType: "android.widget.EditText",
+						value: "ada@example.com",
+						text: "ada@example.com",
+						placeholder: "ada@example.com",
+					}),
+					el("textfield", {
+						id: "b",
+						rawType: "android.widget.EditText",
+						value: "grace@example.com",
+						text: "grace@example.com",
+						placeholder: "ada@example.com",
+					}),
+				],
+				{ platform: "android" }
+			)
+		).entries;
+		expect(hinted?.value).toBeUndefined();
+		expect(hinted?.name).toBeUndefined();
+		expect(hinted?.subtreeText).toBe("");
+		expect(typed?.value).toBe("grace@example.com");
+		expect(typed?.name).toBe("grace@example.com");
+	});
+
+	test("a placeholder on anything but a text input changes nothing", () => {
+		const entry = indexSnapshot(snap([el("button", { label: "Go", value: "Go", placeholder: "Go" })])).entries[0];
+		expect(entry?.value).toBe("Go");
+		expect(entry?.showsPlaceholder).toBe(false);
+	});
+
 	test("a text field with a real value is not secure", () => {
 		const entry = indexSnapshot(snap([el("textfield", { value: "a•b", label: "Name" })])).entries[0];
 		expect(entry?.secure).toBe(false);

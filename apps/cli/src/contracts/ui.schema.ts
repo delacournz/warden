@@ -20,6 +20,8 @@ export const elementSchema = z.strictObject({
 	name: z.string().optional(),
 	id: z.string().optional(),
 	value: z.string().optional(),
+	/** a text input's placeholder (iOS) / hint (Android); a field showing it has no `value` (it holds nothing) */
+	placeholder: z.string().optional(),
 	enabled: z.boolean(),
 	hittable: z.boolean().optional(),
 	selected: z.boolean().optional(),

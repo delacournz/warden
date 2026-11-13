@@ -8,6 +8,7 @@ import {
 	assertDegrees,
 	assertScale,
 	centreOf,
+	fieldShows,
 	fieldValue,
 	focusPoint,
 	graphemes,
@@ -965,7 +966,7 @@ export class Locator {
 		return this.act("clear", async () => {
 			const budget = this.rt.budget(options.timeout);
 			let target = await this.actionable({ enabled: true, tapPointOnScreen: false }, budget.remaining());
-			const before = rawValue(target.entry);
+			const before = fieldShows(target.entry);
 			for (let attempt = 1; ; attempt += 1) {
 				await this.focusAndClear(target, clearMethodFor(attempt));
 				if (target.entry.secure) return;
@@ -1181,7 +1182,7 @@ export class Locator {
 		// back masked: its bullets are counted against the typed text
 		const readValue = (found: NodeEntry): string => {
 			if (text === "") return clearedValue(fieldValue(found), clearedFrom);
-			return found.secure ? maskedReading(found, text) : rawValue(found);
+			return found.secure ? maskedReading(found, text) : fieldShows(found);
 		};
 		const outcome = await confirmFieldValue<never>({
 			text,
@@ -1383,7 +1384,6 @@ function clearMethodFor(attempt: number): ClearMethod {
 	return attempt === 1 ? "auto" : "counted";
 }
 
-/** What the field shows, placeholder and all (used to compare against what was typed). */
 /** Why a fill failed. A field that reads masked is never quoted the typed text: only its length. */
 function fillMismatch(text: string, secure: boolean, held: string, firstHeld: string | undefined): string {
 	const expected = secure ? `${graphemes(text)} characters (secure)` : JSON.stringify(text);
@@ -1407,10 +1407,6 @@ function isSubsequence(part: string, whole: string): boolean {
 		if (at < part.length && part.startsWith(char, at)) at += char.length;
 	}
 	return at === part.length;
-}
-
-function rawValue(entry: NodeEntry): string {
-	return entry.value ?? (entry.role === "textbox" || entry.role === "searchbox" ? (entry.element.text ?? "") : "");
 }
 
 function reached(state: WaitState, entry: NodeEntry | undefined): boolean {

@@ -12,6 +12,8 @@ enum ElementBuilder {
     var maxDepth: Int?
     /// At most this many nodes (preorder, after `interactiveOnly`).
     var maxNodes: Int?
+    /// Placeholders the reader left out, by field (`PlaceholderFill`); a node's own placeholder wins.
+    var placeholders: [PlaceholderKey: String] = [:]
   }
 
   struct Output: Sendable {
@@ -77,7 +79,8 @@ enum ElementBuilder {
       identifier: nonEmpty(flat(node.identifier)),
       value: value,
       text: isStaticText ? (label ?? value) : nil,
-      placeholder: nonEmpty(flat(node.placeholder)),
+      placeholder: nonEmpty(flat(node.placeholder))
+        ?? (options.placeholders.isEmpty ? nil : options.placeholders[PlaceholderKey(node)]),
       frame: frame,
       normFrame: frame.normalized(width: options.screenWidth, height: options.screenHeight),
       traits: traits,
@@ -129,7 +132,7 @@ enum ElementBuilder {
     return raw.hasPrefix("AX") ? String(raw.dropFirst(2)) : raw
   }
 
-  private static func nonEmpty(_ string: String?) -> String? {
+  static func nonEmpty(_ string: String?) -> String? {
     guard let string, !string.isEmpty else { return nil }
     return string
   }

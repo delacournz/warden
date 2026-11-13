@@ -97,6 +97,8 @@ final class Session: @unchecked Sendable {
   let bundlePids = BundlePidMemory()
   let orientationMemory = OrientationMemory()
   let interfaceMemory = InterfaceMemory()
+  /// Text-field placeholders the bridge leaves out, learned from the host reader (`PlaceholderFill`).
+  let placeholderMemory = PlaceholderMemory()
 
   init(
     udid: String, simulator: Simulator, hid: SimulatorHIDSession, hidTransport: String, axDefault: String,
