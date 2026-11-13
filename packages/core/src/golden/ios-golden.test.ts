@@ -286,6 +286,17 @@ describe("golden recipe 2: AutomationEnabled baked in (16-7)", () => {
 		expect(logs.join("\n")).toContain(`${GOLDEN} has no AutomationEnabled — rebuilding`);
 	});
 
+	test("a golden whose AutomationEnabled is stored as the integer 1 is kept, not rebuilt", async () => {
+		const host = fakeHost({
+			sims: [{ udid: "G", name: GOLDEN, state: "Shutdown" }],
+			migrationPolls: 0,
+			automationAsInteger: ["G"],
+		});
+		const result = await ensureGolden(deps(host), "iphone-17");
+		expect(result.success && result.data).toMatchObject({ name: GOLDEN, built: false });
+		expect(host.sims.some((s) => s.udid === "G")).toBe(true);
+	});
+
 	test("the recipe is part of the key: a recipe-2 golden is built next to the recipe-1 one, which a claim keeps (ios-claim-path-R4)", async () => {
 		expect(GOLDEN_RECIPE).toBe(2);
 		const inputs = { xcodeBuild: "17F113", runtimeId: RUNTIME_ID, runtimeBuild: RUNTIME_BUILD, deviceType: IPHONE_17 };
