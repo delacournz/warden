@@ -1,0 +1,8 @@
+{
+	"repo": "https://github.com/callstack/agent-device",
+	"tag": "v0.21.25",
+	"commit": "9dabb5b11bf030a8fc0b475dc99ba4718abeca32",
+	"skills": "skills/*/SKILL.md, unchanged",
+	"rule": "rules/agent-device.md = the recommended agent rule from website/docs/docs/agent-setup.md at the same tag",
+	"license": "MIT (LICENSE)"
+}

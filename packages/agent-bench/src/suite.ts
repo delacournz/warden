@@ -39,9 +39,19 @@ export function loadSuite(path: string): Result<LoadedSuite> {
 	return ok({ suite: parsed.data, path, promptTemplate: readFileSync(promptPath, "utf8") });
 }
 
-export type PromptVars = { udid: string; platform: string; bundleId: string };
+export type PromptVars = { udid: string; platform: "ios" | "android"; bundleId: string };
 
-/** Fills `{{udid}}`, `{{platform}}` and `{{bundleId}}`. */
+/** `--udid` (iOS simulator) or `--serial` (Android): how a CLI is pinned to the device. */
+export const deviceFlagOf = (platform: PromptVars["platform"]): string =>
+	platform === "android" ? "--serial" : "--udid";
+
+/** Fills `{{udid}}`, `{{platform}}`, `{{bundleId}}` and `{{deviceFlag}}`. */
 export function renderPrompt(template: string, vars: PromptVars): string {
-	return template.replace(/\{\{(udid|platform|bundleId)\}\}/g, (_m, key: keyof PromptVars) => vars[key]);
+	const values: Record<string, string> = { ...vars, deviceFlag: deviceFlagOf(vars.platform) };
+	return template.replace(/\{\{(udid|platform|bundleId|deviceFlag)\}\}/g, (_m, key: string) => values[key] ?? "");
+}
+
+/** The agent's prompt: the tool's preamble, then the suite's task. */
+export function composePrompt(preamble: string, task: string, vars: PromptVars): string {
+	return renderPrompt(`${preamble.trim()}\n\n${task.trim()}\n`, vars);
 }

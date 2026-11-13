@@ -6,7 +6,10 @@
  * (`tool_result` blocks, with `is_error` and `content` as a string or text blocks) and the final `result`.
  */
 
-export type CommandClass = { warden: true; ui: boolean; verb: string } | { warden: false; ui: false };
+import type { Driver } from "./kit";
+
+/** Whether one tool call drove the tool under test, and with which verb. */
+export type CallClass = { driver: true; verb: string } | { driver: false };
 
 export type ResultSummary = {
 	subtype: string;
@@ -22,12 +25,10 @@ export type StreamMetrics = {
 	/** every tool_use block */
 	toolCalls: number;
 	toolsByName: Record<string, number>;
-	/** Bash calls that run `warden …` */
-	wardenCalls: number;
-	/** Bash calls that run `warden ui …` */
-	wardenUiCalls: number;
-	/** `warden ui <verb>` (or `warden <command>`) → count */
-	wardenVerbs: Record<string, number>;
+	/** calls to the tool under test: Bash running its CLI, or its MCP server's tools */
+	driverCalls: number;
+	/** verb → count (`ui press` for warden, `press` for agent-device, `gesture-tap` for argent) */
+	driverVerbs: Record<string, number>;
 	/** `Skill` tool loads, by skill name */
 	skillLoads: string[];
 	/** tool results that failed (`is_error`) or name one of the suite's failure patterns */
@@ -61,14 +62,30 @@ function blocks(event: Obj): Obj[] {
 	return message.content.filter(isObj);
 }
 
-/** `warden`, `warden ui <verb>`, also after `cd … &&`, `;`, `|` or an env assignment. */
-const WARDEN = /(?:^|[;&|(]\s*|\s)(?:[A-Z_][A-Z0-9_]*=\S+\s+)*warden\s+([a-z][\w-]*)(?:\s+([a-z][\w-]*))?/;
+function escapeRegExp(s: string): string {
+	return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
-export function classifyCommand(command: string): CommandClass {
-	const m = WARDEN.exec(command);
-	if (m?.[1] === undefined) return { warden: false, ui: false };
-	if (m[1] === "ui") return { warden: true, ui: true, verb: m[2] ?? "ui" };
-	return { warden: true, ui: false, verb: m[1] };
+/** `<bin> <verb>`, also after `cd … &&`, `;`, `|` or an env assignment; a `groups` verb takes the next word too. */
+export function classifyCommand(command: string, driver: Driver): CallClass {
+	if (driver.kind !== "cli") return { driver: false };
+	const re = new RegExp(
+		`(?:^|[;&|(]\\s*|\\s)(?:[A-Z_][A-Z0-9_]*=\\S+\\s+)*${escapeRegExp(driver.bin)}\\s+([a-z][\\w-]*)(?:\\s+([a-z][\\w-]*))?`
+	);
+	const m = re.exec(command);
+	if (m?.[1] === undefined) return { driver: false };
+	if (driver.groups.includes(m[1])) return { driver: true, verb: m[2] === undefined ? m[1] : `${m[1]} ${m[2]}` };
+	return { driver: true, verb: m[1] };
+}
+
+/** A `tool_use` by name and input: Bash for a CLI driver, `mcp__<server>__<tool>` for an MCP one. */
+export function classifyToolUse(driver: Driver, name: string, input: Record<string, unknown>): CallClass {
+	if (driver.kind === "mcp") {
+		const prefix = `mcp__${driver.server}__`;
+		return name.startsWith(prefix) ? { driver: true, verb: name.slice(prefix.length) } : { driver: false };
+	}
+	const command = input.command;
+	return name === "Bash" && typeof command === "string" ? classifyCommand(command, driver) : { driver: false };
 }
 
 function resultText(block: Obj): string {
@@ -79,10 +96,6 @@ function resultText(block: Obj): string {
 		.filter(isObj)
 		.map((b) => str(b.text) ?? "")
 		.join("\n");
-}
-
-function escapeRegExp(s: string): string {
-	return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 /** One stream line: an event object, undefined for a blank line or non-object JSON, "unparsed" for broken JSON. */
@@ -105,14 +118,18 @@ export type StreamParser = {
 	metrics(): StreamMetrics;
 };
 
-export function createStreamParser(failurePatterns: readonly string[]): StreamParser {
-	const patterns = failurePatterns.map((p) => ({ code: p, re: new RegExp(`(?<![\\w])${escapeRegExp(p)}(?![\\w])`) }));
+export type ParserOptions = { driver: Driver; failurePatterns: readonly string[] };
+
+export function createStreamParser(options: ParserOptions): StreamParser {
+	const patterns = options.failurePatterns.map((p) => ({
+		code: p,
+		re: new RegExp(`(?<![\\w])${escapeRegExp(p)}(?![\\w])`),
+	}));
 	const m: StreamMetrics = {
 		toolCalls: 0,
 		toolsByName: {},
-		wardenCalls: 0,
-		wardenUiCalls: 0,
-		wardenVerbs: {},
+		driverCalls: 0,
+		driverVerbs: {},
 		skillLoads: [],
 		stumbles: 0,
 		errorCodes: {},
@@ -125,14 +142,6 @@ export function createStreamParser(failurePatterns: readonly string[]): StreamPa
 		record[key] = (record[key] ?? 0) + 1;
 	};
 
-	const onBash = (command: string): void => {
-		const kind = classifyCommand(command);
-		if (!kind.warden) return;
-		m.wardenCalls += 1;
-		if (kind.ui) m.wardenUiCalls += 1;
-		bump(m.wardenVerbs, kind.verb);
-	};
-
 	const onToolUse = (block: Obj): void => {
 		const name = str(block.name) ?? "unknown";
 		m.toolCalls += 1;
@@ -140,7 +149,11 @@ export function createStreamParser(failurePatterns: readonly string[]): StreamPa
 		const input = isObj(block.input) ? block.input : {};
 		const skill = name === "Skill" ? (str(input.skill) ?? str(input.command)) : undefined;
 		if (skill !== undefined) m.skillLoads.push(skill);
-		if (name === "Bash") onBash(str(input.command) ?? "");
+		const call = classifyToolUse(options.driver, name, input);
+		if (call.driver) {
+			m.driverCalls += 1;
+			bump(m.driverVerbs, call.verb);
+		}
 	};
 
 	const onToolResult = (block: Obj): void => {
@@ -199,8 +212,8 @@ export function createStreamParser(failurePatterns: readonly string[]): StreamPa
 }
 
 /** Parses a whole transcript. */
-export function parseTranscript(text: string, failurePatterns: readonly string[]): StreamMetrics {
-	const parser = createStreamParser(failurePatterns);
+export function parseTranscript(text: string, options: ParserOptions): StreamMetrics {
+	const parser = createStreamParser(options);
 	for (const line of text.split("\n")) parser.push(line);
 	return parser.metrics();
 }

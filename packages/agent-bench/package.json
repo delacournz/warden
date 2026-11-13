@@ -1,7 +1,7 @@
 {
 	"name": "@delacour/warden-agent-bench",
 	"version": "0.1.0",
-	"description": "Agent-in-the-loop benchmark: a Claude Code agent drives the example app through warden with the warden skill; counts tool calls, stumbles and wall time",
+	"description": "Agent-in-the-loop benchmark: a Claude Code agent drives the example app with warden, argent and agent-device, each with its own skills; compares tool calls, stumbles, wall time and cost",
 	"type": "module",
 	"private": true,
 	"scripts": {

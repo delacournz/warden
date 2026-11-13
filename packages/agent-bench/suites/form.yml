@@ -5,10 +5,8 @@ prompt: ../prompts/form.md
 platform: ios
 app: example
 model: claude-sonnet-5-5
-allowedTools: ["Bash(warden *)", "Skill", "Read"]
 maxTurns: 50
 timeoutMs: 600000
-failurePatterns: [stale_ref, E_TIMEOUT, target_not_found, wait_target_absent, wait_text_absent, device_not_leased, device_foreign, ambiguous_device, usage]
 success:
   - wait: id=settings-screen
   - is: id=settings-dark-mode

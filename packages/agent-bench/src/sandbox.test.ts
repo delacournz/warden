@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { authEnv, createSandbox } from "./sandbox";
+import { authEnv, createSandbox, gateSettings, type SandboxKit } from "./sandbox";
 
 function fakeSkill(): string {
 	const dir = mkdtempSync(join(tmpdir(), "agent-bench-skill-"));
@@ -14,20 +14,33 @@ function fakeSkill(): string {
 	return dir;
 }
 
+function wardenKit(skillDir = fakeSkill()): SandboxKit {
+	return {
+		files: [
+			{ from: skillDir, to: "skills/warden", exclude: ["rules"] },
+			{ from: join(skillDir, "rules", "warden.md"), to: "rules/warden.md" },
+		],
+		shims: [{ name: "warden", argv: ["/x/bun", "/repo/apps/cli/src/cli.ts"] }],
+		mcpServers: {},
+		env: {},
+	};
+}
+
+const root = (): string => mkdtempSync(join(tmpdir(), "agent-bench-sb-"));
+
 describe("createSandbox", () => {
-	test("installs the skill and the always-on rule into a fresh config dir", () => {
-		const root = mkdtempSync(join(tmpdir(), "agent-bench-sb-"));
-		const sb = createSandbox({ root, skillDir: fakeSkill(), cliPath: "/repo/apps/cli/src/cli.ts", bunPath: "/x/bun" });
+	test("copies the kit's skills and rules into a fresh config dir, honouring excludes", () => {
+		const sb = createSandbox(root(), wardenKit());
 		expect(readFileSync(join(sb.configDir, "skills", "warden", "SKILL.md"), "utf8")).toContain("name: warden");
 		expect(existsSync(join(sb.configDir, "skills", "warden", "references", "ui.md"))).toBe(true);
 		expect(existsSync(join(sb.configDir, "skills", "warden", "rules"))).toBe(false);
 		expect(readFileSync(join(sb.configDir, "rules", "warden.md"), "utf8")).toBe("# rule\n");
 		expect(existsSync(sb.workDir)).toBe(true);
+		expect(sb.mcpConfigPath).toBeUndefined();
 	});
 
-	test("puts a warden shim for this checkout's CLI first on PATH", () => {
-		const root = mkdtempSync(join(tmpdir(), "agent-bench-sb-"));
-		const sb = createSandbox({ root, skillDir: fakeSkill(), cliPath: "/repo/apps/cli/src/cli.ts", bunPath: "/x/bun" });
+	test("writes each shim first on PATH", () => {
+		const sb = createSandbox(root(), wardenKit());
 		const shim = join(sb.binDir, "warden");
 		expect(readFileSync(shim, "utf8")).toBe('#!/bin/sh\nexec "/x/bun" "/repo/apps/cli/src/cli.ts" "$@"\n');
 		expect(statSync(shim).mode & 0o111).not.toBe(0);
@@ -38,9 +51,32 @@ describe("createSandbox", () => {
 		expect(env.HOME).toBe("/h");
 	});
 
+	test("an MCP kit gets an mcp.json with only its servers, and its env", () => {
+		const sb = createSandbox(root(), {
+			files: [],
+			shims: [],
+			mcpServers: { argent: { command: "/g/argent", args: ["mcp"] } },
+			env: { AGENT_DEVICE_STATE_DIR: "/s" },
+		});
+		if (sb.mcpConfigPath === undefined) throw new Error("no mcp.json");
+		expect(JSON.parse(readFileSync(sb.mcpConfigPath, "utf8"))).toEqual({
+			mcpServers: { argent: { command: "/g/argent", args: ["mcp"] } },
+		});
+		expect(sb.env({ PATH: "/p" }, "s").AGENT_DEVICE_STATE_DIR).toBe("/s");
+	});
+
+	test("a CLI kit's Bash gate becomes a PreToolUse hook in settings.json", () => {
+		const sb = createSandbox(root(), { ...wardenKit(), bashGate: ["/x/bun", "/r/bash-gate.ts", "warden"] });
+		if (sb.settingsPath === undefined) throw new Error("no settings.json");
+		const settings = JSON.parse(readFileSync(sb.settingsPath, "utf8"));
+		expect(settings).toEqual(gateSettings(["/x/bun", "/r/bash-gate.ts", "warden"]));
+		expect(settings.hooks.PreToolUse[0].matcher).toBe("Bash");
+		expect(settings.hooks.PreToolUse[0].hooks[0].command).toBe('"/x/bun" "/r/bash-gate.ts" "warden"');
+		expect(createSandbox(root(), wardenKit()).settingsPath).toBeUndefined();
+	});
+
 	test("drops the parent's session ids so the agent owns the bench's lease", () => {
-		const root = mkdtempSync(join(tmpdir(), "agent-bench-sb-"));
-		const sb = createSandbox({ root, skillDir: fakeSkill(), cliPath: "/c", bunPath: "/b" });
+		const sb = createSandbox(root(), wardenKit());
 		const env = sb.env(
 			{ PATH: "/p", CLAUDE_CODE_SESSION_ID: "outer", CLAUDE_SESSION_ID: "outer", WARDEN_UDID: "X" },
 			"s"

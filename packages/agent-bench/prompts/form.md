@@ -1,3 +1,1 @@
-The app {{bundleId}} is installed on the {{platform}} device {{udid}}, which is already leased for you. Drive it only with the `warden` CLI and always pass `--udid {{udid}}`. Do not claim, release or boot any other device, and do not run `warden ui close --release`: the harness releases the lease when you finish.
-
 Task: open the app fresh, get past the onboarding screens, sign in with email `ada@example.com` and password `password1`, then open the Settings tab. Make sure the "Notifications" switch ends up off and the "Dark mode" switch ends up on, whatever their state was. Verify both before you stop.

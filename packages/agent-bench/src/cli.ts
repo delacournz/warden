@@ -1,14 +1,26 @@
 #!/usr/bin/env bun
 import { resolve } from "node:path";
 import { realExec } from "@delacour/warden-e2e-bench/src/harness/exec";
-import { HELP, parseArgs } from "./args";
-import { REPORT_FILE, REPORT_MD, renderMarkdown } from "./report";
-import { runAgentBench } from "./run";
-import { listSuites, loadSuite, resolveSuitePath } from "./suite";
+import { type Args, HELP, parseArgs } from "./args";
+import { allPassed, REPORT_FILE, REPORT_MD, renderMarkdown } from "./report";
+import { type RunInput, runAgentBench } from "./run";
+import { type LoadedSuite, listSuites, loadSuite, resolveSuitePath } from "./suite";
 
 const REPO_ROOT = resolve(import.meta.dir, "..", "..", "..");
 
-/** `bun run bench:agent`: exit 0 passed, 1 the run did not pass, 2 usage or setup error. */
+/** The run's input from the parsed flags (only the ones given). */
+function runInput(args: Extract<Args, { kind: "run" }>, loaded: LoadedSuite): RunInput {
+	return {
+		loaded,
+		repoRoot: REPO_ROOT,
+		...(args.udid !== undefined ? { udid: args.udid } : {}),
+		...(args.model !== undefined ? { model: args.model } : {}),
+		...(args.out !== undefined ? { outDir: resolve(args.out) } : {}),
+		...(args.tools !== undefined ? { tools: args.tools } : {}),
+	};
+}
+
+/** `bun run bench:agent`: exit 0 every tool passed, 1 any tool did not (or was unavailable), 2 usage or setup error. */
 async function main(argv: readonly string[]): Promise<number> {
 	const parsed = parseArgs(argv);
 	if (!parsed.success) {
@@ -40,23 +52,14 @@ async function main(argv: readonly string[]): Promise<number> {
 	};
 	process.on("SIGINT", onSignal);
 	process.on("SIGTERM", onSignal);
-	const out = await runAgentBench(
-		{
-			loaded: loaded.data,
-			repoRoot: REPO_ROOT,
-			...(args.udid !== undefined ? { udid: args.udid } : {}),
-			...(args.model !== undefined ? { model: args.model } : {}),
-			...(args.out !== undefined ? { outDir: resolve(args.out) } : {}),
-		},
-		{
-			exec: realExec,
-			env: process.env,
-			now: () => new Date(),
-			log: (line) => console.error(`bench:agent: ${line}`),
-			bunPath: process.execPath,
-			signal: controller.signal,
-		}
-	);
+	const out = await runAgentBench(runInput(args, loaded.data), {
+		exec: realExec,
+		env: process.env,
+		now: () => new Date(),
+		log: (line) => console.error(`bench:agent: ${line}`),
+		bunPath: process.execPath,
+		signal: controller.signal,
+	});
 	if (!out.success) {
 		console.error(`bench:agent: ${String(out.error)}`);
 		return 2;
@@ -64,7 +67,7 @@ async function main(argv: readonly string[]): Promise<number> {
 	const { report, runDir } = out.data;
 	console.log(args.json ? JSON.stringify(report, null, 2) : renderMarkdown(report));
 	console.error(`bench:agent: ${runDir}/${REPORT_FILE} · ${runDir}/${REPORT_MD}`);
-	return report.outcome === "passed" ? 0 : 1;
+	return allPassed(report) ? 0 : 1;
 }
 
 process.exit(await main(process.argv.slice(2)));

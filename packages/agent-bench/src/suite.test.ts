@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { listSuites, loadSuite, renderPrompt, SUITES_DIR } from "./suite";
+import { composePrompt, listSuites, loadSuite, renderPrompt, SUITES_DIR } from "./suite";
 import { DEFAULT_MODEL } from "./suite.schema";
 
 function suiteDir(yml: string, prompt = "Drive {{bundleId}} on {{platform}} {{udid}}."): string {
@@ -16,7 +16,6 @@ const MINIMAL = `
 name: s
 description: one suite
 prompt: s.md
-allowedTools: ["Bash(warden *)", Skill]
 maxTurns: 10
 success:
   - wait: id=todos-screen
@@ -32,7 +31,16 @@ describe("loadSuite", () => {
 		expect(loaded.data.suite.platform).toBe("ios");
 		expect(loaded.data.suite.app).toBe("example");
 		expect(loaded.data.suite.failurePatterns).toEqual([]);
+		expect(loaded.data.suite.tools).toEqual(["warden", "argent", "agent-device"]);
 		expect(loaded.data.promptTemplate).toContain("{{udid}}");
+	});
+
+	test("takes a baseline per tool and rejects an unknown tool", () => {
+		const base = "{toolCalls: 1, driverCalls: 1, stumbles: 0, wallMs: 1}";
+		const ok = loadSuite(join(suiteDir(`${MINIMAL}\nbaseline: {argent: ${base}}\n`), "s.yml"));
+		expect(ok.success && ok.data.suite.baseline?.argent?.toolCalls).toBe(1);
+		expect(loadSuite(join(suiteDir(`${MINIMAL}\nbaseline: {maestro: ${base}}\n`), "s.yml")).success).toBe(false);
+		expect(loadSuite(join(suiteDir(`${MINIMAL}\ntools: [maestro]\n`), "s.yml")).success).toBe(false);
 	});
 
 	test("rejects an unknown key", () => {
@@ -55,10 +63,23 @@ describe("loadSuite", () => {
 });
 
 describe("renderPrompt", () => {
-	test("fills every placeholder", () => {
+	test("fills every placeholder; the device flag follows the platform", () => {
 		expect(
-			renderPrompt("{{bundleId}} {{platform}} {{udid}} {{udid}}", { udid: "U", platform: "ios", bundleId: "b" })
-		).toBe("b ios U U");
+			renderPrompt("{{bundleId}} {{platform}} {{udid}} {{udid}} {{deviceFlag}}", {
+				udid: "U",
+				platform: "ios",
+				bundleId: "b",
+			})
+		).toBe("b ios U U --udid");
+		expect(renderPrompt("{{deviceFlag}}", { udid: "S", platform: "android", bundleId: "b" })).toBe("--serial");
+	});
+});
+
+describe("composePrompt", () => {
+	test("the tool's preamble, a blank line, then the task", () => {
+		expect(
+			composePrompt("Use the CLI on {{udid}}.\n", "Task: sign in.\n", { udid: "U", platform: "ios", bundleId: "b" })
+		).toBe("Use the CLI on U.\n\nTask: sign in.\n");
 	});
 });
 

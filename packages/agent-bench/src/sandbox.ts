@@ -1,30 +1,37 @@
 import { chmodSync, cpSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { err, ok, type Result } from "@delacour/warden-types/result";
+import type { Kit } from "./kit";
 
 /**
- * The agent's world: a fresh `CLAUDE_CONFIG_DIR` holding only the warden skill and its always-on rule (no user
- * CLAUDE.md, settings, hooks, plugins or MCP servers), an empty working directory, and a `warden` shim for this
- * checkout's CLI first on PATH. `HOME` is kept: warden's lease store (`~/.warden`) and the simulator tools live
- * under it, and the agent must see the lease the bench claimed.
+ * The agent's world: a fresh `CLAUDE_CONFIG_DIR` holding only the tool's skills and always-on rules (no user
+ * CLAUDE.md, settings, hooks, plugins or MCP servers), an empty working directory, the kit's shims first on PATH
+ * and, for an MCP tool, an `mcp.json` with only its server. `HOME` is kept: warden's lease store (`~/.warden`)
+ * and the simulator tools live under it, and the agent must see the lease the bench claimed.
  */
 export type Sandbox = {
 	root: string;
 	configDir: string;
 	workDir: string;
 	binDir: string;
-	/** the agent's environment: `base` minus anything that would point warden at another session or device */
+	/** `--mcp-config` path; absent when the kit has no MCP server */
+	mcpConfigPath?: string;
+	/** `--settings` path (the Bash gate hook); absent when the kit has none */
+	settingsPath?: string;
+	/** the agent's environment: `base` minus anything that would point a tool at another session or device */
 	env(base: Record<string, string | undefined>, wardenSessionId: string): Record<string, string | undefined>;
 };
 
-export type SandboxInput = {
-	root: string;
-	/** `<repo>/skills/warden` */
-	skillDir: string;
-	/** `<repo>/apps/cli/src/cli.ts` */
-	cliPath: string;
-	bunPath: string;
-};
+export type SandboxKit = Pick<Kit, "files" | "shims" | "mcpServers" | "env" | "bashGate">;
+
+/** Settings with one `PreToolUse` hook on Bash: the kit's gate decides every call. */
+export function gateSettings(argv: readonly string[]): Record<string, unknown> {
+	return {
+		hooks: {
+			PreToolUse: [{ matcher: "Bash", hooks: [{ type: "command", command: argv.map(shellQuote).join(" ") }] }],
+		},
+	};
+}
 
 /** Removed from the agent's env: an outer session id would make the bench's lease look foreign. */
 const DROPPED_ENV = [
@@ -37,33 +44,47 @@ const DROPPED_ENV = [
 	"WARDEN_SERIAL",
 ] as const;
 
-export function createSandbox(input: SandboxInput): Sandbox {
-	const configDir = join(input.root, "config");
-	const workDir = join(input.root, "work");
-	const binDir = join(input.root, "bin");
-	rmSync(input.root, { recursive: true, force: true });
-	const skillTarget = join(configDir, "skills", "warden");
-	mkdirSync(skillTarget, { recursive: true });
-	cpSync(input.skillDir, skillTarget, { recursive: true, filter: (src) => src !== join(input.skillDir, "rules") });
-	mkdirSync(join(configDir, "rules"), { recursive: true });
-	cpSync(join(input.skillDir, "rules", "warden.md"), join(configDir, "rules", "warden.md"));
-	mkdirSync(workDir, { recursive: true });
-	mkdirSync(binDir, { recursive: true });
-	const shim = join(binDir, "warden");
-	writeFileSync(shim, `#!/bin/sh\nexec "${input.bunPath}" "${input.cliPath}" "$@"\n`);
-	chmodSync(shim, 0o755);
+function shellQuote(s: string): string {
+	return `"${s.replace(/(["\\$`])/g, "\\$1")}"`;
+}
+
+export function createSandbox(root: string, kit: SandboxKit): Sandbox {
+	const configDir = join(root, "config");
+	const workDir = join(root, "work");
+	const binDir = join(root, "bin");
+	rmSync(root, { recursive: true, force: true });
+	for (const dir of [configDir, workDir, binDir]) mkdirSync(dir, { recursive: true });
+	for (const file of kit.files) {
+		const target = join(configDir, file.to);
+		mkdirSync(dirname(target), { recursive: true });
+		const excluded = new Set((file.exclude ?? []).map((e) => join(file.from, e)));
+		cpSync(file.from, target, { recursive: true, filter: (src) => !excluded.has(src) });
+	}
+	for (const shim of kit.shims) {
+		const path = join(binDir, shim.name);
+		writeFileSync(path, `#!/bin/sh\nexec ${shim.argv.map(shellQuote).join(" ")} "$@"\n`);
+		chmodSync(path, 0o755);
+	}
+	const mcpConfigPath = Object.keys(kit.mcpServers).length > 0 ? join(root, "mcp.json") : undefined;
+	if (mcpConfigPath !== undefined)
+		writeFileSync(mcpConfigPath, `${JSON.stringify({ mcpServers: kit.mcpServers }, null, 2)}\n`);
+	const settingsPath = kit.bashGate !== undefined ? join(root, "settings.json") : undefined;
+	if (settingsPath !== undefined && kit.bashGate !== undefined)
+		writeFileSync(settingsPath, `${JSON.stringify(gateSettings(kit.bashGate), null, 2)}\n`);
 	return {
-		root: input.root,
+		root,
 		configDir,
 		workDir,
 		binDir,
+		...(mcpConfigPath !== undefined ? { mcpConfigPath } : {}),
+		...(settingsPath !== undefined ? { settingsPath } : {}),
 		env(base, wardenSessionId) {
 			const env: Record<string, string | undefined> = { ...base };
 			for (const key of DROPPED_ENV) delete env[key];
 			env.PATH = base.PATH ? `${binDir}:${base.PATH}` : binDir;
 			env.CLAUDE_CONFIG_DIR = configDir;
 			env.WARDEN_SESSION_ID = wardenSessionId;
-			return env;
+			return { ...env, ...kit.env };
 		},
 	};
 }

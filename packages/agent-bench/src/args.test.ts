@@ -9,6 +9,16 @@ describe("parseArgs", () => {
 		});
 	});
 
+	test("--tools narrows to known tools, deduplicated", () => {
+		const parsed = parseArgs(["login", "--tools", "argent,agent-device,argent"]);
+		expect(parsed).toEqual({
+			success: true,
+			data: { kind: "run", suite: "login", tools: ["argent", "agent-device"], json: false },
+		});
+		expect(parseArgs(["login", "--tools", "maestro"]).success).toBe(false);
+		expect(parseArgs(["login", "--tools"]).success).toBe(false);
+	});
+
 	test("list and help", () => {
 		expect(parseArgs(["list"])).toEqual({ success: true, data: { kind: "list" } });
 		expect(parseArgs([])).toEqual({ success: true, data: { kind: "help" } });

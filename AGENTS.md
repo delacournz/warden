@@ -21,7 +21,7 @@ packages/
   core/               # @delacour/warden-core — lease store, allocation, device providers, build cache
   e2e/                # @delacour/warden-e2e — spec runner (test/expect over bun test), iOS/Android driver, warden-simd helper, devtools; see packages/e2e/AGENTS.md
   e2e-bench/          # @delacour/warden-e2e-bench — private benchmark of warden/maestro/argent/agent-device/tester.army/detox on one parity suite; `bun run bench`; see packages/e2e-bench/AGENTS.md
-  agent-bench/        # @delacour/warden-agent-bench — private agent-in-the-loop benchmark: a Claude Code agent drives the example app with the warden skill; `bun run bench:agent <suite>`, manual/local only; see packages/agent-bench/AGENTS.md
+  agent-bench/        # @delacour/warden-agent-bench — private agent-in-the-loop benchmark: a Claude Code agent drives the example app with each tool's own kit (warden, argent, agent-device) and compares them; `bun run bench:agent <suite>`, manual/local only; see packages/agent-bench/AGENTS.md
   biome-config/       # shared Biome config (root.jsonc, react.jsonc)
   tsconfig/           # shared tsconfig (tsconfig.base.json, tsconfig.react.json)
   types/              # shared utility types (Result, AsyncResult, ok, err)
