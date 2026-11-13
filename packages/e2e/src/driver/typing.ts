@@ -65,6 +65,22 @@ export function canPasteText(driver: Driver): driver is Driver & PastesText {
 	return typeof (driver as Partial<PastesText>).pasteText === "function";
 }
 
+/**
+ * Optional fast path next to the frozen `Driver`: type `text` with the driver's quick key pacing (iOS: the same
+ * `warden-simd` `typeText` op with shorter holds and gaps, see `driver/ios/type-budget.ts` `QUICK_KEY_PACING`). Quick
+ * typing can lose a key on a controlled input under load, so it is only for text that is read back afterwards and
+ * typed again paced when it does not match: the first attempt of a verified `fill`. Never for secure fields (they
+ * cannot be read back), `type()`, `--no-verify` or a retry.
+ */
+export type TypesQuickly = { typeTextQuick(text: string): DriverResult<void> };
+
+export function canTypeQuickly(driver: Driver): driver is Driver & TypesQuickly {
+	return typeof (driver as Partial<TypesQuickly>).typeTextQuick === "function";
+}
+
+/** How `typeText` paces keys: `paced` = the driver's safe default; `quick` = `TypesQuickly` where the driver offers it. */
+export type TypePace = "quick" | "paced";
+
 const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
 function graphemesOf(text: string): string[] {
@@ -75,8 +91,17 @@ async function pace(driver: Driver, sleep: Sleep): Promise<void> {
 	if (driver.platform === "ios" && KEY_PACE_MS > 0) await sleep(KEY_PACE_MS);
 }
 
-/** Types `text` at the caret. Android types the whole string in one call. */
-export async function typeText(driver: Driver, sleep: Sleep, text: string): DriverResult<void> {
+/**
+ * Types `text` at the caret. Android types the whole string in one call. `quick` uses the driver's quick pacing where it
+ * has one (`TypesQuickly`); the caller must read the field back and retype `paced` on a mismatch.
+ */
+export async function typeText(
+	driver: Driver,
+	sleep: Sleep,
+	text: string,
+	speed: TypePace = "paced"
+): DriverResult<void> {
+	if (speed === "quick" && canTypeQuickly(driver)) return driver.typeTextQuick(text);
 	if (driver.platform !== "ios" || !SPLIT_TEXT) {
 		const typed = await driver.typeText(text);
 		if (typed.success) await pace(driver, sleep);

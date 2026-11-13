@@ -63,7 +63,7 @@ import { keyboardVisible } from "./keyboard-state";
 import type { AuditsNatively, NativeAuditOptions, NativeAuditResult } from "./native-audit";
 import { faultNotes } from "./network-proxy";
 import type { DrivesScreenReader, SpokenRead } from "./screen-reader";
-import type { PastesText, SelectsAll, SetsText } from "./typing";
+import type { PastesText, SelectsAll, SetsText, TypesQuickly } from "./typing";
 
 /**
  * Test doubles for `Driver`: `fakeDriver` (scripted screens, records every call) and the element-tree
@@ -211,6 +211,7 @@ export type DriverCall =
 	| { method: "selectAll" }
 	| { method: "setText"; text: string }
 	| { method: "pasteText"; text: string }
+	| { method: "typeTextQuick"; text: string }
 	| { method: "pressElement"; element: Element }
 	| { method: "scrollElement"; direction: ScrollDirection; within?: Element }
 	| { method: "pressButton"; button: HardwareButton }
@@ -276,6 +277,8 @@ export type FakeDriverOptions = {
 	setText?: boolean;
 	/** offer the optional `PastesText` capability (calls are recorded as `pasteText`); a plain driver has none */
 	pasteText?: boolean;
+	/** offer the optional `TypesQuickly` capability (calls are recorded as `typeTextQuick`); a plain driver has none */
+	typeTextQuick?: boolean;
 	/**
 	 * Offer the optional `ActsOnElements` capability (calls are recorded as `pressElement` / `scrollElement`) and
 	 * answer whether the driver handled the action (default false: the caller sends the touch). A plain driver has none.
@@ -320,6 +323,7 @@ export type FakeDriver = Driver &
 	Partial<SelectsAll> &
 	Partial<SetsText> &
 	Partial<PastesText> &
+	Partial<TypesQuickly> &
 	Partial<ActsOnElements> &
 	Partial<ReadsAlertOn & ProbesFrontmost & ReadsA11y & ReadsA11yEvents & AuditsNatively & DrivesScreenReader> & {
 		/** every call so far, in order */
@@ -390,6 +394,8 @@ function attachOptionalOps(
 	if (options.selectAll) driver.selectAll = async () => run({ method: "selectAll" }, () => undefined);
 	if (options.pasteText) driver.pasteText = async (text) => run({ method: "pasteText", text }, () => undefined);
 	if (options.setText) driver.setText = async (text) => run({ method: "setText", text }, () => undefined);
+	if (options.typeTextQuick)
+		driver.typeTextQuick = async (text) => run({ method: "typeTextQuick", text }, () => undefined);
 	const actions = options.elementActions;
 	if (actions !== undefined) {
 		driver.pressElement = async (element) => run({ method: "pressElement", element }, () => actions.handled);
