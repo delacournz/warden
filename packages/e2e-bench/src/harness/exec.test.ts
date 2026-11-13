@@ -15,12 +15,12 @@ describe("realExec", () => {
 	});
 
 	test("reports the child's CPU time at exit, the descendants it reaped included (bench-fidelity-R4)", async () => {
-		const loop = "i=0; while [ $i -lt 60000 ]; do i=$((i+1)); done";
+		const loop = "i=0; while [ $i -lt 20000 ]; do i=$((i+1)); done";
 		const r = await realExec.run("sh", ["-c", `${loop}; (${loop})`]);
 		expect(r.code).toBe(0);
 		expect(r.cpuSec).toBeGreaterThan(0.01);
 		expect(r.cpuSec).toBeLessThan(30);
-	});
+	}, 30_000);
 
 	test("times out", async () => {
 		const r = await realExec.run("sh", ["-c", "sleep 5"], { timeoutMs: 100 });

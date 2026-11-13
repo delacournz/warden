@@ -15,11 +15,19 @@ import { fromDriver } from "./driver";
 import { connectAndroidHost, connectHelper, connectIosRunner, stopAndroidHost } from "./helper";
 import type { UiError } from "./output";
 import { ownedPackages } from "./phone";
-import { readDumpRoute, writeDumpRoute } from "./state";
+import { readDumpRoute, readState, writeDumpRoute } from "./state";
 
 /** `WARDEN_ANDROID_HOST=0` drives an Android device in-process (the way before the resident host), else through it. */
 export function androidHostFromEnv(env: Readonly<Record<string, string | undefined>>): boolean {
 	return env.WARDEN_ANDROID_HOST !== "0";
+}
+
+/**
+ * iOS launches carry the injected library (hint, custom actions, reading order, announcements) after
+ * `warden ui open --a11y` (remembered per device in `state.json`) or with `WARDEN_A11Y=1`.
+ */
+function iosA11y(ctx: CommandContext, device: UiDevice): { a11y?: true } {
+	return readState(ctx, device.udid).a11y === true || ctx.env.WARDEN_A11Y === "1" ? { a11y: true } : {};
 }
 
 /**
@@ -35,7 +43,7 @@ export async function uiDriver(ctx: CommandContext, device: UiDevice): Promise<R
 	if (device.platform === "ios") {
 		if (isPhysicalIosId(device.udid)) return connectIosRunner(ctx, device.udid);
 		const { leaseDriverExtras } = await import("./conditions-real");
-		return connectHelper(ctx, device.udid, {}, leaseDriverExtras(ctx, device));
+		return connectHelper(ctx, device.udid, {}, { ...leaseDriverExtras(ctx, device), ...iosA11y(ctx, device) });
 	}
 	if (androidHostFromEnv(ctx.env)) {
 		const hosted = await connectAndroidHost(ctx, device.udid);

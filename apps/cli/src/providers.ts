@@ -10,7 +10,7 @@ import { androidSnapshotFailedHook, androidSnapshotHook, goldenDeps, goldenEnabl
 
 /**
  * Device provider for `platform`. iOS pool devices are cloned from a golden image (a first-booted,
- * settled sim) unless `WARDEN_GOLDEN=0`; a failed clone falls back to `simctl create`. Android emulators
+ * settled sim) unless `WARDEN_GOLDEN=0` or `opts.golden` is false; a failed clone falls back to `simctl create`. Android emulators
  * launch from warden's quick-boot snapshot of the AVD when one exists, unless `WARDEN_ANDROID_SNAPSHOT=0` /
  * `android.snapshot: false`; a failed launch from it falls back to a cold boot. Claims never build it
  * (`warden gc` / `warden golden ensure --platform android` do). `opts.slim` is the iOS daemon-slimming
@@ -20,7 +20,14 @@ export function providerFor(
 	platform: Platform,
 	ctx: CommandContext,
 	owner: Owner,
-	opts: { sleep?: Sleep; slim?: SlimProfile | false; physical?: boolean; namedPhysical?: readonly string[] } = {}
+	opts: {
+		sleep?: Sleep;
+		slim?: SlimProfile | false;
+		physical?: boolean;
+		namedPhysical?: readonly string[];
+		/** `false`: never clone from a golden (an e2e suite without `golden`), as `WARDEN_GOLDEN=0` */
+		golden?: false;
+	} = {}
 ): DeviceProvider {
 	const deps: ProviderDeps = {
 		exec: ctx.exec,
@@ -41,7 +48,7 @@ export function providerFor(
 		...(opts.physical === true ? { physical: true } : {}),
 		...(opts.namedPhysical !== undefined ? { namedPhysical: opts.namedPhysical } : {}),
 	};
-	if (!goldenEnabled(ctx.env)) return createIosProvider(deps, base);
+	if (opts.golden === false || !goldenEnabled(ctx.env)) return createIosProvider(deps, base);
 	const golden = { ...goldenDeps(ctx, owner, opts.sleep), prewarmHint: true };
 	return createIosProvider(deps, {
 		...base,

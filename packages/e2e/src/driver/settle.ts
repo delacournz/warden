@@ -45,6 +45,18 @@ export const DEFAULT_SETTLE_QUIET_MS = 250;
 /** How long a settle waits for quiet before it gives up. */
 export const DEFAULT_SETTLE_TIMEOUT_MS = 3000;
 
+/**
+ * The shortest window a snapshot-hash settle fallback waits (iOS, and `device.settle` on a driver without one). A navigation push exposes both screens at their final
+ * frames for 300-460 ms before the old one leaves the tree, so two equal reads 250 ms apart can settle on that mixed
+ * tree. The helper's own snapshot fallback (`FrameStability.minQuietMs`) uses the same floor.
+ */
+export const HASH_FALLBACK_MIN_QUIET_MS = 500;
+
+/** The quiet window a hash fallback uses for a caller's `quietMs`. */
+export function hashFallbackQuietMs(quietMs: number): number {
+	return Math.max(quietMs, HASH_FALLBACK_MIN_QUIET_MS);
+}
+
 const DEFAULT_POLL_MS = 50;
 
 /**
@@ -74,7 +86,8 @@ export async function settleByHash(poll: () => Promise<string>, deps: SettleDeps
 	}
 }
 
-function tuple(element: Element): string {
+/** One element as `(role, identifier, label, value, frame to 1 pt)`: what `snapshotHash` hashes, per node. */
+export function elementKey(element: Element): string {
 	const { x, y, width, height } = element.frame;
 	return JSON.stringify([
 		element.role,
@@ -91,6 +104,6 @@ function tuple(element: Element): string {
 /** Stable fingerprint over `(role, identifier, label, value, frame)` of every node in preorder. */
 export function snapshotHash(snapshot: Pick<Snapshot, "flat">): string {
 	let text = "";
-	for (const element of snapshot.flat) text += `${tuple(element)}\n`;
+	for (const element of snapshot.flat) text += `${elementKey(element)}\n`;
 	return Bun.hash(text).toString(36);
 }

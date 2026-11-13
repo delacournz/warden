@@ -1,6 +1,7 @@
-import { Children, type ReactElement, type ReactNode, useMemo } from "react";
+import { type ReactElement, type ReactNode, useMemo } from "react";
 import type { AccessibilityState } from "react-native";
 import Animated from "react-native-reanimated";
+import { wrapTextChildren } from "@/lib/wrap-text-children";
 import { useListGroupContext } from "@/components/ui/list-group/list-group.context";
 import { Pressable, type PressableProps } from "@/components/ui/pressable";
 import { type ItemContextValue, ItemProvider } from "./item.context";
@@ -71,7 +72,7 @@ function ItemRoot({
 		() => ({ isDisabled, isSelected, orientation, size: resolvedSize, surface }),
 		[isDisabled, isSelected, orientation, resolvedSize, surface]
 	);
-	const content = useMemo(() => wrapTextChildren(children), [children]);
+	const content = useMemo(() => wrapItemText(children, asChild), [asChild, children]);
 	const rootClassName = itemVariants({ isDisabled, isSelected, orientation, size: resolvedSize, surface }).root({
 		className,
 	});
@@ -115,40 +116,25 @@ function ItemRoot({
 /**
  * Wraps bare text children in a title inside a content column.
  *
- * Consecutive strings and numbers are collected into a single title rather
- * than one each — `Row {index}` is one piece of text. React Native cannot
- * render a string outside a `<Text>`, so without this `<Item>Wi-Fi</Item>`
- * would crash.
+ * React Native cannot render a string outside a `<Text>`, so without this
+ * `<Item>Wi-Fi</Item>` would crash. The run-collapsing, and the rule that a
+ * single child — and every child under `asChild` — comes back untouched for
+ * `Pressable`'s `Children.only`, live in the shared `wrapTextChildren`, where
+ * they are tested.
  *
  * Lives with the root because the root is what wraps its own text; a part
  * importing it from here would close a cycle. See AGENTS.md rule 3.
  */
-function wrapTextChildren(children: ReactNode): ReactNode {
-	const items = Children.toArray(children);
-	const output: ReactNode[] = [];
-	let run: (string | number)[] = [];
-
-	const flushRun = () => {
-		if (run.length === 0) return;
-		output.push(
-			<ItemContent key={`content-${output.length}`}>
-				<ItemTitle>{run.join("")}</ItemTitle>
+function wrapItemText(children: ReactNode, asChild: boolean | undefined): ReactNode {
+	return wrapTextChildren(
+		children,
+		(text, key) => (
+			<ItemContent key={key}>
+				<ItemTitle>{text}</ItemTitle>
 			</ItemContent>
-		);
-		run = [];
-	};
-
-	for (const child of items) {
-		if (typeof child === "string" || typeof child === "number") {
-			run.push(child);
-			continue;
-		}
-		flushRun();
-		output.push(child);
-	}
-	flushRun();
-
-	return output;
+		),
+		{ asChild }
+	);
 }
 
 /**

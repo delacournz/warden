@@ -1,9 +1,8 @@
 /**
  * Whether `KeyboardProvider`'s shared animation values are provably stale.
  *
- * Lives here, free of React Native imports, so the decision is reachable from
- * `bun test` — `hooks/use-keyboard-state-sync` cannot be, since Bun's
- * transpiler cannot parse React Native's Flow-typed source. See AGENTS.md.
+ * Lives here, free of React Native imports, so the decision is unit-testable —
+ * `hooks/use-keyboard-state-sync` cannot be, since a bare JS runtime cannot parse React Native's Flow-typed source. See AGENTS.md.
  *
  * `hasFocusedInput` MUST come from React Native's own focus registry
  * (`TextInput.State.currentlyFocusedInput()`), never from

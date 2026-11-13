@@ -1,0 +1,23 @@
+---
+title: Locale and timezone
+description: Run the app on a leased simulator or emulator in another language, region or timezone with warden ui, and when each platform applies it.
+icon: Languages
+---
+
+`warden ui locale` and `warden ui timezone` change what the app formats dates, numbers and strings with.
+
+```bash
+warden ui locale fr-FR
+warden ui timezone Asia/Tokyo
+warden ui locale status
+warden ui timezone reset
+```
+
+The locale is a BCP 47 tag (`fr-FR`), the timezone an IANA name (`Asia/Tokyo`). On iOS the change is staged for the next launch (`staged: true` and a warning): `warden ui open --relaunch`. Release clears the app locale and puts the timezone back. From a spec or a suite: [Locale and timezone in E2E tests](/docs/e2e/conditions/locale).
+
+## Per platform
+
+| | iOS simulator | Android emulator |
+|---|---|---|
+| Locale | applies to the app launched next (`-AppleLanguages` / `-AppleLocale`) | Android 13+ (API 33): per app, live |
+| Timezone | applies to the app launched next (`TZ`); the result has `appliesOnLaunch: true` | live and device-wide |

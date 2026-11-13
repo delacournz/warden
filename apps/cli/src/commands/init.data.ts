@@ -19,7 +19,11 @@ function bundleIds({ ios, android }: InitApp["bundleId"]): string {
  * `{ e2e: false }` (what `warden dev` offers to write) keeps it to the project: the ids warden would otherwise
  * have to ask Expo for on every start.
  */
-export function wardenConfigSource(app: InitApp, options: { e2e?: boolean } = {}): string {
+export function wardenConfigSource(
+	app: InitApp,
+	options: { e2e?: boolean; platform?: "ios" | "android" } = {}
+): string {
+	const platform = options.platform ?? "ios";
 	const name = str(app.name);
 	const root = app.root !== undefined && app.root !== "." ? `root: ${str(app.root)}, ` : "";
 	const header = `/**
@@ -35,18 +39,22 @@ export function wardenConfigSource(app: InitApp, options: { e2e?: boolean } = {}
 	projects: [{ name: ${name}, ${root}bundleId: ${bundleIds(app.bundleId)} }],
 };
 `;
+	const metro =
+		platform === "ios"
+			? `
+			// no Expo dev menu, onboarding sheet or floating button over the app
+			metro: { launchArgs: [${DEV_MENU_OFF_ARGS.map(str).join(", ")}] },`
+			: "";
 	return `${header}export default {
 	projects: [{ name: ${name}, ${root}bundleId: ${bundleIds(app.bundleId)} }],
 	e2e: {
 		[${name}]: {
 			project: ${name},
 			specsDir: ${str(DEFAULT_SPECS_DIR)},
-			platform: "ios",
+			platform: ${str(platform)},
 			isolate: "device",
 			count: ${DEFAULT_E2E_COUNT},
-			app: true,
-			// no Expo dev menu, onboarding sheet or floating button over the app
-			metro: { launchArgs: [${DEV_MENU_OFF_ARGS.map(str).join(", ")}] },
+			app: true,${metro}
 		},
 	},
 };
@@ -56,12 +64,13 @@ export function wardenConfigSource(app: InitApp, options: { e2e?: boolean } = {}
 /** A first spec: the app opens. */
 export const SMOKE_SPEC_SOURCE = `import { test } from "@delacour/warden-e2e";
 
-// the spec opens the app itself; a system prompt over the app is dismissed wherever a step meets one
+// launch: "none" = the test opens the app itself (app.open below) instead of the runner opening it first
+// systemAlerts: "dismiss" = a system prompt over the app (permissions, "Open in...?") is closed for you
 test.use({ launch: "none", systemAlerts: "dismiss" });
 
 test("the app opens", async ({ app }) => {
 	await app.open({ wait: "quiet" });
-	// next: assert on your first screen, e.g. (import expect from "@delacour/warden-e2e")
+	// next: assert on your first screen. Add \`expect\` to the import and \`screen\` to the fixtures, then:
 	// await expect(screen.getByTestId("home")).toBeVisible({ timeout: 30_000 });
 });
 `;

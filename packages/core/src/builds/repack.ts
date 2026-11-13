@@ -1,5 +1,7 @@
 import {
 	closeSync,
+	constants,
+	copyFileSync,
 	existsSync,
 	mkdirSync,
 	mkdtempSync,
@@ -13,24 +15,45 @@ import {
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, relative } from "node:path";
-import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
+import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import type { Exec } from "../exec";
 import { findNodeBin } from "../node-bin";
 import type { Platform } from "../types";
-import { diskSize, findRepack, findSimulatorBase, kindHash, recordRepack, repackDir, touchBuild } from "./cache";
+import { baseIdentity } from "./base-identity";
+import {
+	adoptKindDir,
+	diskSize,
+	findRepack,
+	findSimulatorBase,
+	forgetInstallsAt,
+	kindHash,
+	recordRepack,
+	repackDir,
+	touchBuild,
+} from "./cache";
 import { type EnsureKindInput, ensureKindBuild, LOCAL_PROFILE } from "./ensure";
 import { type GitContext, gitContext, readRepackMeta, writeRepackMeta } from "./js-key";
 import { computeKindKey, type KindKeys } from "./kind-key";
-import { buildLockKey, withBuildLock } from "./lock";
+import { type BuildLockDeps, buildLockKey, withBuildLock } from "./lock";
 import type { ApplyRepack, BundleOutput } from "./repack.types";
+import { androidKeepsSigner } from "./repack-android";
 
 /** The first bytes of Hermes bytecode (`0x1f1903c103bc1fc6` little-endian). */
 const HBC_MAGIC = Uint8Array.from([0xc6, 0x1f, 0xbc, 0x03, 0xc1, 0x03, 0x19, 0x1f]);
+
+/**
+ * Why a cached repack was not reused: its simulator base was replaced since (`base-changed`), it was made before
+ * warden recorded which base it came from (`base-unrecorded`, once), or it is signed by another key than its base so a
+ * device holding the base could not update to it (`signer-changed`, Android).
+ */
+export type RepackReason = "base-changed" | "base-unrecorded" | "signer-changed";
 
 /** What `repackApp` produced: a cached repack (reused or just made), or why a full simulator build is needed instead. */
 export type RepackResult =
 	| {
 			kind: "reused" | "repacked";
+			/** `repacked` over a cached repack that could not be reused; absent on a first repack or a `force` */
+			reason?: RepackReason;
 			/** the repacked `.app` / `.apk` */
 			artifact: string;
 			/** the cache / install hash of the repack (`kindHash`) */
@@ -40,6 +63,8 @@ export type RepackResult =
 			jsKey: string;
 			/** bundle + Hermes compile time; absent when a reused repack has no readable `meta.json` */
 			bundleMs?: number;
+			/** `repacked` only: the Android base built in this run embeds this JS, so its apk is the repack (no bundle ran) */
+			fromBase?: true;
 	  }
 	| { kind: "fallback"; reason: string };
 
@@ -52,6 +77,10 @@ export type RepackInput = Omit<EnsureKindInput, "key" | "buildKey" | "deviceId" 
 	hermes?: (exec: Exec, platform: Platform, baseArtifact: string) => Promise<boolean>;
 	/** where scratch dirs go (default the OS temp dir) */
 	scratchRoot?: string;
+	/** is the cached repack signed by its base's key? default: Android compares the apks' certificates, iOS true */
+	keepsSigner?: (platform: Platform, baseArtifact: string, repackArtifact: string) => Promise<boolean>;
+	/** finds or builds the simulator base; default `ensureKindBuild` */
+	ensureBase?: typeof ensureKindBuild;
 };
 
 type Env = Record<string, string | undefined>;
@@ -222,8 +251,11 @@ async function compileHermes(step: BundleStep, bundle: string, assetsDir: string
 	return ok({ bundle: hbc, assetsDir, sourcemap, hermes: true });
 }
 
-/** Bundle the JS into `scratch`, then Hermes-compile it when the base runs Hermes. */
-async function bundleJs(step: BundleStep): AsyncResult<BundleOutput> {
+/** The bundler's plain JS output in the scratch dir, before any Hermes compile. */
+type RawBundle = { bundle: string; assetsDir: string };
+
+/** Run the bundler (Metro via `expo export:embed` / `react-native bundle`) into `scratch`. Needs no base. */
+async function runBundler(step: Omit<BundleStep, "hermes">): AsyncResult<RawBundle> {
 	const { exec, root, platform, scratch } = step;
 	const binName = step.framework === "expo" ? "expo" : "react-native";
 	const bin = findNodeBin(root, binName);
@@ -242,9 +274,43 @@ async function bundleJs(step: BundleStep): AsyncResult<BundleOutput> {
 		return err(`repack: the bundler wrote no ${basename(bundle)}`);
 	const assetsDir = join(scratch, "assets");
 	mkdirSync(assetsDir, { recursive: true });
-	if (!step.hermes) return ok({ bundle, assetsDir, sourcemap: `${bundle}.map`, hermes: false });
+	return ok({ bundle, assetsDir });
+}
 
-	return compileHermes(step, bundle, assetsDir);
+/** The bundle as the repacker takes it: Hermes-compiled when the base runs Hermes, else the plain JS. */
+function finishBundle(step: BundleStep, raw: RawBundle): AsyncResult<BundleOutput> {
+	if (!step.hermes) return Promise.resolve(ok({ ...raw, sourcemap: `${raw.bundle}.map`, hermes: false }));
+	return compileHermes(step, raw.bundle, raw.assetsDir);
+}
+
+/**
+ * The bundler run while the simulator base builds: it needs only the worktree's JS, so it overlaps the native build
+ * instead of following it. Its own scratch dir, quiet (the build's output is what streams); the Hermes compile waits
+ * for the base, which says whether Hermes is on.
+ */
+type EarlyBundle = {
+	scratch: string;
+	startedAt: number;
+	done: Promise<{ raw: Result<RawBundle, string>; endedAt: number }>;
+};
+
+/**
+ * Why a cached repack cannot be reused over `basePath`, if it cannot: it is valid over the exact base it was cloned
+ * from, and signed by that base's key. A pruned base is never passed here, the repack stays usable then.
+ */
+async function staleReason(
+	input: RepackInput,
+	basePath: string,
+	repackPath: string,
+	recordedBase: string | undefined
+): Promise<RepackReason | undefined> {
+	const { platform, exec } = input;
+	const current = await baseIdentity(platform, basePath);
+	if (current !== undefined && recordedBase !== current)
+		return recordedBase === undefined ? "base-unrecorded" : "base-changed";
+	const keeps =
+		input.keepsSigner ?? ((p, b, r) => (p === "android" ? androidKeepsSigner(exec, b, r) : Promise.resolve(true)));
+	return (await keeps(platform, basePath, repackPath)) ? undefined : "signer-changed";
 }
 
 /**
@@ -275,11 +341,27 @@ export async function repackApp(input: RepackInput): AsyncResult<RepackResult> {
 	const query = { projectKey, platform, nativeFp: repack.nativeFp, jsKey: repack.jsKey };
 	const startedAt = input.now();
 
+	let reason: RepackReason | undefined;
 	const reuse = async (): Promise<RepackResult | undefined> => {
+		adoptKindDir(store, {
+			env: input.env,
+			projectKey,
+			platform,
+			profile: `${project.eas?.profile ?? LOCAL_PROFILE}:simulator`,
+			key: repack,
+			now: input.now(),
+		});
 		const hit = findRepack(store, query);
 		if (!hit || (input.force && hit.createdAt < startedAt)) return undefined;
-		touchBuild(store, projectKey, platform, hit.hash, input.now());
 		const meta = await readRepackMeta(dirname(hit.path));
+		const base = findSimulatorBase(store, { projectKey, platform, nativeFp: repack.nativeFp });
+		const stale =
+			base && existsSync(base.path) ? await staleReason(input, base.path, hit.path, meta?.baseId) : undefined;
+		if (stale) {
+			reason = stale;
+			return undefined;
+		}
+		touchBuild(store, projectKey, platform, hit.hash, input.now());
 		return {
 			kind: "reused",
 			artifact: hit.path,
@@ -292,21 +374,65 @@ export async function repackApp(input: RepackInput): AsyncResult<RepackResult> {
 	const early = await reuse();
 	if (early) return ok(early);
 
-	const base = await ensureKindBuild({
-		...input,
-		key: keys.data.key,
-		buildKey: keys.data.buildKey,
-		native: keys.data.native,
-	});
-	if (!base.success) return base;
-	const baseRecord = findSimulatorBase(store, { projectKey, platform, nativeFp: repack.nativeFp });
-	const baseArtifact = baseRecord?.path ?? base.data.appPath;
-	if (!baseArtifact || !existsSync(baseArtifact))
-		return err(`repack: the simulator base build is missing (${baseHash})`);
-	touchBuild(store, projectKey, platform, baseHash, input.now());
+	const baseKey = keys.data.key;
+	const earlyBundle = baseWillBuild(input, baseKey, repack.nativeFp)
+		? startEarlyBundle(input, flags, entry, keys.data)
+		: undefined;
+	try {
+		const base = await (input.ensureBase ?? ensureKindBuild)({
+			...input,
+			key: baseKey,
+			buildKey: keys.data.buildKey,
+			native: keys.data.native,
+		});
+		if (!base.success) return base;
+		const baseRecord = findSimulatorBase(store, { projectKey, platform, nativeFp: repack.nativeFp });
+		const baseArtifact = baseRecord?.path ?? base.data.appPath;
+		if (!baseArtifact || !existsSync(baseArtifact))
+			return err(`repack: the simulator base build is missing (${baseHash})`);
+		touchBuild(store, projectKey, platform, baseHash, input.now());
 
-	const lock = {
-		store,
+		const made: Made = { keys: keys.data, repack, flags, entry, hash, baseHash, baseArtifact, reason };
+		const fromBase = platform === "android" && base.data.source === "build";
+		return await withBuildLock(lockDeps(input), buildLockKey(projectKey, platform, repack.jsKey), async () => {
+			const again = await reuse();
+			if (again) return ok(again);
+			made.reason = reason;
+			if (fromBase && (await embedsBundle(input.exec, baseArtifact))) return adoptBase(input, made);
+			return makeRepack(input, made, earlyBundle);
+		});
+	} finally {
+		if (earlyBundle) {
+			await earlyBundle.done;
+			rmSync(earlyBundle.scratch, { recursive: true, force: true });
+		}
+	}
+}
+
+/**
+ * Is an iOS simulator base about to be built (none cached, builds on)? Then the bundle can overlap it. Android builds
+ * its base with the bundle embedded (adopted as the repack), so it is never raced. Registers a base a CI cache
+ * restored without its row first, as `ensureApp` would.
+ */
+function baseWillBuild(input: RepackInput, baseKey: KindKeys["key"], nativeFp: string): boolean {
+	const { store, platform, projectKey } = input;
+	if (platform !== "ios" || !input.build) return false;
+	adoptKindDir(store, {
+		env: input.env,
+		projectKey,
+		platform,
+		profile: `${input.project.eas?.profile ?? LOCAL_PROFILE}:simulator`,
+		key: baseKey,
+		now: input.now(),
+	});
+	const cached = findSimulatorBase(store, { projectKey, platform, nativeFp });
+	return !(cached && existsSync(cached.path));
+}
+
+/** The repack's build lock deps (one bundle per `(project, platform, jsKey)` at a time). */
+function lockDeps(input: RepackInput): BuildLockDeps {
+	return {
+		store: input.store,
 		owner: input.owner,
 		pid: input.pid,
 		now: input.now,
@@ -315,11 +441,74 @@ export async function repackApp(input: RepackInput): AsyncResult<RepackResult> {
 		log: input.log,
 		...(input.lockPollMs !== undefined ? { pollMs: input.lockPollMs } : {}),
 	};
-	return withBuildLock(lock, buildLockKey(projectKey, platform, repack.jsKey), async () => {
-		const again = await reuse();
-		if (again) return ok(again);
-		return makeRepack(input, { keys: keys.data, repack, flags, entry, hash, baseHash, baseArtifact });
-	});
+}
+
+/** Start the bundler in its own scratch dir, now; never rejects (`done` carries the result). */
+function startEarlyBundle(input: RepackInput, flags: readonly string[], entry: string, keys: KindKeys): EarlyBundle {
+	const scratchRoot = input.scratchRoot ?? tmpdir();
+	mkdirSync(scratchRoot, { recursive: true });
+	const scratch = mkdtempSync(join(scratchRoot, "warden-repack-"));
+	const startedAt = input.now();
+	input.log(`bundling ${input.platform} JS while the simulator base builds`);
+	const done = runBundler({
+		exec: input.exec,
+		root: input.project.root,
+		platform: input.platform,
+		framework: input.project.framework,
+		flags,
+		entry,
+		env: { ...input.env, ...keys.settings.env },
+		scratch,
+		log: () => {},
+	})
+		.catch(
+			(error: unknown): Result<RawBundle, string> =>
+				err(`repack: ${error instanceof Error ? error.message : String(error)}`)
+		)
+		.then((raw) => ({ raw, endedAt: input.now() }));
+	return { scratch, startedAt, done };
+}
+
+/** Does the apk carry `assets/index.android.bundle` (the RN Gradle plugin's bundle of a Release build)? */
+async function embedsBundle(exec: Exec, apk: string): Promise<boolean> {
+	const listing = await exec(["unzip", "-Z1", apk]);
+	return listing.exitCode === 0 && listing.stdout.split("\n").includes("assets/index.android.bundle");
+}
+
+/**
+ * The Android base this run just built (`assembleRelease` bundles the worktree's JS into it, with the kind's env) is
+ * already the repack of that JS: its apk is copied into the repack dir and recorded, with no second bundle, apply or
+ * re-sign. Only a base built here: one another warden built (or a cached one) may hold another checkout's JS.
+ */
+async function adoptBase(input: RepackInput, made: Made): AsyncResult<RepackResult> {
+	const { platform, projectKey, env } = input;
+	const { repack, hash, baseHash, baseArtifact } = made;
+	const finalDir = repackDir(env, projectKey, platform, repack.nativeFp, repack.jsKey);
+	let staging: string | undefined;
+	try {
+		mkdirSync(dirname(finalDir), { recursive: true });
+		staging = mkdtempSync(join(dirname(finalDir), ".staging-"));
+		const git = await gitContext(input.exec, input.project.root, input.git);
+		if (!git.success) return git;
+		const baseId = await baseIdentity(platform, baseArtifact);
+		const name = basename(baseArtifact);
+		copyFileSync(baseArtifact, join(staging, name), constants.COPYFILE_FICLONE);
+		const artifact = commitRepack(input, made, { staging, finalDir, name, git: git.data, bundleMs: 0, baseId });
+		input.log("using the JS bundle the fresh Android base build embeds as the repack (no second bundle)");
+		return ok({
+			kind: "repacked",
+			artifact,
+			hash,
+			baseHash,
+			jsKey: repack.jsKey,
+			fromBase: true,
+			...(made.reason ? { reason: made.reason } : {}),
+		});
+	} catch (error) {
+		return err(`repack: ${error instanceof Error ? error.message : String(error)}`);
+	} finally {
+		if (staging) rmSync(staging, { recursive: true, force: true });
+	}
 }
 
 type Made = {
@@ -330,6 +519,7 @@ type Made = {
 	hash: string;
 	baseHash: string;
 	baseArtifact: string;
+	reason: RepackReason | undefined;
 };
 
 /** The `simulator-repack` row of a repack that is in its final dir. */
@@ -353,8 +543,68 @@ function recordMade(input: RepackInput, made: Made, git: GitContext, artifact: s
 	});
 }
 
-/** Bundle, apply, stage, move into `repackDir`, write `meta.json`, record. Scratch and staging dirs always go. */
-async function makeRepack(input: RepackInput, made: Made): AsyncResult<RepackResult> {
+type Staged = {
+	staging: string;
+	finalDir: string;
+	/** the artifact's file / dir name inside `staging` */
+	name: string;
+	git: GitContext;
+	bundleMs: number;
+	baseId: string | undefined;
+};
+
+/**
+ * Write `meta.json` beside the staged artifact, swap `staging` in as `finalDir` and record the repack; returns the
+ * artifact's final path. Devices that ran the repack this one replaces must install the new one, so their install
+ * records of it are forgotten.
+ */
+function commitRepack(input: RepackInput, made: Made, staged: Staged): string {
+	const { staging, finalDir, git, baseId } = staged;
+	writeRepackMeta(staging, {
+		worktree: git.worktree,
+		...(git.branch ? { branch: git.branch } : {}),
+		head: git.head,
+		createdAt: input.now(),
+		bundleMs: staged.bundleMs,
+		...(baseId !== undefined ? { baseId } : {}),
+	});
+	if (existsSync(finalDir)) forgetInstallsAt(input.store, input.platform, [made.hash]);
+	rmSync(finalDir, { recursive: true, force: true });
+	renameSync(staging, finalDir);
+	const artifact = join(finalDir, staged.name);
+	recordMade(input, made, git, artifact);
+	return artifact;
+}
+
+/**
+ * The repacker's bundle, timed: the `early` bundle's run plus its Hermes compile, or a bundle run now. `bundleMs` is
+ * bundler + Hermes time either way, not the wait for the base.
+ */
+async function bundleFor(
+	step: BundleStep,
+	early: EarlyBundle | undefined,
+	now: () => number
+): AsyncResult<{ bundled: BundleOutput; bundleMs: number }> {
+	let started = now();
+	let raw: Result<RawBundle, string>;
+	let earlyMs = 0;
+	if (early) {
+		const result = await early.done;
+		raw = result.raw;
+		earlyMs = Math.max(0, result.endedAt - early.startedAt);
+		started = now();
+	} else raw = await runBundler(step);
+	if (!raw.success) return raw;
+	const bundled = await finishBundle(step, raw.data);
+	if (!bundled.success) return bundled;
+	return ok({ bundled: bundled.data, bundleMs: earlyMs + Math.max(0, now() - started) });
+}
+
+/**
+ * Bundle (or take the `early` bundle made while the base built), apply, stage, move into `repackDir`, write
+ * `meta.json`, record. Scratch and staging dirs always go (the `early` scratch is the caller's).
+ */
+async function makeRepack(input: RepackInput, made: Made, early?: EarlyBundle): AsyncResult<RepackResult> {
 	const { exec, platform, project, projectKey, env } = input;
 	const { repack, hash, baseHash, baseArtifact } = made;
 	const finalDir = repackDir(env, projectKey, platform, repack.nativeFp, repack.jsKey);
@@ -364,14 +614,14 @@ async function makeRepack(input: RepackInput, made: Made): AsyncResult<RepackRes
 	try {
 		mkdirSync(dirname(finalDir), { recursive: true });
 		mkdirSync(scratchRoot, { recursive: true });
-		scratch = mkdtempSync(join(scratchRoot, "warden-repack-"));
+		scratch = early?.scratch ?? mkdtempSync(join(scratchRoot, "warden-repack-"));
 		staging = mkdtempSync(join(dirname(finalDir), ".staging-"));
+		const baseId = await baseIdentity(platform, baseArtifact);
 		const git = await gitContext(exec, project.root, input.git);
 		if (!git.success) return git;
 		const hermes = await (input.hermes ?? detectHermes)(exec, platform, baseArtifact);
-		const started = input.now();
 		input.onPhase?.({ phase: "repacking", platform, jsKey: repack.jsKey });
-		const bundled = await bundleJs({
+		const step: BundleStep = {
 			exec,
 			root: project.root,
 			platform,
@@ -383,28 +633,34 @@ async function makeRepack(input: RepackInput, made: Made): AsyncResult<RepackRes
 			hermes,
 			log: input.log,
 			...(input.buildOutput ? { output: input.buildOutput } : {}),
-		});
-		if (!bundled.success) return bundled;
-		const bundleMs = Math.max(0, input.now() - started);
+		};
+		const timed = await bundleFor(step, early, input.now);
+		if (!timed.success) return timed;
+		const { bundled, bundleMs } = timed.data;
 
-		const applied = await input.repackers[platform]({ exec, baseArtifact, outDir: staging, bundle: bundled.data });
+		const applied = await input.repackers[platform]({ exec, baseArtifact, outDir: staging, bundle: bundled });
 		if (!applied.success) return err(`repack: ${applied.error}`);
 		if ("fallback" in applied.data) return ok({ kind: "fallback", reason: applied.data.reason });
 
 		const stagedArtifact = applied.data.artifact;
 		if (!existsSync(stagedArtifact)) return err(`repack: the repacker wrote no artifact (${stagedArtifact})`);
-		const artifact = join(finalDir, basename(stagedArtifact));
-		writeRepackMeta(staging, {
-			worktree: git.data.worktree,
-			...(git.data.branch ? { branch: git.data.branch } : {}),
-			head: git.data.head,
-			createdAt: input.now(),
+		const artifact = commitRepack(input, made, {
+			staging,
+			finalDir,
+			name: basename(stagedArtifact),
+			git: git.data,
 			bundleMs,
+			baseId,
 		});
-		rmSync(finalDir, { recursive: true, force: true });
-		renameSync(staging, finalDir);
-		recordMade(input, made, git.data, artifact);
-		return ok({ kind: "repacked", artifact, hash, baseHash, jsKey: repack.jsKey, bundleMs });
+		return ok({
+			kind: "repacked",
+			artifact,
+			hash,
+			baseHash,
+			jsKey: repack.jsKey,
+			bundleMs,
+			...(made.reason ? { reason: made.reason } : {}),
+		});
 	} catch (error) {
 		return err(`repack: ${error instanceof Error ? error.message : String(error)}`);
 	} finally {

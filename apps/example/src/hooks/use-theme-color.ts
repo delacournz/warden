@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { useCSSVariable } from "uniwind";
 import { isLiteralColor, themeVariableName } from "@/lib/color";
 
@@ -41,4 +42,28 @@ export function useThemeColor(token: string): string | undefined {
 	const resolved = useCSSVariable(isLiteral ? PROBE_VARIABLE : name) as string | undefined;
 
 	return isLiteral ? token : resolved;
+}
+
+/**
+ * {@link useThemeColor} for several tokens in one lookup, keyed by token.
+ *
+ * For a renderer that cannot call a hook where it draws — a Skia canvas is a second React
+ * reconciler, so a theme hook inside it reads no `ScopedTheme`. Resolve above the canvas, pass the
+ * record in. Hand it a list that is equal across renders (sorted, deduplicated) and the lookup
+ * does not re-subscribe.
+ */
+export function useThemeColors(tokens: readonly string[]): Readonly<Record<string, string | undefined>> {
+	const names = tokens.map((token) => (isLiteralColor(token) ? PROBE_VARIABLE : themeVariableName(token)));
+	const resolved = useCSSVariable(names.length > 0 ? names : [PROBE_VARIABLE]);
+	const key = tokens.join("\n");
+
+	// biome-ignore lint/correctness/useExhaustiveDependencies: `key` stands for `tokens`, which a caller may rebuild every render.
+	return useMemo(() => {
+		const colors: Record<string, string | undefined> = {};
+		tokens.forEach((token, index) => {
+			const value = resolved[index];
+			colors[token] = isLiteralColor(token) ? token : typeof value === "string" ? value : undefined;
+		});
+		return colors;
+	}, [key, resolved]);
 }

@@ -11,7 +11,7 @@ import {
 	warmDemand,
 } from "@delacour/warden-core/warm-pool";
 import { mapBounded } from "./bounded";
-import { CAPACITY_PLATFORMS, hostInventoryOf, pressureOf, readCapacityBasis } from "./capacity-deps";
+import { CAPACITY_PLATFORMS, enforcedBudget, hostInventoryOf, pressureOf, readCapacityBasis } from "./capacity-deps";
 import type { CommandContext } from "./context";
 import { providerFor } from "./providers";
 
@@ -28,7 +28,9 @@ const keyOf = (d: { platform: string; id: string }): string => `${d.platform}:${
 export async function readWarmPlan(ctx: CommandContext, owner: Owner): Promise<WarmPlan> {
 	const store = ctx.store();
 	const now = ctx.now();
-	const { budget, config } = await readCapacityBasis(ctx);
+	const basis = await readCapacityBasis(ctx);
+	const { config } = basis;
+	const budget = enforcedBudget(ctx.env, basis);
 	const inventory = await hostInventoryOf(ctx, owner)();
 	const pressure = await pressureOf(ctx)();
 	const head = queueOrder(admissionQueue(store.listQueue()), now)[0];

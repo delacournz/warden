@@ -2,6 +2,7 @@ import type { ReactElement } from "react";
 import { View, type ViewProps } from "react-native";
 import { ScreenProvider, useScreenContext } from "./screen.context";
 import { screenVariants } from "./screen.variants";
+import { ScreenScrollSourceBridge } from "./screen-scroll-source";
 
 export type ScreenRootProps = ViewProps & {
 	/**
@@ -28,11 +29,15 @@ export function ScreenRoot({ debug = false, className, children, ...props }: Scr
 	// second, unread set of measurements.
 	const parentContext = useScreenContext();
 
+	// The bridge republishes the scroll values as a `ScrollSource`, which is what
+	// lets the scroll family work inside a screen with no wiring.
 	return (
 		<ScreenProvider debug={debug} parentContext={parentContext}>
-			<View className={screenVariants().root({ className })} {...props}>
-				{children}
-			</View>
+			<ScreenScrollSourceBridge>
+				<View className={screenVariants().root({ className })} {...props}>
+					{children}
+				</View>
+			</ScreenScrollSourceBridge>
 		</ScreenProvider>
 	);
 }

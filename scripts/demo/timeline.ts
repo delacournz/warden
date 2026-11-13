@@ -1,4 +1,12 @@
-import type { DemoDefinition, DemoStep, PlanStep, RecordedTake, RenderPlan, TerminalLayout } from "./demo.types";
+import type {
+	DemoDefinition,
+	DemoOutput,
+	DemoStep,
+	PlanStep,
+	RecordedTake,
+	RenderPlan,
+	TerminalLayout,
+} from "./demo.types";
 
 export const CANVAS = { width: 1920, height: 1080, fps: 30 } as const;
 export const PHONE = { x: 1289, y: 50, width: 451, height: 980, radius: 62 } as const;
@@ -10,6 +18,8 @@ const MIN_FONT = 17;
 const MAX_TYPE_S = 0.75;
 const TYPE_S_PER_CHAR = 0.024;
 const OUTRO_DELAY_S = 0.8;
+/** A `lines` output line costs this share of an entry pitch. */
+const LINE_UNITS = 0.4;
 
 const SECRET_PATTERNS: readonly RegExp[] = [
 	/\b(token|secret|password|passwd|api[_-]?key|authorization|bearer)(\s*[:=]\s*|\s+)\S+/gi,
@@ -17,6 +27,12 @@ const SECRET_PATTERNS: readonly RegExp[] = [
 	/\b[A-Fa-f0-9]{32,}\b/g,
 	/\b[A-Za-z0-9+/_-]{40,}={0,2}/g,
 ];
+
+/** Masks one output: its text, or each line of a `lines` output. */
+export function maskOutput(output: DemoOutput): DemoOutput {
+	if (output.kind === "lines") return { kind: "lines", text: output.text.map(maskSecrets) };
+	return { kind: output.kind, text: maskSecrets(output.text) };
+}
 
 /** Replaces anything secret-looking with bullets; applied to every printed line. */
 export function maskSecrets(text: string): string {
@@ -42,13 +58,20 @@ export function shownCommand(step: DemoStep): string {
  * Fits `count` entries (command + output line each) plus the outro row into the
  * terminal body. Shrinks pitch and font down to a floor, then scrolls instead.
  */
-export function computeTerminalLayout(count: number, bodyHeight: number = TERMINAL_BODY.height): TerminalLayout {
+export function computeTerminalLayout(
+	count: number,
+	bodyHeight: number = TERMINAL_BODY.height,
+	/** Output lines beyond the first one of each entry; each costs `LINE_UNITS` of an entry. */
+	extraLines = 0
+): TerminalLayout {
 	const outroRow = Math.floor(MAX_PITCH / 2);
-	const pitch = count === 0 ? MAX_PITCH : Math.min(MAX_PITCH, Math.floor((bodyHeight - outroRow) / count));
+	const units = count + extraLines * LINE_UNITS;
+	const pitch = count === 0 ? MAX_PITCH : Math.min(MAX_PITCH, Math.floor((bodyHeight - outroRow) / units));
 	const fontPx = Math.min(MAX_FONT, Math.floor(pitch * 0.29));
 	if (fontPx >= MIN_FONT || count === 0) {
 		return {
 			entryPitch: pitch,
+			lineGap: Math.round(pitch * LINE_UNITS),
 			outputOffset: Math.round(pitch * 0.44),
 			fontPx,
 			visibleEntries: count,
@@ -57,6 +80,7 @@ export function computeTerminalLayout(count: number, bodyHeight: number = TERMIN
 	}
 	return {
 		entryPitch: MAX_PITCH,
+		lineGap: Math.round(MAX_PITCH * LINE_UNITS),
 		outputOffset: Math.round(MAX_PITCH * 0.44),
 		fontPx: MAX_FONT,
 		visibleEntries: Math.max(1, Math.floor((bodyHeight - outroRow) / MAX_PITCH)),
@@ -90,7 +114,7 @@ export function buildPlan(def: DemoDefinition, take: RecordedTake, videoS: numbe
 		const typeStartS = Math.max(prevOutputS + 0.1, fireS - typeDuration(shown));
 		steps.push({
 			shown,
-			output: { kind: step.output.kind, text: maskSecrets(step.output.text) },
+			output: maskOutput(step.output),
 			typeStartS: Math.min(typeStartS, fireS),
 			fireS,
 			outputS,
@@ -110,7 +134,11 @@ export function buildPlan(def: DemoDefinition, take: RecordedTake, videoS: numbe
 		outroS,
 		durationS,
 		fps: CANVAS.fps,
-		layout: computeTerminalLayout(steps.length),
+		layout: computeTerminalLayout(
+			steps.length,
+			undefined,
+			steps.reduce((n, s) => n + (s.output.kind === "lines" ? Math.max(0, s.output.text.length - 1) : 0), 0)
+		),
 		fontsDir,
 	};
 }

@@ -24,8 +24,7 @@ export type IconSize = (typeof ICON_SIZES)[number];
  * class, and a default here would emit from inside this same call, ahead of it
  * in the merge. {@link resolveIconSizeClass} orders the sources instead.
  *
- * Free of React Native imports so it stays unit-testable — `bun test` cannot
- * parse React Native's Flow-typed source. See AGENTS.md.
+ * Free of React Native imports so it stays pure and unit-testable. See AGENTS.md.
  */
 export const iconVariants = tv({
 	variants: {
@@ -64,7 +63,7 @@ export function isIconSize(size: IconSize | number | undefined): size is IconSiz
  * `h-*`. tailwind-merge conflicts `size` into `w`/`h` but not the reverse, so a
  * trailing `w-6` will not clear a leading `size-5`.
  *
- * Pure, so the whole ladder is reachable from `bun test`. See AGENTS.md.
+ * Pure, so the whole ladder is unit-testable. See AGENTS.md.
  */
 export function resolveIconSizeClass({
 	size,

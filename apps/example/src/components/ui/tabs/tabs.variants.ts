@@ -44,7 +44,7 @@ export const TABS_LABEL_TEXT_SIZE: Record<TabsSize, TextSize> = { sm: "sm", md: 
  * This is the **only** place either colour is named. The label crossfades between
  * them on the UI thread and a composed `Icon` takes one of them as a resolved
  * value, and neither of those can be a class — so the `label` slot carries no
- * colour at all and this map is what `bun test` sweeps instead. `Checkbox`'s
+ * colour at all and this map is what a unit test sweeps instead. `Checkbox`'s
  * animated border makes the same trade for the same reason.
  */
 export const TABS_FOREGROUND_TOKEN: Record<TabsVariant, { selected: string; unselected: string }> = {
@@ -583,7 +583,7 @@ export function resolveScrollOffset(state: {
  * `shrink-0` is what stops flex shrinking eight overflowing panels to an eighth
  * each.
  *
- * Free of React Native imports so it stays unit-testable — `bun test` cannot parse
+ * Free of React Native imports so it stays unit-testable — a bare JS runtime cannot parse
  * React Native's Flow-typed source. See AGENTS.md.
  */
 export const tabsVariants = tv({

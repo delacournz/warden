@@ -1,28 +1,9 @@
 import type { ReactElement, ReactNode } from "react";
 import { View, type ViewProps } from "react-native";
-import { IconCircleCheck, IconCircleInfo, IconExclamationCircle, IconExclamationTriangle } from "@/lib/icons/central";
-import { Icon, type IconComponent } from "@/components/ui/icon";
+import { Icon } from "@/components/ui/icon";
 import { useAlertPart } from "./alert.context";
-import { type AlertStatus, alertVariants } from "./alert.variants";
-
-/**
- * The glyph each status draws.
- *
- * `warning` and `destructive` differ in shape as well as colour — a triangle
- * against a circle — so the two stay distinguishable to anyone who cannot tell
- * amber from red. `default` shares `info`'s glyph: a neutral note is still a
- * note, and a status of its own would need a meaning it does not have.
- *
- * Lives here rather than in `alert.variants.ts` because the glyphs are React
- * Native SVG components, and that file must stay importable from `bun test`.
- */
-const ALERT_GLYPHS: Record<AlertStatus, IconComponent> = {
-	default: IconCircleInfo,
-	info: IconCircleInfo,
-	success: IconCircleCheck,
-	warning: IconExclamationTriangle,
-	destructive: IconExclamationCircle,
-};
+import { alertVariants } from "./alert.variants";
+import { ALERT_GLYPHS } from "./alert-glyphs";
 
 export type AlertIndicatorProps = ViewProps & {
 	className?: string;

@@ -670,7 +670,7 @@ describe("waitReady", () => {
 		const { exec, calls } = fakeExec({ [WAIT]: out(""), [settings]: out("") });
 		const provider = createAndroidProvider(deps(exec), { sleep: async () => {} });
 		expect(await provider.waitReady("emulator-5554", 60_000)).toEqual(ok(undefined));
-		expect(calls).toEqual([WAIT, settings]);
+		expect(calls).toEqual([WAIT, settings, `${ADB} -s emulator-5554 shell dumpsys window`]);
 	});
 
 	const BIO_STATE = `${ADB} -s emulator-5554 get-state`;
@@ -723,7 +723,40 @@ describe("waitReady", () => {
 		const plain = fakeExec({ [wait]: out(""), [plainSettings]: out("") });
 		const other = createAndroidProvider(deps(plain.exec), { sleep: async () => {} });
 		expect(await other.waitReady("emulator-5560", 60_000)).toEqual(ok(undefined));
-		expect(plain.calls).toEqual([wait, plainSettings]);
+		expect(plain.calls).toEqual([wait, plainSettings, `${ADB} -s emulator-5560 shell dumpsys window`]);
+		expect(plain.calls.some((c) => c.includes("input"))).toBe(false);
+	});
+
+	test("a plain emulator restored behind the lock screen is unlocked (the app cannot resolve its launcher otherwise)", async () => {
+		let dumps = 0;
+		const wait = `${ADB} -s emulator-5560 wait-for-device shell ${BOOT_WAIT_SCRIPT}`;
+		const plainSettings = `${ADB} -s emulator-5560 shell ${bootSettingsCommand()}`;
+		const dump = `${ADB} -s emulator-5560 shell dumpsys window`;
+		const unlock = `${ADB} -s emulator-5560 shell ${unlockCommand()}`;
+		const awake = `${ADB} -s emulator-5560 shell ${STAY_AWAKE_COMMAND}`;
+		const plain = fakeExec({
+			[wait]: out(""),
+			[plainSettings]: out(""),
+			[dump]: () => out(++dumps <= 2 ? "isKeyguardShowing=true" : "isKeyguardShowing=false"),
+			[unlock]: out(""),
+			[awake]: out(""),
+		});
+		const other = createAndroidProvider(deps(plain.exec), { sleep: async () => {} });
+		expect(await other.waitReady("emulator-5560", 60_000)).toEqual(ok(undefined));
+		expect(plain.calls).toContain(unlock);
+		expect(plain.calls).toContain(awake);
+	});
+
+	test("a plain emulator that stays locked is still ready, never discarded", async () => {
+		const wait = `${ADB} -s emulator-5560 wait-for-device shell ${BOOT_WAIT_SCRIPT}`;
+		const plain = fakeExec({
+			[wait]: out(""),
+			[`${ADB} -s emulator-5560 shell ${bootSettingsCommand()}`]: out(""),
+			[`${ADB} -s emulator-5560 shell dumpsys window`]: out("isKeyguardShowing=true"),
+		});
+		const other = createAndroidProvider(deps(plain.exec), { sleep: async () => {} });
+		expect(await other.waitReady("emulator-5560", 60_000)).toEqual(ok(undefined));
+		expect(plain.calls.some((c) => c.includes("emu kill"))).toBe(false);
 	});
 
 	test("a biometrics emulator stuck on its keyguard fails readiness and is shut down, not left locked", async () => {

@@ -111,6 +111,14 @@ describe("requests", () => {
 		expect(result).toEqual({ success: true, data: { x: 10, y: 20, timeoutMs: 5000 } });
 	});
 
+	test("minTimeoutMs raises the timeout and never lowers a longer one", async () => {
+		const { client } = await started({ ops: { tap: { echo: true } } });
+		const raised = await client.request("tap", {}, { minTimeoutMs: 20_000 });
+		expect(raised).toEqual({ success: true, data: { timeoutMs: 20_000 } });
+		const kept = await client.request("tap", {}, { timeoutMs: 30_000, minTimeoutMs: 20_000 });
+		expect(kept).toEqual({ success: true, data: { timeoutMs: 30_000 } });
+	});
+
 	test("responses may arrive out of order and are matched by id", async () => {
 		const { client } = await started({
 			ops: { slow: { data: "slow", delayMs: 200 }, fast: { data: "fast" }, mid: { data: "mid", delayMs: 80 } },

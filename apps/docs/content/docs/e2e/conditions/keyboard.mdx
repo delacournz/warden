@@ -1,0 +1,44 @@
+---
+title: Keyboard
+description: Test sheets and footers that ride the on-screen keyboard by showing or hiding it from a spec or a suite.
+icon: Keyboard
+---
+
+`device.keyboard` switches the on-screen keyboard between `software` (it shows, the default) and `hardware` (it stays hidden, as with a connected keyboard), live, so a spec can check a bottom sheet or a sticky footer riding it up and down.
+
+```ts
+import { expect, test } from "@delacour/warden-e2e";
+
+test("the footer stays above the keyboard", async ({ app, device, screen }) => {
+	await app.open();
+	await screen.getByTestId("open-sheet").tap();
+	await screen.getByTestId("sheet-input").fill("buy milk");
+	await expect(device).toHaveKeyboard();
+	await expect(screen.getByTestId("sheet-save")).toBeVisible();
+
+	await device.keyboard("hardware");
+	await expect(device).not.toHaveKeyboard();
+});
+```
+
+| Member | Does |
+|---|---|
+| `device.keyboard("software" \| "hardware" \| "toggle")` | sets the mode live; `toggle` flips the mode this spec has in place |
+| `device.keyboardVisible()` | whether a keyboard is up now |
+| `expect(device).toHaveKeyboard({ timeout? })` | polls until a keyboard is up; `.not` until it is gone |
+
+`device.hideKeyboard()` dismisses a keyboard that is up: iOS resigns the first responder through the injected library (never Return, so no form is submitted; an app running without the library falls back to Enter), Android presses back.
+
+On iOS, a tap on a target the keyboard covers first scrolls it into view or dismisses the keyboard, then taps. On Android, call `device.hideKeyboard()` first.
+
+The mode goes back to the suite's `conditions.keyboard` (else `software`) when the test ends.
+
+## In a suite
+
+```ts title="warden.config.ts"
+conditions: { keyboard: "hardware" },
+```
+
+Applied at the start of each spec and put back when it ends. Values: `"software"` or `"hardware"`.
+
+How each platform switches it and `warden ui keyboard`: [Keyboard on a simulator](/docs/sims/conditions/keyboard).

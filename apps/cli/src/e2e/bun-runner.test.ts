@@ -96,12 +96,40 @@ describe("specEnv", () => {
 });
 
 describe("helperDir", () => {
+	const has = (dir: string) => (path: string) => path === `${dir}/warden-simd`;
+
 	test("a compiled binary: the directory of the executable", () => {
-		expect(helperDir("/$bunfs/root/warden", "/home/me/.local/bin/warden")).toBe("/home/me/.local/bin");
+		expect(helperDir("/$bunfs/root/warden", "/home/me/.local/bin/warden", has("/home/me/.local/bin"))).toBe(
+			"/home/me/.local/bin"
+		);
 	});
 
 	test("from source: the helper's build output in the checkout", () => {
-		expect(helperDir("/repo/apps/cli/src/cli.ts", "/usr/bin/bun")).toBe("/repo/packages/e2e/native/dist");
+		expect(helperDir("/repo/apps/cli/src/cli.ts", "/usr/bin/bun", has("/repo/packages/e2e/native/dist"))).toBe(
+			"/repo/packages/e2e/native/dist"
+		);
+	});
+
+	test("no helper there (a release binary whose helper `doctor --fetch-helper` staged under $WARDEN_HOME, a checkout that never built it): none, so the specs fall through to the staged copy", () => {
+		expect(helperDir("/$bunfs/root/warden", "/home/me/.local/bin/warden", () => false)).toBeUndefined();
+		expect(helperDir("/repo/apps/cli/src/cli.ts", "/usr/bin/bun", () => false)).toBeUndefined();
+	});
+});
+
+describe("specEnv helper dir", () => {
+	const base = {
+		platform: "ios",
+		bundleId: "com.x.app",
+		launchArgs: [],
+		out: "/b",
+		timeouts: { timeoutMs: 1, actionTimeoutMs: 1, assertionTimeoutMs: 1 },
+		specsDir: "/s",
+		version: "0.3.0",
+	} as const;
+
+	test("WARDEN_HELPER_DIR is only set when there is a directory to name", () => {
+		expect(specEnv({ ...base, helperDir: "/h" }).WARDEN_HELPER_DIR).toBe("/h");
+		expect("WARDEN_HELPER_DIR" in specEnv(base)).toBe(false);
 	});
 });
 
@@ -116,6 +144,11 @@ describe("specEnv perf", () => {
 		helperDir: "/h",
 		version: "1",
 	};
+
+	test("WARDEN_DEV_CLIENT_SCHEME only when given", () => {
+		expect(specEnv(base).WARDEN_DEV_CLIENT_SCHEME).toBeUndefined();
+		expect(specEnv({ ...base, devClientScheme: "exp+warden" }).WARDEN_DEV_CLIENT_SCHEME).toBe("exp+warden");
+	});
 
 	test("WARDEN_BIN, WARDEN_PERF and the budgets", () => {
 		const env = specEnv({ ...base, bin: ["/bin/warden"], perf: ["react", "js"], perfBudgets: { jankPct: 5 } });
@@ -134,6 +167,18 @@ describe("specEnv perf", () => {
 	test("WARDEN_BIOMETRICS only for a biometrics suite", () => {
 		expect(specEnv({ ...base, biometrics: true }).WARDEN_BIOMETRICS).toBe("1");
 		expect("WARDEN_BIOMETRICS" in specEnv({ ...base, biometrics: false })).toBe(false);
+	});
+
+	test("WARDEN_A11Y_AUDIT carries the suite's a11y config; WARDEN_A11Y=1 only when asked", () => {
+		const env = specEnv({
+			...base,
+			a11yAudit: { minSeverity: "warning", ignore: [{ rule: "target-size" }] },
+			a11y: true,
+		});
+		expect(env.WARDEN_A11Y_AUDIT).toBe('{"minSeverity":"warning","ignore":[{"rule":"target-size"}]}');
+		expect(env.WARDEN_A11Y).toBe("1");
+		const quiet = specEnv({ ...base, a11y: false });
+		expect("WARDEN_A11Y" in quiet || "WARDEN_A11Y_AUDIT" in quiet).toBe(false);
 	});
 
 	test("absent unless asked for; empty budgets are not exported", () => {

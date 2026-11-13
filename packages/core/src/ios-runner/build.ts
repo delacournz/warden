@@ -1,8 +1,10 @@
+import { join } from "node:path";
 import { type AsyncResult, ok, type Result } from "@delacour/warden-types/result";
 import { buildLockKey, withBuildLock } from "../builds/lock";
 import { execError } from "../exec";
 import { wardenHome } from "../store";
 import { readXcode } from "../xcode";
+import { formatBuildIssues, prepareResultBundle, readBuildIssues } from "../xcresult";
 import {
 	decideReuse,
 	derivedDataDir,
@@ -25,12 +27,16 @@ function failed(error: RunnerBuildError): Result<never, RunnerBuildError> {
 	return { success: false, error };
 }
 
-function buildFailed(message: string, output = ""): RunnerBuildError {
+function buildFailed(message: string, output = "", resultBundle?: string): RunnerBuildError {
 	return {
 		code: "build_failed",
 		message,
-		hint: "Run the same xcodebuild command by hand to see the whole output (WARDEN_DEBUG=1 prints it).",
+		hint:
+			resultBundle === undefined
+				? "Run the same xcodebuild command by hand to see the whole output (WARDEN_DEBUG=1 prints it)."
+				: `Open ${resultBundle} in Xcode for the whole build log, or run the same xcodebuild command by hand (WARDEN_DEBUG=1 prints it).`,
 		output,
+		...(resultBundle === undefined ? {} : { resultBundle }),
 	};
 }
 
@@ -45,6 +51,8 @@ export function buildRunnerArgv(o: {
 	udid: string;
 	team: string;
 	bundleId: string;
+	/** `-resultBundlePath`: where `xcodebuild` records the errors with file:line (must not exist yet) */
+	resultBundle?: string;
 }): string[] {
 	return [
 		"xcodebuild",
@@ -61,13 +69,31 @@ export function buildRunnerArgv(o: {
 		"CODE_SIGN_STYLE=Automatic",
 		`DEVELOPMENT_TEAM=${o.team}`,
 		`WARDEN_RUNNER_BUNDLE_ID=${o.bundleId}`,
+		...(o.resultBundle === undefined ? [] : ["-resultBundlePath", o.resultBundle]),
 	];
 }
 
 type BuildOutcome = { built: true } | { built: false; error: RunnerBuildError };
 
+/** `build_failed` for an unclassified failure: the first errors with file:line from the result bundle, else the log tail. */
+async function unclassified(
+	argv: string[],
+	result: { exitCode: number; stdout: string; stderr: string },
+	input: EnsureRunnerBuildInput,
+	resultBundle: string | undefined
+): Promise<RunnerBuildError> {
+	const output = `${result.stdout}\n${result.stderr}`;
+	const issues = resultBundle === undefined ? null : await readBuildIssues(resultBundle, input.exec);
+	const summary = issues === null ? undefined : formatBuildIssues(issues);
+	const message =
+		summary === undefined
+			? execError(argv.slice(0, 2), result)
+			: `\`${argv.slice(0, 2).join(" ")}\` exited ${result.exitCode}: ${summary}`;
+	return buildFailed(message, outputTail(output), resultBundle);
+}
+
 /** Run `build-for-testing`; a phone that stays locked after the grace period stops it with `device_locked`. */
-async function runBuild(argv: string[], input: EnsureRunnerBuildInput): Promise<BuildOutcome> {
+async function runBuild(argv: string[], input: EnsureRunnerBuildInput, resultBundle?: string): Promise<BuildOutcome> {
 	const abort = new AbortController();
 	let lockTimer: ReturnType<typeof setTimeout> | undefined;
 	let lockLine: string | undefined;
@@ -90,10 +116,7 @@ async function runBuild(argv: string[], input: EnsureRunnerBuildInput): Promise<
 	}
 	if (result.exitCode === 0) return { built: true };
 	const known = classifyRunnerOutput(output);
-	return {
-		built: false,
-		error: known ?? buildFailed(execError(argv.slice(0, 2), result), outputTail(output)),
-	};
+	return { built: false, error: known ?? (await unclassified(argv, result, input, resultBundle)) };
 }
 
 /**
@@ -178,14 +201,16 @@ export async function ensureRunnerBuild(input: EnsureRunnerBuildInput): AsyncRes
 		input.log?.(
 			`building the iPhone runner for team ${team.data.team} (${because}); the first build takes a few minutes`
 		);
+		const resultBundle = prepareResultBundle(join(cacheDir, "results"), "build", now);
 		const argv = buildRunnerArgv({
 			project: staged.data.project,
 			derivedData,
 			udid: input.udid,
 			team: team.data.team,
 			bundleId,
+			resultBundle,
 		});
-		const outcome = await runBuild(argv, input);
+		const outcome = await runBuild(argv, input, resultBundle);
 		if (!outcome.built) return ok<Result<RunnerBuild, RunnerBuildError>>(failed(outcome.error));
 		const xctestrun = findXctestrun(derivedData);
 		if (xctestrun === undefined) {

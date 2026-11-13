@@ -15,19 +15,25 @@ export type CardProps = Omit<SurfaceProps, "padding"> & {
 	size?: CardSize;
 };
 
-function CardRoot({ variant, size = "md", className, children, ...props }: CardProps): ReactElement {
+function CardRoot({ variant, material = "flat", size = "md", className, children, ...props }: CardProps): ReactElement {
 	const parentPlane = useSurfaceContext()?.plane ?? null;
 
 	// Resolved here as well as inside `Surface`, because the parts need the plane
 	// the card landed on — the title's colour and a band footer's fill key off it.
 	const resolved = resolveSurfaceVariant({ parentPlane, variant });
-	const plane = resolveSurfacePlane({ parentPlane, variant: resolved });
+	const plane = resolveSurfacePlane({ material, parentPlane, variant: resolved });
 
 	const context = useMemo<CardContextValue>(() => ({ plane, size, variant: resolved }), [plane, size, resolved]);
 
 	return (
 		<CardProvider value={context}>
-			<Surface className={cardVariants({ size }).root({ className })} padding="none" variant={resolved} {...props}>
+			<Surface
+				className={cardVariants({ size }).root({ className })}
+				material={material}
+				padding="none"
+				variant={resolved}
+				{...props}
+			>
 				{children}
 			</Surface>
 		</CardProvider>

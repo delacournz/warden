@@ -164,6 +164,26 @@ describe("readNode", () => {
 	});
 });
 
+describe("readNode a11y fields", () => {
+	test("reads the a11y flags, live region and action labels", () => {
+		expect(
+			readNode({
+				bounds: [0, 0, 1, 1],
+				a11yFocused: true,
+				notImportant: true,
+				live: 2,
+				actions: ["Archive"],
+			})
+		).toEqual({ bounds: [0, 0, 1, 1], a11yFocused: true, notImportant: true, live: 2, actions: ["Archive"] });
+	});
+
+	test("names a bad live region or action list", () => {
+		expect(readNode({ bounds: [0, 0, 1, 1], live: 3 })).toBe("elements.live: not 1 or 2");
+		expect(readNode({ bounds: [0, 0, 1, 1], actions: [1] })).toBe("elements.actions: not a string array");
+		expect(readNode({ bounds: [0, 0, 1, 1], notImportant: "no" })).toBe("elements.notImportant: not a boolean");
+	});
+});
+
 describe("readSnapshotData", () => {
 	test("rejects a reply from another backend or without elements", () => {
 		expect(typeof readSnapshotData({ backend: "ax", elements: [] })).toBe("string");

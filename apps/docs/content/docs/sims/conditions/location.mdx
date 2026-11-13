@@ -1,0 +1,28 @@
+---
+title: Location
+description: Put a leased simulator or emulator at a GPS point, play a route or a GPX file at a speed, or run a bundled scenario with warden ui.
+icon: MapPin
+---
+
+<DemoTabs ids={["location"]} />
+
+`warden ui location` sets the fix the app gets from the platform's location service, so plain `expo-location` or `CLLocationManager` code sees it. A route plays fixes at a speed.
+
+```bash
+warden ui location set 37.3349,-122.009
+warden ui location route 37.3398,-122.009 37.3349,-122.009 --speed 20
+warden ui location gpx ./commute.gpx
+warden ui location scenario city-run
+warden ui location clear
+```
+
+Scenarios: `city-run`, `city-bike`, `freeway`. See [warden ui](/docs/sims/ui) for every flag. From a spec or a suite: [Location in E2E tests](/docs/e2e/conditions/location).
+
+## How a route plays
+
+On iOS `simctl` plays a route once. On Android a ticker owned by the lease sends a fix every interval until the next location call, and stops when the lease is released.
+
+## Limitations
+
+- `route --loop` is unsupported on iOS (`E_UNSUPPORTED`): `simctl` has no loop.
+- Android keeps the last GPS fix after `clear` and after release: the emulator cannot unset one. iOS clears it.

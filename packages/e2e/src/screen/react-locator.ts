@@ -1,4 +1,4 @@
-import type { DevtoolsFacet, TreeOptions } from "../devtools/devtools.types";
+import type { DevtoolsFacet, TreeComponent, TreeOptions } from "../devtools/devtools.types";
 import type { Platform, Point, Rect, ScreenInfo } from "../driver/driver.types";
 import { matchesText, type TextMatch } from "./text";
 
@@ -12,22 +12,28 @@ export type ReactMatch = {
 	testId: string;
 	/** the component's name (`View`, `Button`, ...) */
 	name: string;
+	/** the strings rendered inside it, when the React tree reported any */
+	text?: string;
 };
 
 export type ReactView = { platform: Platform; screen: ScreenInfo };
 
+/** What the React tree said: `answered: false` when it could not be read (no devtools, a failed or timed-out read). */
+export type ReactLookup = { answered: true; matches: ReactMatch[] } | { answered: false };
+
 /**
  * Components of the running app whose `testID` matches, with rects in the driver's pixels. This is the fallback for
  * `getByTestId` when the platform hides the view from accessibility (React Native only exposes `testID` to
- * accessibility on some views). Any devtools failure means "nothing found", so callers keep their own not-found
- * error. Android measures in dp but the driver taps in px: `view.screen.scale` converts.
+ * accessibility on some views), and the second opinion on a degraded read. A devtools failure is `answered: false`,
+ * kept apart from an empty answer so a caller can tell "absent" from "cannot tell". Android measures in dp but the
+ * driver taps in px: `view.screen.scale` converts.
  */
-export async function locateByTestIdViaReact(
+export async function lookUpTestIdViaReact(
 	facet: Pick<DevtoolsFacet, "tree">,
 	testId: TextMatch,
 	view: ReactView,
 	options: { screenName?: string; timeoutMs?: number } = {}
-): Promise<ReactMatch[]> {
+): Promise<ReactLookup> {
 	const treeOptions: TreeOptions = {
 		...(view.platform === "android" ? { pixelRatio: view.screen.scale } : {}),
 		...(options.screenName === undefined ? {} : { screen: options.screenName }),
@@ -37,11 +43,12 @@ export async function locateByTestIdViaReact(
 	try {
 		result = await facet.tree(treeOptions);
 	} catch {
-		return [];
+		return { answered: false };
 	}
-	if (!result.success) return [];
+	if (!result.success) return { answered: false };
 	const matches: ReactMatch[] = [];
-	for (const component of result.data.components) {
+	const { components } = result.data;
+	for (const component of components) {
 		const { testID, rect } = component;
 		if (testID === undefined || rect === undefined || !matchesText(testID, testId)) continue;
 		matches.push({
@@ -50,9 +57,37 @@ export async function locateByTestIdViaReact(
 			source: "react",
 			testId: testID,
 			name: component.name,
+			...textOf(component, components),
 		});
 	}
-	return matches;
+	return { answered: true, matches };
+}
+
+/**
+ * The text a component renders: its own, else its descendants' in tree order (a padded container such as a badge
+ * around a `Text`, where the `Text` reports the string and the testID sits on the container).
+ */
+function textOf(component: TreeComponent, components: readonly TreeComponent[]): { text?: string } {
+	if (component.text !== undefined) return { text: component.text };
+	const inside = new Set<number>([component.id]);
+	const texts: string[] = [];
+	for (const other of components) {
+		if (other.parent === null || !inside.has(other.parent)) continue;
+		inside.add(other.id);
+		if (other.text !== undefined) texts.push(other.text);
+	}
+	return texts.length === 0 ? {} : { text: texts.join(" ") };
+}
+
+/** `lookUpTestIdViaReact` where any failure means "nothing found", so callers keep their own not-found error. */
+export async function locateByTestIdViaReact(
+	facet: Pick<DevtoolsFacet, "tree">,
+	testId: TextMatch,
+	view: ReactView,
+	options: { screenName?: string; timeoutMs?: number } = {}
+): Promise<ReactMatch[]> {
+	const lookup = await lookUpTestIdViaReact(facet, testId, view, options);
+	return lookup.answered ? lookup.matches : [];
 }
 
 /** Where a tap on `match` lands: `position` is an offset from the frame's top-left corner, else the centre. */

@@ -38,8 +38,8 @@ export const LIST_GROUP_SUFFIX_ICON_TOKEN = "muted-foreground";
  * `w-full` on the item matters because the root clips: without it a short row
  * leaves the press feedback ending mid-card instead of spanning it.
  *
- * Free of React Native imports so it stays unit-testable — `bun test` cannot
- * parse React Native's Flow-typed source. See AGENTS.md.
+ * Free of React Native imports so it stays unit-testable — it must not
+ * pull in React Native's Flow-typed source. See AGENTS.md.
  */
 export const listGroupVariants = tv({
 	slots: {
@@ -105,3 +105,27 @@ export const listGroupVariants = tv({
 });
 
 export type ListGroupVariantProps = VariantProps<typeof listGroupVariants>;
+
+/**
+ * What a list group row renders as.
+ *
+ * - `pressable` — it has a handler: a `Pressable`, announced as a button. A
+ *   disabled one keeps the role, reports `disabled`, and dims through
+ *   `opacity-50`, which `Pressable` composes with its press animation.
+ * - `static` — no handler: a plain view with no role and no press feedback. A
+ *   static row announcing itself as a button is a lie VoiceOver tells on every
+ *   swipe.
+ *
+ * The same rule as `resolveItemRender`, restated rather than imported so the
+ * list group does not take a registry dependency on `item`.
+ */
+export type ListGroupItemRender = "pressable" | "static";
+
+export function resolveListGroupItemRender(options: {
+	onPress?: () => void;
+	onLongPress?: () => void;
+	isDisabled: boolean;
+}): ListGroupItemRender {
+	const hasHandler = options.onPress !== undefined || options.onLongPress !== undefined;
+	return hasHandler ? "pressable" : "static";
+}

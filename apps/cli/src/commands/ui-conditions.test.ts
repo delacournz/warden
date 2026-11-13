@@ -54,6 +54,8 @@ function setup(platform: "ios" | "android" = "ios", physical = false): Setup {
 					locale: (tag, opts) => s.h.driver.locale(tag, opts),
 					a11y: (op) => s.h.driver.a11y(op),
 					battery: (op) => s.h.driver.battery(op),
+					keyboard: (mode) => s.h.driver.keyboard(mode),
+					keyboardState: () => s.h.driver.keyboardState(),
 					camera: (op, opts) => s.h.driver.camera(op, opts),
 					memoryWarning: (opts) => s.h.driver.memoryWarning(opts),
 					push: (payload, opts) => s.h.driver.push(payload, opts),

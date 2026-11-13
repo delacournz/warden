@@ -18,7 +18,6 @@ A compact label for status, category or count. Compound root plus `Badge.Label`,
 | `badge.context.tsx` | `BadgeContext`, `useBadge()`, `useBadgeContext()`, `useBadgePart()` |
 | `badge.types.ts` | Prop types shared by two or more parts |
 | `badge.variants.ts` | Pure `tv()` slots + `resolveBadgeInteractive`, no RN imports |
-| `badge.variants.test.ts` | |
 
 ## Design
 
@@ -36,7 +35,7 @@ A compact label for status, category or count. Compound root plus `Badge.Label`,
   and no `onLongPress` the root is a plain `View`. Mounting a `GestureDetector`
   regardless would put one under every tag in a list of fifty and announce each
   of them to assistive technology as a button with no action. `resolveBadgeInteractive`
-  is that decision, and it is pure so `bun test` reaches it. Supply either
+  is that decision, and it is pure so it is unit-testable. Supply either
   handler and the root becomes a [`Pressable`](../pressable/AGENTS.md),
   inheriting `feedback`, `haptic` and the rest; only the default differs,
   `scale`.
@@ -86,3 +85,10 @@ A compact label for status, category or count. Compound root plus `Badge.Label`,
 - **String children** are wrapped in a `Badge.Label` automatically, consecutive
   strings collapsing into one — the same rule, and the same reason, as
   [`Button`](../button/AGENTS.md).
+
+- **`material="etched"` squares the capsule and tints.** The root and the close button take
+  `rounded-sm`; `soft` status fills become `bg-<status>/8` in light and `/16` in dark, written out
+  per colour because Tailwind's scanner cannot see a built class. The material rides the badge
+  context so the close button follows the root. `BADGE_MATERIALS` and `BadgeMaterial` are exported
+  from the index beside the other three axes — a public prop whose type a caller cannot name is half
+  an API.

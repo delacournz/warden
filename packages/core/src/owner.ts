@@ -16,7 +16,8 @@ export type OwnerContext = {
 
 const SESSION_ENV = ["WARDEN_SESSION_ID", "CLAUDE_CODE_SESSION_ID", "CLAUDE_SESSION_ID"] as const;
 
-function isCi(env: OwnerContext["env"]): boolean {
+/** `CI` is `true` / `1`, or `GITHUB_ACTIONS=true`. */
+export function isCi(env: OwnerContext["env"]): boolean {
 	const ci = env.CI?.toLowerCase();
 	return ci === "true" || ci === "1" || env.GITHUB_ACTIONS === "true";
 }

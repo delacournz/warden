@@ -15,8 +15,9 @@ import { type GitFactsCache, readGitFacts } from "../git-facts";
 import { wardenHome as resolveWardenHome } from "../store";
 import type { Platform } from "../types";
 import { readXcode } from "../xcode";
+import { formatBuildIssues, readBuildIssues } from "../xcresult";
 import type { BuildConfiguration } from "./builds.defaults";
-import { LOCAL_BUILD_TIMEOUT_MS, PROBE_TIMEOUT_MS } from "./builds.defaults";
+import { IOS_DEVICE_RESULT_BUNDLE, LOCAL_BUILD_TIMEOUT_MS, PROBE_TIMEOUT_MS } from "./builds.defaults";
 import { compilerCacheEnv } from "./compiler-cache";
 import type { Project } from "./config";
 import { derivedDataWorkspace } from "./derived-data";
@@ -25,6 +26,7 @@ import { type CacheKey, computeCacheKey } from "./fingerprint";
 import { combineKey, readFileOrUndefined } from "./js-inputs";
 import type { BuildTarget } from "./kinds";
 import { planPrebuiltRn } from "./prebuilt-rn";
+import { readProjectSigning, type SigningKeystore } from "./signing-key";
 
 const iosProducts = (configuration: BuildConfiguration, target: BuildTarget) =>
 	join("Build", "Products", `${configuration}-${target === "device" ? "iphoneos" : "iphonesimulator"}`);
@@ -198,6 +200,16 @@ export type LocalBuildDeps = {
 	git?: GitFactsCache;
 	/** the native fingerprint the git-ignored (CNG) native dir was last prebuilt at; absent = never regenerate it */
 	prebuildStamp?: PrebuildStamp;
+	/** log `still building <platform> (<elapsed>): <last output line>` every `everyMs` while the build runs; absent = silent */
+	heartbeat?: BuildHeartbeat;
+};
+
+/** A local build's progress line on a timer, for a run whose build output nobody sees (`warden e2e`, CI). */
+export type BuildHeartbeat = {
+	everyMs: number;
+	now: () => number;
+	/** start the timer; returns its stop (default `setInterval`) */
+	schedule?: (fn: () => void, ms: number) => () => void;
 };
 
 /** Where `runLocalBuild` records the native fingerprint a CNG `ios/` / `android/` was generated for. */
@@ -239,6 +251,8 @@ async function cacheEnv(deps: LocalBuildDeps): Promise<Record<string, string>> {
 	const { platform } = deps;
 	const gitTop = platform === "ios" ? await gitToplevel(deps) : undefined;
 	const xcode = platform === "ios" ? await readXcode(deps.exec, deps.env) : undefined;
+	const ccacheBinary =
+		platform === "ios" ? deps.env.CCACHE_BINARY || (await probe(deps, ["which", "ccache"])) : undefined;
 	return {
 		...prebuilt,
 		...compilerCacheEnv({
@@ -246,14 +260,18 @@ async function cacheEnv(deps: LocalBuildDeps): Promise<Record<string, string>> {
 			wardenHome: deps.wardenHome ?? resolveWardenHome(deps.env),
 			gitTop: gitTop || undefined,
 			xcodeMajor: xcode?.success ? xcode.data.major : undefined,
+			ccacheBinary: ccacheBinary || undefined,
 			enabled: true,
 			baseEnv: deps.env,
 		}),
 	};
 }
 
-/** What a local build produced: the artifact, and the project's key after the build when the build itself moved it (17-1). */
-export type LocalBuild = { artifact: string; postKey?: string };
+/**
+ * What a local build produced: the artifact, the project's key after the build when the build itself moved it (17-1),
+ * and (Android) the keystore the APK was signed with, so repacks can keep its signer without the prebuild output.
+ */
+export type LocalBuild = { artifact: string; postKey?: string; signing?: SigningKeystore };
 
 /** iOS: `app`'s `CFBundleIdentifier` against the project's (a UI test runner or another app is a mismatch). */
 type BundleCheck = "match" | "mismatch" | "unknown";
@@ -364,7 +382,46 @@ async function dropStaleNativeDir(deps: LocalBuildDeps, native: string): Promise
 	rmSync(nativeDir, { recursive: true, force: true });
 }
 
-/** The whole output of a failed build, kept for the errors the summary cannot show; best effort. */
+/** `setInterval`, unref'd so a stuck timer never keeps the process alive. */
+function intervalTimer(fn: () => void, ms: number): () => void {
+	const id = setInterval(fn, ms);
+	id.unref?.();
+	return () => clearInterval(id);
+}
+
+// biome-ignore lint/suspicious/noControlCharactersInRegex: strips ANSI colour codes from build output
+const ANSI = /\u001b\[[0-9;]*[A-Za-z]/g;
+const HEARTBEAT_LINE_MAX = 160;
+
+/** `125_000` → `2m 5s`; under a minute `42s`. */
+export function formatElapsed(ms: number): string {
+	const total = Math.floor(ms / 1000);
+	const minutes = Math.floor(total / 60);
+	return minutes > 0 ? `${minutes}m ${total % 60}s` : `${total}s`;
+}
+
+/**
+ * Track the build's last non-blank output line and, with `deps.heartbeat`, log how long it has run every tick. Returns
+ * the line sink for `exec`'s `onLine` (also forwarded to `deps.output`) and the timer's stop.
+ */
+function startHeartbeat(deps: LocalBuildDeps): { onLine: (line: string) => void; stop: () => void } {
+	let last: string | undefined;
+	const onLine = (line: string) => {
+		const clean = line.replace(ANSI, "").trim();
+		if (clean) last = clean.length > HEARTBEAT_LINE_MAX ? `${clean.slice(0, HEARTBEAT_LINE_MAX - 1)}…` : clean;
+		deps.output?.(line);
+	};
+	const beat = deps.heartbeat;
+	if (!beat) return { onLine, stop: () => {} };
+	const started = beat.now();
+	const stop = (beat.schedule ?? intervalTimer)(() => {
+		const elapsed = formatElapsed(beat.now() - started);
+		deps.log(`still building ${deps.platform} (${elapsed})${last ? `: ${last}` : ""}`);
+	}, beat.everyMs);
+	return { onLine, stop };
+}
+
+/** The whole output of a build (failed: for the errors the summary cannot show; green: for CI's log group); best effort. */
 function keepBuildLog(deps: LocalBuildDeps, res: ExecResult): string | undefined {
 	const path = join(
 		deps.wardenHome ?? resolveWardenHome(deps.env),
@@ -389,13 +446,41 @@ function expoBuildLog(root: string): string {
 	}
 }
 
+/** The device build's result bundle (`iosDeviceBuildCommand`), when this build wrote it: one older than the build is stale. */
+function freshResultBundle(root: string, startedAt: number): string | undefined {
+	const path = join(root, "ios", IOS_DEVICE_RESULT_BUNDLE);
+	try {
+		return statSync(path).mtimeMs >= startedAt - 2_000 ? path : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/** `N errors: file:line: msg … — result bundle: path`, from the result bundle this build wrote; undefined without one. */
+async function resultBundleFailure(deps: LocalBuildDeps, startedAt: number): Promise<string | undefined> {
+	const bundle = freshResultBundle(deps.project.root, startedAt);
+	if (bundle === undefined) return undefined;
+	const issues = await readBuildIssues(bundle, deps.exec);
+	const summary = issues === null ? undefined : formatBuildIssues(issues);
+	return summary === undefined ? undefined : `${summary} — result bundle: ${bundle}`;
+}
+
 /**
- * Why the build command failed. iOS: the compiler/linker errors with file:line:col (parsed from the output, or
- * expo's raw `xcodebuild.log`) and where the full log is kept; otherwise the last lines, as before.
+ * Why the build command failed. iOS: the compiler/linker errors with file:line (from the result bundle a device build
+ * writes, else parsed from the output or expo's raw `xcodebuild.log`) and where the full log is kept; otherwise the
+ * last lines, as before.
  */
-function describeBuildFailure(deps: LocalBuildDeps, argv: string[], res: ExecResult): string {
+async function describeBuildFailure(
+	deps: LocalBuildDeps,
+	argv: string[],
+	res: ExecResult,
+	startedAt: number
+): Promise<string> {
 	const logPath = keepBuildLog(deps, res);
 	if (deps.platform !== "ios") return `${execError(argv, res)}${logPath ? ` — full log: ${logPath}` : ""}`;
+	const fromBundle = await resultBundleFailure(deps, startedAt);
+	if (fromBundle !== undefined)
+		return `exited ${res.exitCode}, ${fromBundle}${logPath ? ` — full log: ${logPath}` : ""}`;
 	const output = `${res.stdout}\n${res.stderr}`;
 	let diagnostics = parseBuildDiagnostics(output);
 	if (diagnostics.length === 0) diagnostics = parseBuildDiagnostics(expoBuildLog(deps.project.root));
@@ -403,6 +488,13 @@ function describeBuildFailure(deps: LocalBuildDeps, argv: string[], res: ExecRes
 	return summary
 		? `exited ${res.exitCode}, ${summary}`
 		: `${execError(argv, res)}${logPath ? ` — full log: ${logPath}` : ""}`;
+}
+
+/** The keystore an Android build was signed with (undefined elsewhere, or when none can be read). */
+function androidSigning(deps: LocalBuildDeps): SigningKeystore | undefined {
+	return deps.platform === "android"
+		? readProjectSigning(deps.project.root, deps.project.buildConfiguration)
+		: undefined;
 }
 
 /**
@@ -422,13 +514,21 @@ export async function runLocalBuild(deps: LocalBuildDeps): AsyncResult<LocalBuil
 	deps.log(`building ${platform} locally: ${command} (in ${project.root})`);
 	const argv = ["sh", "-c", command];
 	const caching = await cacheEnv(deps);
-	const res = await deps.exec(argv, {
-		cwd: project.root,
-		env: { ...caching, ...project.buildEnv, EXPO_NO_TELEMETRY: "1" },
-		timeoutMs: deps.timeoutMs ?? LOCAL_BUILD_TIMEOUT_MS,
-		...(deps.output ? { onLine: deps.output } : {}),
-	});
-	if (res.exitCode !== 0) return err(`local build failed: ${describeBuildFailure(deps, argv, res)}`);
+	const progress = startHeartbeat(deps);
+	let res: ExecResult;
+	const startedAt = Date.now();
+	try {
+		res = await deps.exec(argv, {
+			cwd: project.root,
+			env: { ...caching, ...project.buildEnv, EXPO_NO_TELEMETRY: "1" },
+			timeoutMs: deps.timeoutMs ?? LOCAL_BUILD_TIMEOUT_MS,
+			onLine: progress.onLine,
+		});
+	} finally {
+		progress.stop();
+	}
+	if (res.exitCode !== 0) return err(`local build failed: ${await describeBuildFailure(deps, argv, res, startedAt)}`);
+	keepBuildLog(deps, res);
 	const after = await computeCacheKey(deps.exec, project, platform, undefined, undefined, deps.env);
 	if (!after.success) return after;
 	const moved = after.data.key !== deps.hash;
@@ -450,5 +550,6 @@ export async function runLocalBuild(deps: LocalBuildDeps): AsyncResult<LocalBuil
 	if (located.kind === "up-to-date") deps.log(`build was up to date; reusing ${artifact}`);
 	if (moved)
 		deps.log(`the build created ${platform}/ (prebuild): caching under ${deps.hash}, aliased as ${after.data.key}`);
-	return ok(moved ? { artifact, postKey: after.data.key } : { artifact });
+	const signing = androidSigning(deps);
+	return ok({ artifact, ...(moved ? { postKey: after.data.key } : {}), ...(signing ? { signing } : {}) });
 }

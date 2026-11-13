@@ -80,8 +80,8 @@ export const PROGRESS_OUTPUT_TEXT_SIZE: Record<ProgressSize, TextSize> = { sm: "
  * thinner than the slider's groove, because a bar you read is lighter than a
  * groove you grab.
  *
- * Free of React Native imports so it stays unit-testable — `bun test` cannot parse
- * React Native's Flow-typed source. See AGENTS.md.
+ * Free of React Native imports so it stays unit-testable — it must not
+ * pull in React Native's Flow-typed source. See AGENTS.md.
  */
 export const progressVariants = tv({
 	slots: {

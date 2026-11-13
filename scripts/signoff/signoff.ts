@@ -296,8 +296,34 @@ async function ciLikeEnv(): Promise<Record<string, string | undefined>> {
 	return env;
 }
 
+/**
+ * `env` plus a turbo cache directory shared by every worktree of this repo: `turbo-cache` inside the
+ * git common dir (`.git/turbo-cache`, absolute). A fresh worktree otherwise starts with an empty
+ * `.turbo/cache` and replays nothing, which defeats the point of caching typecheck / check / test.
+ * Keyed by content hash, so two branches can never serve each other a stale result. A caller's own
+ * `TURBO_CACHE_DIR` wins; no git common dir (not a checkout) leaves the env alone.
+ */
+export function turboCacheEnv(
+	env: Record<string, string | undefined>,
+	gitCommonDir: string | null
+): Record<string, string | undefined> {
+	if (env.TURBO_CACHE_DIR || gitCommonDir === null || gitCommonDir === "") return { ...env };
+	return { ...env, TURBO_CACHE_DIR: join(gitCommonDir, "turbo-cache") };
+}
+
+/** The absolute git common dir (shared by all worktrees), or null outside a git checkout. */
+async function gitCommonDir(): Promise<string | null> {
+	const child = Bun.spawn(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], {
+		cwd: REPO_ROOT,
+		stdout: "pipe",
+		stderr: "ignore",
+	});
+	const [out, code] = await Promise.all([new Response(child.stdout).text(), child.exited]);
+	return code === 0 ? out.trim() : null;
+}
+
 /** Resolved once: reading and parsing the file per spawned command would be pointless churn. */
-const checkEnv = await ciLikeEnv();
+const checkEnv = turboCacheEnv(await ciLikeEnv(), await gitCommonDir());
 
 /**
  * Run a command; returns its exit code. With no `sink` the user's stdio is attached. With one, stdout

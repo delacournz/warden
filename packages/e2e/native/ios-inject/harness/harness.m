@@ -142,7 +142,9 @@ static void make_video(NSString *path, double seconds) {
 - (void)captureOutput:(AVCapturePhotoOutput *)o didFinishCaptureForResolvedSettings:(AVCaptureResolvedPhotoSettings *)s error:(NSError *)e { [self.photoEvents addObject:@"didFinishCapture"]; }
 - (void)captureOutput:(AVCaptureFileOutput *)o didStartRecordingToOutputFileAtURL:(NSURL *)u fromConnections:(NSArray<AVCaptureConnection *> *)c { self.started = YES; }
 - (void)captureOutput:(AVCaptureFileOutput *)o didFinishRecordingToOutputFileAtURL:(NSURL *)u fromConnections:(NSArray<AVCaptureConnection *> *)c error:(NSError *)e {
-  self.recordError = e.localizedDescription;
+  NSError *under = (NSError *)e.userInfo[NSUnderlyingErrorKey];
+  self.recordError = e ? [NSString stringWithFormat:@"%@ [%@ %ld%@]", e.localizedDescription, e.domain, (long)e.code,
+    under ? [NSString stringWithFormat:@" <- %@ %ld", under.domain, (long)under.code] : @""] : nil;
   self.finished = YES;
 }
 @end

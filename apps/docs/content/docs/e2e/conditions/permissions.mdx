@@ -1,6 +1,6 @@
 ---
 title: Permissions
-description: Grant, deny or unset the app's privacy permissions before it launches, so a spec reaches the screen behind the prompt, or the denied path.
+description: Grant, deny or unset the app's privacy permissions from a spec or a suite before it launches, so the test reaches the screen behind the prompt, or the denied path.
 icon: ShieldCheck
 ---
 
@@ -18,14 +18,7 @@ Set permissions before `app.open()`: iOS terminates a running app whose permissi
 | `set({ location?, camera?, photos?, … }, { bundleId? })` | each `"granted" \| "denied" \| "unset"` (`unset` asks again). Returns `{ bundleId, applied, skipped }`; none applicable throws `E_UNSUPPORTED`. Default app: the suite's |
 | `reset({ bundleId? })` | every name this test set back to the suite's value, else `"unset"` |
 
-Names: `location` `locationAlways` `camera` `photos` `photosAdd` `contacts` `contactsLimited` `notifications` `microphone` `calendar` `reminders` `motion` `mediaLibrary` `siri`.
-
-## Skipped names
-
-A name comes back in `skipped` when the platform has no service for it or the app does not declare it.
-
-- **iOS:** `camera` and `notifications` have no `simctl privacy` service and are skipped.
-- **Android:** only the permissions the app's manifest declares apply; any other name is skipped with a warning.
+Names: `location` `locationAlways` `camera` `photos` `photosAdd` `contacts` `contactsLimited` `notifications` `microphone` `calendar` `reminders` `motion` `mediaLibrary` `siri`. A name the platform or the app cannot take comes back in `skipped` ([which](/docs/sims/conditions/permissions#skipped-names)).
 
 ## In a suite
 
@@ -35,12 +28,4 @@ conditions: { permissions: { location: "denied", camera: "granted" } },
 
 Applied before the app launches, and put back after each spec.
 
-## By hand
-
-```bash
-warden ui permission set location=granted camera=denied
-warden ui permission status
-warden ui permission reset
-```
-
-`--app <bundle>` names the app; the default is the one `warden ui open` launched. Run `permission set` before `open`. Release puts the permissions back (iOS: privacy reset; Android: permissions reset).
+By hand with `warden ui permission`: [Permissions on a simulator](/docs/sims/conditions/permissions).

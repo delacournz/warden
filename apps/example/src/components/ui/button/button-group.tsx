@@ -13,6 +13,7 @@ import {
 	type ButtonSize,
 	type ButtonVariant,
 	buttonVariants,
+	resolveGroupMemberStretch,
 	resolveGroupPositions,
 	resolveGroupSeams,
 } from "./button.variants";
@@ -30,6 +31,18 @@ export type ButtonGroupProps = ViewProps & {
 	isDisabled?: boolean;
 	/** Press treatment for every member. Unset, a joined member fades rather than scaling. */
 	feedback?: PressableFeedback;
+	/**
+	 * Join the members into one shape. On by default, because that is what a group is. Off keeps the
+	 * inherited `variant` / `size` / `isDisabled` / `feedback` and drops the joined shape: every
+	 * member keeps its own corner, no seam overlap, and the run takes a `gap`.
+	 */
+	isAttached?: boolean;
+	/**
+	 * Span the parent and split it equally between members. Horizontal only — a vertical group
+	 * already stretches its members, so there it only widens the group. The parent needs a
+	 * definite width.
+	 */
+	isFullWidth?: boolean;
 	className?: string;
 	children?: ReactNode;
 };
@@ -40,13 +53,15 @@ function ButtonGroupRoot({
 	variant,
 	isDisabled,
 	feedback,
+	isAttached = true,
+	isFullWidth = false,
 	className,
 	children,
 	...props
 }: ButtonGroupProps): ReactElement {
 	const group = useMemo<ButtonGroupContextValue>(
-		() => ({ feedback, isDisabled, orientation, size, variant }),
-		[feedback, isDisabled, orientation, size, variant]
+		() => ({ feedback, isAttached, isDisabled, isFullWidth, orientation, size, variant }),
+		[feedback, isAttached, isDisabled, isFullWidth, orientation, size, variant]
 	);
 
 	const items = useMemo(() => Children.toArray(children), [children]);
@@ -56,17 +71,18 @@ function ButtonGroupRoot({
 	// the members' order actually change.
 	const values = useMemo(() => {
 		const isMember = items.map(isGroupMember);
-		const positions = resolveGroupPositions(isMember);
-		const seams = resolveGroupSeams(isMember);
+		const positions = resolveGroupPositions(isMember, group);
+		const seams = resolveGroupSeams(isMember, group);
+		const isStretched = resolveGroupMemberStretch(group);
 
 		return positions.map<ButtonGroupItemContextValue | null>((position, index) =>
-			position === null ? null : { ...group, isSeamed: seams[index] === true, position }
+			position === null ? null : { ...group, isSeamed: seams[index] === true, isStretched, position }
 		);
 	}, [items, group]);
 
 	return (
 		<ButtonGroupProvider value={group}>
-			<View className={buttonVariants({ orientation }).group({ className })} {...props}>
+			<View className={buttonVariants({ isAttached, isFullWidth, orientation }).group({ className })} {...props}>
 				{items.map((child, index) => {
 					const value = values[index];
 					if (!value) return child;
@@ -130,14 +146,34 @@ function keyOf(child: ReactNode, index: number): string {
  * The group paints nothing itself — no background, no border, no disabled fade.
  * A fade here would compound with the members' own down to a quarter opacity.
  *
- * Horizontal groups are content-width. For a run that fills its parent, put
- * `className="w-full"` on the group and `className="flex-1"` on each member.
+ * Horizontal groups are content-width. `isFullWidth` spans the parent and
+ * splits it equally between members — `flex-1 basis-0` on each, published as
+ * `isStretched` on the member's context — whatever their labels say. The parent
+ * needs a definite width for there to be anything to split.
+ *
+ * `isAttached={false}` keeps the shared axes and drops the shape: every member
+ * draws its own corner, nothing overlaps, the run takes a gap, and an unset
+ * `feedback` goes back to the lone button's `scale`.
  *
  * @example
  * <Button.Group variant="outline">
  *   <Button onPress={archive}>Archive</Button>
  *   <Button onPress={report}>Report</Button>
  *   <Button onPress={snooze}>Snooze</Button>
+ * </Button.Group>
+ *
+ * @example
+ * <Button.Group isAttached={false} size="sm" variant="outline">
+ *   <Button onPress={find}>Find</Button>
+ *   <Button onPress={exportFile}>Export</Button>
+ *   <Button onPress={share}>Share</Button>
+ * </Button.Group>
+ *
+ * @example
+ * <Button.Group isFullWidth variant="outline">
+ *   <Button onPress={monthly}>Monthly</Button>
+ *   <Button onPress={annual}>Annual</Button>
+ *   <Button onPress={once}>One-off</Button>
  * </Button.Group>
  *
  * @example

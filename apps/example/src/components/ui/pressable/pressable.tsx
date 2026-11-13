@@ -9,7 +9,7 @@ import {
 	type Ref,
 	useMemo,
 } from "react";
-import type { AccessibilityState, ViewProps } from "react-native";
+import { type AccessibilityActionEvent, type AccessibilityState, Platform, type ViewProps } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { Presets } from "react-native-pulsar";
 import Animated, { useAnimatedStyle, useSharedValue, withSpring } from "react-native-reanimated";
@@ -17,7 +17,16 @@ import { scheduleOnRN } from "react-native-worklets";
 import { useResolveClassNames } from "uniwind";
 import { composeRefs } from "@/lib/compose-refs";
 import { mergeProps } from "@/lib/merge-props";
-import { type PressableFeedback, resolvePressedState, resolveRestOpacity } from "./pressable.variants";
+import {
+	dispatchPressableAccessibilityAction,
+	invokePressableHandler,
+	isPressableInteractive,
+	type PressableFeedback,
+	resolvePressableAccessibilityState,
+	resolvePressableActivation,
+	resolvePressedState,
+	resolveRestOpacity,
+} from "./pressable.variants";
 
 const PRESS_SPRING = { damping: 18, mass: 0.4, stiffness: 320 } as const;
 
@@ -132,6 +141,12 @@ export type PressableProps = Omit<ViewProps, "style"> & {
  * Built on the Gesture API rather than a ready-made pressable so the animation,
  * the haptic and the gesture stay on one thread, and so nothing depends on
  * Gesture Handler's own `Pressable`, which was renamed in its v3.
+ *
+ * A gesture only ever sees touches, so a screen reader's activation is wired
+ * to `onPress` separately — `onAccessibilityTap` on iOS, an `activate` action on
+ * Android — and TalkBack's long press to `onLongPress` through a `longpress`
+ * action, all behind the same `disabled` / `busy` guard. See
+ * `resolvePressableActivation` and `dispatchPressableAccessibilityAction`.
  */
 export function Pressable({
 	children,
@@ -146,11 +161,14 @@ export function Pressable({
 	pressedOpacity,
 	asChild = false,
 	accessibilityState,
+	accessibilityActions,
+	onAccessibilityAction,
+	onAccessibilityTap,
 	ref,
 	...props
 }: PressableProps): ReactElement {
 	const pressed = useSharedValue(0);
-	const interactive = !disabled && !busy;
+	const interactive = isPressableInteractive({ busy, disabled });
 	// Destructured to primitives on purpose. Reanimated's plugin collects what
 	// the worklet closes over, and a fresh object each render would rebuild the
 	// animated style every render.
@@ -198,8 +216,41 @@ export function Pressable({
 
 	// Built once and spread at both render sites: a caller-supplied
 	// `accessibilityState` merges into it rather than being clobbered by the
-	// `{...props}` spread that lands after it.
-	const state: AccessibilityState = { ...accessibilityState, busy, disabled };
+	// `{...props}` spread that lands after it. A caller's `busy: true` survives
+	// the prop's default — see `resolvePressableAccessibilityState`.
+	const state: AccessibilityState = resolvePressableAccessibilityState({ accessibilityState, busy, disabled });
+
+	const activation = resolvePressableActivation({
+		accessibilityActions,
+		hasAccessibilityTap: onAccessibilityTap !== undefined,
+		hasLongPress: onLongPress !== undefined,
+		hasPress: onPress !== undefined,
+		platform: Platform.OS,
+	});
+	// Built once and spread last at both render sites, after `{...props}`, so a
+	// caller's actions and handlers are merged in here rather than replacing the
+	// activation the pressable adds. `activate` and `longpress` are consumed only
+	// when the pressable added them; every other action reaches the caller's
+	// handler. Both paths share the gesture's `disabled` / `busy` guard.
+	const accessibilityWiring = {
+		accessibilityActions: activation.accessibilityActions,
+		onAccessibilityAction: (event: AccessibilityActionEvent) => {
+			const consumed = dispatchPressableAccessibilityAction({
+				actionName: event.nativeEvent.actionName,
+				activation,
+				busy,
+				disabled,
+				onLongPress,
+				onPress,
+			});
+			if (!consumed) onAccessibilityAction?.(event);
+		},
+		onAccessibilityTap: activation.wiresAccessibilityTap
+			? () => {
+					invokePressableHandler(onPress, { busy, disabled });
+				}
+			: onAccessibilityTap,
+	};
 
 	const content = asChild ? (
 		renderAsChild(children, {
@@ -209,6 +260,7 @@ export function Pressable({
 			ref,
 			style: animatedStyle,
 			...props,
+			...accessibilityWiring,
 		})
 	) : (
 		<Animated.View
@@ -223,6 +275,7 @@ export function Pressable({
 			ref={ref}
 			style={animatedStyle}
 			{...props}
+			{...accessibilityWiring}
 		>
 			{children}
 		</Animated.View>
@@ -248,7 +301,7 @@ function renderAsChild(children: ReactNode, slotProps: Record<string, unknown>):
 		);
 	}
 
-	const child = Children.only(children);
+	const [child] = Children.toArray(children);
 	if (!isValidElement(child)) {
 		throw new Error("Pressable asChild expects a single React element child; text and fragments cannot take props.");
 	}

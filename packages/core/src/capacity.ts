@@ -16,6 +16,13 @@ export type CapacityConfig = {
 
 export type Budget = { memMb: number; cpu: number; maxUnits: number };
 
+/** No limits: what a budget is when capacity is not enforced. */
+export const UNLIMITED_BUDGET: Budget = {
+	memMb: Number.POSITIVE_INFINITY,
+	cpu: Number.POSITIVE_INFINITY,
+	maxUnits: Number.POSITIVE_INFINITY,
+};
+
 export type Dimension = "mem" | "cpu" | "max";
 
 export type FitResult =

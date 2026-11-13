@@ -93,6 +93,8 @@ export function locateHelper(input: LocateHelperInput): Result<HelperLocation, D
  */
 export function resolveHelper(o: OpenIosDriverOptions): Result<string, DriverError> {
 	if (o.helperPath !== undefined) return { success: true, data: o.helperPath };
+	// the warden that started the run (`WARDEN_VERSION`) staged its helper under `$WARDEN_HOME/simd/<version>`
+	const version = o.version ?? o.env?.wardenVersion;
 	const located = locateHelper({
 		env: { [ENV_NAMES.simd]: o.env?.simd, [ENV_NAMES.helperDir]: o.env?.helperDir },
 		execPath: o.execPath ?? process.execPath,
@@ -100,7 +102,7 @@ export function resolveHelper(o: OpenIosDriverOptions): Result<string, DriverErr
 		wardenHome: o.wardenHome ?? resolveWardenHome(),
 		exists: o.exists ?? existsSync,
 		realpath: o.realpath ?? realpathSync,
-		...(o.version ? { version: o.version } : {}),
+		...(version ? { version } : {}),
 	});
 	return located.success ? { success: true, data: located.data.path } : located;
 }

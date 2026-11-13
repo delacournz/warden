@@ -66,6 +66,18 @@ describe("buildTimeline", () => {
 		expect(tl.counter[3]?.to).toBeNull();
 	});
 
+	test("a spec count differing from the job count heads the clip and the counter counts shards", () => {
+		const withSpecs = buildTimeline(batch, { duration: 45, hold: 3, specs: 7 });
+		expect(withSpecs.specs).toBe(7);
+		expect(withSpecs.counter.map((c) => c.text)).toEqual([
+			"0/3 shards done",
+			"1/3 shards done",
+			"2/3 shards done",
+			"3/3 shards done",
+		]);
+		expect(tl.specs).toBe(3);
+	});
+
 	test("never slows a short run down", () => {
 		expect(buildTimeline(batch, { duration: 600, hold: 3 }).speed).toBe(1);
 	});
@@ -152,6 +164,11 @@ describe("parseCli", () => {
 	test("flags", () => {
 		const r = parseCli(["rec", "out", "--duration", "30", "--width", "1280"]);
 		expect(r.success && r.data.duration === 30 && r.data.width === 1280).toBe(true);
+	});
+	test("--name and --command", () => {
+		const r = parseCli(["rec", "out", "--name", "parallel", "--command", "warden e2e example"]);
+		expect(r.success && r.data.name === "parallel" && r.data.command === "warden e2e example").toBe(true);
+		expect(parseCli(["rec", "out", "--name", "Bad Name"]).success).toBe(false);
 	});
 	test("usage on missing dirs or bad numbers", () => {
 		expect(parseCli(["rec"]).success).toBe(false);

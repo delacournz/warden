@@ -1,7 +1,5 @@
-import { join } from "node:path";
 import { findWardenConfig } from "@delacour/warden-core/builds/config";
 import type { BuildLockDeps } from "@delacour/warden-core/builds/lock";
-import { collectRunnerSources, loadEmbeddedRunnerSources } from "@delacour/warden-core/ios-runner/pack";
 import type {
 	EnsureRunnerBuildInput,
 	RunnerBuild,
@@ -12,6 +10,7 @@ import type { AsyncResult } from "@delacour/warden-types/result";
 import { resolveOwner } from "../claim-flags";
 import type { CommandContext } from "../context";
 import { type BuildInfo, currentBuild } from "../update/build-info";
+import { runnerSourcesFor } from "./sim-sources";
 import type { RunnerBuildFailure, RunnerBuildPort } from "./types";
 
 /** `ensureRunnerBuild`, or a fake of it. */
@@ -60,10 +59,7 @@ export function createRunnerBuild(ctx: CommandContext, deps: RunnerBuildDeps = {
 				configBundleId: ios.runnerBundleId,
 				lock,
 				log: (line) => ctx.err(line),
-				loadSources: async () =>
-					info.channel === "dev"
-						? collectRunnerSources(join(info.sourceDir, "packages", "e2e", "native"))
-						: loadEmbeddedRunnerSources(),
+				loadSources: runnerSourcesFor(info),
 			});
 			if (!built.success) return { success: false, error: describeBuildError(built.error) };
 			const { xctestrun, derivedData, bundleId } = built.data;

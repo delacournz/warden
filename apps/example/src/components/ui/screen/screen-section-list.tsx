@@ -1,11 +1,14 @@
 import { type ForwardedRef, forwardRef, type ReactElement, type RefAttributes, useMemo } from "react";
-import { type DefaultSectionT, SectionList, type SectionListProps, View } from "react-native";
+import { SectionList, type SectionListProps, View } from "react-native";
 import Animated from "react-native-reanimated";
 import { cn } from "@/lib/cn";
 import type { ScreenScrollableProps } from "./screen.types";
 import { screenVariants } from "./screen.variants";
 import { resolveListComponent } from "./screen-list-component";
 import { useScreenScrollInsets } from "./use-screen-scroll-insets";
+
+/** React Native's default `SectionT`, which its strict API no longer exports. */
+type DefaultSectionT = Record<string, unknown>;
 
 // `Animated.createAnimatedComponent` erases the generic parameters; the recast
 // puts them back so `sections` and `renderItem` still check against each other.
@@ -39,11 +42,15 @@ export const ScreenSectionList = forwardRef(function ScreenSectionListRender<Ite
 		contentContainerClassName,
 		ListHeaderComponent: ListHeaderComponentProp,
 		ListFooterComponent: ListFooterComponentProp,
+		onScroll,
 		...props
 	}: ScreenSectionListProps<ItemT, SectionT>,
 	ref: ForwardedRef<SectionList<ItemT, SectionT>>
 ): ReactElement {
-	const { scrollHandler, insetTopAnimatedStyle, insetBottomAnimatedStyle } = useScreenScrollInsets("standard");
+	const { scrollHandler, insetTopAnimatedStyle, insetBottomAnimatedStyle } = useScreenScrollInsets(
+		"standard",
+		onScroll
+	);
 
 	const ListHeaderComponent = useMemo<ReactElement>(
 		() => (

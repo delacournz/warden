@@ -1,6 +1,12 @@
-import type { Driver, Element, Rect, Snapshot } from "@delacour/warden-e2e/driver/driver.types";
+import { canReadA11y } from "@delacour/warden-e2e/driver/a11y-read";
+import type { Driver, Element, ElementA11y, Rect, Snapshot } from "@delacour/warden-e2e/driver/driver.types";
 import { assignRefs, type RefTable } from "@delacour/warden-e2e/driver/refs";
-import { DEFAULT_SETTLE_QUIET_MS, settleByHash, snapshotHash } from "@delacour/warden-e2e/driver/settle";
+import {
+	DEFAULT_SETTLE_QUIET_MS,
+	hashFallbackQuietMs,
+	settleByHash,
+	snapshotHash,
+} from "@delacour/warden-e2e/driver/settle";
 import { indexSnapshot, type NodeEntry } from "@delacour/warden-e2e/screen/nodes";
 import { resolve } from "@delacour/warden-e2e/screen/query";
 import { isListed, renderEntryLine, renderHeader, renderSnapshot } from "@delacour/warden-e2e/screen/render";
@@ -27,6 +33,8 @@ export type SnapshotRequest = {
 	markMissingIds?: boolean;
 	/** `--settle [ms]`: wait for a quiet screen (budget in ms), then diff against the previous snapshot */
 	settle?: { budgetMs: number };
+	/** `--a11y`: merge the screen-reader facts (iOS: the injected library's read) and print the hint / actions / focus columns */
+	a11y?: boolean;
 };
 
 /** One element of the `--json` result (`result.elements`): what a line shows, structured. */
@@ -41,6 +49,8 @@ export type ElementJson = {
 	selected?: boolean;
 	checked?: boolean;
 	frame: Rect;
+	/** `--a11y`: the screen-reader facts the backend read */
+	a11y?: ElementA11y;
 	/** an interactive element without a testID (only set while a recording is active) */
 	noId?: true;
 };
@@ -58,6 +68,8 @@ export type TakenSnapshot = {
 	lines: string[];
 	/** structured twin of `lines` */
 	elements: ElementJson[];
+	/** `--a11y` on an iOS app launched without the injected library: hint / actions / order are absent */
+	a11yMissing?: true;
 	/** advice printed after the lines (`[no-id]` marks) */
 	hints: string[];
 	total: number;
@@ -76,9 +88,10 @@ function pruneDepth(snapshot: Snapshot, levels: number): Snapshot {
 	return { ...snapshot, elements, flat: preorder(elements) };
 }
 
-export function elementJson(entry: NodeEntry, ref: string | undefined): ElementJson {
+export function elementJson(entry: NodeEntry, ref: string | undefined, withA11y = false): ElementJson {
 	const { element, states } = entry;
 	return {
+		...(withA11y && element.a11y !== undefined ? { a11y: element.a11y } : {}),
 		...(ref !== undefined ? { ref } : {}),
 		role: entry.role,
 		...(entry.name !== undefined ? { name: entry.name } : {}),
@@ -90,6 +103,21 @@ export function elementJson(entry: NodeEntry, ref: string | undefined): ElementJ
 		...(states.checked !== undefined ? { checked: states.checked } : {}),
 		frame: element.frame,
 	};
+}
+
+/**
+ * The snapshot with the screen-reader facts of `Element.a11y` filled in where the platform needs a second read (iOS: the
+ * injected library; Android snapshots carry them). `missing`: an iOS app launched without the library.
+ */
+async function withA11yFacts(
+	driver: Driver,
+	snapshot: Snapshot
+): Promise<Result<{ snapshot: Snapshot; missing: boolean }, UiError>> {
+	if (!canReadA11y(driver)) return ok({ snapshot, missing: false });
+	const read = await driver.readA11y(snapshot);
+	if (read.success) return ok({ snapshot: read.data, missing: false });
+	if (read.error.code === "E_UNSUPPORTED") return ok({ snapshot, missing: true });
+	return { success: false, error: driverUiError(read.error) };
 }
 
 type Fetched = { snapshot: Snapshot; settle?: { quiet: boolean; waitedMs: number } };
@@ -116,8 +144,9 @@ async function fetchSnapshot(
 		return snapshotHash(taken.data);
 	};
 	try {
+		// A navigation push holds a mixed tree still for 300-460 ms: a shorter window would call it settled.
 		const outcome = await settleByHash(poll, {
-			quietMs: DEFAULT_SETTLE_QUIET_MS,
+			quietMs: hashFallbackQuietMs(DEFAULT_SETTLE_QUIET_MS),
 			timeoutMs: settle.budgetMs,
 			now: ctx.now,
 			sleep: deps.sleep,
@@ -133,9 +162,27 @@ async function fetchSnapshot(
 	}
 }
 
+/** An interactive element without a testID, when the request asks for those to be marked. */
+function lacksMarkedId(request: SnapshotRequest, entry: NodeEntry): boolean {
+	return (
+		request.markMissingIds === true &&
+		request.interactiveOnly &&
+		isInteractiveRole(entry.role) &&
+		(entry.element.identifier === undefined || entry.element.identifier === "")
+	);
+}
+
+/** The hint line telling the author to add a testID to the `missing` marked elements. */
+function missingIdHints(missing: number): string[] {
+	if (missing === 0) return [];
+	return [
+		`# ${missing} interactive element${missing === 1 ? "" : "s"} marked ${NO_ID_MARK}: add testID + accessible in the component, reload, \`record undo\` and redo — a text selector breaks with the copy`,
+	];
+}
+
 /**
  * Take a snapshot of the device, give it the next generation and `@eN` refs, store it as the device's
- * `last-snapshot.json` and render it. With `settle`, polls until the screen hash stays equal for 250 ms
+ * `last-snapshot.json` and render it. With `settle`, polls until the screen hash stays equal for 500 ms
  * (or the budget runs out: `settle.quiet === false`) and diffs against the previously stored snapshot.
  * Refs are numbered over the whole tree, so `-i`, `--depth` and `--all` print the same `@eN` for the same element.
  */
@@ -149,7 +196,9 @@ export async function takeSnapshot(
 	const previous = readLastSnapshot(ctx, udid);
 	const fetched = await fetchSnapshot(ctx, deps, driver, request.settle);
 	if (!fetched.success) return fetched;
-	const { snapshot } = fetched.data;
+	const merged = request.a11y ? await withA11yFacts(driver, fetched.data.snapshot) : undefined;
+	if (merged !== undefined && !merged.success) return merged;
+	const snapshot = merged?.data.snapshot ?? fetched.data.snapshot;
 	const { generation, refs } = storeSnapshot(ctx, udid, snapshot);
 	const hash = snapshotHash(snapshot);
 
@@ -157,15 +206,12 @@ export async function takeSnapshot(
 	const rendered = renderSnapshot(view, {
 		interactiveOnly: request.interactiveOnly,
 		refs: refs.byId,
+		...(request.a11y ? { a11y: true } : {}),
 		...(request.all ? {} : { maxLines: DEFAULT_MAX_LINES }),
 	});
 	const entries = indexSnapshot(view).entries;
 	const listed = (request.interactiveOnly ? entries.filter(isListed) : entries).slice(0, rendered.shown);
-	const unmarked = (entry: NodeEntry): boolean =>
-		request.markMissingIds === true &&
-		request.interactiveOnly &&
-		isInteractiveRole(entry.role) &&
-		(entry.element.identifier === undefined || entry.element.identifier === "");
+	const unmarked = (entry: NodeEntry): boolean => lacksMarkedId(request, entry);
 	const lines = rendered.lines.map((line, at) => {
 		const entry = listed[at];
 		return entry !== undefined && unmarked(entry) ? `${line} ${NO_ID_MARK}` : line;
@@ -185,18 +231,14 @@ export async function takeSnapshot(
 		}),
 		lines,
 		elements: listed.map((entry) => ({
-			...elementJson(entry, refs.byId.get(entry.element.id)),
+			...elementJson(entry, refs.byId.get(entry.element.id), request.a11y === true),
 			...(unmarked(entry) ? { noId: true as const } : {}),
 		})),
-		hints:
-			missing === 0
-				? []
-				: [
-						`# ${missing} interactive element${missing === 1 ? "" : "s"} marked ${NO_ID_MARK}: add testID + accessible in the component, reload, \`record undo\` and redo — a text selector breaks with the copy`,
-					],
+		hints: missingIdHints(missing),
 		total: rendered.total,
 		shown: rendered.shown,
 		omitted: rendered.omitted,
+		...(merged?.data.missing ? { a11yMissing: true as const } : {}),
 	};
 	if (fetched.data.settle) taken.settle = fetched.data.settle;
 	if (request.settle && previous) {

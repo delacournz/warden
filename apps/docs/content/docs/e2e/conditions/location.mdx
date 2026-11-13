@@ -1,10 +1,8 @@
 ---
 title: Location
-description: Put the device at a GPS point, play a route or a GPX file at a speed, or run a bundled scenario, from a spec, a suite or warden ui.
+description: Test geofences, run trackers and location-gated screens with a GPS point, a route or a GPX file played at a speed, from a spec or a suite.
 icon: MapPin
 ---
-
-<DemoTabs ids={["location"]} />
 
 `device.location` sets the fix the app gets from the platform's location service, so plain `expo-location` or `CLLocationManager` code sees it. A route plays fixes at a speed, which is how a geofence or a run tracker gets exercised.
 
@@ -22,13 +20,11 @@ await device.location.clear();
 | Call | Does |
 |---|---|
 | `set({ lat, lon, altM? })` | a point |
-| `route(points \| { gpx }, { speedMps?, intervalS?, loop? })` | waypoints, or a GPX file (relative to the working directory), played at a speed |
+| `route(points \| { gpx }, { speedMps?, intervalS?, loop? })` | waypoints, or a GPX file (relative to the working directory), played at a speed. `loop` is Android only |
 | `scenario(name)` | one of the bundled routes |
 | `clear()` | iOS clears the simulated location. Android stops the ticker and keeps the last fix (the emulator console cannot unset one) |
 
-## How a route plays
-
-On iOS `simctl` plays a route once. On Android a ticker owned by the lease sends a fix every interval until the next location call, and stops when the lease is released.
+Grant the permission up front so the app reads the fix without a prompt: `device.permissions.set({ location: "granted" })` ([Permissions](/docs/e2e/conditions/permissions)).
 
 ## In a suite
 
@@ -38,19 +34,4 @@ conditions: { location: "city-run" },
 
 `location` takes `{ lat, lon, altM? }` or a scenario name. Every spec starts from it.
 
-## By hand
-
-```bash
-warden ui location set 37.3349,-122.009
-warden ui location route 37.3398,-122.009 37.3349,-122.009 --speed 20
-warden ui location gpx ./commute.gpx
-warden ui location scenario city-run
-warden ui location clear
-```
-
-See [warden ui](/docs/agents/ui) for every flag.
-
-## Limitations
-
-- `route` with `loop` is unsupported on iOS (`E_UNSUPPORTED`): `simctl` has no loop.
-- Android keeps the last GPS fix after `clear()` and after release: the emulator cannot unset one.
+How a route plays per platform, limitations and `warden ui location`: [Location on a simulator](/docs/sims/conditions/location).

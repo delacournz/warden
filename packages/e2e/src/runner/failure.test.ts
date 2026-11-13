@@ -36,6 +36,35 @@ describe("captureFailure", () => {
 		expect(text).toContain('[button] "Sign in" id=sign-in');
 	});
 
+	test("a screen read on ax after an axbridge stall says so under the header", async () => {
+		const dir = tmp();
+		const screen = {
+			...snapshotOf([el("button", { label: "Sign in", id: "sign-in" })]),
+			backend: "ax" as const,
+			fellBackFrom: "axbridge" as const,
+			bridgeStall: { stage: "cooldown", cold: false, cooldownRemainingMs: 12_500, probes: 2 },
+		};
+		const driver = fakeDriver({ screens: [screen] });
+		await captureFailure(driver, dir);
+		const lines = readFileSync(join(dir, "screen-at-failure.txt"), "utf8").split("\n");
+		expect(lines[0]).toMatch(/^# ios ax /);
+		expect(lines[1]).toBe(
+			"# read on ax: axbridge stalled (stage cooldown · warm · cooldown 12.5 s left · 2 failed bridge reads in a row)"
+		);
+	});
+
+	test("a fallback without a stall report still names the reader it replaced", async () => {
+		const dir = tmp();
+		const screen = {
+			...snapshotOf([el("button", { label: "Go" })]),
+			backend: "ax" as const,
+			fellBackFrom: "axbridge" as const,
+		};
+		await captureFailure(fakeDriver({ screens: [screen] }), dir);
+		const lines = readFileSync(join(dir, "screen-at-failure.txt"), "utf8").split("\n");
+		expect(lines[1]).toBe("# read on ax: axbridge did not answer");
+	});
+
 	test("raw png bytes are written when the driver returns no path", async () => {
 		const dir = tmp();
 		const driver = fakeDriver({

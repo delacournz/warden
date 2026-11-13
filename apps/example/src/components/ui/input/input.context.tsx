@@ -1,6 +1,6 @@
 import { createContext, type ReactElement, type ReactNode, type RefObject, use } from "react";
-import type { TextInput } from "react-native";
-import type { InputSize, InputVariant } from "./input.variants";
+import type { TextInputInstance } from "react-native";
+import type { InputGroupPlacement, InputSize, InputVariant } from "./input.variants";
 
 export type InputGroupContextValue = {
 	/** Visual variant of the box every part of the group sits in. */
@@ -22,7 +22,13 @@ export type InputGroupContextValue = {
 	 * the middle of the box, and a tap on the padding either side would otherwise
 	 * do nothing.
 	 */
-	fieldRef: RefObject<TextInput | null>;
+	fieldRef: RefObject<TextInputInstance | null>;
+	/**
+	 * Reported by the field when it is multiline, so the box can trade its fixed
+	 * height for a floor and top-align the row. A `Textarea` in a group is the
+	 * case this exists for.
+	 */
+	setMultiline: (isMultiline: boolean) => void;
 };
 
 const InputGroupContext = createContext<InputGroupContextValue | null>(null);
@@ -84,4 +90,52 @@ export function useInputGroupPart(component: string): InputGroupContextValue {
 		throw new Error(`${component} must be rendered inside an <Input.Group>.`);
 	}
 	return context;
+}
+
+const InputGroupPlacementContext = createContext<InputGroupPlacement | null>(null);
+
+/**
+ * Tells a part which section of the group it sits in: a row — the field's, or
+ * a block's — or the box itself, between a block and the row.
+ *
+ * Only `Input.Group.Separator` reads it, to pick its orientation without a prop:
+ * across a row it is a vertical hairline, between sections a horizontal one.
+ */
+export function InputGroupPlacementProvider({
+	value,
+	children,
+}: {
+	value: InputGroupPlacement;
+	children: ReactNode;
+}): ReactElement {
+	return <InputGroupPlacementContext value={value}>{children}</InputGroupPlacementContext>;
+}
+InputGroupPlacementProvider.displayName = "DelacourUI.Input.Group.PlacementProvider";
+
+/** Which section of the group a part sits in, or null outside one. */
+export function useInputGroupPlacement(): InputGroupPlacement | null {
+	return use(InputGroupPlacementContext);
+}
+
+const InputGroupOuterBlockContext = createContext(false);
+
+/**
+ * Tells an `Input.Group.Block` that it is the outermost one in its section —
+ * the first `start` block or the last `end` block — and so sits against the
+ * box's border. `Input.Group` sets it while it sorts its children.
+ */
+export function InputGroupOuterBlockProvider({
+	value,
+	children,
+}: {
+	value: boolean;
+	children: ReactNode;
+}): ReactElement {
+	return <InputGroupOuterBlockContext value={value}>{children}</InputGroupOuterBlockContext>;
+}
+InputGroupOuterBlockProvider.displayName = "DelacourUI.Input.Group.OuterBlockProvider";
+
+/** Whether this block is the outermost one in its section. False outside a group. */
+export function useIsOuterInputGroupBlock(): boolean {
+	return use(InputGroupOuterBlockContext);
 }

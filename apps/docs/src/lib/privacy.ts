@@ -45,7 +45,7 @@ const MAIL = `[${CONTACT}](mailto:${CONTACT})`;
 const HISTORY = `https://github.com/${gitConfig.user}/${gitConfig.repo}/commits/${gitConfig.branch}/apps/docs/src/lib/privacy.ts`;
 
 export const PRIVACY = {
-	updated: "2026-10-25",
+	updated: "2026-11-05",
 	controller: "Delacour Limited",
 	contact: CONTACT,
 	title: "Privacy policy",
@@ -56,7 +56,7 @@ export const PRIVACY = {
 		"No accounts, sign-in or profiles. Nothing we receive has your name or email address on it.",
 		"No adverts, no tracking across other companies' sites, and nothing is sold.",
 		"The website counts visits with PostHog without cookies. PostHog sets a cookie and records your session only if you accept.",
-		"The `warden` CLI sends nothing about you. It talks to npm and GitHub only to update itself.",
+		"The `warden` CLI sends anonymous usage data: which commands you run, never your code, file paths, device identifiers or IP address. It tells you the first time, and `warden telemetry disable` or `DO_NOT_TRACK=1` turns it off.",
 		"Your settings, the site's light or dark choice and your answer to the cookie banner, stay on your device.",
 	],
 } as const;
@@ -118,9 +118,20 @@ export const PRIVACY_SECTIONS: readonly PrivacySection[] = [
 		id: "the-cli",
 		title: "The command-line tool",
 		body: [
-			"The `warden` CLI collects no telemetry and has no account. It runs on your own Mac or CI runner, and the only requests it makes beyond your machine are the ones below.",
+			"The `warden` CLI has no account and runs on your own Mac or CI runner. It sends anonymous usage data, on by default: the first time it would send anything it prints a notice saying so, and `warden telemetry` shows whether it is on. Turn it off with `warden telemetry disable`, or by setting `DO_NOT_TRACK=1`, `DELACOUR_TELEMETRY_DISABLED=1` or `WARDEN_TELEMETRY_DISABLED=1`; any of the three also overrides a choice to turn it on. [What it collects, field by field,](/docs/reference/cli#telemetry) is in the CLI reference, and `DELACOUR_TELEMETRY_DEBUG=1` prints a request instead of sending it.",
+			"Besides that, the only requests it makes beyond your machine are the ones below.",
 		],
 		disclosures: [
+			{
+				what: "Once per command: its name; the names, never the values, of the flags you typed; whether it ran with --json; whether it was for iOS or Android; how many e2e suites it was asked to run, never their names; whether it succeeded, failed or was cancelled, its exit code, how long it took, and the class name of any error; your operating system, CPU, and Bun or Node version; whether it ran in CI or from a coding agent; how it was started; warden's version; a random machine ID and a random ID for the run; and a one-way hash of your git remote that stands for the project. Never your code, file or suite names, paths, bundle identifiers, simulator UDIDs, app names, URLs, remote URL, environment variable values, error messages or username",
+				to: "Delacour's own server, `telemetry.delacour.co.nz`, which works out your country from the request, discards your IP address, and passes the event to PostHog",
+				why: "To see which commands are used, on which platforms, from which CI systems and coding agents, and which commands fail. The IP address is used to answer the request and then dropped.",
+			},
+			{
+				what: "A random machine ID, a random salt, your choice to turn telemetry on or off, and when you were shown the notice",
+				to: "Your device only, `~/.config/delacour/telemetry.json`, a file shared with other Delacour command-line tools",
+				why: "So warden recognises the machine across runs, remembers your choice and shows the notice once. Delete the file at any time; the next run makes a new ID.",
+			},
 			{
 				what: "A version check and, if you update, a download: your IP address and the package requested",
 				to: "npm, `registry.npmjs.org`, or whichever registry your package manager uses",
@@ -151,7 +162,7 @@ export const PRIVACY_SECTIONS: readonly PrivacySection[] = [
 		title: "Who else handles it",
 		body: [
 			"The companies above process this information for us under their own terms. They are based in the United States, so it is processed there:",
-			"[Railway](https://railway.com/legal/privacy) for hosting the website, [PostHog](https://posthog.com/privacy) for the website's visit counts and recordings, [npm](https://docs.npmjs.com/policies/privacy) for the CLI's updates, and [GitHub](https://docs.github.com/site-policy/privacy-policies/github-general-privacy-statement) for the helper download.",
+			"[Railway](https://railway.com/legal/privacy) for hosting the website and the telemetry server, [PostHog](https://posthog.com/privacy) for the website's visit counts and recordings and the CLI's usage data, [npm](https://docs.npmjs.com/policies/privacy) for the CLI's updates, and [GitHub](https://docs.github.com/site-policy/privacy-policies/github-general-privacy-statement) for the helper download.",
 			"We do not sell or rent anything to anyone, and we do not share it with anyone else unless the law requires us to.",
 		],
 	},
@@ -159,15 +170,15 @@ export const PRIVACY_SECTIONS: readonly PrivacySection[] = [
 		id: "why",
 		title: "Why we use it",
 		body: [
-			"Only to run the website and the CLI, to count how many people use them, to see which pages and searches get used and where readers get stuck, and to fix what breaks. We do not combine it with anything else, and we do not use it to identify, profile or advertise to anyone.",
-			"If UK or EU data protection law applies to you, our lawful basis is our legitimate interest in running and improving these services, which we have weighed against your interests given how little is collected. That covers PostHog's cookieless counting. For PostHog's cookie, local storage and session recording, it is your consent, which you can withdraw at any time from Cookie settings at the foot of the home page.",
+			"Only to run the website and the CLI, to count how many people use them, to see which pages, searches and CLI commands get used and where readers get stuck, and to fix what breaks. We do not combine it with anything else, and we do not use it to identify, profile or advertise to anyone.",
+			"If UK or EU data protection law applies to you, our lawful basis is our legitimate interest in running and improving these services, which we have weighed against your interests given how little is collected. That covers PostHog's cookieless counting and the CLI's usage data, which you can switch off in one command. For PostHog's cookie, local storage and session recording, it is your consent, which you can withdraw at any time from Cookie settings at the foot of the home page.",
 		],
 	},
 	{
 		id: "how-long",
 		title: "How long it is kept",
 		body: [
-			"What stays on your device is there until you clear it. Railway, PostHog, npm and GitHub keep what they receive for the periods their own policies set, linked above.",
+			"What stays on your device is there until you clear it. The CLI's usage events are kept on our server for 180 days, after which only daily totals remain, with no machine or project IDs in them. Railway, PostHog, npm and GitHub keep what they receive for the periods their own policies set, linked above.",
 		],
 	},
 	{
@@ -175,7 +186,7 @@ export const PRIVACY_SECTIONS: readonly PrivacySection[] = [
 		title: "Your rights",
 		body: [
 			`Under New Zealand's Privacy Act 2020 you can ask to see personal information we hold about you and to have it corrected. If you are in the UK or the EU you can also ask us to delete it, to restrict or object to how it is used, or to give you a copy. Write to ${MAIL}.`,
-			"Nothing we receive has your name on it, so we may not be able to find information about you in particular. Declining in the cookie banner is the surest way to stop a recording.",
+			"Nothing we receive has your name on it, so we may not be able to find information about you in particular. Declining in the cookie banner is the surest way to stop a recording. For the command-line tool, `warden telemetry disable` stops it, and deleting `~/.config/delacour/telemetry.json` discards its random machine ID, the only handle we would have to find anything about you.",
 			"If you are unhappy with how we have handled a request, you can complain to New Zealand's [Office of the Privacy Commissioner](https://www.privacy.org.nz), the UK's [Information Commissioner's Office](https://ico.org.uk/make-a-complaint/) or the data protection authority where you live.",
 		],
 	},

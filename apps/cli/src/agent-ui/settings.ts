@@ -1,3 +1,4 @@
+import { androidScreenReaderResets } from "@delacour/warden-core/conditions/a11y-keys";
 import { clearCondition, recordCondition } from "@delacour/warden-core/conditions/conditions";
 import type {
 	A11yCondition,
@@ -9,11 +10,18 @@ import type {
 	PermissionName,
 	PermissionState,
 } from "@delacour/warden-core/conditions/conditions.types";
+import {
+	DEFAULT_KEYBOARD_MODE,
+	KEYBOARD_MODES,
+	type KeyboardMode,
+} from "@delacour/warden-core/conditions/conditions.types";
 import { appliedA11y, resolveTextSize } from "@delacour/warden-core/conditions/text-size";
+import { androidTools } from "@delacour/warden-core/providers/android";
 import { ok, type Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
+import type { A11yVerbOptions } from "./a11y";
 import { deviceInfo, fail, recordOf, resolveDeps, withPort } from "./conditions";
-import type { ConditionsDeps } from "./conditions-types";
+import type { ConditionsDeps, ConditionsPort } from "./conditions-types";
 import type { UiDevice } from "./device";
 import { driverUiError, fromDriver, type UiDeps } from "./driver";
 import type { UiError, UiSuccess } from "./output";
@@ -29,6 +37,13 @@ export type A11yOptionValues = UiOptionValues & {
 	bold?: boolean;
 	contrast?: string;
 	reduceMotion?: boolean;
+	screenReader?: boolean;
+	reduceTransparency?: boolean;
+	buttonShapes?: boolean;
+	differentiateWithoutColor?: boolean;
+	onOffLabels?: boolean;
+	highContrastText?: boolean;
+	colorInversion?: boolean;
 };
 
 export type BatteryOptionValues = UiOptionValues & { level?: string; charging?: boolean };
@@ -120,6 +135,33 @@ async function permissionSet(
 	});
 }
 
+type Grants = PermissionCondition["grants"];
+
+/** Sets every recorded permission of each bundle back to `unset`; an app that does not declare one has nothing to reset. */
+async function resetBundleGrants(
+	port: ConditionsPort,
+	grants: Grants,
+	bundles: readonly string[]
+): Promise<Result<undefined, UiError>> {
+	for (const bundleId of bundles) {
+		const back: Partial<Record<PermissionName, PermissionState>> = {};
+		for (const g of grants) if (g.bundleId === bundleId) back[g.permission] = "unset";
+		const done = await port.permissions(back, { bundleId });
+		if (!done.success && done.error.code !== "E_UNSUPPORTED")
+			return { success: false, error: driverUiError(done.error) };
+	}
+	return ok(undefined);
+}
+
+/** Stores the grants that remain after a reset, or forgets the area when none do. */
+function keepGrants(ctx: CommandContext, device: UiDevice, rest: Grants): Result<undefined, UiError> {
+	if (rest.length === 0) {
+		forget(ctx, device, "permission");
+		return ok(undefined);
+	}
+	return save(ctx, device, "permission", { grants: rest });
+}
+
 async function permissionReset(
 	ctx: CommandContext,
 	deps: Deps,
@@ -134,20 +176,11 @@ async function permissionReset(
 		(b) => opts.app === undefined || b === opts.app
 	);
 	return withPort<UiSuccess>(ctx, deps, device, async (port) => {
-		for (const bundleId of bundles) {
-			const back: Partial<Record<PermissionName, PermissionState>> = {};
-			for (const g of record.value.grants) if (g.bundleId === bundleId) back[g.permission] = "unset";
-			const done = await port.permissions(back, { bundleId });
-			// an app that does not declare the permission has nothing to reset
-			if (!done.success && done.error.code !== "E_UNSUPPORTED")
-				return { success: false, error: driverUiError(done.error) };
-		}
+		const reset = await resetBundleGrants(port, record.value.grants, bundles);
+		if (!reset.success) return reset;
 		const rest = record.value.grants.filter((g) => !bundles.includes(g.bundleId));
-		if (rest.length === 0) forget(ctx, device, "permission");
-		else {
-			const saved = save(ctx, device, "permission", { grants: rest });
-			if (!saved.success) return saved;
-		}
+		const kept = keepGrants(ctx, device, rest);
+		if (!kept.success) return kept;
 		return success(device, "permission-reset", `permissions reset for ${bundles.join(", ")}`, {
 			changed: true,
 			bundles,
@@ -204,6 +237,29 @@ function saveLocale(ctx: CommandContext, device: UiDevice, value: LocaleConditio
 	return save(ctx, device, "locale", value);
 }
 
+type TimezoneApplied = { previous?: string | undefined; appliesOnLaunch?: boolean | undefined };
+
+/** The locale record after a timezone change (`reset` drops the timezone and its remembered previous value). */
+function timezoneRecord(record: LocaleCondition, arg: string, applied: TimezoneApplied): LocaleCondition {
+	const { timezone: _drop, previousTimezone: before, ...rest } = record;
+	if (arg === "reset") return rest;
+	const previousTimezone = before ?? applied.previous;
+	return { ...rest, timezone: arg, ...(previousTimezone === undefined ? {} : { previousTimezone }) };
+}
+
+/** The `timezone set|reset` success payload. */
+function timezoneSuccess(device: UiDevice, arg: string, applied: TimezoneApplied): Result<UiSuccess, UiError> {
+	const resetting = arg === "reset";
+	const staged = applied.appliesOnLaunch === true;
+	return success(
+		device,
+		resetting ? "timezone-reset" : "timezone-set",
+		resetting ? "timezone reset" : `timezone ${arg}${staged ? " (next launch)" : ""}`,
+		{ timezone: resetting ? null : arg, staged, previous: applied.previous ?? null },
+		staged ? ["staged: a simulator has no device timezone; the app launched next gets it (`open --relaunch`)"] : []
+	);
+}
+
 async function timezoneApply(
 	ctx: CommandContext,
 	deps: Deps,
@@ -220,21 +276,9 @@ async function timezoneApply(
 			)
 		);
 		if (!applied.success) return applied;
-		const { timezone: _drop, previousTimezone: before, ...rest } = record;
-		const previousTimezone = before ?? applied.data.previous;
-		const next: LocaleCondition = resetting
-			? rest
-			: { ...rest, timezone: arg, ...(previousTimezone === undefined ? {} : { previousTimezone }) };
-		const saved = saveLocale(ctx, device, next);
+		const saved = saveLocale(ctx, device, timezoneRecord(record, arg, applied.data));
 		if (!saved.success) return saved;
-		const staged = applied.data.appliesOnLaunch === true;
-		return success(
-			device,
-			resetting ? "timezone-reset" : "timezone-set",
-			resetting ? "timezone reset" : `timezone ${arg}${staged ? " (next launch)" : ""}`,
-			{ timezone: resetting ? null : arg, staged, previous: applied.data.previous ?? null },
-			staged ? ["staged: a simulator has no device timezone; the app launched next gets it (`open --relaunch`)"] : []
-		);
+		return timezoneSuccess(device, arg, applied.data);
 	});
 }
 
@@ -251,6 +295,29 @@ export function uiTimezone(ctx: CommandContext, deps: UiDeps, arg: string, opts:
 	});
 }
 
+type LocaleApplied = { bundleId?: string | undefined; appliesOnLaunch?: boolean | undefined };
+
+/** The locale record after a locale change (`reset` drops the locale and its app). */
+function localeRecord(record: LocaleCondition, arg: string, applied: LocaleApplied): LocaleCondition {
+	const { locale: _drop, bundleId: _app, ...rest } = record;
+	if (arg === "reset") return rest;
+	const bundleId = applied.bundleId;
+	return { ...rest, locale: arg, ...(bundleId === undefined ? {} : { bundleId }) };
+}
+
+/** The `locale set|reset` success payload. */
+function localeSuccess(device: UiDevice, arg: string, applied: LocaleApplied): Result<UiSuccess, UiError> {
+	const resetting = arg === "reset";
+	const staged = applied.appliesOnLaunch === true;
+	return success(
+		device,
+		resetting ? "locale-reset" : "locale-set",
+		resetting ? "locale reset" : `locale ${arg}${staged ? " (next launch)" : ""}`,
+		{ locale: resetting ? null : arg, bundleId: applied.bundleId ?? null, staged },
+		staged ? ["staged: the app launched next gets it (`open --relaunch`)"] : []
+	);
+}
+
 async function localeApply(
 	ctx: CommandContext,
 	deps: Deps,
@@ -265,21 +332,9 @@ async function localeApply(
 			await port.locale(resetting ? null : arg, appOf(ctx, device, opts.app ?? record.bundleId))
 		);
 		if (!applied.success) return applied;
-		const { locale: _drop, bundleId: _app, ...rest } = record;
-		const bundleId = applied.data.bundleId;
-		const next: LocaleCondition = resetting
-			? rest
-			: { ...rest, locale: arg, ...(bundleId === undefined ? {} : { bundleId }) };
-		const saved = saveLocale(ctx, device, next);
+		const saved = saveLocale(ctx, device, localeRecord(record, arg, applied.data));
 		if (!saved.success) return saved;
-		const staged = applied.data.appliesOnLaunch === true;
-		return success(
-			device,
-			resetting ? "locale-reset" : "locale-set",
-			resetting ? "locale reset" : `locale ${arg}${staged ? " (next launch)" : ""}`,
-			{ locale: resetting ? null : arg, bundleId: bundleId ?? null, staged },
-			staged ? ["staged: the app launched next gets it (`open --relaunch`)"] : []
-		);
+		return localeSuccess(device, arg, applied.data);
 	});
 }
 
@@ -299,6 +354,17 @@ export function uiLocale(ctx: CommandContext, deps: UiDeps, arg: string, opts: A
 
 // ---------- a11y ----------
 
+/** The on/off display settings beyond text size, bold, contrast and reduce motion. */
+const A11Y_SWITCHES = [
+	"screenReader",
+	"reduceTransparency",
+	"buttonShapes",
+	"differentiateWithoutColor",
+	"onOffLabels",
+	"highContrastText",
+	"colorInversion",
+] as const satisfies readonly (keyof A11yOptionValues & keyof A11yCondition)[];
+
 function a11yOpOf(opts: A11yOptionValues): Result<NonNullable<A11yCondition>, UiError> {
 	const op: A11yCondition = {};
 	if (opts.textSize !== undefined) {
@@ -308,6 +374,7 @@ function a11yOpOf(opts: A11yOptionValues): Result<NonNullable<A11yCondition>, Ui
 	}
 	if (opts.bold !== undefined) op.boldText = opts.bold;
 	if (opts.reduceMotion !== undefined) op.reduceMotion = opts.reduceMotion;
+	for (const key of A11Y_SWITCHES) if (opts[key] !== undefined) op[key] = opts[key];
 	if (opts.contrast !== undefined) {
 		if (opts.contrast !== "increased" && opts.contrast !== "normal") {
 			return fail("usage", `--contrast must be increased or normal, got "${opts.contrast}"`);
@@ -315,8 +382,27 @@ function a11yOpOf(opts: A11yOptionValues): Result<NonNullable<A11yCondition>, Ui
 		op.contrast = opts.contrast;
 	}
 	return Object.keys(op).length === 0
-		? fail("usage", "a11y set needs one of --text-size, --bold, --contrast, --reduce-motion")
+		? fail(
+				"usage",
+				"a11y set needs one of --text-size, --bold, --contrast, --reduce-motion, --screen-reader, --reduce-transparency, --button-shapes, --differentiate-without-color, --on-off-labels, --high-contrast-text, --color-inversion"
+			)
 		: ok(op);
+}
+
+/**
+ * Android TalkBack: keep the services and master switch the device had before warden turned it on (undo puts back
+ * exactly those); once TalkBack is turned off again nothing of it stays on the record.
+ */
+function withScreenReaderRecord(
+	record: A11yCondition,
+	op: NonNullable<A11yCondition>,
+	previous: A11yCondition["screenReaderPrevious"]
+): A11yCondition {
+	if (op.screenReader === false && record.screenReaderPrevious !== undefined) {
+		const { screenReader: _off, screenReaderPrevious: _prior, ...rest } = record;
+		return rest;
+	}
+	return previous === undefined ? record : { ...record, screenReaderPrevious: previous };
 }
 
 async function a11ySet(
@@ -332,11 +418,15 @@ async function a11ySet(
 		if (!applied.success) return applied;
 		const resolved = op.data.textSize === undefined ? undefined : resolveTextSize(op.data.textSize);
 		const previous = recordOf(ctx, device.lease.id, "a11y")?.value ?? {};
-		const next: A11yCondition = {
-			...previous,
-			...appliedA11y(op.data, applied.data.applied),
-			...(resolved?.success ? { fontScale: resolved.data.scale } : {}),
-		};
+		const next = withScreenReaderRecord(
+			{
+				...previous,
+				...appliedA11y(op.data, applied.data.applied),
+				...(resolved?.success ? { fontScale: resolved.data.scale } : {}),
+			},
+			op.data,
+			applied.data.screenReaderPrevious
+		);
 		const saved = save(ctx, device, "a11y", next);
 		if (!saved.success) return saved;
 		const warnings = [
@@ -347,45 +437,88 @@ async function a11ySet(
 			device,
 			"a11y-set",
 			`a11y ${applied.data.applied.join(", ")}`,
-			{ applied: applied.data.applied, skipped: applied.data.skipped },
+			{
+				applied: applied.data.applied,
+				skipped: applied.data.skipped,
+				...(applied.data.screenReader === undefined ? {} : { screenReader: applied.data.screenReader }),
+			},
 			warnings
 		);
 	});
 }
 
 async function a11yReset(ctx: CommandContext, deps: Deps, device: UiDevice): Promise<Result<UiSuccess, UiError>> {
-	if (recordOf(ctx, device.lease.id, "a11y") === undefined) {
+	const recorded = recordOf(ctx, device.lease.id, "a11y")?.value;
+	if (recorded === undefined) {
 		return success(device, "a11y-reset", "a11y was not changed", { changed: false });
 	}
 	return withPort<UiSuccess>(ctx, deps, device, async (port) => {
 		const done = fromDriver(await port.a11y(null));
 		if (!done.success) return done;
+		// this process never turned TalkBack on, so the port cannot undo it: put the recorded services back
+		if (device.platform === "android") {
+			const { adb } = androidTools(ctx.env);
+			for (const argv of androidScreenReaderResets(recorded)) {
+				await ctx.exec([adb, "-s", device.udid, "shell", ...argv]);
+			}
+		}
 		forget(ctx, device, "a11y");
 		return success(device, "a11y-reset", "a11y reset", { changed: true });
 	});
 }
 
-/** `warden ui a11y set [--text-size <name|scale>] [--bold] [--contrast increased|normal] [--reduce-motion]` · `reset` · `status`. */
-export function uiA11y(ctx: CommandContext, deps: UiDeps, action: string, opts: A11yOptionValues): Promise<number> {
+/** What `a11y status` says about the screen reader a recorded condition left on. */
+function screenReaderOf(record: A11yCondition | undefined, platform: UiDevice["platform"]) {
+	if (record?.screenReader !== true) return { mode: "off" } as const;
+	return platform === "android"
+		? ({ mode: "real", engine: "talkback" } as const)
+		: ({ mode: "simulated", engine: "voiceover" } as const);
+}
+
+/** `warden ui a11y status`: the recorded condition plus what it leaves the screen reader doing. */
+function a11yStatus(ctx: CommandContext, device: UiDevice): Result<UiSuccess, UiError> {
+	const record = recordOf(ctx, device.lease.id, "a11y")?.value;
+	const screenReader = screenReaderOf(record, device.platform);
+	const reader =
+		screenReader.mode === "off"
+			? ""
+			: `\nscreen reader  ${screenReader.mode} (${screenReader.engine}${screenReader.mode === "simulated" ? ": a flag the app reads, not VoiceOver" : ""})`;
+	return success(
+		device,
+		"a11y-status",
+		record === undefined ? "a11y  not changed" : `a11y  ${JSON.stringify(record)}${reader}`,
+		{ a11y: record ?? null, screenReader }
+	);
+}
+
+/**
+ * `warden ui a11y set [--text-size <name|scale>] [--bold] [--contrast increased|normal] [--reduce-motion]
+ * [--screen-reader] [--reduce-transparency] [--button-shapes] [--differentiate-without-color] [--on-off-labels]
+ * [--high-contrast-text] [--color-inversion]` (each with a `--no-…`) · `reset` · `status`; and the read-side verbs
+ * `audit` · `order` · `speak <locator>` · `announcements` · `spoken` · `focus next|prev|activate|status` (`a11y.ts`).
+ */
+export async function uiA11y(
+	ctx: CommandContext,
+	deps: UiDeps,
+	action: string,
+	rest: readonly string[],
+	opts: A11yOptionValues & A11yVerbOptions
+): Promise<number> {
+	const { A11Y_VERBS, isA11yVerb, uiA11yVerb } = await import("./a11y");
+	if (isA11yVerb(action)) return uiA11yVerb(ctx, deps, action, rest, opts);
 	return runUi(ctx, deps, `a11y ${action}`, opts, async (device) => {
+		if (rest.length > 0 && (action === "set" || action === "reset" || action === "status")) {
+			return unexpected(action, rest, "a11y");
+		}
 		switch (action) {
 			case "set":
 				return a11ySet(ctx, await resolveDeps(deps), device, opts);
 			case "reset":
 				return a11yReset(ctx, await resolveDeps(deps), device);
-			case "status": {
-				const record = recordOf(ctx, device.lease.id, "a11y")?.value;
-				return success(
-					device,
-					"a11y-status",
-					record === undefined ? "a11y  not changed" : `a11y  ${JSON.stringify(record)}`,
-					{
-						a11y: record ?? null,
-					}
-				);
-			}
+			case "status":
+				return a11yStatus(ctx, device);
 			default:
-				return fail("usage", `unknown a11y action "${action}"`, "set, reset or status");
+				return fail("usage", `unknown a11y action "${action}"`, `set, reset, status, ${A11Y_VERBS.join(", ")}`);
 		}
 	});
 }
@@ -460,6 +593,81 @@ export function uiBattery(
 			}
 			default:
 				return fail("usage", `unknown battery action "${action}"`, "set, reset or status");
+		}
+	});
+}
+
+// ---------- keyboard ----------
+
+const isKeyboardMode = (value: string): value is KeyboardMode => (KEYBOARD_MODES as readonly string[]).includes(value);
+
+/** Puts the device on `mode`; the default mode leaves no record (release has nothing to undo), the other one is recorded. */
+async function keyboardSet(
+	ctx: CommandContext,
+	deps: Deps,
+	device: UiDevice,
+	mode: KeyboardMode
+): Promise<Result<UiSuccess, UiError>> {
+	return withPort<UiSuccess>(ctx, deps, device, async (port) => {
+		const applied = fromDriver(await port.keyboard(mode));
+		if (!applied.success) return applied;
+		if (mode === DEFAULT_KEYBOARD_MODE) {
+			forget(ctx, device, "keyboard");
+		} else {
+			const saved = save(ctx, device, "keyboard", { mode });
+			if (!saved.success) return saved;
+		}
+		return success(
+			device,
+			"keyboard-set",
+			`keyboard ${mode}`,
+			{ mode, appliesOnLaunch: applied.data.appliesOnLaunch === true },
+			applied.data.appliesOnLaunch
+				? ["applies to the app launched next: relaunch it (`warden ui open <bundle> --relaunch`)"]
+				: []
+		);
+	});
+}
+
+/**
+ * `warden ui keyboard software|hardware|toggle|status|reset`: the on-screen keyboard. `software` (the default) keeps
+ * it up while warden types, `hardware` hides it. `status` reads the mode and whether a keyboard is on screen now.
+ */
+export function uiKeyboard(ctx: CommandContext, deps: UiDeps, action: string, opts: UiOptionValues): Promise<number> {
+	return runUi(ctx, deps, `keyboard ${action}`, opts, async (device) => {
+		const resolved = await resolveDeps(deps);
+		if (isKeyboardMode(action)) return keyboardSet(ctx, resolved, device, action);
+		switch (action) {
+			case "toggle":
+				return withPort<UiSuccess>(ctx, resolved, device, async (port) => {
+					const current = fromDriver(await port.keyboardState());
+					if (!current.success) return current;
+					return keyboardSet(ctx, resolved, device, current.data.mode === "software" ? "hardware" : "software");
+				});
+			case "reset": {
+				if (recordOf(ctx, device.lease.id, "keyboard") === undefined) {
+					return success(device, "keyboard-reset", "keyboard was not changed", { changed: false });
+				}
+				return withPort<UiSuccess>(ctx, resolved, device, async (port) => {
+					const done = fromDriver(await port.keyboard(DEFAULT_KEYBOARD_MODE));
+					if (!done.success) return done;
+					forget(ctx, device, "keyboard");
+					return success(device, "keyboard-reset", "keyboard reset", { changed: true, mode: DEFAULT_KEYBOARD_MODE });
+				});
+			}
+			case "status":
+				return withPort<UiSuccess>(ctx, resolved, device, async (port) => {
+					const state = fromDriver(await port.keyboardState());
+					if (!state.success) return state;
+					return success(
+						device,
+						"keyboard-status",
+						`keyboard  ${state.data.mode}  ${state.data.visible ? "visible" : "not visible"}`,
+						{ mode: state.data.mode, visible: state.data.visible }
+					);
+				});
+			default:
+				return fail("usage", `unknown keyboard action "${action}"`, "software, hardware, toggle, status or reset");
 		}
 	});
 }

@@ -147,6 +147,46 @@ describe("undoConditions", () => {
 		]);
 	});
 
+	test("android keyboard reset puts the recorded IMEs back exactly and drops the stash", async () => {
+		const l = lease("android", "emulator-5554");
+		const enabled = "a.b/.LatinIME;12:c.d/.Voice";
+		recordCondition(
+			store,
+			l.id,
+			"keyboard",
+			{ mode: "hardware", previousIme: { enabled, default: "a.b/.LatinIME" } },
+			1
+		);
+		const result = await undoConditions(deps(), l);
+		expect(result.success).toBe(true);
+		expect(calls).toEqual([
+			[...ADB, "shell", "settings", "put", "secure", "enabled_input_methods", `'${enabled}'`],
+			[...ADB, "shell", "settings", "put", "secure", "default_input_method", "a.b/.LatinIME"],
+			[...ADB, "shell", "settings", "delete", "global", "warden_ime_enabled"],
+			[...ADB, "shell", "settings", "delete", "global", "warden_ime_default"],
+		]);
+	});
+
+	test("android keyboard reset without a recorded state restores from the device-side stash", async () => {
+		const l = lease("android", "emulator-5554");
+		recordCondition(store, l.id, "keyboard", { mode: "hardware" }, 1);
+		const result = await undoConditions(deps(), l);
+		expect(result.success).toBe(true);
+		expect(calls).toHaveLength(3);
+		expect(calls[0]?.slice(0, 5)).toEqual([...ADB, "shell", "sh"]);
+		expect(calls[0]?.join(" ")).toContain("warden_ime_enabled");
+		expect(calls[1]).toEqual([...ADB, "shell", "settings", "delete", "global", "warden_ime_enabled"]);
+	});
+
+	test("ios keyboard has no simctl reset command and its row clears", async () => {
+		const l = lease("ios", UDID);
+		recordCondition(store, l.id, "keyboard", { mode: "hardware" }, 1);
+		const result = await undoConditions(deps(), l);
+		expect(result.success).toBe(true);
+		expect(calls).toEqual([]);
+		expect(activeConditions(store, l.id)).toEqual([]);
+	});
+
 	test("android locale puts the timezone back to the recorded one and clears the app locale", async () => {
 		const l = lease("android", "emulator-5554");
 		recordCondition(
@@ -180,6 +220,92 @@ describe("undoConditions", () => {
 			["xcrun", "simctl", "ui", UDID, "increase_contrast", "disabled"],
 			["xcrun", "simctl", "status_bar", UDID, "clear"],
 		]);
+	});
+
+	test("ios a11y deletes only the defaults keys the record holds", async () => {
+		const l = lease("ios", UDID);
+		recordCondition(store, l.id, "a11y", { reduceMotion: true, screenReader: true, contrast: "increased" }, 1);
+		await undoConditions(deps(), l);
+		expect(calls).toEqual([
+			["xcrun", "simctl", "ui", UDID, "content_size", "large"],
+			["xcrun", "simctl", "ui", UDID, "increase_contrast", "disabled"],
+			["xcrun", "simctl", "spawn", UDID, "defaults", "delete", "com.apple.Accessibility", "ReduceMotionEnabled"],
+			["xcrun", "simctl", "spawn", UDID, "defaults", "delete", "com.apple.Accessibility", "VoiceOverTouchEnabled"],
+		]);
+	});
+
+	test("ios a11y undo tolerates a defaults key that was never written", async () => {
+		const l = lease("ios", UDID);
+		recordCondition(store, l.id, "a11y", { boldText: true }, 1);
+		fail = () => false;
+		const base = deps();
+		const exec: Exec = async (cmd) =>
+			cmd[4] === "defaults"
+				? { exitCode: 1, stdout: "", stderr: "The domain/default pair of (x, y) does not exist" }
+				: base.exec(cmd);
+		const r = await undoConditions({ ...base, exec }, l);
+		expect(r.success).toBe(true);
+	});
+
+	test("android a11y resets high contrast text, inversion and the transition scale it set", async () => {
+		const l = lease("android", "emulator-5554");
+		recordCondition(store, l.id, "a11y", { highContrastText: true, colorInversion: true, reduceMotion: true }, 1);
+		await undoConditions(deps(), l);
+		expect(calls.slice(2)).toEqual([
+			[...ADB, "shell", "settings", "put", "secure", "high_text_contrast_enabled", "0"],
+			[...ADB, "shell", "settings", "put", "secure", "accessibility_display_inversion_enabled", "0"],
+			[...ADB, "shell", "settings", "put", "global", "transition_animation_scale", "1.0"],
+		]);
+	});
+
+	test("android TalkBack undo restores the exact previous services and never deletes what warden did not add", async () => {
+		const l = lease("android", "emulator-5554");
+		recordCondition(
+			store,
+			l.id,
+			"a11y",
+			{
+				screenReader: true,
+				screenReaderPrevious: { services: "com.other/com.other.Svc$Inner", enabled: "1" },
+			},
+			1
+		);
+		await undoConditions(deps(), l);
+		expect(calls.slice(2)).toEqual([
+			[
+				...ADB,
+				"shell",
+				"settings",
+				"put",
+				"secure",
+				"enabled_accessibility_services",
+				"'com.other/com.other.Svc$Inner'",
+			],
+			[...ADB, "shell", "settings", "put", "secure", "accessibility_enabled", "'1'"],
+		]);
+	});
+
+	test("android TalkBack undo deletes the keys that were unset before", async () => {
+		const l = lease("android", "emulator-5554");
+		recordCondition(
+			store,
+			l.id,
+			"a11y",
+			{ screenReader: true, screenReaderPrevious: { services: null, enabled: null } },
+			1
+		);
+		await undoConditions(deps(), l);
+		expect(calls.slice(2)).toEqual([
+			[...ADB, "shell", "settings", "delete", "secure", "enabled_accessibility_services"],
+			[...ADB, "shell", "settings", "delete", "secure", "accessibility_enabled"],
+		]);
+	});
+
+	test("a screenReader record without previous values touches no accessibility service", async () => {
+		const l = lease("android", "emulator-5554");
+		recordCondition(store, l.id, "a11y", { screenReader: true }, 1);
+		await undoConditions(deps(), l);
+		expect(calls.slice(2)).toEqual([]);
 	});
 
 	test("ios locale removes the staged launch settings", async () => {
@@ -276,6 +402,30 @@ describe("undoConditions", () => {
 		expect(res.success).toBe(true);
 		expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({ seq: 8, offline: false, clockOffsetMs: 0, camera: {} });
 		expect(activeConditions(store, l.id)).toEqual([]);
+	});
+
+	test("ios keyboard release puts software back in a running injected app's state file", async () => {
+		const home = join(dir, "home");
+		const path = injectStatePath(home, UDID);
+		mkdirSync(dirname(path), { recursive: true });
+		writeFileSync(path, JSON.stringify({ seq: 7, keyboard: "hardware" }));
+		const l = lease("ios", UDID);
+		recordCondition(store, l.id, "keyboard", { mode: "hardware" }, 1);
+		const res = await undoConditions({ ...deps(), env: { WARDEN_HOME: home } }, l);
+		expect(res.success).toBe(true);
+		expect(JSON.parse(readFileSync(path, "utf8"))).toMatchObject({ seq: 8, keyboard: "software" });
+		expect(activeConditions(store, l.id)).toEqual([]);
+	});
+
+	test("an ios clock release leaves the keyboard mode in the state file alone", async () => {
+		const home = join(dir, "home");
+		const path = injectStatePath(home, UDID);
+		mkdirSync(dirname(path), { recursive: true });
+		writeFileSync(path, JSON.stringify({ seq: 7, keyboard: "hardware", clockOffsetMs: 5 }));
+		const l = lease("ios", UDID);
+		recordCondition(store, l.id, "clock", { kind: "offset", ms: 5 }, 1);
+		await undoConditions({ ...deps(), env: { WARDEN_HOME: home } }, l);
+		expect(JSON.parse(readFileSync(path, "utf8"))).toMatchObject({ seq: 8, keyboard: "hardware", clockOffsetMs: 0 });
 	});
 
 	test("ios camera blanks the injected app's feeds, removes the staged files and clears the row", async () => {

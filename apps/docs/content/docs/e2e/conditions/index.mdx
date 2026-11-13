@@ -1,14 +1,12 @@
 ---
 title: Device conditions
-description: Change the network, GPS location, clock, biometrics, permissions, locale, accessibility settings and battery of a simulator or emulator from a spec, a suite or warden ui, and have it undone on release.
+description: Test the app offline, on 3G, with one host failing, at a moving GPS fix, two weeks in the future, with a failed Face ID, a denied permission, a QR code in the camera, another locale or the largest text size, from a spec or a suite.
 icon: Signal
 ---
 
-import { Accessibility, BatteryMedium, BellRing, Clock, FingerprintPattern, Languages, MapPin, ShieldCheck, Wifi } from "lucide-react";
+import { Accessibility, BatteryMedium, BellRing, Camera, Clock, FingerprintPattern, Keyboard, Languages, MapPin, ShieldCheck, Wifi } from "lucide-react";
 
-<DemoTabs ids={["network", "fault", "location", "clock", "biometrics"]} />
-
-A spec can put the device into a condition (offline, 3G, one host failing, a moving GPS fix, a clock two weeks ahead, a failed Face ID, a denied permission) and check what the app does. Everything a test changes belongs to its lease: when the test ends, or the lease is released or reclaimed, warden puts it back, so the next agent never inherits a shaped device.
+A spec can put the device into a condition (offline, 3G, one host failing, a moving GPS fix, a clock two weeks ahead, a failed Face ID, a denied permission, a QR code in front of the camera) and check what the app does. Everything a test changes belongs to its lease: when the test ends, warden puts it back, so the next spec never inherits a shaped device.
 
 ```ts title="e2e/network-offline.e2e.ts"
 import { expect, test } from "@delacour/warden-e2e";
@@ -30,38 +28,24 @@ The example app has a Conditions screen (`warden-example://conditions`) and a sp
 <Cards className="lg:grid-cols-3">
 <Card icon={<Wifi />} title="Network" href="/docs/e2e/conditions/network">Offline, presets from `edge` to `wifi`, a flapping link, one failing host.</Card>
 <Card icon={<MapPin />} title="Location" href="/docs/e2e/conditions/location">A GPS point, a route or GPX file played at a speed, bundled scenarios.</Card>
-<Card icon={<Clock />} title="Clock" href="/docs/e2e/conditions/clock">Advance the wall clock, jump to an instant, freeze it on iOS.</Card>
-<Card icon={<FingerprintPattern />} title="Biometrics" href="/docs/e2e/conditions/biometrics">Enroll, match and fail Face ID, Touch ID and fingerprint on the real prompt.</Card>
-<Card icon={<ShieldCheck />} title="Permissions" href="/docs/e2e/conditions/permissions">Grant, deny or unset location, camera, photos and more before launch.</Card>
-<Card icon={<Languages />} title="Locale and timezone" href="/docs/e2e/conditions/locale">Another language, region or timezone for the app.</Card>
-<Card icon={<Accessibility />} title="Accessibility settings" href="/docs/e2e/conditions/accessibility">Larger text, bold text, increased contrast.</Card>
-<Card icon={<BatteryMedium />} title="Battery" href="/docs/e2e/conditions/battery">Level and charging state.</Card>
-<Card icon={<BellRing />} title="Push and memory warnings" href="/docs/e2e/conditions/events">One-off events: a push payload on iOS, a memory trim on Android.</Card>
+<Card icon={<Clock />} title="Clock" href="/docs/e2e/conditions/clock">Expire a trial in one step: advance, jump or freeze the clock.</Card>
+<Card icon={<FingerprintPattern />} title="Biometrics" href="/docs/e2e/conditions/biometrics">Match and fail the real Face ID, Touch ID and fingerprint prompt.</Card>
+<Card icon={<ShieldCheck />} title="Permissions" href="/docs/e2e/conditions/permissions">Skip the prompt, or test the denied path on purpose.</Card>
+<Card icon={<Camera />} title="Camera" href="/docs/e2e/conditions/camera">Scan a known QR code, capture a known photo.</Card>
+<Card icon={<Languages />} title="Locale and timezone" href="/docs/e2e/conditions/locale">Translations, date formats and day boundaries.</Card>
+<Card icon={<Accessibility />} title="Accessibility settings" href="/docs/e2e/conditions/accessibility">Layouts at the largest text size, reduced-motion paths.</Card>
+<Card icon={<BatteryMedium />} title="Battery" href="/docs/e2e/conditions/battery">Low-power banners and charging-only work.</Card>
+<Card icon={<Keyboard />} title="Keyboard" href="/docs/e2e/conditions/keyboard">Sheets and footers that ride the keyboard.</Card>
+<Card icon={<BellRing />} title="Push and memory warnings" href="/docs/e2e/conditions/events">Deliver a push payload, trim memory.</Card>
 </Cards>
 
-## Platform support
+Simulators and emulators only: every condition fails `E_UNSUPPORTED` on a physical device. What each platform supports, and how to set the same conditions by hand with `warden ui`: [Device conditions on a simulator](/docs/sims/conditions#platform-support).
 
-Simulators and emulators only: every condition fails `E_UNSUPPORTED` on a physical device.
+## In a spec or a suite
 
-| Condition | iOS simulator | Android emulator |
-|---|---|---|
-| [Network](/docs/e2e/conditions/network) | the app's `NSURLSession` traffic, through a per-app proxy | native speed and offline; loss and faults through the system proxy |
-| [Location](/docs/e2e/conditions/location) | points and routes; a route plays once | points and routes, looped or not; the last fix stays |
-| [Clock](/docs/e2e/conditions/clock) | the app's clock; can be frozen | the emulator's clock; cannot be frozen |
-| [Biometrics](/docs/e2e/conditions/biometrics) | Face ID and Touch ID | fingerprint |
-| [Permissions](/docs/e2e/conditions/permissions) | every name but `camera` and `notifications` | the names the manifest declares |
-| [Locale and timezone](/docs/e2e/conditions/locale) | the next launch | live; locale needs Android 13+ |
-| [Accessibility settings](/docs/e2e/conditions/accessibility) | text size, contrast | text size, bold text |
-| [Battery](/docs/e2e/conditions/battery) | status bar only | what the app reads |
-| [Push and memory warnings](/docs/e2e/conditions/events) | push | memory warning |
+The same conditions can change mid-test from a spec, or be the starting state of every spec in a suite.
 
-On iOS, network and clock reach only an app launched with warden's network dylib: declare them in the suite's `conditions`, or pass `{ relaunch: true }` ([how it reaches the app](/docs/e2e/conditions/network#how-it-reaches-the-app)).
-
-## Three places to set one
-
-The same conditions are available from a spec, as a suite's starting state, and by hand while you drive a device.
-
-<Tabs items={["Spec", "Suite", "By hand"]}>
+<Tabs items={["Spec", "Suite"]}>
 <Tab value="Spec">
 
 ```ts
@@ -81,16 +65,6 @@ conditions: {
   clock: { offset: "15d" },
   permissions: { location: "denied" },
 },
-```
-
-</Tab>
-<Tab value="By hand">
-
-```bash
-warden ui network set 3g
-warden ui location scenario city-run
-warden ui clock advance 15d
-warden ui permission set location=denied
 ```
 
 </Tab>
@@ -119,14 +93,15 @@ e2e: {
 | `locale` | a BCP 47 tag |
 | `timezone` | an IANA name |
 | `a11y` | `{ textSize?, boldText?, contrast?, reduceMotion? }` |
+| `keyboard` | `"software"` (default) or `"hardware"` |
 
 A suite's key replaces the top-level one for that area. A bad value fails config load. On iOS, declaring `network` or `clock` launches the app with the dylib, which is why the example runs its condition specs in a separate `conditions` suite: the other specs keep a plain launch.
 
 ```bash
-warden e2e conditions --specs network-offline,network-slow,location-route,clock-trial
+warden e2e conditions --specs conditions/network,conditions/location,conditions/clock
 ```
 
-Biometrics is not a condition key: enrolled devices come from `biometrics: true` ([Biometrics](/docs/e2e/conditions/biometrics#enrolled-devices-biometrics-true)).
+The camera feed is the suite's own `camera` key, not a `conditions` key ([Camera](/docs/e2e/conditions/camera#in-a-suite)). Biometrics is not one either: enrolled devices come from `biometrics: true` ([Biometrics](/docs/e2e/conditions/biometrics#enrolled-devices-biometrics-true)).
 
 ## Timeline
 
@@ -139,13 +114,6 @@ const run = await device.timeline([
 
 A timeline changes the network and the location on a schedule. `at` is an offset from now. A step sets a condition, not a flap. The returned run has the same `stop()`, `done` and `status()` as a [flap](/docs/e2e/conditions/network#flapping).
 
-## What is undone on release
+## What is undone after each spec
 
-Release, gc and the end of a spec put the device back:
-
-- network online, faults cleared, the shaping proxy, the flap scheduler and the route ticker stopped
-- the location cleared on iOS (Android keeps the last GPS fix: the emulator cannot unset one)
-- the clock real again; a still-running injected iOS app is reset to online and the real clock
-- permissions reset, text size and contrast or font scale and bold back to defaults, the app locale cleared, the timezone back, the battery real
-
-Each change a spec makes is a `condition` line in `results.jsonl`.
+The end of a spec puts the device back to the suite's baseline (or the real state without one): the network, location, clock, permissions, accessibility settings, locale, timezone, battery, keyboard and camera feed. Each change a spec makes is a `condition` line in `results.jsonl`. The full list is in [What is undone on release](/docs/sims/conditions#what-is-undone-on-release).

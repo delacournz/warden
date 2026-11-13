@@ -40,32 +40,49 @@ type Opts = {
 	idAfter?: string;
 };
 
+const done: ExecResult = { exitCode: 0, stdout: "", stderr: "" };
+
+/** `cp` copies for real; `-c` (clone) can be made to fail */
+function fakeCp(opts: Opts, args: string[]): ExecResult {
+	if (args[0] === "-c" && opts.cloneFails) return { ...done, exitCode: 1, stderr: "clone unsupported" };
+	const [from, to] = args.slice(-2) as [string, string];
+	cpSync(from, to, { recursive: true });
+	return done;
+}
+
+/** `plutil -extract` answers the bundle id (changed after the repack when `idAfter` is set); `-create` writes the file */
+function fakePlutil(opts: Opts, args: string[]): ExecResult {
+	if (args[0] === "-extract") {
+		const afterRepack = args.at(-1)?.startsWith(outDir) === true;
+		return { ...done, stdout: `${afterRepack ? (opts.idAfter ?? "com.x.app") : "com.x.app"}\n` };
+	}
+	if (args[0] === "-create") {
+		writeFileSync(args[2] ?? "", "");
+		return done;
+	}
+	return done;
+}
+
+/** `codesign -d` prints the entitlements; `--force` signs (or fails) */
+function fakeCodesign(opts: Opts, args: string[]): ExecResult {
+	if (args[0] === "-d") {
+		return { ...done, stdout: opts.entitlements ?? '<?xml version="1.0"?><plist><dict></dict></plist>' };
+	}
+	if (args[0] === "--force") return opts.signFails ? { ...done, exitCode: 1, stderr: "no identity" } : done;
+	return done;
+}
+
 /** a fake host: `cp` copies for real (nothing else touches the machine); plutil / codesign answer from `opts` */
 function host(opts: Opts, calls: string[][]): Exec {
+	const tools: Record<string, (opts: Opts, args: string[]) => ExecResult> = {
+		cp: fakeCp,
+		plutil: fakePlutil,
+		codesign: fakeCodesign,
+	};
 	return async (cmd) => {
 		calls.push([...cmd]);
-		const ok: ExecResult = { exitCode: 0, stdout: "", stderr: "" };
-		const [bin, ...args] = cmd;
-		if (bin === "cp") {
-			if (args[0] === "-c" && opts.cloneFails) return { ...ok, exitCode: 1, stderr: "clone unsupported" };
-			const [from, to] = args.slice(-2) as [string, string];
-			cpSync(from, to, { recursive: true });
-			return ok;
-		}
-		if (bin === "plutil" && args[0] === "-extract") {
-			const afterRepack = args.at(-1)?.startsWith(outDir) === true;
-			return { ...ok, stdout: `${afterRepack ? (opts.idAfter ?? "com.x.app") : "com.x.app"}\n` };
-		}
-		if (bin === "plutil" && args[0] === "-create") {
-			writeFileSync(args[2] ?? "", "");
-			return ok;
-		}
-		if (bin === "codesign" && args[0] === "-d") {
-			return { ...ok, stdout: opts.entitlements ?? '<?xml version="1.0"?><plist><dict></dict></plist>' };
-		}
-		if (bin === "codesign" && args[0] === "--force")
-			return opts.signFails ? { ...ok, exitCode: 1, stderr: "no identity" } : ok;
-		return ok;
+		const [bin = "", ...args] = cmd;
+		return tools[bin]?.(opts, args) ?? done;
 	};
 }
 
@@ -91,6 +108,19 @@ describe("applyIosRepack", () => {
 		const sign = calls.find((c) => c[1] === "--force");
 		expect(sign).toEqual(["codesign", "--force", "--sign", "-", "--timestamp=none", app]);
 		expect(existsSync(join(outDir, ".entitlements.plist"))).toBe(false);
+	});
+
+	test("a base that kept its own embedded bundle (an imported CI build) gets this JS, not the stale one", async () => {
+		writeFileSync(join(base, "main.jsbundle"), "OLD-EMBEDDED-JS");
+		mkdirSync(join(base, "EXUpdates.bundle"), { recursive: true });
+		writeFileSync(join(base, "EXUpdates.bundle", "app.manifest"), "{}");
+		const { res, calls } = await run();
+		expect(res.success).toBe(true);
+		const app = join(outDir, "App.app");
+		expect(readFileSync(join(app, "main.jsbundle"), "utf8")).toBe("NEW-JS");
+		expect(existsSync(join(app, "assets", "old", "gone.png"))).toBe(false);
+		expect(readFileSync(join(base, "main.jsbundle"), "utf8")).toBe("OLD-EMBEDDED-JS");
+		expect(calls.some((c) => c.includes("EXUpdatesEnabled"))).toBe(true);
 	});
 
 	test("an empty entitlements dict signs without --entitlements; a real one is passed through", async () => {

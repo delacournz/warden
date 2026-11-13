@@ -58,15 +58,17 @@ const held = (...udids: string[]) => ({
 });
 
 describe("startEarlyWarm", () => {
-	test("a leg's devices are warmed the moment they are leased, before anything settles", async () => {
+	test("a leg's warm-up starts the moment it is leased, one device after the other", async () => {
 		const f = fake();
 		f.deps.legCounts = [2];
 		const warm = startEarlyWarm(f.deps);
 		expect(f.started).toEqual([]);
 		warm.leased(held("U1", "U2"), 0);
 		await Bun.sleep(0);
-		expect(f.started.sort()).toEqual(["U1", "U2"]);
+		expect(f.started).toEqual(["U1"]);
 		f.release("U1");
+		await Bun.sleep(0);
+		expect(f.started).toEqual(["U1", "U2"]);
 		f.release("U2");
 		const done = await warm.settled();
 		expect(done.devices.map((d) => [d.worker, d.udid, d.ok])).toEqual([
@@ -97,6 +99,43 @@ describe("startEarlyWarm", () => {
 			"/logs/warm-2.log",
 			"/logs/warm-3.log",
 		]);
+	});
+
+	test("legs leased together still warm one device at a time, in lease order", async () => {
+		const f = fake();
+		f.deps.legCounts = [1, 1, 1];
+		const warm = startEarlyWarm(f.deps);
+		warm.leased(held("A1"), 0);
+		warm.leased(held("B1"), 1);
+		warm.leased(held("C1"), 2);
+		await Bun.sleep(0);
+		expect(f.started).toEqual(["A1"]);
+		f.release("A1");
+		await Bun.sleep(0);
+		expect(f.started).toEqual(["A1", "B1"]);
+		f.release("B1", "fail");
+		await Bun.sleep(0);
+		expect(f.started).toEqual(["A1", "B1", "C1"]);
+		f.release("C1");
+		const done = await warm.settled();
+		expect(done.devices.map((d) => [d.worker, d.ok])).toEqual([
+			[0, true],
+			[1, false],
+			[2, true],
+		]);
+	});
+
+	test("abort ends the queue of legs that have not started", async () => {
+		const f = fake();
+		f.deps.legCounts = [1, 1];
+		const warm = startEarlyWarm(f.deps);
+		warm.leased(held("A1"), 0);
+		warm.leased(held("B1"), 1);
+		await Bun.sleep(0);
+		warm.abort();
+		const done = await warm.settled();
+		expect(f.started).toEqual(["A1"]);
+		expect(done.devices.map((d) => d.ok)).toEqual([false, false]);
 	});
 
 	test("a failed warm-up is a warning in the outcome, not a printed line", async () => {
@@ -165,5 +204,52 @@ describe("startEarlyWarm", () => {
 		const f = fake();
 		const warm = startEarlyWarm(f.deps);
 		expect(await warm.settled()).toEqual({ devices: [], helpers: [], warnings: [] });
+	});
+
+	test("a device's reboot waits until the run says it is prepared (its install and setup are done)", async () => {
+		const f = fake();
+		let reboots = 0;
+		const wedged: WarmHelper = {
+			socketPath: "/s/U1.sock",
+			snapshot: async () => ({ success: false, error: "E_TIMEOUT" }),
+			close: async () => {},
+			stop: async () => {},
+			recover: async () => ({ kind: "failed", stage: "restart", error: "restart backboardd: exit 3" }),
+			reboot: async () => {
+				reboots++;
+				return { kind: "rebooted" };
+			},
+		};
+		const warm = startEarlyWarm({ ...f.deps, connect: async () => ({ success: true, data: wedged }), legCounts: [1] });
+		warm.leased(held("U1"), 0);
+		await Bun.sleep(5);
+		expect(reboots).toBe(0);
+		warm.prepared("U1");
+		await Bun.sleep(5);
+		expect(reboots).toBe(1);
+		warm.abort();
+		await warm.settled();
+	});
+
+	test("prepared before the warm-up asks: the reboot does not wait", async () => {
+		const f = fake();
+		let reboots = 0;
+		const wedged: WarmHelper = {
+			socketPath: "/s/U1.sock",
+			snapshot: async () => ({ success: false, error: "E_TIMEOUT" }),
+			close: async () => {},
+			recover: async () => ({ kind: "failed", stage: "restart", error: "exit 3" }),
+			reboot: async () => {
+				reboots++;
+				return { kind: "refused", reason: "test" };
+			},
+		};
+		const warm = startEarlyWarm({ ...f.deps, connect: async () => ({ success: true, data: wedged }), legCounts: [1] });
+		warm.prepared("U1");
+		warm.leased(held("U1"), 0);
+		await Bun.sleep(5);
+		expect(reboots).toBe(1);
+		warm.abort();
+		await warm.settled();
 	});
 });

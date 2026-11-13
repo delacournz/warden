@@ -56,8 +56,7 @@ export type CardPlane = (typeof CARD_PLANES)[number];
  * does not cascade colour to a `Text`, so the tokens live on the title and
  * description slots.
  *
- * Free of React Native imports so it stays unit-testable — `bun test` cannot
- * parse React Native's Flow-typed source. See AGENTS.md.
+ * Free of React Native imports so it stays pure and unit-testable. See AGENTS.md.
  */
 export const cardVariants = tv({
 	slots: {

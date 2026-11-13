@@ -9,13 +9,19 @@
  * a missing helper an error.
  *   dist/npm/warden-e2e/       → @delacour/warden-e2e: package.json + index.mjs/preload.mjs (+ chunk) + index.d.ts/preload.d.ts
  *                                + types/ (the spec API for `warden e2e`, bundled from packages/e2e; lock-step with warden)
- * Every package also gets the repo-root LICENSE. Repository / homepage / bugs links are added only with
+ *   dist/warden-atf-<sha8>.jar → release asset: the Android audit jar, downloaded by @delacour/warden-e2e on first use
+ *                                (kept out of the npm bundle: an inlined base64 zip held each release in npm's review)
+ * Every package also gets the repo-root LICENSE and `homepage` (the website, from apps/cli/package.json; e2e → its docs).
+ * Repository / bugs links are added only with
  * `--repo-links` or `WARDEN_NPM_REPO_LINKS=1` (the release workflow sets it once the repo is public).
  * Publishing is the release workflow's job: platform packages first, then @delacour/warden, then @delacour/warden-e2e.
  */
-import { chmodSync, copyFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
+import { ATF_DEX } from "@delacour/warden-e2e/driver/android/atf-dex.generated";
+import { atfAssetName, WORKSPACE_ATF_JAR } from "@delacour/warden-e2e/driver/android/atf-jar";
 import cliPackage from "../package.json" with { type: "json" };
 import { buildConfigEntry } from "../src/npm/config-entry";
 import { stageE2e } from "../src/npm/e2e-stage";
@@ -47,6 +53,7 @@ const meta: PackageMeta = {
 	version: cliPackage.version,
 	description: cliPackage.description,
 	license: cliPackage.license,
+	homepage: cliPackage.homepage,
 	...(repoLinks ? { repository: DEFAULT_RELEASE_REPO } : {}),
 };
 
@@ -101,6 +108,14 @@ console.log("staged dist/npm/warden");
 const e2e = await stageE2e({ repoRoot, outDir: join(out, "warden-e2e"), meta });
 if (!e2e.success) throw new Error(e2e.error);
 console.log("staged dist/npm/warden-e2e");
+
+const atfJar = readFileSync(WORKSPACE_ATF_JAR);
+const atfSha = createHash("sha256").update(atfJar).digest("hex");
+if (atfSha !== ATF_DEX.jarSha256) {
+	throw new Error(`${WORKSPACE_ATF_JAR}: sha256 ${atfSha} is not ATF_DEX.jarSha256 — run \`android:emit-atf\``);
+}
+writeFileSync(join(dist, atfAssetName(ATF_DEX)), atfJar);
+console.log(`staged dist/${atfAssetName(ATF_DEX)} (release asset)`);
 
 console.log(
 	`npm ${meta.version}: ${RELEASE_TARGETS.length} platform packages + @delacour/warden + @delacour/warden-e2e${repoLinks ? "" : " (no repo links)"}`

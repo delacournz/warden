@@ -98,6 +98,8 @@ export type RepackMeta = {
 	head: string;
 	createdAt: number;
 	bundleMs: number;
+	/** `baseIdentity` of the simulator base this repack was cloned from; absent on a repack of an older warden */
+	baseId?: string;
 };
 
 export const REPACK_META_FILE = "meta.json";
@@ -124,8 +126,15 @@ export async function readRepackMeta(
 		return undefined;
 	}
 	if (!isRecord(raw)) return undefined;
-	const { worktree, branch, head, createdAt, bundleMs } = raw;
+	const { worktree, branch, head, createdAt, bundleMs, baseId } = raw;
 	if (typeof worktree !== "string" || typeof head !== "string") return undefined;
 	if (typeof createdAt !== "number" || typeof bundleMs !== "number") return undefined;
-	return { worktree, ...(typeof branch === "string" ? { branch } : {}), head, createdAt, bundleMs };
+	return {
+		worktree,
+		...(typeof branch === "string" ? { branch } : {}),
+		head,
+		createdAt,
+		bundleMs,
+		...(typeof baseId === "string" ? { baseId } : {}),
+	};
 }

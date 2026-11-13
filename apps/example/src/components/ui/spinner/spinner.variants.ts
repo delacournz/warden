@@ -69,7 +69,7 @@ export type SpinnerArcStop = { offset: number; opacity: number };
  * angle while its opacity steps evenly, which inverts the skew. Both half-rings
  * share the resulting offset ladder; only the endpoints differ.
  *
- * Pure, so the whole ladder is reachable from `bun test`. See AGENTS.md.
+ * Pure, so the whole ladder is unit-testable. See AGENTS.md.
  */
 export function spinnerArcStops(from: number, to: number): SpinnerArcStop[] {
 	return Array.from({ length: SPINNER_ARC_STOP_COUNT + 1 }, (_unused, index) => {
@@ -103,7 +103,7 @@ export const SPINNER_FALLBACK_COLOR: SpinnerColor = "default";
  * Neither slot carries a colour: the glyph is an SVG stroke, which takes a
  * resolved value rather than a class. See {@link SPINNER_COLOR_TOKEN}.
  *
- * Free of React Native imports so it stays unit-testable — `bun test` cannot
+ * Free of React Native imports so it stays unit-testable — a bare JS runtime cannot
  * parse React Native's Flow-typed source. See AGENTS.md.
  */
 export const spinnerVariants = tv({
@@ -147,7 +147,7 @@ export function isSpinnerSize(size: SpinnerSize | number | undefined): size is S
  * Precedence matches {@link resolveSpinnerColor}, and the rule `Icon` follows,
  * so a spinner composed into a button matches it without being told to.
  *
- * Pure, so the whole ladder is reachable from `bun test`. See AGENTS.md.
+ * Pure, so the whole ladder is unit-testable. See AGENTS.md.
  */
 export function resolveSpinnerRootClass({
 	size,

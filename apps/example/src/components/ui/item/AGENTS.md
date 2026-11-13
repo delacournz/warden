@@ -25,7 +25,6 @@ A row of media, text and actions, for lists and settings. Compound root plus
 | `item.context.tsx` | `ItemProvider`, `useItem()`, `useItemContext()`, `useItemPart()` |
 | `item.types.ts` | Prop types shared by two or more parts |
 | `item.variants.ts` | Pure `tv()` slots and the four resolvers, no RN imports |
-| `item.variants.test.ts` | |
 
 ## Design
 
@@ -49,7 +48,7 @@ A row of media, text and actions, for lists and settings. Compound root plus
   its text and its divider out of line. The tests assert the item's `min-h`,
   `gap`, `px` and `py` against `listGroupVariants().item()` at every size, and
   the bare media icon against the group's `prefixIcon` — change one without the
-  other and `bun test` fails by name.
+  other and they drift apart.
 - **Pressable only with a handler.** `resolveItemRender` returns one of two:
   `pressable` (a handler — a `Pressable`, role `button`, children merged into
   one accessible element; disabled, it keeps the role, reports `disabled` and
@@ -87,6 +86,17 @@ A row of media, text and actions, for lists and settings. Compound root plus
   hand-placed rule in a group.
 - **String children** are wrapped in a `Content` around a `Title`, consecutive
   strings collapsing into one — the same rule, and the same reason, as
-  [`ListGroup`](../list-group/AGENTS.md).
+  [`ListGroup`](../list-group/AGENTS.md). The shared `lib/wrap-text-children`
+  does it, and both rows call the one copy so the rule cannot drift between
+  them.
+- **`asChild` gets the caller's child exactly as written.** `Pressable` with
+  `asChild` passes its children to `Children.only`, which throws on any array —
+  even one holding a single element — so
+  `<Item asChild onPress={…}><View /></Item>` threw while the wrap always
+  rebuilt the children as an array. Under `asChild` nothing is wrapped at all;
+  without it, a lone element still comes back as that same element, not a
+  re-keyed copy or a one-item array. Text under `asChild` is the caller's to
+  wrap — `Slot` cannot pass props to a string.
+  
 - **Text colour goes on the text.** No slot but `title` and `description` holds
   a `text-*` colour; the tests assert the root never does.

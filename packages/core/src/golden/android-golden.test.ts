@@ -163,6 +163,23 @@ function fakeAndroidHost(opts: HostOptions = {}) {
 		return out("OK: killing emulator, bye bye\r\n");
 	}
 
+	/** The commands whose answer depends on (or changes) the instance's touches / lock state. */
+	function statefulCommand(instance: Instance, rest: string): ExecResult | undefined {
+		if (rest === "emu finger touch 1") {
+			instance.touches = (instance.touches ?? 0) + 1;
+			return out("OK\r\n");
+		}
+		if (rest === "shell dumpsys fingerprint") {
+			const count = (instance.touches ?? 0) >= 2 && !opts.enrollNeverFinishes ? 1 : 0;
+			return out(`{"service":"Fingerprint Manager","prints":[{"id":0,"count":${count},"accept":0,"reject":0}]}`);
+		}
+		if (rest === "shell dumpsys window") {
+			const showing = !(instance.unlocked === true && opts.keyguardStuck !== true);
+			return out(`isKeyguardShowing=${showing}`);
+		}
+		return undefined;
+	}
+
 	function deviceCommand(serial: string, instance: Instance, rest: string): ExecResult | undefined {
 		const hangs = instance.writable && opts.buildNeverBoots === true;
 		const fixed: Record<string, () => ExecResult> = {
@@ -173,16 +190,8 @@ function fakeAndroidHost(opts: HostOptions = {}) {
 			"shell getprop ro.build.version.sdk": () => out("36\n"),
 			"emu kill": () => kill(serial),
 		};
-		if (rest === "emu finger touch 1") {
-			instance.touches = (instance.touches ?? 0) + 1;
-			return out("OK\r\n");
-		}
-		if (rest === "shell dumpsys fingerprint") {
-			const count = (instance.touches ?? 0) >= 2 && !opts.enrollNeverFinishes ? 1 : 0;
-			return out(`{"service":"Fingerprint Manager","prints":[{"id":0,"count":${count},"accept":0,"reject":0}]}`);
-		}
-		if (rest === "shell dumpsys window")
-			return out(`isKeyguardShowing=${instance.unlocked === true && opts.keyguardStuck !== true ? "false" : "true"}`);
+		const stateful = statefulCommand(instance, rest);
+		if (stateful) return stateful;
 		if (rest.startsWith("shell input keyevent 224")) instance.unlocked = true;
 		if (/^shell (locksettings|am|input|uiautomator|cat|svc|settings) /.test(rest)) return out("");
 		const name = /^emu avd snapshot save (\S+)$/.exec(rest)?.[1];

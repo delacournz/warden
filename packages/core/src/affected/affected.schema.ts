@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { a11yAuditConfigSchema } from "../a11y/a11y.config";
 import { duration, portSpec, reclaimSchema, slimConfigSchema } from "../batch/preset.schema";
 import { appOptionSchema } from "../builds/app-option.schema";
 import { cameraConfigSchema, conditionsConfigSchema } from "../conditions/conditions.config";
@@ -32,6 +33,7 @@ type RunSettings = {
 	passes: number;
 	count?: number | undefined;
 	profile?: string | undefined;
+	runtime?: string | undefined;
 	devices?: Array<{ profile: string; default: boolean }> | undefined;
 };
 
@@ -230,6 +232,8 @@ export const e2eSuiteSchema = z
 		retry: z.number().int().min(0).default(0),
 		count: z.number().int().min(1).optional(),
 		profile: z.string().min(1).optional(),
+		/** iOS simulator runtime the run's devices and golden use: `latest`, `iOS-26-5`, `26.5` (`--runtime` overrides) */
+		runtime: z.string().min(1).optional(),
 		/** install the project's app on each device first (`warden batch --app`); `{ installMode }` = `--install-mode` */
 		app: appOptionSchema.optional(),
 		/** ports leased for the run (`<from>[:<span>]`), exported as `WARDEN_PORT_<i>` / `WARDEN_PORTS` to serve, setup and every spec process */
@@ -245,6 +249,8 @@ export const e2eSuiteSchema = z
 		setup: z.string().min(1).optional(),
 		/** iOS: switch off the simulator daemons specs never need on each device, before `setup`. An object keeps categories (`except`, ids) or single labels (`keep`) on */
 		slim: slimConfigSchema.optional(),
+		/** iOS: clone the suite's simulators from a golden image (`true`); default off = each is a fresh `simctl create` + first boot */
+		golden: z.boolean().optional(),
 		/** devices of this suite have a fingerprint / Face ID enrolled (own golden, own pool); overrides the top-level `biometrics` */
 		biometrics: z.boolean().optional(),
 		/** `erase` | `uninstall` | `none`: reclaim the suite's devices when they are released; overrides the top-level `reclaim` */
@@ -259,6 +265,8 @@ export const e2eSuiteSchema = z
 		perf: perfConfigSchema.optional(),
 		/** device conditions every spec of the suite starts from; each area replaces the top-level one */
 		conditions: conditionsConfigSchema.optional(),
+		/** accessibility audit settings for this suite; each key replaces the top-level `a11y` one */
+		a11y: a11yAuditConfigSchema.optional(),
 		/** the simulated camera every spec starts from, applied before the first `app.open()`; Android devices of the suite claim `+cam` */
 		camera: cameraConfigSchema.optional(),
 		/** default `required` for specs that don't set it */

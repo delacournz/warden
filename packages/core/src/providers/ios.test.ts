@@ -13,7 +13,14 @@ import {
 	FAKE_IPHONE_UDID,
 	FAKE_UNPAIRED_UDID,
 } from "./devicectl.fixtures";
-import { createIosProvider, deleteSim, parseSimctlDevices, parseSimctlDeviceTypes, parseSimctlRuntimes } from "./ios";
+import {
+	checkIosRuntime,
+	createIosProvider,
+	deleteSim,
+	parseSimctlDevices,
+	parseSimctlDeviceTypes,
+	parseSimctlRuntimes,
+} from "./ios";
 import { SIMCTL_DEVICES_JSON, SIMCTL_DEVICETYPES_JSON, SIMCTL_RUNTIMES_JSON, simctlDevicesJson } from "./ios.fixture";
 import type { DeviceProvider } from "./provider.types";
 
@@ -974,5 +981,24 @@ describe("createIosProvider physical iPhones (PHY-6.5)", () => {
 		await p.prepareBoot?.(FAKE_IPHONE_UDID);
 		await p.afterReady?.(FAKE_IPHONE_UDID);
 		expect(calls).toEqual([]);
+	});
+});
+
+describe("checkIosRuntime", () => {
+	const exec: Exec = async () => ({ exitCode: 0, stdout: SIMCTL_RUNTIMES_JSON, stderr: "" });
+
+	test("an installed runtime passes, in any spelling", async () => {
+		for (const wanted of ["26.3", "iOS-26-3", "iOS 26.3"]) {
+			const found = await checkIosRuntime(exec, wanted);
+			expect(found.success && found.data.identifier).toBe("com.apple.CoreSimulator.SimRuntime.iOS-26-3");
+		}
+	});
+
+	test("a missing runtime is refused with the installed list, never swapped", async () => {
+		const found = await checkIosRuntime(exec, "27.0");
+		expect(found.success).toBe(false);
+		if (found.success) return;
+		expect(found.error).toContain('iOS runtime "27.0" is not installed');
+		expect(found.error).toContain("installed: iOS-26-5, iOS-26-3, iOS-26-1");
 	});
 });

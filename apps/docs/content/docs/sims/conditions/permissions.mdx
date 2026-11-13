@@ -1,0 +1,24 @@
+---
+title: Permissions
+description: Grant, deny or unset an app's privacy permissions on a leased simulator or emulator with warden ui, and which names each platform takes.
+icon: ShieldCheck
+---
+
+`warden ui permission` sets the app's privacy permissions directly, so you do not tap through a system prompt (iOS does not always raise one) and can reach the denied path on purpose.
+
+```bash
+warden ui permission set location=granted camera=denied
+warden ui permission status
+warden ui permission reset
+```
+
+`--app <bundle>` names the app; the default is the one `warden ui open` launched. Run `permission set` before `open`: iOS terminates a running app whose permission changes. Release puts the permissions back (iOS: privacy reset; Android: permissions reset). From a spec or a suite: [Permissions in E2E tests](/docs/e2e/conditions/permissions).
+
+Each takes `granted`, `denied` or `unset` (`unset` asks again). Names: `location` `locationAlways` `camera` `photos` `photosAdd` `contacts` `contactsLimited` `notifications` `microphone` `calendar` `reminders` `motion` `mediaLibrary` `siri`.
+
+## Skipped names
+
+A name is skipped when the platform has no service for it or the app does not declare it.
+
+- **iOS:** `camera` and `notifications` have no `simctl privacy` service and are skipped.
+- **Android:** only the permissions the app's manifest declares apply; any other name is skipped with a warning.

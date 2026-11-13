@@ -59,6 +59,22 @@ describe("warden repack", () => {
 		expect(seen[0]?.project.name).toBe("demo");
 	});
 
+	test("--json carries why a cached repack was rebuilt", async () => {
+		const c = setup(["ios", "--json"]);
+		await createRepackCommand(deps, async () =>
+			ok({
+				kind: "repacked",
+				reason: "base-changed",
+				artifact: "/a",
+				hash: "h",
+				baseHash: "b",
+				jsKey: "j",
+				bundleMs: 1,
+			})
+		).run(c);
+		expect(JSON.parse(c.stdout.join("\n")).reason).toBe("base-changed");
+	});
+
 	test("--force reaches the repack", async () => {
 		const seen: RepackInput[] = [];
 		const c = setup(["android", "--force", "--json"]);

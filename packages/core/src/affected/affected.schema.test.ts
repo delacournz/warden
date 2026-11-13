@@ -14,6 +14,15 @@ const issues = (extra: Record<string, unknown>): string[] => {
 	return res.success ? [] : res.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`);
 };
 
+describe("golden", () => {
+	test("optional boolean: unset by default, true / false accepted, anything else refused", () => {
+		expect(suite().golden).toBeUndefined();
+		expect(suite({ golden: true }).golden).toBe(true);
+		expect(suite({ golden: false }).golden).toBe(false);
+		expect(issues({ golden: "yes" })).not.toEqual([]);
+	});
+});
+
 describe("suiteIsolation", () => {
 	test("a suite that says nothing runs one spec process per device", () => {
 		expect(suiteIsolation(suite())).toBe("device");
@@ -108,6 +117,20 @@ describe("physical", () => {
 	});
 });
 
+describe("e2e.<suite>.a11y", () => {
+	test("ignore, minSeverity and rules; strict keys and known rules only", () => {
+		const a11y = {
+			ignore: [{ rule: "target-size", identifier: "x" }],
+			minSeverity: "warning",
+			rules: ["missing-name"],
+		};
+		expect(suite({ a11y }).a11y as unknown).toEqual(a11y);
+		expect(issues({ a11y: { ignore: [{ rule: "nope" }] } })).not.toEqual([]);
+		expect(issues({ a11y: { minSeverity: "info" } })).not.toEqual([]);
+		expect(issues({ a11y: { extra: 1 } })).not.toEqual([]);
+	});
+});
+
 describe("e2e.<suite>.conditions", () => {
 	test("network, location and clock, strict keys", () => {
 		expect(
@@ -115,5 +138,21 @@ describe("e2e.<suite>.conditions", () => {
 		).toEqual({ network: "3g", location: { lat: 1, lon: 2 }, clock: "2026-01-01T00:00:00Z" });
 		expect(issues({ conditions: { network: "5g" } })).not.toEqual([]);
 		expect(issues({ conditions: { battery: 1 } })).not.toEqual([]);
+	});
+});
+
+describe("e2e suite runtime", () => {
+	test("is optional and keeps the spelling it was given", () => {
+		expect(suite().runtime).toBeUndefined();
+		for (const runtime of ["latest", "iOS-26-5", "26.5", "27.0"]) expect(suite({ runtime }).runtime).toBe(runtime);
+	});
+
+	test("an empty or non-string runtime is refused", () => {
+		expect(issues({ runtime: "" })).not.toEqual([]);
+		expect(issues({ runtime: 27 })).not.toEqual([]);
+	});
+
+	test("combines with devices legs", () => {
+		expect(issues({ runtime: "27.0", devices: [{ profile: "iphone-17" }] })).toEqual([]);
 	});
 });

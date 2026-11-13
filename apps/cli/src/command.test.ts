@@ -3,6 +3,8 @@ import { Chalk } from "chalk";
 import { type Command, type CommandEntry, defineCommand, runLazyProgram, runProgram } from "./command";
 import { reportError } from "./output";
 import { withSpinner } from "./spinner-context";
+import { commandPathOf } from "./telemetry/properties";
+import type { Finished, Tracker } from "./telemetry/tracker";
 import { scriptedUi, type TestContext, testContext } from "./testing";
 
 let ctx: TestContext | undefined;
@@ -247,5 +249,84 @@ describe("runProgram --json failures", () => {
 		ctx = testContext([]);
 		expect(await runProgram([ok], ["zeta", "--json"], ctx)).toBe(0);
 		expect(ctx.stdout).toEqual([]);
+	});
+});
+
+describe("runProgram telemetry", () => {
+	type Seen = { began: string[]; finished: Finished[] };
+
+	function withTracker(argv: string[], commands: Command[] = [alpha]): Promise<{ code: number; seen: Seen }> {
+		const seen: Seen = { began: [], finished: [] };
+		const tracker: Tracker = {
+			begin: async (command) => void seen.began.push(commandPathOf(command)),
+			finish: async (result) => void seen.finished.push(result),
+		};
+		ctx = testContext(argv, { tracker });
+		return runProgram(commands, argv, ctx).then((code) => ({ code, seen }));
+	}
+
+	test("begins before the action and finishes once with the exit code", async () => {
+		const { code, seen } = await withTracker(["alpha"]);
+		expect(code).toBe(3);
+		expect(seen.began).toEqual(["alpha"]);
+		expect(seen.finished).toEqual([{ outcome: "error", exitCode: 3 }]);
+	});
+
+	test("a zero exit is a success without an exit code, 130 is cancelled", async () => {
+		const ok = defineCommand({ name: "ok", summary: "s", register: (cmd, _c, done) => void cmd.action(() => done(0)) });
+		const stop = defineCommand({
+			name: "stop",
+			summary: "s",
+			register: (cmd, _c, done) => void cmd.action(() => done(130)),
+		});
+		expect((await withTracker(["ok"], [ok])).seen.finished).toEqual([{ outcome: "success" }]);
+		expect((await withTracker(["stop"], [stop])).seen.finished).toEqual([{ outcome: "cancelled", exitCode: 130 }]);
+	});
+
+	test("a throwing action finishes with the error, then still throws", async () => {
+		const boom = defineCommand({
+			name: "boom",
+			summary: "s",
+			register: (cmd) =>
+				void cmd.action(() => {
+					throw new Error("kaboom");
+				}),
+		});
+		const seen: Seen = { began: [], finished: [] };
+		ctx = testContext(["boom"], {
+			tracker: { begin: async () => {}, finish: async (r) => void seen.finished.push(r) },
+		});
+		await expect(runProgram([boom], ["boom"], ctx)).rejects.toThrow("kaboom");
+		expect(seen.finished[0]).toMatchObject({ outcome: "error" });
+	});
+
+	test("help and usage errors run no action, so nothing is tracked", async () => {
+		expect((await withTracker(["--help"])).seen).toEqual({ began: [], finished: [] });
+		expect((await withTracker(["alpha", "--nope"])).seen).toEqual({ began: [], finished: [] });
+	});
+
+	test("the --json failure envelope is printed before the flush, and stays the only stdout", async () => {
+		const order: string[] = [];
+		const fail = defineCommand({
+			name: "fail",
+			summary: "s",
+			register: (cmd, c, done) =>
+				void cmd.option("--json").action(() => {
+					reportError(c, "fail", "no device");
+					done(1);
+				}),
+		});
+		ctx = testContext(["fail", "--json"], {
+			tracker: { begin: async () => {}, finish: async () => void order.push("finish") },
+		});
+		const out = ctx.out;
+		ctx.out = (line) => {
+			order.push("out");
+			out(line);
+		};
+		await runProgram([fail], ["fail", "--json"], ctx);
+		expect(order).toEqual(["out", "finish"]);
+		expect(ctx.stdout).toHaveLength(1);
+		expect(JSON.parse(ctx.stdout[0] as string)).toMatchObject({ ok: false });
 	});
 });

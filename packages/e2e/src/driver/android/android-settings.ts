@@ -1,16 +1,27 @@
-import type { PermissionName, PermissionState, TextSize } from "@delacour/warden-core/conditions/conditions.types";
+import {
+	IME_STASH_DEFAULT,
+	IME_STASH_ENABLED,
+	type ImeState,
+	type KeyboardMode,
+	type PermissionName,
+	type PermissionState,
+	type TextSize,
+} from "@delacour/warden-core/conditions/conditions.types";
 import { androidFontScale, resolveTextSize } from "@delacour/warden-core/conditions/text-size";
+import type { ScreenReaderState } from "../../a11y/a11y.types";
 import { badRequest, batteryProblem, localeProblem, timezoneProblem } from "../device-settings";
-import type { A11yOp, A11yState, BatteryOp, BatteryState, Driver, DriverResult } from "../driver.types";
+import type { A11yOp, A11yState, BatteryOp, BatteryState, Driver, DriverResult, KeyboardResult } from "../driver.types";
 import { driverErr } from "../errors";
 import type { AdbSession } from "./adb-session";
 import { shellCommand } from "./android-argv";
+import { createTalkBack, type TalkBackControl } from "./android-talkback";
 
 /**
  * Android device settings over the resident adb shell (each mechanism verified on an emulator): `pm grant|revoke`
  * for permissions, `cmd alarm set-timezone`, per-app `cmd locale set-app-locales` (API 33+), `settings put` for
- * font scale and bold text, `dumpsys battery`, `am send-trim-memory`. No contrast or reduce-motion switch exists in
- * the shell (the animation scales are the driver's own), so those are skipped, not faked.
+ * font scale, bold text, high-contrast text and colour inversion, `dumpsys battery`, `am send-trim-memory`. Reduce
+ * motion is the transition animation scale (what RN reads), which the driver restores to the device's value on open.
+ * No contrast switch exists in the shell, so that is skipped, not faked.
  */
 
 const ANDROID = "android.permission.";
@@ -64,7 +75,12 @@ export const setAppLocaleArgv = (pkg: string, tag: string | null): string[] => [
 	tag ?? "",
 ];
 export const getAppLocaleArgv = (pkg: string): string[] => ["cmd", "locale", "get-app-locales", pkg];
-export const settingGetArgv = (table: "system" | "secure", key: string): string[] => ["settings", "get", table, key];
+export const settingGetArgv = (table: "system" | "secure" | "global", key: string): string[] => [
+	"settings",
+	"get",
+	table,
+	key,
+];
 export const BOLD_TEXT_ADJUSTMENT = 300;
 export const trimMemoryArgv = (pkg: string): string[] => ["am", "send-trim-memory", pkg, "RUNNING_CRITICAL"];
 export const BATTERY_RESET_ARGV: readonly string[] = ["dumpsys", "battery", "reset"];
@@ -94,11 +110,15 @@ export type AndroidSettingsDeps = {
 	sleep?: (ms: number) => Promise<void>;
 	/** the host's timezone, restored on `timezone(null)` when no previous one is given (default: `Intl`) */
 	hostTimezone?: () => string;
+	/** the transition animation scale the device had before the driver zeroed it (what `reduceMotion: false` restores); `"null"` / absent = none known */
+	transitionOriginal?: () => string | undefined;
+	/** is `warden-uiad` how this driver reads the screen (TalkBack mode needs it: the dump fallback unbinds TalkBack); default false */
+	uiadAvailable?: () => boolean;
 };
 
 export type AndroidSettings = Pick<
 	Driver,
-	"permissions" | "timezone" | "locale" | "a11y" | "battery" | "memoryWarning" | "push"
+	"permissions" | "timezone" | "locale" | "a11y" | "battery" | "memoryWarning" | "push" | "keyboard" | "keyboardState"
 >;
 
 type Shelled = { ok: boolean; stdout: string; failure: string | undefined };
@@ -110,9 +130,10 @@ type Ctx = {
 	shell(argv: readonly string[]): Promise<Shelled>;
 	must(argv: readonly string[]): DriverResult<string>;
 	/** `settings put`, then read back: a font change makes the system write its own value a moment later, so a put is repeated until it holds */
-	putSetting(table: "system" | "secure", key: string, value: string): DriverResult<string>;
+	putSetting(table: "system" | "secure" | "global", key: string, value: string): DriverResult<string>;
 	packageOf(explicit: string | undefined, what: string): { bundleId: string } | ReturnType<typeof driverErr>;
 	sdk(): Promise<number>;
+	talkback: TalkBackControl;
 };
 
 const unsupported = (parts: readonly { name: string; reason: string }[]) =>
@@ -238,48 +259,128 @@ function fontScaleOf(size: TextSize | undefined): { scale: number; notes: string
 	};
 }
 
-/** Settings with no shell mechanism on Android, for the ones `op` asks for. */
+/** iOS-only settings, for the ones `op` asks for. */
+const IOS_ONLY = ["reduceTransparency", "buttonShapes", "differentiateWithoutColor", "onOffLabels"] as const;
+
+/** Settings with no Android mechanism (yet), for the ones `op` asks for. */
 function a11ySkips(op: A11yOp | null): { setting: string; reason: string }[] {
 	const skipped: { setting: string; reason: string }[] = [];
 	if (op?.contrast !== undefined) {
 		skipped.push({ setting: "contrast", reason: "Android has no shell switch for contrast that takes effect" });
 	}
-	if (op?.reduceMotion !== undefined) {
-		skipped.push({
-			setting: "reduceMotion",
-			reason: "Android's closest setting is the animation scales, which warden's driver manages itself",
-		});
+	for (const setting of IOS_ONLY) {
+		if (op?.[setting] !== undefined) skipped.push({ setting, reason: "iOS only" });
 	}
 	return skipped;
 }
 
+/** The scale `reduceMotion: false` means: the device's own transition scale, else the platform default. */
+function transitionOff(c: Ctx): string {
+	const original = c.deps.transitionOriginal?.();
+	return original !== undefined && original !== "null" && Number(original) > 0 ? original : "1.0";
+}
+
+/** Boolean settings that are one `settings put` of 1 / 0, in the order they are applied. */
+const SWITCHES = [
+	["highContrastText", "secure", "high_text_contrast_enabled"],
+	["colorInversion", "secure", "accessibility_display_inversion_enabled"],
+] as const;
+
+/** What an a11y request has applied so far, filled by the step functions. */
+interface A11yRun {
+	applied: string[];
+	notes: string[];
+	screenReader?: ScreenReaderState;
+	screenReaderPrevious?: A11yState["screenReaderPrevious"];
+}
+
+type A11yFailure = Extract<Awaited<ReturnType<Driver["a11y"]>>, { success: false }>;
+
+/** One a11y setting: runs when the request is a reset (`null`) or names the setting, and returns a failure to stop. */
+type A11yStep = (c: Ctx, op: A11yOp | null, run: A11yRun) => Promise<A11yFailure | undefined>;
+
+const stepFontScale: A11yStep = async (c, op, run) => {
+	if (op !== null && op.textSize === undefined) return undefined;
+	const font = fontScaleOf(op?.textSize);
+	if ("success" in font) return font;
+	run.notes = font.notes;
+	const done = await c.putSetting("system", "font_scale", String(font.scale));
+	if (!done.success) return done;
+	run.applied.push("textSize");
+	return undefined;
+};
+
+const stepBoldText: A11yStep = async (c, op, run) => {
+	if (op !== null && op.boldText === undefined) return undefined;
+	const done = await c.putSetting(
+		"secure",
+		"font_weight_adjustment",
+		String(op?.boldText === true ? BOLD_TEXT_ADJUSTMENT : 0)
+	);
+	if (!done.success) return done;
+	run.applied.push("boldText");
+	return undefined;
+};
+
+const stepSwitches: A11yStep = async (c, op, run) => {
+	for (const [field, table, key] of SWITCHES) {
+		if (op !== null && op[field] === undefined) continue;
+		const done = await c.putSetting(table, key, op?.[field] === true ? "1" : "0");
+		if (!done.success) return done;
+		if (op !== null) run.applied.push(field);
+	}
+	return undefined;
+};
+
+const stepReduceMotion: A11yStep = async (c, op, run) => {
+	if (op !== null && op.reduceMotion === undefined) return undefined;
+	const done = await c.putSetting(
+		"global",
+		"transition_animation_scale",
+		op?.reduceMotion === true ? "0" : transitionOff(c)
+	);
+	if (!done.success) return done;
+	if (op !== null) run.applied.push("reduceMotion");
+	return undefined;
+};
+
+// null resets everything warden set, TalkBack included (a no-op when warden never turned it on)
+const stepScreenReader: A11yStep = async (c, op, run) => {
+	if (op !== null && op.screenReader === undefined) return undefined;
+	const done = await (op?.screenReader === true ? c.talkback.enable() : c.talkback.disable());
+	if (!done.success) return done;
+	if (op !== null) {
+		run.screenReader = done.data;
+		run.applied.push("screenReader");
+		run.screenReaderPrevious = c.talkback.previous();
+	}
+	return undefined;
+};
+
+/** The a11y steps, in the order they are applied. */
+const A11Y_STEPS: readonly A11yStep[] = [stepFontScale, stepBoldText, stepSwitches, stepReduceMotion, stepScreenReader];
+
 function a11yOp(c: Ctx): Driver["a11y"] {
 	return async (op) => {
-		const applied: string[] = [];
-		const skipped: { setting: string; reason: string }[] = [];
-		let notes: string[] = [];
-		if (op === null || op.textSize !== undefined) {
-			const font = fontScaleOf(op?.textSize);
-			if ("success" in font) return font;
-			notes = font.notes;
-			const done = await c.putSetting("system", "font_scale", String(font.scale));
-			if (!done.success) return done;
-			applied.push("textSize");
+		const run: A11yRun = { applied: [], notes: [] };
+		for (const step of A11Y_STEPS) {
+			const failed = await step(c, op, run);
+			if (failed) return failed;
 		}
-		if (op === null || op.boldText !== undefined) {
-			const done = await c.putSetting(
-				"secure",
-				"font_weight_adjustment",
-				String(op?.boldText === true ? BOLD_TEXT_ADJUSTMENT : 0)
-			);
-			if (!done.success) return done;
-			applied.push("boldText");
-		}
-		skipped.push(...a11ySkips(op));
-		if (applied.length === 0 && skipped.length > 0) {
+		const skipped = a11ySkips(op);
+		if (run.applied.length === 0 && skipped.length > 0) {
 			return unsupported(skipped.map((s) => ({ name: s.setting, reason: s.reason })));
 		}
-		return { success: true, data: { applied, skipped, notes } satisfies A11yState };
+		return {
+			success: true,
+			data: {
+				applied: run.applied,
+				skipped,
+				notes: run.notes,
+				...(run.screenReader === undefined ? {} : { screenReader: run.screenReader }),
+				...(run.screenReaderPrevious === undefined ? {} : { screenReaderPrevious: run.screenReaderPrevious }),
+			} satisfies A11yState,
+		};
 	};
 }
 
@@ -289,6 +390,15 @@ function batteryRequestProblem(op: BatteryOp) {
 	return batteryArgvs(op).length === 0
 		? driverErr("E_BAD_REQUEST", "battery needs a level, charging, or both")
 		: undefined;
+}
+
+/** Applies a battery request's `dumpsys battery` commands in order, stopping at the first failure. */
+async function applyBattery(c: Ctx, op: BatteryOp) {
+	for (const cmd of batteryArgvs(op)) {
+		const done = await c.must(cmd);
+		if (!done.success) return done;
+	}
+	return undefined;
 }
 
 function batteryOp(c: Ctx): Driver["battery"] {
@@ -302,10 +412,8 @@ function batteryOp(c: Ctx): Driver["battery"] {
 		}
 		const bad = batteryRequestProblem(op);
 		if (bad) return bad;
-		for (const cmd of batteryArgvs(op)) {
-			const done = await c.must(cmd);
-			if (!done.success) return done;
-		}
+		const failed = await applyBattery(c, op);
+		if (failed) return failed;
 		return {
 			success: true,
 			data: {
@@ -314,6 +422,97 @@ function batteryOp(c: Ctx): Driver["battery"] {
 				cosmetic: false,
 			},
 		};
+	};
+}
+
+const nullable = (value: string): string => (value.trim() === "null" ? "" : value.trim());
+
+async function readIme(c: Ctx): Promise<ImeState> {
+	const enabled = await c.shell(settingGetArgv("secure", "enabled_input_methods"));
+	const current = await c.shell(settingGetArgv("secure", "default_input_method"));
+	return { enabled: nullable(enabled.stdout), default: nullable(current.stdout) };
+}
+
+/** What `hardware` mode stashed on the device, or `undefined` when no IME was switched off by it. */
+async function readImeStash(c: Ctx): Promise<ImeState | undefined> {
+	const enabled = await c.shell(settingGetArgv("global", IME_STASH_ENABLED));
+	const current = await c.shell(settingGetArgv("global", IME_STASH_DEFAULT));
+	const state = { enabled: nullable(enabled.stdout), default: nullable(current.stdout) };
+	return state.enabled === "" ? undefined : state;
+}
+
+/**
+ * The mode the device is in: with no IME enabled the on-screen keyboard cannot show (`hardware`). The emulator's
+ * built-in qwerty keyboard is never "external", so `show_ime_with_hard_keyboard` cannot hide it.
+ */
+async function readKeyboardMode(c: Ctx): Promise<KeyboardMode> {
+	return (await readIme(c)).enabled === "" ? "hardware" : "software";
+}
+
+/**
+ * Whether the IME window is up: `dumpsys window InputMethod` says `isVisible=true` while it is (the uiautomator dump
+ * carries the app's window only, so the keyboard is never in the snapshot on Android).
+ */
+export function imeVisibleIn(dump: string): boolean {
+	return /\bisVisible=true\b/.test(dump);
+}
+
+async function readKeyboardVisible(c: Ctx): Promise<boolean> {
+	const read = await c.shell(["dumpsys", "window", "InputMethod"]);
+	return read.ok && imeVisibleIn(read.stdout);
+}
+
+/** `software`: put the device-side stash back exactly, then drop it (nothing stashed: nothing to do). */
+async function restoreImes(c: Ctx): Promise<DriverResult<KeyboardResult>> {
+	const stash = await readImeStash(c);
+	if (stash !== undefined) {
+		const steps: string[][] = [
+			["settings", "put", "secure", "enabled_input_methods", stash.enabled],
+			...(stash.default === "" ? [] : [["settings", "put", "secure", "default_input_method", stash.default]]),
+			["settings", "delete", "global", IME_STASH_ENABLED],
+			["settings", "delete", "global", IME_STASH_DEFAULT],
+		];
+		for (const argv of steps) {
+			const done = await c.must(argv);
+			if (!done.success) return done;
+		}
+	}
+	return { success: true, data: { mode: "software" } };
+}
+
+/** Stash the enabled IMEs and the default on the device, then `ime disable` each. */
+async function hideImes(c: Ctx, current: ImeState): Promise<DriverResult<KeyboardResult>> {
+	const listed = await c.shell(["ime", "list", "-s"]);
+	const ids = listed.stdout
+		.split("\n")
+		.map((line) => line.trim())
+		.filter((line) => line.includes("/"));
+	const steps: string[][] = [
+		["settings", "put", "global", IME_STASH_ENABLED, current.enabled],
+		...(current.default === "" ? [] : [["settings", "put", "global", IME_STASH_DEFAULT, current.default]]),
+		...ids.map((id) => ["ime", "disable", id]),
+	];
+	for (const argv of steps) {
+		const done = await c.must(argv);
+		if (!done.success) return done;
+	}
+	if ((await readIme(c)).enabled !== "") {
+		return driverErr("E_IO", "an input method is still enabled after ime disable", { detail: { serial: c.serial } });
+	}
+	return { success: true, data: { mode: "hardware", previousIme: current } };
+}
+
+/**
+ * `hardware`: no IME is enabled, so no soft keyboard shows and `input text` still types (the stash lives on the
+ * device in `warden_ime_*`, so a later process or release finds it). `software`: the stash put back. Live, no relaunch.
+ */
+function keyboardOp(c: Ctx): Driver["keyboard"] {
+	return async (mode) => {
+		if (mode === "software") return restoreImes(c);
+		const current = await readIme(c);
+		if (current.enabled !== "") return hideImes(c, current);
+		const previous = await readImeStash(c);
+		return { success: true, data: { mode, ...(previous === undefined ? {} : { previousIme: previous }) } };
 	};
 }
 
@@ -333,7 +532,11 @@ function memoryWarningOp(c: Ctx): Driver["memoryWarning"] {
 	};
 }
 
-export function createAndroidSettings(deps: AndroidSettingsDeps): AndroidSettings {
+export function createAndroidSettings(deps: AndroidSettingsDeps): AndroidSettings & {
+	talkback: TalkBackControl;
+	keyboardMode(): Promise<KeyboardMode>;
+	keyboardVisible(): Promise<boolean>;
+} {
 	const { session, serial } = deps;
 
 	async function shell(argv: readonly string[]): Promise<Shelled> {
@@ -354,8 +557,17 @@ export function createAndroidSettings(deps: AndroidSettingsDeps): AndroidSetting
 			: driverErr("E_IO", done.failure ?? argv.join(" "), { detail: { serial } });
 	}
 
+	const talkback = createTalkBack({
+		serial,
+		shell,
+		must,
+		uiadAvailable: () => deps.uiadAvailable?.() ?? false,
+		sleep: (ms) => (deps.sleep ?? ((wait: number) => Bun.sleep(wait)))(ms),
+	});
+
 	const ctx: Ctx = {
 		deps,
+		talkback,
 		serial,
 		shell,
 		must,
@@ -385,11 +597,18 @@ export function createAndroidSettings(deps: AndroidSettingsDeps): AndroidSetting
 	};
 
 	return {
+		talkback,
 		permissions: permissionsOp(ctx),
 		timezone: timezoneOp(ctx),
 		locale: localeOp(ctx),
 		a11y: a11yOp(ctx),
 		battery: batteryOp(ctx),
+		keyboard: keyboardOp(ctx),
+		keyboardMode: () => readKeyboardMode(ctx),
+		keyboardVisible: () => readKeyboardVisible(ctx),
+		async keyboardState() {
+			return { success: true, data: { mode: await readKeyboardMode(ctx), visible: await readKeyboardVisible(ctx) } };
+		},
 		memoryWarning: memoryWarningOp(ctx),
 		async push() {
 			return driverErr(

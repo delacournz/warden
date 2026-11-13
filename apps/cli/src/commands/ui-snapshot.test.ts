@@ -170,7 +170,7 @@ describe("warden ui snapshot", () => {
 		expect(readState(h.c, UDID)).toMatchObject({ generation: 1 });
 	});
 
-	test("--settle: waits for two equal hashes >= 250 ms apart, then prints a +/-/= diff vs the stored snapshot", async () => {
+	test("--settle: waits for two equal hashes >= 500 ms apart, then prints a +/-/= diff vs the stored snapshot", async () => {
 		const before = snapshotOf([el("text", { label: "Loading" }), el("button", { label: "Keep", id: "keep" })]);
 		const loaded = snapshotOf([el("text", { label: "Loaded" }), el("button", { label: "Keep", id: "keep" })]);
 		const h = harness([before]);
@@ -186,6 +186,21 @@ describe("warden ui snapshot", () => {
 		expect(text).toContain('+ @e1 [text] "Loaded" enabled (0,0 390×44)');
 		expect(text).toContain("= 1 unchanged");
 		expect(h.driver.callsOf("snapshot").length).toBeGreaterThanOrEqual(2 + 1);
+	});
+
+	test("--settle waits 500 ms of quiet, so a navigation push's mixed tree (held 460 ms) is never the result", async () => {
+		let start: number | undefined;
+		let h: Harness | undefined;
+		h = harness(() => {
+			const t = h?.clock.t ?? 0;
+			start ??= t;
+			return snapshotOf([el("text", { label: t - start < 460 ? "mid-push" : "pushed" })]);
+		});
+		expect(await h.run("snapshot", "--settle", "--json")).toBe(0);
+		const out = doc(h.c);
+		expect(out.result.settle.quiet).toBe(true);
+		expect(out.result.settle.waitedMs).toBeGreaterThanOrEqual(460 + 500);
+		expect(readLastSnapshot(h.c, UDID)?.snapshot.flat.map((e) => e.label)).toContain("pushed");
 	});
 
 	test("--settle on a screen that keeps changing gives up at the budget with a warning", async () => {

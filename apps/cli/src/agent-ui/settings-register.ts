@@ -4,10 +4,14 @@ import type { UiDeps } from "./driver";
 import { withUiOptions } from "./ui-options";
 
 const APP = "--app <bundle>";
+
+function collect(value: string, previous: string[]): string[] {
+	return [...previous, value];
+}
 const APP_HELP = "the app's bundle id / package (default: the app `open` launched)";
 
 /**
- * Device settings a test starts from: `warden ui permission | timezone | locale | a11y | battery | memory-warning |
+ * Device settings a test starts from: `warden ui permission | timezone | locale | a11y | battery | keyboard | memory-warning |
  * push`. Each is its own verb (like `location` and `clock`) so `--help` shows its own flags; they share the lease's
  * condition store, so release undoes them. One call from `commands/ui.ts`; `settings.ts` is imported by the one that runs.
  */
@@ -52,17 +56,53 @@ export function registerSettingsCommands(
 	withUiOptions(
 		cmd
 			.command("a11y")
-			.description("accessibility: set [--text-size] [--bold] [--contrast] [--reduce-motion] | reset | status")
-			.argument("<action>", "set | reset | status")
-			.option("--text-size <size>", "a name (accessibility-large, extra-large, ...) or a font scale (1.5)")
-			.option("--bold", "bold text (Android)")
+			.description(
+				"accessibility: set [--text-size] [--bold] [--screen-reader] … | reset | status | audit | order | speak <locator> | announcements | spoken | focus next|prev|activate|status"
+			)
+			.argument("<action>", "set | reset | status | audit | order | speak | announcements | spoken | focus")
+			.argument("[args...]", "speak: a locator (@e3, id=…, label=…); focus: next | prev | activate | status")
+			.option(
+				"--text-size <size>",
+				"a name (accessibility-large, extra-large, ...) or a font scale (1.5); audit: the size the app runs at"
+			)
+			.option("--bold", "bold text")
 			.option("--no-bold", "bold text off")
 			.option("--contrast <mode>", "increased | normal (iOS)")
-			.option("--reduce-motion", "reduce motion (no mechanism on either platform: reported as skipped)")
+			.option(
+				"--reduce-motion",
+				"reduce motion (Android: transition animations off; the e2e driver turns them off anyway)"
+			)
 			.option("--no-reduce-motion", "reduce motion off")
-	).action(async (action, opts) => {
+			.option(
+				"--screen-reader",
+				"screen reader on: iOS a simulated VoiceOver flag, Android real TalkBack (emulator, Play image)"
+			)
+			.option("--no-screen-reader", "screen reader off (Android: the previous accessibility services come back)")
+			.option("--reduce-transparency", "reduce transparency (iOS)")
+			.option("--no-reduce-transparency", "reduce transparency off")
+			.option("--button-shapes", "button shapes (iOS)")
+			.option("--no-button-shapes", "button shapes off")
+			.option("--differentiate-without-color", "differentiate without colour (iOS)")
+			.option("--no-differentiate-without-color", "differentiate without colour off")
+			.option("--on-off-labels", "on/off labels on switches (iOS)")
+			.option("--no-on-off-labels", "on/off labels off")
+			.option("--high-contrast-text", "high contrast text (Android)")
+			.option("--no-high-contrast-text", "high contrast text off")
+			.option("--color-inversion", "colour inversion (Android)")
+			.option("--no-color-inversion", "colour inversion off")
+			.option("--rule <id>", "audit: only this rule (repeat for several)", collect, [] as string[])
+			.option(
+				"--ignore <rule[:identifier]>",
+				"audit: drop a rule, or only on the element with that id (repeatable)",
+				collect,
+				[] as string[]
+			)
+			.option("--min-severity <severity>", "audit: lowest severity that fails, error (default) | warning")
+			.option("--no-native", "audit: warden's rules only, no XCUITest / ATF")
+			.option("--since <cursor>", "announcements, spoken: only what came after this cursor")
+	).action(async (action, args, opts) => {
 		const { uiA11y } = await import("./settings");
-		done(await uiA11y(ctx, deps, action, opts));
+		done(await uiA11y(ctx, deps, action, args, opts));
 	});
 	withUiOptions(
 		cmd
@@ -75,6 +115,17 @@ export function registerSettingsCommands(
 	).action(async (action, opts) => {
 		const { uiBattery } = await import("./settings");
 		done(await uiBattery(ctx, deps, action, opts));
+	});
+	withUiOptions(
+		cmd
+			.command("keyboard")
+			.description(
+				"on-screen keyboard: software (shows, default) | hardware (hidden, input as from a keyboard) | toggle | status | reset"
+			)
+			.argument("<action>", "software | hardware | toggle | status | reset")
+	).action(async (action, opts) => {
+		const { uiKeyboard } = await import("./settings");
+		done(await uiKeyboard(ctx, deps, action, opts));
 	});
 	withUiOptions(
 		cmd

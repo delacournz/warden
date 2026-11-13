@@ -1,4 +1,4 @@
-import { createTV } from "tailwind-variants";
+import { createTV } from "tailwind-variants/config";
 import { TW_MERGE_CONFIG } from "@/styles/tokens";
 
 /**
@@ -8,6 +8,9 @@ import { TW_MERGE_CONFIG } from "@/styles/tokens";
  * `tailwind-variants` directly. `tv()` merges its own slots and variants
  * through a tailwind-merge instance it builds itself, entirely separate from
  * the one behind `cn()`, and a bare `tv` does not know what `button-md` is.
+ *
+ * `tailwind-variants/config`, not the default entry: since v4 the default
+ * entry ships only the compiled default tables and throws on `twMergeConfig`.
  *
  * That is not a cosmetic gap. An unrecognised `text-button-md` lands in
  * tailwind-merge's text *colour* group alongside `text-primary-foreground`, the

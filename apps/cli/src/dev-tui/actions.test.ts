@@ -97,7 +97,7 @@ function setup(info: DevReady | null = IOS, overrides: Partial<ActionEffects> = 
 		openClient: () => done("openClient", undefined),
 		reinstall: () => done("reinstall", { source: "cache", hash: "abc" }),
 		restartSim: () => done("restartSim", undefined),
-		restartMetro: () => done("restartMetro", "http://127.0.0.1:8101"),
+		restartMetro: (_log, clear) => done(clear ? "restartMetro --clear" : "restartMetro", "http://127.0.0.1:8101"),
 		streamLogs: () => {
 			calls.push("streamLogs");
 			return { stop: () => calls.push("logs stop"), done: new Promise<string | undefined>(() => undefined) };
@@ -236,8 +236,42 @@ describe("reinstall, restart sim, metro --clear", () => {
 	test("metro --clear restarts Metro and logs its URL", async () => {
 		const t = setup();
 		await t.actions.run("metro-clear");
-		expect(t.calls).toEqual(["restartMetro"]);
+		expect(t.calls).toEqual(["restartMetro --clear"]);
 		expect(t.row("action:metro-clear")).toMatchObject({ status: "ok", log: ["http://127.0.0.1:8101"] });
+	});
+
+	test("M restarts Metro without clearing its cache", async () => {
+		const t = setup();
+		await t.actions.run("metro-restart");
+		expect(t.calls).toEqual(["restartMetro"]);
+		expect(t.row("action:metro-restart")).toMatchObject({ status: "ok", log: ["http://127.0.0.1:8101"] });
+	});
+
+	test("restartMetro (the control socket's) runs in its row and resolves with the URL", async () => {
+		const t = setup();
+		expect(await t.actions.restartMetro(false)).toEqual(ok("http://127.0.0.1:8101"));
+		expect(await t.actions.restartMetro(true)).toEqual(ok("http://127.0.0.1:8101"));
+		expect(t.calls).toEqual(["restartMetro", "restartMetro --clear"]);
+		expect(t.row("action:metro-clear")?.status).toBe("ok");
+	});
+
+	test("restartMetro while another exclusive action runs is refused with the reason", async () => {
+		let release: () => void = () => undefined;
+		const gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const t = setup(undefined, {
+			reinstall: async () => {
+				await gate;
+				return ok({ source: "cache", hash: "abc" });
+			},
+		});
+		const reinstalling = t.actions.run("reinstall");
+		const refused = await t.actions.restartMetro(false);
+		expect(refused.success).toBe(false);
+		if (!refused.success) expect(refused.error).toContain("reinstall app");
+		release();
+		await reinstalling;
 	});
 
 	test("a second reinstall while one runs is refused", async () => {

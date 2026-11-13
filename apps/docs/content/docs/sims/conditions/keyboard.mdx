@@ -1,0 +1,35 @@
+---
+title: Keyboard
+description: Show or hide the on-screen keyboard on a leased simulator or emulator with warden ui, and how each platform switches it.
+icon: Keyboard
+---
+
+Two modes:
+
+| Mode | What the device does |
+|---|---|
+| `software` | the on-screen keyboard always shows, although warden types with hardware key events (the default) |
+| `hardware` | the on-screen keyboard stays hidden, as with a connected keyboard |
+
+Every warden-leased simulator and emulator starts on `software`, and release puts it back. Switch live to watch a bottom sheet or a sticky footer ride the keyboard up and down. From a spec or a suite: [Keyboard in E2E tests](/docs/e2e/conditions/keyboard).
+
+With the software keyboard up, a tap on a target the keyboard covers first scrolls it into view (inside a scroll container) or dismisses the keyboard (the injected library resigns the first responder; it never presses Return, which could submit a form), then taps. This is iOS only: an Android snapshot carries the app's window, not the keyboard, so there is no frame to test against (use `device.hideKeyboard()`).
+
+## By hand
+
+```bash
+warden ui keyboard hardware
+warden ui keyboard toggle
+warden ui keyboard status   # keyboard  software  visible
+warden ui keyboard reset
+```
+
+With `--json` the answer is `result.mode` (and `result.visible` for `status`). When the running iOS app was launched without warden's library, `software` / `hardware` answer `appliesOnLaunch: true` with a warning: relaunch it with `warden ui open <bundle> --relaunch`. `software` and `reset` drop the record on your lease; `hardware` is put back on release.
+
+## Per platform
+
+| | iOS simulator | Android emulator | Physical device |
+|---|---|---|---|
+| How | the injected library keeps the software keyboard from minimising; live, no relaunch | `hardware` disables every input method (`ime disable`; `input text` still types); the originals are saved on the device and your lease. `software` puts the saved `enabled_input_methods` and `default_input_method` back, and release does too. After `software` the keyboard reappears at the next field focus or tap | `E_UNSUPPORTED` on an iPhone and on an Android phone |
+| Reaches | an app launched by warden; for an app warden did not launch the mode applies from its next launch | the whole device | |
+| Visible read | the accessibility tree | the input method window (`dumpsys window InputMethod`) | |

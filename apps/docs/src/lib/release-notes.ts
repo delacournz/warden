@@ -2,7 +2,7 @@
  * The release notes page, built from the CLI's changesets: released versions come from
  * `apps/cli/CHANGELOG.md`, and the changesets still waiting in `.changeset/` show as Unreleased
  * (so staging, built from `develop`, previews the next release). `scripts/generate-release-notes.ts`
- * writes the result to `content/docs/release-notes.md`; this module only transforms text.
+ * writes the result to `content/docs/releases/index.md`; this module only transforms text.
  */
 import { githubUrl } from "./shared";
 
@@ -127,7 +127,7 @@ export function renderReleaseNotes({
 		"icon: ScrollText",
 		"---",
 		"",
-		`Every version of \`@delacour/warden\` (and \`@delacour/warden-e2e\`, which moves in lock-step). Run \`warden update\` to get the latest, see [Updating & releasing](/docs/updating).`,
+		`Every version of \`@delacour/warden\` (and \`@delacour/warden-e2e\`, which moves in lock-step). Run \`warden update\` to get the latest, see [Updating & releasing](/docs/releases/updating).`,
 	].join("\n");
 
 	const parts = [blocks];

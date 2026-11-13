@@ -25,7 +25,9 @@ import type { RemoteClient } from "@delacour/warden-e2e/driver/remote/remote-cli
 import { ok, type Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import { readServedIdentity } from "../ios-runner/served-identity";
+import { runnerSourcesFor } from "../ios-runner/sim-sources";
 import { selfCommand } from "../self-command";
+import { currentBuild } from "../update/build-info";
 import { DEVICE_LOCKED_HINT, driverUiError } from "./driver";
 import { knownUdids } from "./helper-sweep";
 import { type UiError, uiError } from "./output";
@@ -618,6 +620,8 @@ function locateHelperBinary(
 		...(opts.helperPath !== undefined ? { helperPath: opts.helperPath } : {}),
 		env: { simd: host.env.WARDEN_SIMD, simdSocket: undefined, helperDir: host.env.WARDEN_HELPER_DIR },
 		wardenHome: wardenHome(host.env),
+		// `warden doctor --fetch-helper` stages the helper under `$WARDEN_HOME/simd/<version>`
+		version: currentBuild().version,
 		...(deps.exists ? { exists: deps.exists } : {}),
 	});
 }
@@ -993,7 +997,7 @@ export async function connectHelper(
 	ctx: CommandContext,
 	udid: string,
 	opts: EnsureHelperOptions = {},
-	extras: { networkProxy?: NetworkProxyPort; clockRecorder?: ClockRecorder } = {}
+	extras: { networkProxy?: NetworkProxyPort; clockRecorder?: ClockRecorder; a11y?: boolean } = {}
 ): Promise<Result<Driver, UiError>> {
 	const helper = await ensureHelper(ctx, udid, { ...opts, keepClient: true });
 	if (!helper.success) return helper;
@@ -1007,6 +1011,9 @@ export async function connectHelper(
 		...(opts.helperPath !== undefined ? { helperPath: opts.helperPath } : {}),
 		...(extras.networkProxy ? { networkProxy: extras.networkProxy } : {}),
 		...(extras.clockRecorder ? { clockRecorder: extras.clockRecorder } : {}),
+		...(extras.a11y ? { a11y: true } : {}),
+		version: currentBuild().version,
+		runnerSources: runnerSourcesFor(),
 		now: ctx.now,
 	});
 	if (driver.success) return driver;

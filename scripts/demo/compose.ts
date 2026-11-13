@@ -34,6 +34,8 @@ export type Timeline = {
 	outDuration: number;
 	hold: number;
 	total: number;
+	/** Specs the run covered: `opts.specs`, else the job count. */
+	specs: number;
 	phones: { worker: string; name: string; video: string; offset: number }[];
 	/** Real seconds from the first recording frame to the cast's t=0 (batch start). */
 	castOffset: number;
@@ -41,7 +43,8 @@ export type Timeline = {
 	counter: Span[];
 };
 
-export type TimelineOptions = { duration: number; hold: number; tailMs?: number };
+/** `specs`: set when a job is a shard of several specs (`warden e2e`), so the header counts specs and the counter counts shards. */
+export type TimelineOptions = { duration: number; hold: number; tailMs?: number; specs?: number };
 
 const round = (n: number, digits = 3) => Number(n.toFixed(digits));
 
@@ -86,7 +89,7 @@ export function buildTimeline(batch: Batch, opts: TimelineOptions): Timeline {
 	const total = new Set(batch.jobs.map((j) => j.job)).size;
 	const passes = [...firstPass.values()].sort((a, b) => a - b).map(at);
 	const counter: Span[] = [0, ...passes].map((from, n) => ({
-		text: `${n}/${total} passed`,
+		text: `${n}/${total} ${opts.specs !== undefined && opts.specs !== total ? "shards done" : "passed"}`,
 		tone: n === total && total > 0 ? "lease" : "ink",
 		from,
 		to: passes[n] ?? null,
@@ -98,6 +101,7 @@ export function buildTimeline(batch: Batch, opts: TimelineOptions): Timeline {
 		outDuration: round(realDuration * speed),
 		hold: opts.hold,
 		total,
+		specs: opts.specs ?? total,
 		phones: batch.devices.map((d) => ({
 			worker: d.worker,
 			name: d.name,
@@ -119,6 +123,8 @@ export type FiltergraphOptions = {
 	videos: string[];
 	gif: string;
 	output: string;
+	/** Header command text; default `warden batch ios`. */
+	command?: string;
 };
 
 export type Filtergraph = {
@@ -212,9 +218,9 @@ export function buildFiltergraph(tl: Timeline, opts: FiltergraphOptions): Filter
 		draws.push(`drawtext=${parts.join(":")}`);
 	};
 
-	const specs = tl.total === 1 ? "spec" : "specs";
+	const specs = tl.specs === 1 ? "spec" : "specs";
 	const sims = n === 1 ? "sim" : "sims";
-	draw(`warden batch ios · ${n} ${sims} · ${tl.total} ${specs}`, {
+	draw(`${opts.command ?? "warden batch ios"} · ${n} ${sims} · ${tl.specs} ${specs}`, {
 		size: layout.headerSize,
 		tone: "ink",
 		x: `${layout.margin}`,
@@ -368,10 +374,41 @@ export type ComposeOptions = {
 	duration: number;
 	width: number;
 	hold: number;
+	/** Fixed canvas height (e.g. 1080 for 16:9); unset stacks phones over a full-width terminal. */
+	height?: number;
 	maxBytes: number;
+	/** Output basename: `<name>.mp4|webm|jpg`. Unset keeps `demo.mp4`, `demo.webm`, `poster.jpg`. */
+	name?: string;
+	/** Header command text (default `warden batch ios`). */
+	command?: string;
 };
 
-const usage = "usage: bun scripts/demo/compose.ts <record-dir> <out-dir> [--duration 45] [--width 1920] [--hold 3]";
+const usage =
+	'usage: bun scripts/demo/compose.ts <record-dir> <out-dir> [--duration 45] [--width 1920] [--hold 3] [--height 1080] [--name parallel] [--command "warden e2e example"]';
+
+/** `--duration`, `--width` and `--hold` (positive numbers, defaults 45 / 1920 / 3), `--hold` shorter than `--duration`. */
+function parseNumbers(
+	values: Partial<Record<"duration" | "width" | "hold", string>>
+): Result<Record<"duration" | "width" | "hold", number>> {
+	const numbers: Record<"duration" | "width" | "hold", number> = { duration: 45, width: 1920, hold: 3 };
+	for (const key of ["duration", "width", "hold"] as const) {
+		const raw = values[key];
+		if (raw === undefined) continue;
+		const v = Number(raw);
+		if (!Number.isFinite(v) || v <= 0) return { success: false, error: `--${key} must be a positive number\n${usage}` };
+		numbers[key] = v;
+	}
+	if (numbers.hold >= numbers.duration) return { success: false, error: "--hold must be shorter than --duration" };
+	return ok(numbers);
+}
+
+/** `--height`: absent is fine, otherwise a positive number. */
+function parseHeight(raw: string | undefined): Result<number | undefined> {
+	const height = raw === undefined ? undefined : Number(raw);
+	if (height !== undefined && (!Number.isFinite(height) || height <= 0))
+		return { success: false, error: `--height must be a positive number\n${usage}` };
+	return ok(height);
+}
 
 export function parseCli(argv: string[]): Result<ComposeOptions> {
 	let parsed: ReturnType<typeof parseArgs<{ options: Record<string, { type: "string" }>; allowPositionals: true }>>;
@@ -379,23 +416,36 @@ export function parseCli(argv: string[]): Result<ComposeOptions> {
 		parsed = parseArgs({
 			args: argv,
 			allowPositionals: true,
-			options: { duration: { type: "string" }, width: { type: "string" }, hold: { type: "string" } },
+			options: {
+				duration: { type: "string" },
+				width: { type: "string" },
+				hold: { type: "string" },
+				height: { type: "string" },
+				name: { type: "string" },
+				command: { type: "string" },
+			},
 		});
 	} catch (e) {
 		return { success: false, error: `${e instanceof Error ? e.message : String(e)}\n${usage}` };
 	}
 	const [recordDir, outDir] = parsed.positionals;
 	if (!recordDir || !outDir) return { success: false, error: usage };
-	const numbers: Record<"duration" | "width" | "hold", number> = { duration: 45, width: 1920, hold: 3 };
-	for (const key of ["duration", "width", "hold"] as const) {
-		const raw = parsed.values[key];
-		if (raw === undefined) continue;
-		const v = Number(raw);
-		if (!Number.isFinite(v) || v <= 0) return { success: false, error: `--${key} must be a positive number\n${usage}` };
-		numbers[key] = v;
-	}
-	if (numbers.hold >= numbers.duration) return { success: false, error: "--hold must be shorter than --duration" };
-	return ok({ recordDir, outDir, ...numbers, maxBytes: 6_000_000 });
+	const numbers = parseNumbers(parsed.values);
+	if (!numbers.success) return numbers;
+	const height = parseHeight(parsed.values.height);
+	if (!height.success) return height;
+	const name = parsed.values.name;
+	if (name !== undefined && !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(name))
+		return { success: false, error: `--name must be lower-case words joined by hyphens\n${usage}` };
+	return ok({
+		recordDir,
+		outDir,
+		...numbers.data,
+		maxBytes: 6_000_000,
+		...(height.data !== undefined ? { height: height.data } : {}),
+		...(name !== undefined ? { name } : {}),
+		...(parsed.values.command !== undefined ? { command: parsed.values.command } : {}),
+	});
 }
 
 const fontCandidates = ["/System/Library/Fonts/Menlo.ttc", "/Library/Fonts/Arial Unicode.ttf"];
@@ -514,6 +564,16 @@ async function encodeMp4(inter: string, mp4: string, maxBytes: number): Promise<
 	}
 }
 
+/** Specs in a `warden e2e --record` dir's e2e-report.json (undefined for a plain batch dir). */
+async function e2eSpecCount(recordDir: string): Promise<number | undefined> {
+	const file = join(recordDir, "e2e-report.json");
+	if (!existsSync(file)) return undefined;
+	const report: unknown = JSON.parse(await readFile(file, "utf8"));
+	if (typeof report !== "object" || report === null || !("specs" in report) || !Array.isArray(report.specs))
+		return undefined;
+	return report.specs.length;
+}
+
 async function compose(o: ComposeOptions): Promise<void> {
 	const font = requireTools();
 
@@ -524,6 +584,7 @@ async function compose(o: ComposeOptions): Promise<void> {
 	const batch = parsed.data;
 	const videos = batch.devices.map((d) => join(recordDir, d.video));
 	const cast = join(recordDir, "tui.cast");
+	const specCount = await e2eSpecCount(recordDir);
 	for (const f of [...videos, cast]) if (!existsSync(f)) throw new Error(`missing ${f}`);
 
 	await mkdir(outDir, { recursive: true });
@@ -538,10 +599,25 @@ async function compose(o: ComposeOptions): Promise<void> {
 			phones: batch.devices.length,
 			phoneAspect: phone.w / phone.h,
 			terminalAspect: termSize.w / termSize.h,
+			...(o.height !== undefined ? { height: o.height } : {}),
 		});
-		const tl = buildTimeline(batch, { duration: o.duration, hold: o.hold, tailMs: TAIL_MS });
+		const tl = buildTimeline(batch, {
+			duration: o.duration,
+			hold: o.hold,
+			tailMs: TAIL_MS,
+			...(specCount !== undefined ? { specs: specCount } : {}),
+		});
 		const inter = join(workDir, "inter.mp4");
-		const fg = buildFiltergraph(tl, { layout, font, fps: 30, workDir, videos, gif, output: inter });
+		const fg = buildFiltergraph(tl, {
+			layout,
+			font,
+			fps: 30,
+			workDir,
+			videos,
+			gif,
+			output: inter,
+			...(o.command !== undefined ? { command: o.command } : {}),
+		});
 		await writePng(renderUnderlay(layout), layout, join(workDir, "underlay.rgba"), fg.underlay);
 		await writePng(renderTopLayer(layout), layout, join(workDir, "top.rgba"), fg.top);
 		await writeFile(join(workDir, "graph.txt"), fg.graph);
@@ -552,13 +628,14 @@ async function compose(o: ComposeOptions): Promise<void> {
 		);
 		await run(["ffmpeg", ...fg.args], "ffmpeg compose");
 
-		const mp4 = join(outDir, "demo.mp4");
+		const mp4 = join(outDir, `${o.name ?? "demo"}.mp4`);
 		await encodeMp4(inter, mp4, o.maxBytes);
-		const webm = join(outDir, "demo.webm");
+		const webm = join(outDir, `${o.name ?? "demo"}.webm`);
 		await run(["ffmpeg", ...webmArgs(inter, webm)], "ffmpeg webm");
 		console.error(`webm: ${((await stat(webm)).size / 1e6).toFixed(2)} MB`);
-		await run(["ffmpeg", ...posterArgs(inter, join(outDir, "poster.jpg"))], "ffmpeg poster");
-		console.error(`wrote ${mp4}, ${webm}, ${join(outDir, "poster.jpg")}`);
+		const poster = join(outDir, o.name === undefined ? "poster.jpg" : `${o.name}.jpg`);
+		await run(["ffmpeg", ...posterArgs(inter, poster)], "ffmpeg poster");
+		console.error(`wrote ${mp4}, ${webm}, ${poster}`);
 	} finally {
 		await rm(workDir, { recursive: true, force: true });
 	}

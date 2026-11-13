@@ -15,7 +15,6 @@ that rotates.
 | `spinner-arc.tsx` | The default arc glyph |
 | `spinner.context.tsx` | `SpinnerContext`, `useSpinner()`, `useSpinnerContext()` |
 | `spinner.variants.ts` | Pure `tv()` slots + resolvers, no RN imports |
-| `spinner.variants.test.ts` | |
 
 ## Design
 
@@ -63,7 +62,7 @@ that rotates.
   reads as a bright chunk beside a flat grey quadrant rather than as an even
   comet. `spinnerArcStops` places each stop at the offset the arc actually
   occupies at that angle while stepping the opacity evenly, which inverts the
-  skew; it is pure, so `bun test` pins the whole ladder.
+  skew; it is pure, so a unit test pins the whole ladder.
   `gradientUnits="userSpaceOnUse"` then keeps the endpoints exact, where an
   object bounding box would leave open whether a given renderer includes the
   stroke — which shifts both ends off 0 and 1 and clips the head and the tail.
@@ -71,3 +70,5 @@ that rotates.
   `System` policy `withTiming` completes instantly while the OS reduce-motion
   setting is on, so `withRepeat(-1)` would spin a zero-length animation forever.
   A status indicator is not decorative motion.
+
+- **The root is `accessible`.** It is one `progressbar` element, busy, so a screen reader announces the spinner as a single unit rather than walking the SVG glyph; it is also what makes a role query find it. The glyph is decorative and never needs focus of its own.

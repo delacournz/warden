@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { ScrollView, ViewProps } from "react-native";
+import type { ScrollViewInstance, ViewProps } from "react-native";
 import type { ScreenEdge, ScreenPlacement } from "./screen.variants";
 
 /**
@@ -19,7 +19,7 @@ import type { ScreenEdge, ScreenPlacement } from "./screen.variants";
  * `never` — which still compiles everywhere, silently accepts any ref, and
  * gives a caller a `.current` it can do nothing with.
  */
-export type ScreenScrollViewRef = ScrollView;
+export type ScreenScrollViewRef = ScrollViewInstance;
 
 /**
  * The shape of a container that can inset itself against the safe area.

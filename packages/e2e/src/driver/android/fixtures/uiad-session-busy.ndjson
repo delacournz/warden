@@ -1,1 +1,1 @@
-{"event":"fatal","error":{"code":"E_AX_UNAVAILABLE","message":"java.lang.IllegalStateException: UiAutomationService android.accessibilityservice.IAccessibilityServiceClient$Stub$Proxy@7e423b6already registered!","retryable":false,"detail":{"reason":"uiautomation_busy"}}}
+{"event":"fatal","error":{"code":"E_AX_UNAVAILABLE","message":"java.lang.IllegalStateException: UiAutomationService android.accessibilityservice.IAccessibilityServiceClient$Stub$Proxy@671e525already registered!","retryable":false,"detail":{"reason":"uiautomation_busy"}}}

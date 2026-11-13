@@ -1,5 +1,5 @@
 import type { ReactElement } from "react";
-import type { InputSlotProps } from "./input.types";
+import type { InputGroupDecoratorProps } from "./input.types";
 import { InputGroupDecorator } from "./input-group-decorator";
 
 /**
@@ -10,7 +10,7 @@ import { InputGroupDecorator } from "./input-group-decorator";
  * destructive with the group when the value is invalid. A bare string is wrapped in a
  * `Text` that inherits the same affix treatment.
  */
-export function InputGroupPrefix(props: InputSlotProps): ReactElement {
+export function InputGroupPrefix(props: InputGroupDecoratorProps): ReactElement {
 	return <InputGroupDecorator part="Input.Group.Prefix" {...props} />;
 }
 InputGroupPrefix.displayName = "DelacourUI.Input.Group.Prefix";

@@ -172,3 +172,25 @@ export function createScreen(deps: ScreenDeps): Screen {
 		close: restore,
 	};
 }
+
+/** The real process's signal and exit hooks. */
+export function nodeProcess(): ScreenProcess {
+	return {
+		on: (event, listener) => process.on(event, listener),
+		off: (event, listener) => process.off(event, listener),
+		listenerCount: (event) => process.listenerCount(event),
+		exit: (code) => process.exit(code),
+	};
+}
+
+/** The real stdin, in the shape the screen takes. */
+export function nodeStdin(): ScreenInput {
+	return {
+		isTTY: process.stdin.isTTY,
+		setRawMode: (raw) => process.stdin.setRawMode?.(raw),
+		on: (event, listener) => process.stdin.on(event, listener),
+		off: (event, listener) => process.stdin.off(event, listener),
+		resume: () => process.stdin.resume(),
+		pause: () => process.stdin.pause(),
+	};
+}

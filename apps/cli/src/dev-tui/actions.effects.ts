@@ -114,7 +114,7 @@ export function createActionEffects(deps: EffectsDeps): ActionEffects {
 		openClient: (log) => deps.host()?.openClient(log).then(toFx) ?? Promise.resolve(needHost()),
 		reinstall: (log) => deps.host()?.reinstall(log).then(toFx) ?? Promise.resolve(needHost()),
 		restartSim: (log) => deps.host()?.restartSim(log).then(toFx) ?? Promise.resolve(needHost()),
-		restartMetro: (log) => deps.host()?.restartMetro(log).then(toFx) ?? Promise.resolve(needHost()),
+		restartMetro: (log, clear) => deps.host()?.restartMetro(log, clear).then(toFx) ?? Promise.resolve(needHost()),
 
 		streamLogs(info, onLine): LogStream {
 			const controller = new AbortController();

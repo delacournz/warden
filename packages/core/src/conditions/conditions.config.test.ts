@@ -27,6 +27,16 @@ describe("conditionsConfigSchema", () => {
 		expect(ok.success).toBe(true);
 	});
 
+	test("keyboard takes software or hardware", () => {
+		expect(parse({ keyboard: "software" }).success).toBe(true);
+		expect(parse({ keyboard: "hardware" }).success).toBe(true);
+		expect(parse({ keyboard: "both" }).success).toBe(false);
+		expect(parse({ keyboard: true }).success).toBe(false);
+		const normalized = normalizeConditions({ keyboard: "hardware" });
+		expect(normalized.success && normalized.data.conditions.keyboard).toEqual({ mode: "hardware" });
+		expect(mergeConditionsConfig({ keyboard: "software" }, { keyboard: "hardware" })).toEqual({ keyboard: "hardware" });
+	});
+
 	test("rejects unknown keys and bad values", () => {
 		expect(parse({ battery: 1 }).success).toBe(false);
 		expect(parse({ network: "5g" }).success).toBe(false);

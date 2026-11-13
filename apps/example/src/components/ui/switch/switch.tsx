@@ -190,9 +190,13 @@ function SwitchRoot({
 		[axes.isDisabled, commit, grabbed, haptic, isPressed, progress, selected, setDragging, thumbWidth, trackWidth]
 	);
 
+	// Guarded here rather than at each caller: the pan is gated by `.enabled()`,
+	// but a screen reader's activation and an enclosing `Field`'s label press
+	// both arrive through this function, and a disabled switch must refuse them.
 	const toggle = useCallback(() => {
+		if (axes.isDisabled) return;
 		commit(!selectedRef.current);
-	}, [commit]);
+	}, [axes.isDisabled, commit]);
 
 	// Offered to an enclosing `Field` so tapping the label or the description
 	// beside the switch flips it. A switch in a form is a small pill next to a
@@ -312,7 +316,7 @@ const ACCESSIBILITY_ACTIONS = [{ name: "activate" }] as const;
  * content layers. Reordering here rather than asking the caller to is the
  * difference between an anatomy that documents itself and one that has a gotcha.
  *
- * {@link hasThumbChild} is the decision and is pure, so `bun test` reaches it.
+ * {@link hasThumbChild} is the decision and is pure, so a unit test reaches it.
  *
  * Lives here rather than with the parts: it is the root that arranges its own
  * children, and importing it from a part would close a cycle. See AGENTS.md.
@@ -344,8 +348,7 @@ function withThumb(children: ReactNode): ReactNode {
  * the check no longer rests on identity.
  *
  * `displayName` is what it rests on instead. Rule 12 requires every component in
- * this package to carry one, `display-name.test.ts` enforces that they are
- * present and unique, and it survives every rewrite above because it is a
+ * this package to carry one, present and unique, and it survives every rewrite above because it is a
  * property assigned to the function rather than the function itself. Read off
  * the element's own `type`, which is a function today and would be an object if
  * this part were ever wrapped in `memo`.

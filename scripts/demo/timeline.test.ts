@@ -104,3 +104,35 @@ describe("computeTerminalLayout", () => {
 		expect(l.fontPx).toBe(25);
 	});
 });
+
+describe("lines output", () => {
+	const linesDef: DemoDefinition = {
+		...def,
+		steps: [
+			{
+				argv: ["ui", "record", "stop"],
+				output: { kind: "lines", text: ["a = 1;", "password: hunter2"] },
+				pauseAfterMs: 1,
+			},
+		],
+	};
+	const linesTake: RecordedTake = { name: "t", udid: "u", recordedS: 5, steps: [{ index: 0, startS: 1, endS: 2 }] };
+
+	test("buildPlan keeps every line and masks secrets in each", () => {
+		const plan = buildPlan(linesDef, linesTake, 5, "/f");
+		expect(at(plan.steps, 0).output).toEqual({ kind: "lines", text: ["a = 1;", "password: ••••••••"] });
+	});
+
+	test("extra lines shrink the pitch and set a line gap", () => {
+		const plain = computeTerminalLayout(4);
+		const withLines = computeTerminalLayout(4, undefined, 5);
+		expect(withLines.entryPitch).toBeLessThan(plain.entryPitch);
+		expect(withLines.lineGap).toBeGreaterThan(0);
+		expect(plain.lineGap).toBeGreaterThan(0);
+	});
+
+	test("buildPlan sizes the layout from the lines (all but the first line of each output)", () => {
+		const plan = buildPlan(linesDef, linesTake, 5, "/f");
+		expect(plan.layout).toEqual(computeTerminalLayout(1, undefined, 1));
+	});
+});

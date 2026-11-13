@@ -14,6 +14,12 @@ export type CompilerCacheInput = {
 	gitTop: string | undefined;
 	/** `undefined` = unknown / not installed */
 	xcodeMajor: number | undefined;
+	/**
+	 * Absolute path of ccache (`which ccache`); `undefined` = not installed. React Native's `ccache-clang.sh` runs
+	 * `$CCACHE_BINARY clang`, and the Xcode build setting CocoaPods writes for it never reaches the compiler's env: without
+	 * it as a real env var every compile is plain clang and the cache stays empty.
+	 */
+	ccacheBinary?: string;
 	enabled: boolean;
 	/** caller env, to preserve `GRADLE_OPTS` */
 	baseEnv?: Record<string, string | undefined>;
@@ -36,6 +42,7 @@ export function compilerCacheEnv(input: CompilerCacheInput): Record<string, stri
 		CCACHE_SLOPPINESS,
 		CCACHE_FILECLONE: "true",
 		CCACHE_NOHASHDIR: "true",
+		...(input.ccacheBinary ? { CCACHE_BINARY: input.ccacheBinary } : {}),
 		...(input.xcodeMajor !== undefined && input.xcodeMajor >= XCODE_COMPILATION_CACHE_MIN_MAJOR
 			? { COMPILATION_CACHE_ENABLE_CACHING: "YES" }
 			: {}),

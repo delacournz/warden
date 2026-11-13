@@ -54,10 +54,7 @@ export function TabsSeparator({
 		);
 	}
 
-	const fadeStyle = useAnimatedStyle(
-		() => ({ opacity: resolveSeparatorOpacity(position.value, left, right) }),
-		[left, right]
-	);
+	const fadeStyle = useAnimatedStyle(() => ({ opacity: resolveSeparatorOpacity(position.value, left, right) }));
 
 	const slots = tabsVariants({ size, variant });
 

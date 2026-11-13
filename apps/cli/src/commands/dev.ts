@@ -183,7 +183,7 @@ function parseJson(text: string): unknown {
 }
 
 /** `--scheme`, else `exp+<slug>` (the scheme expo-dev-client registers) from app.json, the resolved app config, or `expo config`. */
-async function devScheme(
+export async function devScheme(
 	ctx: CommandContext,
 	context: ProjectContext,
 	override: string | undefined
@@ -343,6 +343,25 @@ function withBuildOutput(ui: DevUi, opts: EnsureOptions, task: DevTaskHandle): E
 	return ui.metro.kind === "pty" ? { ...opts, buildOutput: (line) => task.log(line) } : opts;
 }
 
+/** What the ui shows was installed; `claimAll` / `noteInstall` run the install, so its result is read off the way in. */
+type InstallTracker = { noteInstall: RunEnsureApp; installed: () => Session["app"] };
+
+/** A `ensureApp` wrapper that puts the install on the dashboard and remembers what was installed. */
+function trackInstall(ui: DevUi, deps: DevDeps): InstallTracker {
+	let installedApp: Session["app"];
+	const noteInstall: RunEnsureApp = async (...args) => {
+		const appTask = ui.task("app", "dev build");
+		args[4] = withBuildOutput(ui, args[4], appTask);
+		const result = await deps.ensureApp(...args);
+		if (result.success) {
+			installedApp = { source: result.data.source, hash: result.data.hash };
+			appTask.ok(`${result.data.source} ${result.data.hash.slice(0, 8)}`);
+		} else appTask.fail(result.error);
+		return result;
+	};
+	return { noteInstall, installed: () => installedApp };
+}
+
 /** Lease the Metro port (+ a device unless one is held) and ensure the app on the device. */
 async function openSession(
 	ctx: CommandContext,
@@ -356,81 +375,104 @@ async function openSession(
 ): AsyncResult<Session> {
 	const held = heldDevice(ctx, owner, platform, opts);
 	if (!held.success) return held;
-	// the ui shows what was installed; claimAll runs the install, so its result is read off the way in
-	let installedApp: Session["app"];
-	const installed = () => installedApp;
-	const noteInstall: RunEnsureApp = async (...args) => {
-		const appTask = ui.task("app", "dev build");
-		args[4] = withBuildOutput(ui, args[4], appTask);
-		const result = await deps.ensureApp(...args);
-		if (result.success) {
-			installedApp = { source: result.data.source, hash: result.data.hash };
-			appTask.ok(`${result.data.source} ${result.data.hash.slice(0, 8)}`);
-		} else appTask.fail(result.error);
-		return result;
-	};
-	if (held.data === undefined) {
-		// only an explicit --headless: dev ignores config `headless` and WARDEN_HEADLESS
-		// the device lease names its holder in `warden ls` and `warden ui`'s busy / sharing messages
-		const flags = parseClaimFlags(
-			platform,
-			{ ...opts, headless: opts.headless === true, label: opts.label ?? DEV_LEASE_LABEL },
-			undefined,
-			undefined,
-			PRIORITY.high
-		);
-		if (!flags.success) return flags;
-		if (flags.data.request.count !== 1) return err("warden dev runs on one device (drop --count)");
-		let showing: Promise<void> | undefined;
-		const session = await claimAll(
-			ctx,
-			{ ...deps, ensureApp: noteInstall },
-			owner,
-			{
-				flags: flags.data,
-				ports: [opts.port],
-				app,
-				onPorts: (leased) => {
-					const first = leased[0]?.port;
-					if (first !== undefined) early.start(first, undefined);
-				},
-				// before the install (minutes): `warden ui` from this session attaches to the device instead of `device_busy`,
-				// and the person sees the sim come up
-				onLeased: (outcome) => {
-					ctx.store().markShared(outcome.claimed.map((c) => c.lease.id));
-					const first = outcome.claimed[0]?.device.id;
-					if (first !== undefined) showing = showDevice(ctx, ui, platform, first, opts.headless === true);
-				},
-				aborted: early.aborted,
+	const tracker = trackInstall(ui, deps);
+	if (held.data === undefined) return openClaimedSession(ctx, ui, deps, owner, platform, opts, app, early, tracker);
+	return openHeldSession(ctx, ui, deps, owner, platform, opts, app, early, tracker, held.data);
+}
+
+/** No device held: claim one (+ the Metro port) for this session and install the app on it. */
+async function openClaimedSession(
+	ctx: CommandContext,
+	ui: DevUi,
+	deps: DevDeps,
+	owner: Owner,
+	platform: Platform,
+	opts: DevOpts,
+	app: EnsureOptions,
+	early: EarlyMetro,
+	tracker: InstallTracker
+): AsyncResult<Session> {
+	// only an explicit --headless: dev ignores config `headless` and WARDEN_HEADLESS
+	// the device lease names its holder in `warden ls` and `warden ui`'s busy / sharing messages
+	const flags = parseClaimFlags(
+		platform,
+		{ ...opts, headless: opts.headless === true, label: opts.label ?? DEV_LEASE_LABEL },
+		undefined,
+		undefined,
+		PRIORITY.high
+	);
+	if (!flags.success) return flags;
+	if (flags.data.request.count !== 1) return err("warden dev runs on one device (drop --count)");
+	let showing: Promise<void> | undefined;
+	const session = await claimAll(
+		ctx,
+		{ ...deps, ensureApp: tracker.noteInstall },
+		owner,
+		{
+			flags: flags.data,
+			ports: [opts.port],
+			app,
+			onPorts: (leased) => {
+				const first = leased[0]?.port;
+				if (first !== undefined) early.start(first, undefined);
 			},
-			"dev"
-		);
-		await showing;
-		if (!session.success) return session;
-		const { outcome, ports, leaseIds } = session.data;
-		// dev's sim keeps its installs and logins across sessions: never deleted as ephemeral (WARDEN_EPHEMERAL_DEV=1 opts in)
-		if (platform === "ios" && devKeepsSim(ctx.env))
-			for (const c of outcome.claimed) ctx.store().markPersistent(platform, c.device.id, ctx.now());
-		// dev's own device goes down with the session (Ctrl-C, a killed terminal, Metro exiting) unless --no-shutdown;
-		// `shutdownReleasedDevices` leaves a sim that was already running when leased alone
-		const release = async () => {
-			if (opts.shutdown)
-				await shutdownDevices(
-					ctx,
-					owner,
-					outcome.claimed.map((c) => c.lease)
-				);
-			await session.data.release();
-		};
-		const deviceId = outcome.claimed[0]?.device.id;
-		const port = ports[0]?.port;
-		if (deviceId === undefined || port === undefined) {
-			await release();
-			return err("claim returned no device / port");
-		}
-		return ok({ deviceId, deviceName: outcome.claimed[0]?.device.name, app: installed(), port, leaseIds, release });
+			// before the install (minutes): `warden ui` from this session attaches to the device instead of `device_busy`,
+			// and the person sees the sim come up
+			onLeased: (outcome) => {
+				ctx.store().markShared(outcome.claimed.map((c) => c.lease.id));
+				const first = outcome.claimed[0]?.device.id;
+				if (first !== undefined) showing = showDevice(ctx, ui, platform, first, opts.headless === true);
+			},
+			aborted: early.aborted,
+		},
+		"dev"
+	);
+	await showing;
+	if (!session.success) return session;
+	const { outcome, ports, leaseIds } = session.data;
+	// dev's sim keeps its installs and logins across sessions: never deleted as ephemeral (WARDEN_EPHEMERAL_DEV=1 opts in)
+	if (platform === "ios" && devKeepsSim(ctx.env))
+		for (const c of outcome.claimed) ctx.store().markPersistent(platform, c.device.id, ctx.now());
+	// dev's own device goes down with the session (Ctrl-C, a killed terminal, Metro exiting) unless --no-shutdown;
+	// `shutdownReleasedDevices` leaves a sim that was already running when leased alone
+	const release = async () => {
+		if (opts.shutdown)
+			await shutdownDevices(
+				ctx,
+				owner,
+				outcome.claimed.map((c) => c.lease)
+			);
+		await session.data.release();
+	};
+	const deviceId = outcome.claimed[0]?.device.id;
+	const port = ports[0]?.port;
+	if (deviceId === undefined || port === undefined) {
+		await release();
+		return err("claim returned no device / port");
 	}
-	const deviceId = held.data;
+	return ok({
+		deviceId,
+		deviceName: outcome.claimed[0]?.device.name,
+		app: tracker.installed(),
+		port,
+		leaseIds,
+		release,
+	});
+}
+
+/** A device already held: lease only the Metro port, boot the device if needed and install the app. */
+async function openHeldSession(
+	ctx: CommandContext,
+	ui: DevUi,
+	deps: DevDeps,
+	owner: Owner,
+	platform: Platform,
+	opts: DevOpts,
+	app: EnsureOptions,
+	early: EarlyMetro,
+	tracker: InstallTracker,
+	deviceId: string
+): AsyncResult<Session> {
 	const ports = await claimRunPorts(ctx, owner, [opts.port], deps.pid, deps.isPortFree, "warden dev");
 	if (!ports.success) return ports;
 	const leaseIds = ports.data.map((p) => p.leaseId);
@@ -447,7 +489,7 @@ async function openSession(
 		return booted;
 	}
 	const showing = showDevice(ctx, ui, platform, deviceId, opts.headless === true);
-	const ensured = await noteInstall(ctx, owner, platform, deviceId, app);
+	const ensured = await tracker.noteInstall(ctx, owner, platform, deviceId, app);
 	await showing;
 	if (!ensured.success) {
 		await release();
@@ -458,7 +500,7 @@ async function openSession(
 		.store()
 		.listDevices(platform)
 		.find((d) => d.id === deviceId)?.name;
-	return ok({ deviceId, deviceName, app: installed(), port, leaseIds, release });
+	return ok({ deviceId, deviceName, app: tracker.installed(), port, leaseIds, release });
 }
 
 /**
@@ -555,7 +597,7 @@ type Running = {
 /** A Metro restart in flight: `runMetro` waits for the replacement's exit, not the old one's. */
 type MetroSwap = { pending: Promise<Metro | undefined> | undefined };
 
-/** Metro's exit code; a restart (`c`) hands over to the replacement, whose exit ends the session instead. */
+/** Metro's exit code; a restart (`M` / `c` / `warden dev restart-metro`) hands over to the replacement, whose exit ends the session instead. */
 async function metroExit(first: MetroProc, swap: MetroSwap): Promise<number> {
 	let code = await first.exited;
 	while (swap.pending) {
@@ -595,10 +637,10 @@ async function restartDevice(
 }
 
 /**
- * Stop the current Metro and start another with `--clear` on the same leased port. `swap` tells `runMetro` to follow
+ * Stop the current Metro and start another (with `--clear` when `clear`) on the same leased port. `swap` tells `runMetro` to follow
  * the replacement; a replacement that does not come up leaves no Metro, and the session ends as when Metro dies.
  */
-async function restartMetro(ctx: CommandContext, r: Running, swap: MetroSwap): AsyncResult<string> {
+async function restartMetro(ctx: CommandContext, r: Running, swap: MetroSwap, clear: boolean): AsyncResult<string> {
 	if (swap.pending) return err("Metro is already restarting");
 	let settle: (metro: Metro | undefined) => void = () => undefined;
 	swap.pending = new Promise<Metro | undefined>((resolve) => {
@@ -609,9 +651,9 @@ async function restartMetro(ctx: CommandContext, r: Running, swap: MetroSwap): A
 		ctx.err("stopping Metro");
 		await r.run.launch?.stop();
 		// Expo's `--clear` is `--reset-cache` for the community CLI
-		const clear = r.project.framework === "react-native" ? "--reset-cache" : "--clear";
-		ctx.err(`starting Metro ${clear} on :${port}`);
-		r.early.start(port, deviceId, [clear]);
+		const extra = clear ? [r.project.framework === "react-native" ? "--reset-cache" : "--clear"] : [];
+		ctx.err(`starting Metro${extra.map((a) => ` ${a}`).join("")} on :${port}`);
+		r.early.start(port, deviceId, extra);
 		const started = await r.run.launch?.pending;
 		if (started?.success !== true) {
 			settle(undefined);
@@ -640,7 +682,7 @@ function devActions(ui: DevUi, deps: DevDeps, opts: DevOpts, r: Running, swap: M
 			return ensured.success ? ok({ source: ensured.data.source, hash: ensured.data.hash }) : err(ensured.error);
 		},
 		restartSim: (log) => restartDevice(scopedCtx(ctx, log), ui, r, opts.headless === true, log),
-		restartMetro: (log) => restartMetro(scopedCtx(ctx, log), r, swap),
+		restartMetro: (log, clear) => restartMetro(scopedCtx(ctx, log), r, swap, clear),
 	};
 }
 
@@ -747,20 +789,48 @@ function devExtras(ui: DevUi, deps: DevDeps, r: Running, metroUrl: string, appId
 	};
 }
 
+/** `warden dev restart-metro` on this session: through the ui, so the dashboard shows it as its restart row. */
+async function restartMetroOnRequest(
+	ui: DevUi,
+	host: DevActionHost,
+	extras: DevExtras,
+	clear: boolean
+): Promise<DevControlResponse> {
+	const restarted = await ui.restartMetro(clear, host);
+	return restarted.success
+		? { ok: true, features: extras.features(), metroUrl: restarted.data }
+		: { ok: false, error: restarted.error, features: extras.features() };
+}
+
 /**
- * Serves `warden dev enable|disable|status` for this session on `<logDir>/control.sock` and records the socket in the
- * registry. Best-effort: without it the extras stay as the flags left them. Resolves with the function that closes it.
+ * Serves `warden dev enable|disable|status|restart-metro` for this session on `<logDir>/control.sock` and records the
+ * socket in the registry. Best-effort: without it the extras stay as the flags left them and Metro restarts only from
+ * the dashboard. Resolves with the function that closes it.
  */
-async function serveDevExtras(ctx: CommandContext, r: Running, extras: DevExtras): Promise<() => Promise<void>> {
+async function serveDevExtras(
+	ui: DevUi,
+	r: Running,
+	extras: DevExtras,
+	host: DevActionHost
+): Promise<() => Promise<void>> {
+	const ctx = ui.ctx;
 	const leaseId = r.session.leaseIds[0];
 	if (leaseId === undefined) return async () => undefined;
-	const served = await serveDevControl(controlSocketPath(join(wardenHome(ctx.env), "dev", leaseId)), (request) =>
-		request.op === "status"
-			? Promise.resolve({ ok: true, features: extras.features() })
-			: extras.set(request.feature, request.on)
-	);
+	const served = await serveDevControl(controlSocketPath(join(wardenHome(ctx.env), "dev", leaseId)), (request) => {
+		switch (request.op) {
+			case "status":
+				return Promise.resolve({ ok: true, features: extras.features() });
+			case "set":
+				return extras.set(request.feature, request.on);
+			case "restart-metro":
+				return restartMetroOnRequest(ui, host, extras, request.clear);
+		}
+	});
 	if (!served.success) {
-		warn(ctx, `warden dev: no control socket (${served.error}); warden dev enable|disable won't reach this session`);
+		warn(
+			ctx,
+			`warden dev: no control socket (${served.error}); warden dev enable|disable|restart-metro won't reach this session`
+		);
 		return async () => undefined;
 	}
 	updateDevSession(ctx.env, leaseId, { controlSocket: served.data.socketPath });
@@ -774,10 +844,11 @@ async function startDevExtras(
 	opts: DevOpts,
 	r: Running,
 	metroUrl: string,
-	appId: string | undefined
+	appId: string | undefined,
+	host: DevActionHost
 ): Promise<() => Promise<void>> {
 	const extras = devExtras(ui, deps, r, metroUrl, appId);
-	const closeControl = await serveDevExtras(ui.ctx, r, extras);
+	const closeControl = await serveDevExtras(ui, r, extras, host);
 	if (opts.devtools === true) {
 		const started = await extras.set("devtools", true);
 		if (!started.ok) warn(ui.ctx, `warden dev: devtools didn't start (${started.error})`);
@@ -821,7 +892,16 @@ async function runMetro(ui: DevUi, deps: DevDeps, opts: DevOpts, r: Running): Pr
 			}
 		}
 		const bundle = bundleIdFor(r.project, r.platform);
-		closeExtras = await startDevExtras(ui, deps, opts, r, metro.data.url, bundle.success ? bundle.data : undefined);
+		const actions = devActions(ui, deps, opts, r, swap);
+		closeExtras = await startDevExtras(
+			ui,
+			deps,
+			opts,
+			r,
+			metro.data.url,
+			bundle.success ? bundle.data : undefined,
+			actions
+		);
 		// one line, not `emit`'s indented document: warden dev keeps running, so readers take the first stdout line
 		if (json)
 			ctx.out(JSON.stringify({ udid: deviceId, port, metroUrl: metro.data.url, leaseIds, source: r.project.source }));
@@ -836,7 +916,7 @@ async function runMetro(ui: DevUi, deps: DevDeps, opts: DevOpts, r: Running): Pr
 				app,
 				projectName: r.project.name,
 				...(bundle.success ? { bundleId: bundle.data } : {}),
-				actions: devActions(ui, deps, opts, r, swap),
+				actions,
 			});
 		return await metroExit(metro.data.proc, swap);
 	} finally {

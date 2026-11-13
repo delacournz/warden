@@ -34,7 +34,7 @@ runs:
         mkdir -p "$dir" "$HOME/.local/bin"
         tag_args=()
         if [ "$WARDEN_VERSION" != "latest" ]; then tag_args=("$WARDEN_VERSION"); fi
-        gh release download "${tag_args[@]}" --repo "$WARDEN_REPO" --dir "$dir" \
+        gh release download ${tag_args[@]+"${tag_args[@]}"} --repo "$WARDEN_REPO" --dir "$dir" \
           --pattern "warden-$target" --pattern checksums.txt --clobber
         (cd "$dir" && grep " warden-$target\$" checksums.txt | shasum -a 256 -c -)
         install -m 0755 "$dir/warden-$target" "$HOME/.local/bin/warden"

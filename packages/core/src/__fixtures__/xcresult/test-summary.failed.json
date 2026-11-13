@@ -1,0 +1,43 @@
+{
+	"devicesAndConfigurations": [
+		{
+			"device": {
+				"architecture": "arm64",
+				"deviceId": "00006040-0000000000000000",
+				"deviceName": "My Mac",
+				"modelName": "MacBook Pro",
+				"osBuildNumber": "25G83",
+				"osVersion": "26.6.2",
+				"platform": "macOS"
+			},
+			"expectedFailures": 0,
+			"failedTests": 1,
+			"passedTests": 1,
+			"skippedTests": 0,
+			"testPlanConfiguration": { "configurationId": "1", "configurationName": "Test Scheme Action" }
+		}
+	],
+	"environmentDescription": "Demo-Package · Built with macOS 26.6.2",
+	"expectedFailures": 0,
+	"failedTests": 1,
+	"finishTime": 1794219722.941,
+	"passedTests": 1,
+	"result": "Failed",
+	"runtimeWarnings": [],
+	"skippedTests": 0,
+	"startTime": 1794219686.927,
+	"statistics": [],
+	"testFailures": [
+		{
+			"failureText": "XCTAssertEqual failed: (\"42\") is not equal to (\"41\") - answer is wrong",
+			"targetName": "DemoTests",
+			"testIdentifier": 1,
+			"testIdentifierString": "DemoTests/testAnswer()",
+			"testIdentifierURL": "test://com.apple.xcode/Demo/DemoTests/DemoTests/testAnswer",
+			"testName": "testAnswer()"
+		}
+	],
+	"title": "Test - Demo-Package",
+	"topInsights": [],
+	"totalTestCount": 2
+}

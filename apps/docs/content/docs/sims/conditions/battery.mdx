@@ -1,0 +1,19 @@
+---
+title: Battery
+description: Set a leased simulator or emulator's battery level and charging state with warden ui, and what the app sees on each platform.
+icon: BatteryMedium
+---
+
+`warden ui battery` sets the level (0-100) and charging state.
+
+```bash
+warden ui battery set --level 5 --no-charging
+warden ui battery status
+warden ui battery reset
+```
+
+Release puts the real battery back. From a spec: [Battery in E2E tests](/docs/e2e/conditions/battery).
+
+| | iOS simulator | Android emulator |
+|---|---|---|
+| What changes | the status bar only: the result has `cosmetic: true` and a warning | the battery the app reads (`dumpsys battery`) |

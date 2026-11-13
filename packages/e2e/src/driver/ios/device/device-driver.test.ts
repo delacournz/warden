@@ -3,6 +3,7 @@ import { canProbeFrontmost, canReadAlertOn } from "../../alerts";
 import { el, snapshotOf } from "../../driver.testing";
 import type { Driver, DriverResult, Snapshot } from "../../driver.types";
 import { driverErr } from "../../errors";
+import { HASH_FALLBACK_MIN_QUIET_MS } from "../../settle";
 import { collectSpanDetail, type SpanDetail } from "../../span-detail";
 import { canPasteText, canSelectAll } from "../../typing";
 import { fakeExec } from "../exec.testing";
@@ -275,6 +276,19 @@ describe("reads", () => {
 		expect(notes).toEqual({ via: "hash" });
 		expect(runner.of("settle")).toHaveLength(0);
 		expect(runner.of("snapshot").length).toBeGreaterThanOrEqual(2);
+	});
+
+	test("settle holds the screen still for at least the minimum fallback window", async () => {
+		let now = 0;
+		const { driver } = await open(snapshotReply, {
+			now: () => now,
+			sleep: async (ms) => {
+				now += ms;
+			},
+		});
+		const outcome = await unwrapped(driver.settle({ quietMs: 250, timeoutMs: 3000 }));
+		expect(outcome.quiet).toBe(true);
+		expect(outcome.waitedMs).toBeGreaterThanOrEqual(HASH_FALLBACK_MIN_QUIET_MS);
 	});
 
 	test("alert and alertOn read alertButtons; isFrontmost asks frontmost", async () => {

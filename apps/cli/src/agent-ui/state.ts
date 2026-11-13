@@ -68,6 +68,8 @@ export type UiState = {
 	video?: { pid: number; path: string; remote?: string; startedAt: number };
 	/** the device's active `warden perf` session: one per device, whoever owns the lease */
 	perf?: { sessionId: string };
+	/** `warden ui open --a11y` ran: iOS launches carry the injected library from then on (hint, actions, order, announcements) */
+	a11y?: true;
 	updatedAt: number;
 };
 
@@ -84,6 +86,17 @@ type StoredSnapshotFile = Omit<StoredSnapshot, "snapshot"> & { snapshot: Omit<Sn
 
 const rectSchema = z.object({ x: z.number(), y: z.number(), width: z.number(), height: z.number() });
 const pointSchema = z.object({ x: z.number(), y: z.number() });
+
+const a11ySchema = z.object({
+	hint: z.string().optional(),
+	actions: z.array(z.string()).optional(),
+	focusable: z.boolean().optional(),
+	important: z.boolean().optional(),
+	a11yFocused: z.boolean().optional(),
+	liveRegion: z.enum(["polite", "assertive"]).optional(),
+	order: z.number().optional(),
+	traversal: z.number().optional(),
+});
 
 const elementSchema: z.ZodType<Element> = z.lazy(() =>
 	z.object({
@@ -106,6 +119,7 @@ const elementSchema: z.ZodType<Element> = z.lazy(() =>
 		hittable: z.boolean().optional(),
 		tapPoint: pointSchema.optional(),
 		pid: z.number().optional(),
+		a11y: a11ySchema.optional(),
 		depth: z.number(),
 		children: z.array(elementSchema),
 	})
@@ -176,6 +190,7 @@ const stateSchema = z.object({
 		.object({ pid: z.number(), path: z.string(), remote: z.string().optional(), startedAt: z.number() })
 		.optional(),
 	perf: z.object({ sessionId: z.string() }).optional(),
+	a11y: z.literal(true).optional(),
 	updatedAt: z.number().optional(),
 });
 

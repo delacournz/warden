@@ -1,5 +1,5 @@
 import type { ReactElement } from "react";
-import type { InputSlotProps } from "./input.types";
+import type { InputGroupDecoratorProps } from "./input.types";
 import { InputGroupDecorator } from "./input-group-decorator";
 
 /**
@@ -9,7 +9,7 @@ import { InputGroupDecorator } from "./input-group-decorator";
  * default chevron because it always navigates, whereas a field's trailing slot
  * has no one thing it usually holds.
  */
-export function InputGroupSuffix(props: InputSlotProps): ReactElement {
+export function InputGroupSuffix(props: InputGroupDecoratorProps): ReactElement {
 	return <InputGroupDecorator part="Input.Group.Suffix" {...props} />;
 }
 InputGroupSuffix.displayName = "DelacourUI.Input.Group.Suffix";

@@ -9,7 +9,8 @@ import type { BuildKind, DeviceTarget } from "./kinds";
 import { safeKey } from "./project-key";
 
 /** Where a cached build came from. */
-export type BuildSource = "eas" | "build" | "import" | "legacy";
+/** Where a cached build came from; `restored` = files a CI cache put back without their row (`adoptKindDir`). */
+export type BuildSource = "eas" | "build" | "import" | "legacy" | "restored";
 
 /** What every cached build records, whatever its kind. */
 type BuildBase = {
@@ -431,24 +432,92 @@ export type StoreArtifactInput = {
 /** Where `storeArtifact` puts an artifact of a kind, and what the row records. Repacks are written by the repack engine. */
 export type KindLayout = { dir: string; kind: "dev" | "simulator-base" | { kind: "release"; jsKey: string } };
 
-/** Move (`input.move`, falling back to a copy) or copy `input.artifact` to `target`, replacing `dir`. */
+/**
+ * Move (`input.move`, falling back to a copy) or copy `input.artifact` to `target`, replacing `dir`. Staged in a
+ * sibling dir and renamed in, so `dir` never holds a half-copied artifact (`adoptKindDir` trusts what it finds there).
+ */
 async function placeArtifact(input: StoreArtifactInput, dir: string, target: string): Promise<void> {
-	rmSync(dir, { recursive: true, force: true });
-	mkdirSync(dir, { recursive: true });
-	let moved = false;
-	if (input.move) {
-		try {
-			renameSync(input.artifact, target);
-			moved = true;
-		} catch {
-			moved = false;
+	const staging = `${dir}.staging-${process.pid}`;
+	const staged = join(staging, basename(target));
+	rmSync(staging, { recursive: true, force: true });
+	mkdirSync(staging, { recursive: true });
+	try {
+		let moved = false;
+		if (input.move) {
+			try {
+				renameSync(input.artifact, staged);
+				moved = true;
+			} catch {
+				moved = false;
+			}
 		}
+		if (!moved) await cp(input.artifact, staged, { recursive: true, verbatimSymlinks: true });
+		// SKIP_BUNDLING skips the bundle phase but Xcode keeps the product's earlier main.jsbundle: a base has no JS
+		if (input.layout?.kind === "simulator-base" && input.platform === "ios") {
+			rmSync(join(staged, "main.jsbundle"), { force: true });
+		}
+		rmSync(dir, { recursive: true, force: true });
+		renameSync(staging, dir);
+	} finally {
+		rmSync(staging, { recursive: true, force: true });
 	}
-	if (!moved) await cp(input.artifact, target, { recursive: true, verbatimSymlinks: true });
-	// SKIP_BUNDLING skips the bundle phase but Xcode keeps the product's earlier main.jsbundle: a base has no JS
-	if (input.layout?.kind === "simulator-base" && input.platform === "ios") {
-		rmSync(join(target, "main.jsbundle"), { force: true });
+}
+
+export type AdoptKindInput = {
+	env: Env;
+	projectKey: string;
+	platform: Platform;
+	/** recorded on the row (informational: lookups never read it) */
+	profile: string;
+	key: KindKey;
+	now: number;
+};
+
+/**
+ * A kind's dir that holds exactly one artifact but has no row: the files came back without `warden.db` (a CI cache
+ * of `~/.warden/builds` restored on a fresh runner). Register it so the lookup finds it instead of rebuilding.
+ * Safe because every writer renames a complete dir into place (`placeArtifact`, the repack's staging). Returns the
+ * new record, or undefined when a row already exists or the dir holds no single artifact.
+ */
+export function adoptKindDir(store: Store, input: AdoptKindInput): BuildRecord | undefined {
+	const { env, projectKey, platform, key } = input;
+	const hash = kindHash(key);
+	if (getBuild(store, projectKey, platform, hash)) return undefined;
+	const dir = kindDir(env, projectKey, platform, key);
+	const ext = artifactExt(platform);
+	let artifacts: string[];
+	try {
+		artifacts = readdirSync(dir).filter((name) => name.endsWith(ext));
+	} catch {
+		return undefined;
 	}
+	const [name] = artifacts;
+	if (artifacts.length !== 1 || name === undefined) return undefined;
+	const path = join(dir, name);
+	const row: BuildBase = {
+		projectKey,
+		platform,
+		profile: input.profile,
+		hash,
+		path,
+		source: "restored",
+		size: diskSize(path),
+		createdAt: input.now,
+		lastUsedAt: input.now,
+	};
+	const record: BuildRecord =
+		key.kind === "simulator-repack"
+			? {
+					...row,
+					kind: "simulator-repack",
+					baseHash: kindHash({ kind: "simulator-base", nativeFp: key.nativeFp }),
+					jsKey: key.jsKey,
+				}
+			: key.kind === "release"
+				? { ...row, kind: "release", jsKey: key.jsKey }
+				: { ...row, kind: key.kind };
+	upsertBuild(store, record);
+	return record;
 }
 
 /** Put `artifact` into the cache dir for (project, platform, hash) and register it. */

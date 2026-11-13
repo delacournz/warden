@@ -52,6 +52,27 @@ export function peakOverlap(intervals: readonly Interval[]): number {
 	return peak;
 }
 
+type EventTally = {
+	claimIds: Set<string>;
+	waits: number[];
+	grants: Map<string, { at: number; platform: Platform; profile: string }>;
+	ends: Map<string, number>;
+};
+
+/** Fold one event into the tally: a request, a grant (with its wait) or the end of a lease. */
+function collectEvent(e: LeaseEvent, tally: EventTally): void {
+	if (e.type === "requested") {
+		tally.claimIds.add(e.claimId ?? `event:${e.id}`);
+	} else if (e.type === "granted") {
+		tally.waits.push(e.data.waitMs);
+		if (e.leaseId !== undefined) {
+			tally.grants.set(e.leaseId, { at: e.at, platform: e.data.platform, profile: e.data.profile ?? "unknown" });
+		}
+	} else if ((e.type === "released" || e.type === "expired") && e.leaseId !== undefined) {
+		tally.ends.set(e.leaseId, e.at);
+	}
+}
+
 /**
  * Pure statistics over an event list. A lease still held at `now` counts as running until `now` for
  * concurrency (not for durations); a lease whose grant is outside the list is ignored.
@@ -62,17 +83,7 @@ export function computeLeaseStats(events: readonly LeaseEvent[], now: number): L
 	const durations: number[] = [];
 	const grants = new Map<string, { at: number; platform: Platform; profile: string }>();
 	const ends = new Map<string, number>();
-	for (const e of events) {
-		if (e.type === "requested") claimIds.add(e.claimId ?? `event:${e.id}`);
-		else if (e.type === "granted") {
-			waits.push(e.data.waitMs);
-			if (e.leaseId !== undefined) {
-				grants.set(e.leaseId, { at: e.at, platform: e.data.platform, profile: e.data.profile ?? "unknown" });
-			}
-		} else if ((e.type === "released" || e.type === "expired") && e.leaseId !== undefined) {
-			ends.set(e.leaseId, e.at);
-		}
-	}
+	for (const e of events) collectEvent(e, { claimIds, waits, grants, ends });
 	const intervals = new Map<string, Interval[]>();
 	const all: Interval[] = [];
 	const grantCount = new Map<string, number>();

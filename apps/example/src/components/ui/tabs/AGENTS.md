@@ -23,7 +23,6 @@ A row of tabs and the panels they switch between. Compound root plus `Tabs.List`
 | `tabs.context.tsx` | Five contexts, split by what changes, with their hooks |
 | `tabs.types.ts` | Prop types shared by two or more parts |
 | `tabs.variants.ts` | Pure `tv()` slots + the gesture and geometry worklets, no RN imports |
-| `tabs.variants.test.ts` | |
 
 ## Design
 
@@ -50,6 +49,11 @@ A row of tabs and the panels they switch between. Compound root plus `Tabs.List`
   real shape (a filter row driving a list elsewhere) and falls back to trigger
   registration, which is one commit late and therefore never preferred when
   panels exist.
+  Being one commit late is also why the initial seed sees an empty order there:
+  an uncontrolled bar with no `defaultValue` latches the first registered value
+  once (`seedRef` in `tabs.tsx`), so it opens on its first tab like a paneled one.
+  The latch fires once, so a trigger added later never takes the selection, and
+  a controlled `value={null}` or an explicit `defaultValue={null}` is left alone.
 - **The one mistake source cannot catch is caught in the measurements.** Triggers
   written in a different order from the panels put the indicator on the wrong
   tab, with nothing in the source to point at; `isTriggerOrderConsistent` checks
@@ -195,12 +199,12 @@ A row of tabs and the panels they switch between. Compound root plus `Tabs.List`
   because all three write that one value.
   [`Checkbox`](../checkbox/AGENTS.md)'s animated border makes the same trade for
   the same reason: a colour that travels cannot be a class.
-  `resolveTabSelectedness` is the ramp, and it is pure, so `bun test` reaches it.
+  `resolveTabSelectedness` is the ramp, and it is pure, so a unit test reaches it.
 - **The `label` slot therefore names no colour at all, and a test enforces that.**
   Two sources for one colour is how a class and a style end up disagreeing for a
   frame on every commit. `TABS_FOREGROUND_TOKEN` is the whole matrix now, swept
   for distinctness and asserted present in both themes — the decision stayed
-  reachable from `bun test`, it just moved from class strings to token names.
+  unit-testable, it just moved from class strings to token names.
 - **`visualIndex` survives for the things that cannot fade.** A composed `Icon`
   takes its colour as a resolved *value* rather than a style, so it has no way to
   be half way between two; it swaps at the midpoint, with a hysteresis band

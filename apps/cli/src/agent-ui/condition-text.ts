@@ -66,6 +66,8 @@ export function conditionsLine(records: readonly ConditionRecord[]): string | un
 				return `camera ${(["back", "front"] as const).filter((f) => record.value[f] !== undefined).join("+") || "none"}`;
 			case "battery":
 				return `battery ${record.value.level === undefined ? "" : `${record.value.level}%`}${record.value.cosmetic ? " (status bar)" : ""}`.trim();
+			case "keyboard":
+				return `keyboard ${record.value.mode}`;
 		}
 		return "";
 	});

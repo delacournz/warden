@@ -545,6 +545,24 @@ describe("fill", () => {
 		expect(driver.calls.at(-1)?.method).toBe("typeText");
 	});
 
+	test("a field that reads back as mask bullets is confirmed by their count (a secure field not known as one)", async () => {
+		const { driver, state } = fieldFixture({ maskedTextfield: true });
+		const { screen } = setup(driver);
+		await screen.getByTestId("field").fill("password1");
+		expect(state.value).toBe("password1");
+		expect(typed(driver)).toBe("password1");
+		expect(driver.callsOf("key")).toEqual([]);
+	});
+
+	test("a masked read-back with the wrong number of bullets is retried, then fails naming the dots", async () => {
+		const { driver } = fieldFixture({ maskedTextfield: true, dropTail: 2, dropTailCalls: 2 });
+		const { screen } = setup(driver);
+		const error = await failure(screen.getByTestId("field").fill("password1"));
+		expect(error.message).toContain("fill did not take: expected 9 characters (secure)");
+		expect(error.message).toContain('the field holds "•••••••"');
+		expect(error.message).not.toContain("passwo");
+	});
+
 	test("an empty string only clears", async () => {
 		const { driver, state } = fieldFixture({ value: "ab" });
 		const { screen } = setup(driver);
@@ -632,6 +650,36 @@ describe("type, clear and press", () => {
 		const stuck = fieldFixture({ value: "ab", dropKeys: 100 });
 		const error = await failure(setup(stuck.driver).screen.getByTestId("field").clear());
 		expect(error.code).toBe("ACTION_FAILED");
+		expect(error.message).toContain('clear did not empty the field: it holds "ab"');
+	});
+
+	test("clear accepts a placeholder the element does not name (React Native on iOS) as empty", async () => {
+		const { driver, state } = fieldFixture({
+			value: "To be cleared",
+			selectAll: true,
+			placeholder: "What needs doing?",
+			placeholderMeta: false,
+		});
+		await setup(driver).screen.getByTestId("field").clear();
+		expect(state.value).toBe("");
+		expect(driver.callsOf("selectAll")).toHaveLength(1);
+	});
+
+	test("clear on an already-empty field that reads as its unnamed placeholder probes one key and passes", async () => {
+		const { driver, state } = fieldFixture({
+			value: "",
+			selectAll: true,
+			placeholder: "What needs doing?",
+			placeholderMeta: false,
+		});
+		await setup(driver).screen.getByTestId("field").clear();
+		expect(state.value).toBe("");
+		expect(driver.callsOf("typeText").map((call) => call.text)).toEqual(["1"]);
+	});
+
+	test("clear still fails on leftover text that deleting could have left", async () => {
+		const stuck = fieldFixture({ value: "ab", dropKeys: 100, placeholder: "Type here", placeholderMeta: false });
+		const error = await failure(setup(stuck.driver).screen.getByTestId("field").clear());
 		expect(error.message).toContain('clear did not empty the field: it holds "ab"');
 	});
 

@@ -2,8 +2,9 @@ import Foundation
 import Network
 
 /// NDJSON over TCP: the `warden-simd` socket protocol on an `NWListener`, because a phone has no unix socket the Mac can
-/// reach. Every callback runs on `queue` (the main queue in the runner, so XCUITest calls stay on the main thread);
-/// requests on all connections are therefore served strictly one after another.
+/// reach. Every callback runs on `queue`, a serial transport queue, so requests on all connections are served strictly one
+/// after another. The runner's `handle` hands each op to `WorkGate`, which runs it on the main thread under a deadline:
+/// the transport queue never runs XCUITest itself, so a wedged op cannot stop it answering.
 final class RunnerServer: @unchecked Sendable {
   private let queue: DispatchQueue
   private let port: UInt16
@@ -12,10 +13,14 @@ final class RunnerServer: @unchecked Sendable {
   private var listener: NWListener?
   private var connections: [ObjectIdentifier: NWConnection] = [:]
 
-  /// Set after a `shutdown` request was answered. The runner's run loop watches it.
-  private(set) var isDone = false
-  /// Requests served so far; the idle timer reads it.
-  private(set) var served = 0
+  private let state = NSLock()
+  private var done = false
+  private var count = 0
+
+  /// Set after a `shutdown` request was answered. The runner's run loop (another thread) watches it.
+  var isDone: Bool { state.withLock { done } }
+  /// Requests served so far; the idle timer (another thread) reads it.
+  var served: Int { state.withLock { count } }
 
   /// `port` 0 picks a free port; `boundPort` says which.
   init(
@@ -102,13 +107,13 @@ final class RunnerServer: @unchecked Sendable {
       response = .failure(id: failure.id, error: failure.error)
       isShutdown = false
     case let .success(request):
-      served += 1
+      state.withLock { count += 1 }
       response = handle(request)
       isShutdown = request.op == "shutdown"
     }
     send(response.json, on: connection) { [weak self] in
       guard isShutdown, let self else { return }
-      self.isDone = true
+      self.state.withLock { self.done = true }
       connection.cancel()
     }
     return isShutdown

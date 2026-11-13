@@ -4,16 +4,20 @@
  *
  *   bun native/android/scripts/record.ts --serial emulator-5554 [--out src/driver/android/fixtures/uiad-session.ndjson]
  *
- * Starts `warden-uiad` from `dist/`, drives the example app's welcome and sign-in screens through every op, and writes
+ * Starts `warden-uiad` from `dist/`, drives the example app's welcome and sign-in screens through every op (the accessibility ones included: `audit`
+ * with the bundled ATF jar, the screen-reader ops with no TalkBack running, `actionClick`, `actionScroll`), and writes
  * every line that crossed the wire, requests (`op`) and server output (`ready`, `ok`, `error`) alike, to the output
  * file, and what a second server started while the first runs says (the `uiautomation_busy` fatal) to `<out>-busy.ndjson`. The unit tests
  * (`uiad-protocol.test.ts`, `uiad-client.test.ts`) replay that file, so the schemas are tested against what the server
  * really says. Re-run it when the Java side changes a reply.
  */
+import { readFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { androidTools } from "@delacour/warden-core/providers/android";
+import { atfDevicePath } from "../../../src/driver/android/atf-device";
 import { main as buildMain } from "./build";
+import { ATF_CHECKED_IN_JAR } from "./build-atf";
 
 const ANDROID_DIR = resolve(import.meta.dir, "..");
 const DEVICE_DEX = "/data/local/tmp/warden-uiad-record.dex";
@@ -94,6 +98,7 @@ function spawnServer(record: Recorded): Live {
 			const id = String(++seq);
 			const line = JSON.stringify({ id, op, ...params });
 			record.lines.push(line);
+			if (process.env.RECORD_TRACE) console.error(`> ${line.slice(0, 120)}`);
 			proc.stdin.write(`${line}\n`);
 			proc.stdin.flush();
 			for (;;) {
@@ -139,6 +144,18 @@ async function until(live: Live, record: Recorded, id: string, tries = 40): Prom
 		await Bun.sleep(250);
 	}
 	throw new Error(`${id} never appeared`);
+}
+
+/** Puts the checked-in `warden-atf.jar` where the driver would (`audit` names it by path); returns that path. */
+async function pushAtf(): Promise<string> {
+	const path = atfDevicePath();
+	const local = resolve(ANDROID_DIR, "dist/warden-atf-record.jar");
+	await writeFile(local, readFileSync(ATF_CHECKED_IN_JAR));
+	await shell(`mkdir -p ${path.slice(0, path.lastIndexOf("/"))}`);
+	const proc = Bun.spawn([adb, "-s", serial ?? "", "push", local, path], { stdout: "ignore", stderr: "ignore" });
+	await proc.exited;
+	await shell(`chmod 444 ${path}`);
+	return path;
 }
 
 const built = await buildMain([]);
@@ -199,6 +216,15 @@ await first.request("swipe", {
 	pressMs: 20,
 	releaseMs: 10,
 });
+// accessibility ops on the sign-in screen: ATF audit, the screen-reader ops while TalkBack is off, node actions
+await first.request("audit", { atf: await pushAtf(), contrast: true });
+await first.request("srFocused");
+await first.request("srFocus", { dir: "next" });
+await first.request("srActivate");
+await first.request("srEvents");
+const emailCenter = centerOf(await until(first, record, "sign-in-email"), "sign-in-email");
+await first.request("actionClick", { ...emailCenter });
+await first.request("actionScroll", { dir: "forward" });
 // a small pinch near the screen centre (two fingers closing), then an invalid request
 await first.request("gesture", {
 	paths: [
@@ -219,6 +245,8 @@ await first.request("gesture", {
 });
 await first.request("gesture", { paths: [] });
 await first.request("setText", { text: "" });
+// empty unless the screen announced something; the checked-in fixture also holds replies (ids a1, a2) from a throwaway app that announces, re-added by hand after a re-record
+await first.request("a11yEvents");
 await first.request("snapshot");
 await first.request("shutdown");
 await first.close();

@@ -227,3 +227,100 @@ describe("warden golden --platform android (16-3)", () => {
 		expect(c.stderr.join("\n")).toContain("--platform");
 	});
 });
+
+describe("warden golden key | export | import (CI cache)", () => {
+	const devices = (c: TestContext) => join(c.cwd, "home", "Library/Developer/CoreSimulator/Devices");
+
+	function seedDevice(c: TestContext, udid: string): void {
+		const prefs = join(devices(c), udid, "data/Library/Preferences");
+		mkdirSync(prefs, { recursive: true });
+		writeFileSync(join(prefs, "com.apple.migration.plist"), "migrated");
+		writeFileSync(join(devices(c), udid, "device.plist"), "plist");
+	}
+
+	function setupHome(argv: string[], host: ReturnType<typeof fakeHost>): TestContext {
+		const c = setup(argv, host);
+		c.env = { ...c.env, HOME: join(c.cwd, "home") };
+		return c;
+	}
+
+	test("key prints the golden's name (profile + key) without building; --json has the inputs", async () => {
+		const host = fakeHost();
+		const c = setupHome(["key"], host);
+		expect(await createGoldenCommand(instant).run(c)).toBe(0);
+		expect(c.stdout.join("\n")).toBe(GOLDEN);
+		const j = setupHome(["key", "--json"], host);
+		expect(await createGoldenCommand(instant).run(j)).toBe(0);
+		expect(JSON.parse(j.stdout.join("\n"))).toMatchObject({
+			name: GOLDEN,
+			key: KEY,
+			profile: "iphone-17",
+			xcodeBuild: "17F113",
+			runtimeBuild: RUNTIME_BUILD,
+		});
+		expect(host.calls.some((call) => call[2] === "create")).toBe(false);
+	});
+
+	test("export writes <dir>/<golden>; import on a machine without it registers it", async () => {
+		const exporter = fakeHost({ sims: [{ udid: "G", name: GOLDEN, state: "Shutdown" }], migrationPolls: 0 });
+		const c = setupHome(["export", "goldens", "--json"], exporter);
+		seedDevice(c, "G");
+		expect(await createGoldenCommand(instant).run(c)).toBe(0);
+		expect(JSON.parse(c.stdout.join("\n"))).toMatchObject({ name: GOLDEN, built: false });
+		expect(existsSync(join(c.cwd, "goldens", GOLDEN, "golden.json"))).toBe(true);
+
+		const importer = fakeHost({ migrationPolls: 0 });
+		const i = setupHome(["import", "goldens", "--json"], importer);
+		i.cwd = c.cwd;
+		expect(await createGoldenCommand(instant).run(i)).toBe(0);
+		expect(JSON.parse(i.stdout.join("\n"))).toEqual([
+			{ name: GOLDEN, profile: "iphone-17", imported: true, udid: "NEW-1" },
+		]);
+		expect(importer.sims.map((s) => s.name)).toEqual([GOLDEN]);
+		c.cleanup();
+	});
+
+	/** A clock that moves on every read, so the settle wait (deadline on `now`) runs out with the instant sleep. */
+	function ticking(c: TestContext): TestContext {
+		let t = 1_000_000;
+		c.now = () => {
+			t += 60_000;
+			return t;
+		};
+		return c;
+	}
+
+	test("export of a golden that never settles fails; --allow-unsettled exports it and says so", async () => {
+		const refused = ticking(setupHome(["export", "goldens"], fakeHost({ migrationPolls: 0, cpu: [300] })));
+		seedDevice(refused, "NEW-1");
+		expect(await createGoldenCommand(instant).run(refused)).toBe(1);
+		expect(refused.stderr.join("\n")).toContain("--allow-unsettled");
+		refused.cleanup();
+		ctx = undefined;
+
+		const c = ticking(
+			setupHome(["export", "goldens", "--allow-unsettled", "--json"], fakeHost({ migrationPolls: 0, cpu: [300] }))
+		);
+		seedDevice(c, "NEW-1");
+		expect(await createGoldenCommand(instant).run(c)).toBe(0);
+		expect(JSON.parse(c.stdout.join("\n"))).toMatchObject({ name: GOLDEN, built: true, unsettled: true });
+		expect(existsSync(join(c.cwd, "goldens", GOLDEN, "golden.json"))).toBe(true);
+		c.cleanup();
+	});
+
+	test("import of a missing dir (cache miss) is not an error", async () => {
+		const c = setupHome(["import", "nowhere"], fakeHost());
+		expect(await createGoldenCommand(instant).run(c)).toBe(0);
+		expect(c.stdout.join("\n")).toContain("no golden archives");
+	});
+
+	test("android is not supported by key / export / import", async () => {
+		for (const argv of [["key"], ["export", "d"], ["import", "d"]]) {
+			const c = setupHome([...argv, "--platform", "android"], fakeHost());
+			expect(await createGoldenCommand(instant).run(c)).toBe(1);
+			expect(c.stderr.join("\n")).toContain("iOS only");
+			c.cleanup();
+			ctx = undefined;
+		}
+	});
+});

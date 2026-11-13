@@ -8,10 +8,15 @@ export {
 	useAvatarGroupContext,
 } from "./avatar.context";
 export {
+	AVATAR_BUTTON_FALLBACK_LABEL,
 	AVATAR_OVERFLOW_DISPLAY_MAX,
 	type AvatarSource,
+	type AvatarSourceCache,
 	type AvatarSourceEntry,
+	type AvatarSourceRequest,
+	flattenAvatarChildren,
 	resolveAvatarAccessibilityLabel,
+	resolveAvatarBadgeHasContent,
 	resolveAvatarGroup,
 	resolveAvatarInitials,
 	resolveAvatarOverflowLabel,

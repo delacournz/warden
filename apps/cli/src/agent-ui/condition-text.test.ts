@@ -15,9 +15,10 @@ describe("conditionsLine", () => {
 			rec({ area: "locale", value: { timezone: "Asia/Tokyo", locale: "fr-FR" } }),
 			rec({ area: "a11y", value: { textSize: "accessibility-large", boldText: true } }),
 			rec({ area: "battery", value: { level: 15, cosmetic: true } }),
+			rec({ area: "keyboard", value: { mode: "hardware" } }),
 		]);
 		expect(line).toBe(
-			"permission location=denied · locale Asia/Tokyo fr-FR · a11y text accessibility-large bold · battery 15% (status bar)"
+			"permission location=denied · locale Asia/Tokyo fr-FR · a11y text accessibility-large bold · battery 15% (status bar) · keyboard hardware"
 		);
 	});
 });

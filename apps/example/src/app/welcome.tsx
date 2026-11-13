@@ -37,6 +37,7 @@ export default function Welcome() {
 			</Screen.View>
 			<Screen.Footer>
 				<Button
+					size="lg"
 					onPress={() => (isLast ? router.push("/sign-in") : setStep(step + 1))}
 					testID={isLast ? "welcome-get-started" : "welcome-next"}
 				>

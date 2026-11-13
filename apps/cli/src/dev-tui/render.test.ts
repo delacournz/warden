@@ -5,7 +5,18 @@ import type { Key } from "./keys";
 import { createMetroPane } from "./metro-pane";
 import { type HudFps, type HudSample, initialState, type TuiState } from "./model";
 import { reduce, type TuiEvent } from "./reducer";
-import { formatDuration, HUD_WIDTH, hudLines, listWidth, paneCursor, render } from "./render";
+import {
+	formatDuration,
+	formatElapsed,
+	HUD_WIDTH,
+	hudLines,
+	listWidth,
+	paneCursor,
+	render,
+	SLOW_TICK_MS,
+	SPIN_MS,
+	tickInterval,
+} from "./render";
 
 const READY: DevReady = {
 	platform: "ios",
@@ -100,7 +111,7 @@ describe("render", () => {
 		const frame = text(render(stateAt(80, 24, threeTasks), 80, 24));
 		expect(frame).toContain("✓ claim device");
 		expect(frame).toContain("1.3s");
-		expect(frame).toContain("▶ dev build");
+		expect(frame).toMatch(/[\u2800-\u28ff] dev build/);
 		expect(frame).toContain("· metro");
 	});
 
@@ -248,7 +259,7 @@ describe("Metro pane", () => {
 	test("the cursor sits at the pane's cursor only while interacting with the metro row", () => {
 		const cursor = { x: 4, y: 7, visible: true };
 		const interact = stateAt(120, 40, [...toMetro, press("i")]);
-		expect(paneCursor(interact, 120, cursor)).toEqual({ x: listWidth(120) + 2 + 4, y: 1 + 7 });
+		expect(paneCursor(interact, 120, cursor)).toEqual({ x: listWidth(120) + 2 + 4, y: 2 + 7 });
 		expect(paneCursor(stateAt(120, 40, toMetro), 120, cursor)).toBeUndefined();
 		expect(paneCursor(interact, 120, { ...cursor, visible: false })).toBeUndefined();
 		const exited = [...toMetro, press("i"), { type: "metro:exit", code: 0, at: 1 } satisfies TuiEvent];
@@ -309,11 +320,12 @@ describe("HUD", () => {
 		expect(text(render(state, 80, 24))).not.toContain("cpu");
 	});
 
-	test("it covers the top right of the pane and leaves the task list alone", () => {
+	test("it covers the top right of the pane below its title and leaves the task list alone", () => {
 		const state = stateAt(120, 40, [...base, sample(okSample())]);
 		const rows = render(state, 120, 40).map(stripAnsi);
-		expect(rows[1]?.slice(120 - HUD_WIDTH)).toMatch(/^┌ warden-iphone-17-5 ── 00:12:21 ─*┐$/);
-		expect(rows[1]?.slice(0, 32)).toContain("claim device");
+		expect(rows[1]?.slice(120 - HUD_WIDTH)).not.toContain("┌");
+		expect(rows[2]?.slice(120 - HUD_WIDTH)).toMatch(/^┌ warden-iphone-17-5 ── 00:12:21 ─*┐$/);
+		expect(rows[2]?.slice(0, 32)).toContain("show simulator");
 	});
 
 	test("iOS shows rss and no fps", () => {
@@ -355,5 +367,77 @@ describe("HUD", () => {
 	test("every row is exactly the box width", () => {
 		for (const line of hudLines(withBundle(stateAt(120, 40, [...base, sample(okSample())])), 120) ?? [])
 			expect(visibleWidth(line)).toBe(HUD_WIDTH);
+	});
+});
+
+describe("live state", () => {
+	const ESC = String.fromCharCode(27);
+	const tick = (at: number): TuiEvent => ({ type: "tick", at });
+
+	test("a running task spins and counts up; the frame follows the clock", () => {
+		const a = render(stateAt(80, 24, [...threeTasks, tick(5300)]), 80, 24);
+		const b = render(stateAt(80, 24, [...threeTasks, tick(5300 + SPIN_MS)]), 80, 24);
+		const row = (frame: string[]): string => stripAnsi(frame[3] ?? "");
+		expect(row(a)).toMatch(/^› [\u2800-\u28ff] dev build +4s│/);
+		expect(row(a).slice(2, 3)).not.toBe(row(b).slice(2, 3));
+	});
+
+	test("the live session row is a dot, not a spinner", () => {
+		const frame = render(stateAt(80, 24, [...threeTasks, { type: "ready", info: READY, at: 2000 }]), 80, 24);
+		expect(stripAnsi(frame[7] ?? "")).toMatch(/^› ● session/);
+	});
+
+	test("formatElapsed is whole seconds, then minutes, then hours", () => {
+		expect(formatElapsed(999)).toBe("0s");
+		expect(formatElapsed(65_000)).toBe("1m05s");
+		expect(formatElapsed(3_840_000)).toBe("1h04m");
+	});
+
+	test("the pane title names the selected task and its state", () => {
+		const frame = render(stateAt(80, 24, [...threeTasks, tick(4300)]), 80, 24);
+		expect(stripAnsi(frame[1] ?? "")).toContain("│ dev build · running 3s");
+		const done = render(stateAt(80, 24, [...threeTasks, press("k"), press("k")]), 80, 24);
+		expect(stripAnsi(done[1] ?? "")).toContain("│ claim device · ✓ done 1.3s");
+	});
+
+	test("the selected row is a highlight bar while the list has focus, a marker in the log", () => {
+		const list = render(stateAt(80, 24, threeTasks), 80, 24);
+		expect(list[3]).toStartWith(`${ESC}[7m`);
+		const log = render(stateAt(80, 24, [...threeTasks, press("tab")]), 80, 24);
+		expect(log[3]).not.toStartWith(`${ESC}[7m`);
+		expect(stripAnsi(log[3] ?? "")).toStartWith("› ");
+	});
+
+	test("an action's outcome flashes in the footer, then the hint comes back", () => {
+		const events: TuiEvent[] = [
+			...threeTasks,
+			{ type: "task:start", id: "action:screenshot", title: "screenshot", at: 2000 },
+			{ type: "task:ok", id: "action:screenshot", detail: "/tmp/shots/1.png", at: 2500 },
+		];
+		const shown = render(stateAt(80, 24, events), 80, 24);
+		expect(stripAnsi(shown[23] ?? "")).toStartWith("✓ screenshot · /tmp/shots/1.png");
+		const gone = render(stateAt(80, 24, [...events, tick(5600)]), 80, 24);
+		expect(stripAnsi(gone[23] ?? "")).toStartWith("↑↓ select");
+	});
+
+	test("a failed action flashes red with its error; session rows never flash", () => {
+		const state = stateAt(80, 24, [
+			{ type: "task:start", id: "action:reinstall", title: "reinstall", at: 0 },
+			{ type: "task:fail", id: "action:reinstall", error: "build failed\nsee log", at: 10 },
+		]);
+		expect(state.flash).toEqual({ kind: "fail", text: "reinstall · build failed", at: 10 });
+		expect(stateAt(80, 24, threeTasks).flash).toBeUndefined();
+	});
+
+	test("the header shows a red badge once Metro died", () => {
+		const frame = render(stateAt(80, 24, [{ type: "metro:exit", code: 1, at: 0 }]), 80, 24);
+		expect(stripAnsi(frame[0] ?? "")).toContain("✗ metro exited (1)");
+	});
+
+	test("the clock ticks fast while something spins, slowly for the live session, not at all when idle", () => {
+		expect(tickInterval(stateAt(80, 24, []))).toBeUndefined();
+		expect(tickInterval(stateAt(80, 24, threeTasks))).toBe(SPIN_MS);
+		const live = stateAt(80, 24, [{ type: "ready", info: READY, at: 0 }]);
+		expect(tickInterval(live)).toBe(SLOW_TICK_MS);
 	});
 });

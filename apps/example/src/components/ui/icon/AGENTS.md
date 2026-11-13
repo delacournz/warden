@@ -16,7 +16,6 @@ instead of every call site repeating them.
 | `icon.tsx` | `Icon`, the `IconGlyph` proxy and the one `withUniwind` wrapper (see rule 7) — internal below `Icon` |
 | `icon.context.tsx` | `IconDefaults`, `IconDefaultsProvider`, `useIconDefaults()` |
 | `icon.variants.ts` | Pure `tv()` + the size-class ladder, no RN imports |
-| `icon.variants.test.ts` | |
 
 ## Design
 
@@ -91,7 +90,7 @@ instead of every call site repeating them.
 - **Central Icons only**, via `@/lib/icons/central` — never Lucide,
   Hugeicons, or anything else. That is rule 5.
 - **`icon.variants.ts` is free of React Native imports** so the whole ladder is
-  reachable from `bun test` — `resolveIconSizeClass`, `isIconSize` and
+  unit-testable — `resolveIconSizeClass`, `isIconSize` and
   `iconVariants` are all pure. See [Testing](../../../AGENTS.md#testing).
 
 ## Known gaps

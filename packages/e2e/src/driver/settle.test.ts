@@ -1,6 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { el, snapshotOf } from "./driver.testing";
-import { type SettleDetail, settleByHash, settleDetailOf, snapshotHash } from "./settle";
+import {
+	HASH_FALLBACK_MIN_QUIET_MS,
+	hashFallbackQuietMs,
+	type SettleDetail,
+	settleByHash,
+	settleDetailOf,
+	snapshotHash,
+} from "./settle";
 
 /** Fake clock: `sleep` advances time, `now` reads it. */
 function clock() {
@@ -78,6 +85,28 @@ describe("settleByHash", () => {
 		const c = clock();
 		const result = await settleByHash(async () => "a", { quietMs: 0, timeoutMs: 1000, pollMs: 10, ...c });
 		expect(result).toEqual({ quiet: true, waitedMs: 10 });
+	});
+});
+
+describe("hashFallbackQuietMs", () => {
+	test("a fallback window is never shorter than a navigation push's mixed tree (300-460 ms)", () => {
+		expect(HASH_FALLBACK_MIN_QUIET_MS).toBeGreaterThan(460);
+		expect(hashFallbackQuietMs(0)).toBe(HASH_FALLBACK_MIN_QUIET_MS);
+		expect(hashFallbackQuietMs(250)).toBe(HASH_FALLBACK_MIN_QUIET_MS);
+		expect(hashFallbackQuietMs(900)).toBe(900);
+	});
+
+	test("a mid-push tree that holds still for 460 ms is not taken as settled", async () => {
+		const c = clock();
+		const start = c.now();
+		const result = await settleByHash(async () => (c.now() - start < 460 ? "mixed" : "pushed"), {
+			quietMs: hashFallbackQuietMs(250),
+			timeoutMs: 3000,
+			pollMs: 50,
+			...c,
+		});
+		expect(result.quiet).toBe(true);
+		expect(result.waitedMs).toBeGreaterThanOrEqual(460 + HASH_FALLBACK_MIN_QUIET_MS);
 	});
 });
 

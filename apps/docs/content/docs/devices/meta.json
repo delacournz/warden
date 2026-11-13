@@ -1,4 +1,0 @@
-{
-	"title": "Devices & parallel",
-	"pages": ["leases", "physical-devices", "scripts", "ports", "capacity", "disk", "golden-images", "perf", "headless", "app-builds"]
-}

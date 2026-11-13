@@ -15,7 +15,14 @@ import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/r
 import { phaseTracker } from "./app-phase";
 import { selfCommand } from "./autogc";
 import { type ClaimFlags, claimWithFlags } from "./claim-flags";
-import { defaultAppDeps, type EnsureOptions, ensurePreparedApp, type PreparedApp, prepareApp } from "./commands/app";
+import {
+	defaultAppDeps,
+	type EnsureOptions,
+	ensureAppFor,
+	ensurePreparedApp,
+	type PreparedApp,
+	prepareApp,
+} from "./commands/app";
 import type { CommandContext } from "./context";
 import { releaseDevices } from "./device-lease";
 import {
@@ -46,6 +53,18 @@ export type RunEnsureApp = (
 	opts: EnsureOptions
 ) => AsyncResult<EnsureResult & { kindApp?: KindApp }>;
 
+/** Build (or find) the app `opts` asks for into the cache, on no device: what `warden e2e --build-only` runs. */
+export type BuildApp = (
+	ctx: CommandContext,
+	owner: Owner,
+	platform: Platform,
+	opts: EnsureOptions
+) => AsyncResult<EnsureResult & { kindApp?: KindApp }>;
+
+/** The real `BuildApp`: `ensureAppFor` with no device resolves the build into the cache and installs nothing. */
+export const buildAppIntoCache: BuildApp = (ctx, owner, platform, opts) =>
+	ensureAppFor(ctx, defaultAppDeps, owner, platform, undefined, opts);
+
 /** Effects a lease session needs (a subset of `RunDeps` / `BatchDeps`). */
 export type LeaseSessionDeps = {
 	/** pid recorded on the leases — the warden process itself */
@@ -60,6 +79,8 @@ export type LeaseSessionDeps = {
 	isPortFree: (port: number) => Promise<boolean>;
 	/** `--app`: make sure the project's app is installed on a claimed device (default: `ensureAppFor`) */
 	ensureApp?: RunEnsureApp;
+	/** the wait between two checks while a claim is queued (tests; default: the claim's own 2 s) */
+	claimPollMs?: number;
 };
 
 /** A port leased for the child, exported as `WARDEN_PORT_<i>`. */
@@ -287,6 +308,8 @@ export type LeaseArgs = {
 	dropLost?: boolean;
 	/** one id for every claim this command makes (set by `claimAll`): `WARDEN_MAX_PER_OWNER` counts the command once */
 	claimId?: string;
+	/** the wait between two checks while a claim is queued (set from `LeaseSessionDeps.claimPollMs`) */
+	claimPollMs?: number;
 };
 
 /** The error of a claim the caller gave up on (`aborted`) — nothing to add to it. */
@@ -506,6 +529,7 @@ async function runLeg(
 			onHide: (start) => hides.push(start),
 			...(args.claimId !== undefined ? { claimId: args.claimId } : {}),
 			...(args.aborted ? { abort: args.aborted } : {}),
+			...(args.claimPollMs !== undefined ? { pollMs: args.claimPollMs } : {}),
 		});
 	} catch (error) {
 		await hides[0]?.settled;
@@ -567,10 +591,62 @@ async function runLegs(
 }
 
 /** `args` with the one claim id every claim of this command shares (`WARDEN_MAX_PER_OWNER` counts the command once). */
-const withClaimId = (args: LeaseArgs): LeaseArgs => ({
+const withClaimId = (args: LeaseArgs, claimPollMs?: number): LeaseArgs => ({
 	...args,
 	claimId: args.claimId ?? `c_${randomUUID().replaceAll("-", "").slice(0, 12)}`,
+	...(claimPollMs !== undefined ? { claimPollMs } : {}),
 });
+
+/** Names each installed app on stderr and exports the last one's path / hash to the run env. */
+function reportInstalledApps(
+	ctx: CommandContext,
+	name: string,
+	runs: Awaited<ReturnType<typeof runLegs>>,
+	env: Record<string, string | undefined>
+): void {
+	for (const app of runs.flatMap((r) => (r.install?.success ? r.install.data : []))) {
+		ctx.err(`warden ${name}: app ${app.result.source} on ${app.deviceId} [${app.result.hash}]`);
+		if (app.result.appPath) env.WARDEN_APP_PATH = app.result.appPath;
+		env.WARDEN_APP_HASH = app.result.hash;
+	}
+}
+
+/** One more leg claimed after the session started (an elastic worker); its lease ids join `leaseIds` and `drop` takes them out again. */
+async function claimMoreLeg(
+	ctx: CommandContext,
+	owner: Owner,
+	args: LeaseArgs,
+	pid: LeaseSessionDeps["pid"],
+	install: Parameters<typeof runLeg>[6],
+	leaseIds: string[],
+	reclaim: ClaimFlags["reclaim"],
+	o: MoreClaimOptions
+): AsyncResult<MoreClaim> {
+	const more: LeaseArgs = { ...args, aborted: o.aborted };
+	delete more.onLeased;
+	if (o.onLeased) more.onLeased = o.onLeased;
+	const run = await runLeg(ctx, owner, o.leg, o.flags, more, pid, install);
+	if (!run.claim.success) return run.claim;
+	const claimed = run.claim.data;
+	const ids = claimed.claimed.map((c) => c.lease.id);
+	if (run.install && !run.install.success) {
+		await args.beforeRelease?.();
+		await releaseDevices(ctx, ids, { touch: false });
+		return run.install;
+	}
+	leaseIds.push(...ids);
+	return ok({
+		outcome: claimed,
+		lost: run.lost ?? [],
+		drop: async () => {
+			for (const id of ids) {
+				const at = leaseIds.indexOf(id);
+				if (at >= 0) leaseIds.splice(at, 1);
+			}
+			await releaseDevices(ctx, ids, { reclaim: o.flags.reclaim ?? reclaim });
+		},
+	});
+}
 
 /**
  * Lease the ports, claim the devices and (with `--app`) ensure the app; on any failure nothing stays
@@ -579,12 +655,12 @@ const withClaimId = (args: LeaseArgs): LeaseArgs => ({
  */
 export async function claimAll(
 	ctx: CommandContext,
-	deps: Pick<LeaseSessionDeps, "pid" | "isPortFree" | "ensureApp">,
+	deps: Pick<LeaseSessionDeps, "pid" | "isPortFree" | "ensureApp" | "claimPollMs">,
 	owner: Owner,
 	input: LeaseArgs,
 	name = "run"
 ): AsyncResult<LeaseSession> {
-	const args = withClaimId(input);
+	const args = withClaimId(input, deps.claimPollMs);
 	const label = args.flags.label ?? `warden ${name}`;
 	const ports = await claimRunPorts(ctx, owner, args.ports, deps.pid, deps.isPortFree, label);
 	if (!ports.success) return ports;
@@ -623,40 +699,17 @@ export async function claimAll(
 	const release = async () => {
 		await releaseDevices(ctx, leaseIds, { reclaim });
 	};
-	const claimMore = async (o: MoreClaimOptions): AsyncResult<MoreClaim> => {
-		const more: LeaseArgs = { ...args, aborted: o.aborted };
-		delete more.onLeased;
-		if (o.onLeased) more.onLeased = o.onLeased;
-		const run = await runLeg(
+	const claimMore = (o: MoreClaimOptions): AsyncResult<MoreClaim> =>
+		claimMoreLeg(
 			ctx,
 			owner,
-			o.leg,
-			o.flags,
-			more,
+			args,
 			deps.pid,
-			ensure && args.app ? { ensure, opts: args.app } : undefined
+			ensure && args.app ? { ensure, opts: args.app } : undefined,
+			leaseIds,
+			reclaim,
+			o
 		);
-		if (!run.claim.success) return run.claim;
-		const claimed = run.claim.data;
-		const ids = claimed.claimed.map((c) => c.lease.id);
-		if (run.install && !run.install.success) {
-			await args.beforeRelease?.();
-			await releaseDevices(ctx, ids, { touch: false });
-			return run.install;
-		}
-		leaseIds.push(...ids);
-		return ok({
-			outcome: claimed,
-			lost: run.lost ?? [],
-			drop: async () => {
-				for (const id of ids) {
-					const at = leaseIds.indexOf(id);
-					if (at >= 0) leaseIds.splice(at, 1);
-				}
-				await releaseDevices(ctx, ids, { reclaim: o.flags.reclaim ?? reclaim });
-			},
-		});
-	};
 	const env = childEnv(ctx.env, outcome, ports.data);
 	setRunEnv(env, args.legFlags ?? [args.flags]);
 	const failed = legsFailure(runs, outcome, lost);
@@ -665,11 +718,7 @@ export async function claimAll(
 		await release();
 		return failed;
 	}
-	for (const app of runs.flatMap((r) => (r.install?.success ? r.install.data : []))) {
-		ctx.err(`warden ${name}: app ${app.result.source} on ${app.deviceId} [${app.result.hash}]`);
-		if (app.result.appPath) env.WARDEN_APP_PATH = app.result.appPath;
-		env.WARDEN_APP_HASH = app.result.hash;
-	}
+	reportInstalledApps(ctx, name, runs, env);
 	return ok({
 		outcome,
 		claims,

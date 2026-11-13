@@ -1,4 +1,4 @@
-import { MarkdownCopyButton, ViewOptionsPopover } from "fumadocs-ui/layouts/docs/page";
+import { MarkdownCopyButton, ViewOptionsPopover } from "fumadocs-ui/layouts/notebook/page";
 import type { ReactElement } from "react";
 import { gitConfig } from "@/lib/shared";
 

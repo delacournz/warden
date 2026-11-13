@@ -46,7 +46,8 @@ export type KindApp =
 	| (KindAppBase & { kind: "dev" | "release"; fallbackReason?: string })
 	| (KindAppBase & {
 			kind: "simulator";
-			repack: { jsKey: string; baseHash: string; reused: boolean; bundleMs?: number };
+			/** `fromBase`: the fresh Android base embeds this JS, so its apk is the repack (no bundle ran) */
+			repack: { jsKey: string; baseHash: string; reused: boolean; bundleMs?: number; fromBase?: true };
 	  });
 
 /** The effects `ensureKindApp` composes, injectable for tests. */
@@ -72,6 +73,8 @@ function buildInput(input: KindAppInput): Omit<EnsureKindInput, "key" | "buildKe
 		force: _force,
 		hermes: _hermes,
 		scratchRoot: _scratch,
+		keepsSigner: _keepsSigner,
+		ensureBase: _ensureBase,
 		configTeamId: _team,
 		...rest
 	} = input;
@@ -161,6 +164,7 @@ export async function prepareKindApp(input: KindAppInput, deps: KindAppDeps = re
 			baseHash: result.baseHash,
 			reused: result.kind === "reused",
 			...(result.bundleMs !== undefined ? { bundleMs: result.bundleMs } : {}),
+			...(result.kind === "repacked" && result.fromBase ? { fromBase: true as const } : {}),
 		},
 	});
 }

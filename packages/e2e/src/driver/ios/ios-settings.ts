@@ -1,9 +1,17 @@
+import {
+	IOS_DEFAULTS_FIELDS,
+	type IosDefaultsField,
+	iosDefaultsDeleteArgvs,
+	iosDefaultsMissing,
+	iosDefaultsWriteArgvs,
+} from "@delacour/warden-core/conditions/a11y-keys";
 import type { PermissionName, PermissionState, TextSize } from "@delacour/warden-core/conditions/conditions.types";
 import type { LaunchSettings } from "@delacour/warden-core/conditions/launch-settings";
 import { resolveTextSize } from "@delacour/warden-core/conditions/text-size";
 import { type Exec, execError } from "@delacour/warden-core/exec";
+import type { ScreenReaderState } from "../../a11y/a11y.types";
 import { badRequest, batteryProblem, localeProblem, pushProblem, timezoneProblem } from "../device-settings";
-import type { A11yState, BatteryState, Driver, DriverResult, LaunchOptions } from "../driver.types";
+import type { A11yState, BatteryState, Driver, DriverError, DriverResult, LaunchOptions } from "../driver.types";
 import { driverErr } from "../errors";
 
 /**
@@ -133,6 +141,99 @@ export type IosSettings = Pick<
 	launchSettings(): LaunchSettings;
 };
 
+/** One `simctl` call as the settings use it (see `simctl` in {@link createIosSettings}). */
+type SimctlRun = (argv: string[], retryHung?: boolean, tolerate?: (stderr: string) => boolean) => DriverResult<void>;
+
+type SettingFailure = { success: false; error: DriverError };
+
+/** What one a11y step did: the settings it applied, or the failure that ends the call. */
+type A11yStepOutcome = { ok: true; applied: readonly string[] } | { ok: false; failure: SettingFailure };
+
+type A11yOp = Parameters<Driver["a11y"]>[0];
+
+const NOTHING_APPLIED: A11yStepOutcome = { ok: true, applied: [] };
+
+/** `textSize`: set when asked for (or reset to the default by `null`). */
+async function a11yTextSizeStep(run: SimctlRun, udid: string, op: A11yOp): Promise<A11yStepOutcome> {
+	const size = op === null ? undefined : op.textSize;
+	if (op !== null && size === undefined) return NOTHING_APPLIED;
+	const resolved = op === null ? undefined : resolveTextSize(size as TextSize);
+	if (resolved && !resolved.success) return { ok: false, failure: driverErr("E_BAD_REQUEST", resolved.error) };
+	const done = await run(contentSizeArgv(udid, resolved ? resolved.data.category : DEFAULT_CONTENT_SIZE));
+	return done.success ? { ok: true, applied: ["textSize"] } : { ok: false, failure: done };
+}
+
+/** `contrast`: set when asked for (or switched off by `null`). */
+async function a11yContrastStep(run: SimctlRun, udid: string, op: A11yOp): Promise<A11yStepOutcome> {
+	if (op !== null && op.contrast === undefined) return NOTHING_APPLIED;
+	const done = await run(contrastArgv(udid, op?.contrast === "increased"));
+	return done.success ? { ok: true, applied: ["contrast"] } : { ok: false, failure: done };
+}
+
+/** The boolean `defaults` fields: all deleted by `null`, else the ones given are written. */
+async function a11yDefaultsStep(run: SimctlRun, udid: string, op: A11yOp): Promise<A11yStepOutcome> {
+	if (op === null) {
+		for (const argv of iosDefaultsDeleteArgvs(udid, IOS_DEFAULTS_FIELDS)) {
+			const done = await run(argv, false, iosDefaultsMissing);
+			if (!done.success) return { ok: false, failure: done };
+		}
+		return NOTHING_APPLIED;
+	}
+	const entries = IOS_DEFAULTS_FIELDS.flatMap((field): [IosDefaultsField, boolean][] => {
+		const on = op[field];
+		return on === undefined ? [] : [[field, on]];
+	});
+	for (const argv of iosDefaultsWriteArgvs(udid, entries)) {
+		const done = await run(argv);
+		if (!done.success) return { ok: false, failure: done };
+	}
+	return { ok: true, applied: entries.map(([field]) => field) };
+}
+
+/** The a11y settings that only exist on Android, when the op asks for them. */
+function a11ySkipped(op: A11yOp): { setting: string; reason: string }[] {
+	const skipped: { setting: string; reason: string }[] = [];
+	for (const setting of ["highContrastText", "colorInversion"] as const) {
+		if (op?.[setting] !== undefined) skipped.push({ setting, reason: "Android only" });
+	}
+	return skipped;
+}
+
+/** The simulated screen reader state an op asks for, if any. */
+function a11yScreenReader(op: A11yOp): ScreenReaderState | undefined {
+	if (op?.screenReader === undefined) return undefined;
+	return op.screenReader ? { mode: "simulated", engine: "voiceover" } : { mode: "off" };
+}
+
+/** `battery(null)`: clear the status bar override. */
+async function batteryClear(run: SimctlRun, udid: string): DriverResult<BatteryState> {
+	const done = await run(statusBarClearArgv(udid));
+	return done.success ? { success: true, data: { cosmetic: true } satisfies BatteryState } : done;
+}
+
+/** `battery({ level?, charging? })`: validate, then override the status bar. */
+async function batteryOverride(
+	run: SimctlRun,
+	udid: string,
+	op: { level?: number; charging?: boolean }
+): DriverResult<BatteryState> {
+	const bad = badRequest(batteryProblem(op.level));
+	if (bad) return bad;
+	if (op.level === undefined && op.charging === undefined) {
+		return driverErr("E_BAD_REQUEST", "battery needs a level, charging, or both");
+	}
+	const done = await run(statusBarBatteryArgv(udid, op));
+	if (!done.success) return done;
+	return {
+		success: true,
+		data: {
+			...(op.level === undefined ? {} : { level: op.level }),
+			...(op.charging === undefined ? {} : { charging: op.charging }),
+			cosmetic: true,
+		},
+	};
+}
+
 export function createIosSettings(deps: IosSettingsDeps): IosSettings {
 	const { udid, exec } = deps;
 	let memoryStaged: LaunchSettings = {};
@@ -150,10 +251,10 @@ export function createIosSettings(deps: IosSettingsDeps): IosSettings {
 	};
 
 	/** `retryHung`: a call killed at the timeout runs once more (seen: `simctl privacy` hanging on a sim that just booted) */
-	async function simctl(argv: string[], retryHung = false): DriverResult<void> {
+	async function simctl(argv: string[], retryHung = false, tolerate?: (stderr: string) => boolean): DriverResult<void> {
 		let res = await exec(argv, { timeoutMs: SIMCTL_MS });
 		if (retryHung && res.exitCode === KILLED_BY_TIMEOUT) res = await exec(argv, { timeoutMs: SIMCTL_MS });
-		return res.exitCode === 0
+		return res.exitCode === 0 || tolerate?.(`${res.stderr}${res.stdout}`)
 			? { success: true, data: undefined }
 			: driverErr("E_IO", execError(argv, res), { detail: { udid } });
 	}
@@ -210,51 +311,24 @@ export function createIosSettings(deps: IosSettingsDeps): IosSettings {
 		},
 		async a11y(op) {
 			const applied: string[] = [];
-			const skipped: { setting: string; reason: string }[] = [];
-			const size = op === null ? undefined : op.textSize;
-			if (op === null || size !== undefined) {
-				const resolved = op === null ? undefined : resolveTextSize(size as TextSize);
-				if (resolved && !resolved.success) return driverErr("E_BAD_REQUEST", resolved.error);
-				const done = await simctl(contentSizeArgv(udid, resolved ? resolved.data.category : DEFAULT_CONTENT_SIZE));
-				if (!done.success) return done;
-				applied.push("textSize");
+			const steps = [a11yTextSizeStep, a11yContrastStep, a11yDefaultsStep];
+			for (const step of steps) {
+				const outcome = await step(simctl, udid, op);
+				if (!outcome.ok) return outcome.failure;
+				applied.push(...outcome.applied);
 			}
-			if (op === null || op.contrast !== undefined) {
-				const done = await simctl(contrastArgv(udid, op?.contrast === "increased"));
-				if (!done.success) return done;
-				applied.push("contrast");
-			}
-			if (op?.boldText !== undefined) {
-				skipped.push({ setting: "boldText", reason: "iOS has no simctl switch for bold text" });
-			}
-			if (op?.reduceMotion !== undefined) {
-				skipped.push({ setting: "reduceMotion", reason: "iOS has no simctl switch for reduce motion" });
-			}
+			const skipped = a11ySkipped(op);
 			if (applied.length === 0 && skipped.length > 0) {
 				return driverErr("E_UNSUPPORTED", skipped.map((s) => `${s.setting}: ${s.reason}`).join("; "));
 			}
-			return { success: true, data: { applied, skipped, notes: [] } satisfies A11yState };
-		},
-		async battery(op) {
-			if (op === null) {
-				const done = await simctl(statusBarClearArgv(udid));
-				return done.success ? { success: true, data: { cosmetic: true } satisfies BatteryState } : done;
-			}
-			const bad = badRequest(batteryProblem(op.level));
-			if (bad) return bad;
-			if (op.level === undefined && op.charging === undefined) {
-				return driverErr("E_BAD_REQUEST", "battery needs a level, charging, or both");
-			}
-			const done = await simctl(statusBarBatteryArgv(udid, op));
-			if (!done.success) return done;
+			const screenReader = a11yScreenReader(op);
 			return {
 				success: true,
-				data: {
-					...(op.level === undefined ? {} : { level: op.level }),
-					...(op.charging === undefined ? {} : { charging: op.charging }),
-					cosmetic: true,
-				},
+				data: { applied, skipped, notes: [], ...(screenReader ? { screenReader } : {}) } satisfies A11yState,
 			};
+		},
+		async battery(op) {
+			return op === null ? batteryClear(simctl, udid) : batteryOverride(simctl, udid, op);
 		},
 		async memoryWarning() {
 			return driverErr(

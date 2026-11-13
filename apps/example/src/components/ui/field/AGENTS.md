@@ -23,7 +23,6 @@ A form field's layout, and the one place its state is written down. Root plus
 | `field.context.tsx` | `FieldProvider`, `useField()`, `useFieldContext()` |
 | `field.types.ts` | Prop types shared by two or more parts |
 | `field.variants.ts` | Pure `tv()` slots + resolvers, no RN imports |
-| `field.variants.test.ts` | |
 
 ## Design
 
@@ -45,8 +44,8 @@ A form field's layout, and the one place its state is written down. Root plus
   it. A checkbox in a form is a small square next to a sentence, and the sentence
   is what people aim at. This is [`Input.Group`](../input/AGENTS.md)'s trick one level out: that group
   is a pressable whose press focuses the field through a ref on its context.
-  `resolveFieldInteractive` is the decision and it is pure, so `bun test` reaches
-  it. A field of static text registers nothing and stays a `View` — mounting a
+  `resolveFieldInteractive` is the decision and it is pure, so it is
+  unit-testable. A field of static text registers nothing and stays a `View` — mounting a
   detector regardless would put one under every label and description in a form,
   the thing [`Badge`](../badge/AGENTS.md) refuses for a list of fifty tags. The row is
   `accessible={false}`, so the control stays the element a screen reader sees,
@@ -64,7 +63,7 @@ A form field's layout, and the one place its state is written down. Root plus
   icon's key, say — would name the control after the wrong thing. State rather
   than a ref for the same reason as the press: the control renders differently
   for it, and the label registers in an effect, so it costs one render on mount.
-- **A data-attribute class would also leave `bun test`.** Even for a part styling
+- **A data-attribute class would also hide the decision from unit tests.** Even for a part styling
   itself, `data-invalid:text-destructive` moves the decision from `field.variants.ts`
   into uniwind's runtime matcher, where no unit test can see it. The parts style
   themselves from `tv()` booleans; the context is only for crossing a component
@@ -107,7 +106,7 @@ A form field's layout, and the one place its state is written down. Root plus
   primitive. `Label` narrows `children` from `Text`'s and reports
   `accessibilityState.disabled`, so wrapping it would change this part's public
   surface. The two colour and fade identically instead, and
-  `label.variants.test.ts` holds them to it against `fieldVariants`' label slot
+  they must stay in step with `fieldVariants`' label slot
   and `resolveFieldTextColor`. A required field uses `Label` directly, since
   `Field.Label` has no `isRequired`.
 - **There is no `Field.Title`.** On the web it exists because a `<div>` is not a

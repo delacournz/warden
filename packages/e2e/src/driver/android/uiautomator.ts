@@ -1,4 +1,4 @@
-import type { Element, Rect, Role } from "../driver.types";
+import type { Element, ElementA11y, Rect, Role } from "../driver.types";
 import type { UiadNode } from "./uiad-protocol";
 
 /** Thrown when the text has no `<hierarchy>` (e.g. `ERROR: null root node returned by UiTestAutomationBridge.`). */
@@ -11,7 +11,8 @@ export class UiautomatorParseError extends Error {
 
 export type ParsedTree = { elements: Element[]; flat: Element[] };
 
-type RawNode = { attrs: Map<string, string>; children: RawNode[] };
+/** `a11y` carries what only the helper path knows (the dump's XML has no such attributes). */
+type RawNode = { attrs: Map<string, string>; children: RawNode[]; a11y?: ElementA11y };
 
 const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };
 
@@ -239,6 +240,19 @@ function normalize(frame: Rect, screen: { width: number; height: number }): Rect
 	};
 }
 
+/**
+ * `Element.a11y` of a node: `focusable` from the `focusable` attribute (the dump has it; absent in a hand-built map
+ * means unknown), plus whatever the helper path read. Undefined when nothing is known.
+ */
+function a11yOf(attrs: Map<string, string>, extra: ElementA11y | undefined): ElementA11y | undefined {
+	const focusable = attrs.get("focusable");
+	const a11y: ElementA11y = {
+		...(focusable === undefined ? {} : { focusable: focusable === "true" }),
+		...extra,
+	};
+	return Object.keys(a11y).length > 0 ? a11y : undefined;
+}
+
 function toElement(raw: RawNode, id: string, depth: number, screen: { width: number; height: number }): Element {
 	const a = raw.attrs;
 	const f = readFlags(a);
@@ -250,6 +264,7 @@ function toElement(raw: RawNode, id: string, depth: number, screen: { width: num
 	const text = a.get("text") ?? "";
 	const hint = a.get("hint") ?? "";
 	const isInput = role === "textfield" || role === "securefield";
+	const a11y = a11yOf(a, raw.a11y);
 	return {
 		id,
 		role,
@@ -268,6 +283,7 @@ function toElement(raw: RawNode, id: string, depth: number, screen: { width: num
 		...(f.checkable ? { checked: f.checked } : {}),
 		hittable: f.clickable && f.enabled && overlapsScreen(frame, screen),
 		tapPoint: { x: Math.round(frame.x + frame.width / 2), y: Math.round(frame.y + frame.height / 2) },
+		...(a11y ? { a11y } : {}),
 		depth,
 		children: [],
 	};
@@ -331,8 +347,15 @@ function rawFromUiad(node: UiadNode): RawNode {
 	flag("selected", node.selected);
 	flag("focused", node.focused);
 	flag("password", node.password);
+	attrs.set("focusable", node.focusable ? "true" : "false");
 	if (node.disabled) attrs.set("enabled", "false");
-	return { attrs, children: (node.children ?? []).map(rawFromUiad) };
+	const a11y: ElementA11y = {
+		important: !node.notImportant,
+		...(node.a11yFocused ? { a11yFocused: true } : {}),
+		...(node.live ? { liveRegion: node.live === 2 ? "assertive" : "polite" } : {}),
+		...(node.actions && node.actions.length > 0 ? { actions: node.actions } : {}),
+	};
+	return { attrs, a11y, children: (node.children ?? []).map(rawFromUiad) };
 }
 
 /**

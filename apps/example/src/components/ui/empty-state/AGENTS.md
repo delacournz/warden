@@ -19,7 +19,6 @@ five parts: `Header`, `Media`, `Title`, `Description`, `Content`.
 | `empty-state.context.tsx` | `EmptyStateProvider`, `useEmptyState()`, `useEmptyStateContext()`, `useEmptyStatePart()` |
 | `empty-state.types.ts` | Prop types shared by two or more parts |
 | `empty-state.variants.ts` | Pure `tv()` slots and the media colour map, no RN imports |
-| `empty-state.variants.test.ts` | |
 
 ## Anatomy
 

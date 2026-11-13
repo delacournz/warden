@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Exec, ExecResult } from "../exec";
 import { createGitFactsCache } from "../git-facts";
+import { IOS_DEVICE_RESULT_BUNDLE } from "./builds.defaults";
 import { fakeApp, testProject } from "./builds.testing";
 import { releaseKey } from "./fingerprint";
 import { combineKey, jsInputsHash } from "./js-inputs";
@@ -316,6 +317,111 @@ describe("runLocalBuild", () => {
 		expect(seen).toEqual(["> Task :app:assembleDebug"]);
 	});
 
+	/** A heartbeat whose timer the test fires by hand, on a clock the test moves. */
+	function manualHeartbeat() {
+		const state = { clock: 0, tick: undefined as (() => void) | undefined, everyMs: 0, stopped: false };
+		const heartbeat = {
+			everyMs: 60_000,
+			now: () => state.clock,
+			schedule: (fn: () => void, ms: number) => {
+				state.tick = fn;
+				state.everyMs = ms;
+				return () => {
+					state.stopped = true;
+				};
+			},
+		};
+		return { state, heartbeat };
+	}
+
+	test("heartbeat: a long build logs how long it has run and its last output line", async () => {
+		const s = setup(["h1"]);
+		const { state, heartbeat } = manualHeartbeat();
+		const logs: string[] = [];
+		const exec: Exec = async (cmd, opts) => {
+			if (cmd[2] === "gradle-build") {
+				state.clock = 60_000;
+				state.tick?.();
+				opts?.onLine?.("\u001b[32m> Task :app:compileDebugKotlin\u001b[0m   ");
+				opts?.onLine?.("   ");
+				state.clock = 125_000;
+				state.tick?.();
+			}
+			return s.exec(cmd, opts);
+		};
+		const res = await runLocalBuild({
+			...base,
+			log: (line) => logs.push(line),
+			exec,
+			project: s.project,
+			platform: "android",
+			hash: "h1",
+			heartbeat,
+		});
+		expect(res.success).toBe(true);
+		expect(state.everyMs).toBe(60_000);
+		expect(logs.filter((line) => line.startsWith("still building"))).toEqual([
+			"still building android (1m 0s)",
+			"still building android (2m 5s): > Task :app:compileDebugKotlin",
+		]);
+		expect(state.stopped).toBe(true);
+	});
+
+	test("heartbeat: stopped when the build fails too", async () => {
+		const s = setup(["h1"]);
+		const { state, heartbeat } = manualHeartbeat();
+		const res = await runLocalBuild({
+			...base,
+			exec: s.exec,
+			project: s.project,
+			platform: "ios",
+			hash: "h1",
+			heartbeat,
+		});
+		expect(res.success).toBe(false);
+		expect(state.stopped).toBe(true);
+	});
+
+	test("no heartbeat unless asked", async () => {
+		const s = setup(["h1"]);
+		const logs: string[] = [];
+		const exec: Exec = async (cmd, opts) => {
+			if (cmd[2] === "gradle-build") opts?.onLine?.("> Task :app:assembleDebug");
+			return s.exec(cmd, opts);
+		};
+		await runLocalBuild({
+			...base,
+			log: (l) => logs.push(l),
+			exec,
+			project: s.project,
+			platform: "android",
+			hash: "h1",
+		});
+		expect(logs.some((line) => line.startsWith("still building"))).toBe(false);
+	});
+
+	test("a green build keeps its whole output in the build log too", async () => {
+		const s = setup(["h1"]);
+		const exec: Exec = async (cmd, opts) => {
+			if (cmd[2] === "gradle-build") {
+				await s.exec(cmd, opts);
+				return { exitCode: 0, stdout: "> Task :app:assembleDebug\nBUILD SUCCESSFUL\n", stderr: "" };
+			}
+			return s.exec(cmd, opts);
+		};
+		const wh = join(dir, "wh");
+		const res = await runLocalBuild({
+			...base,
+			exec,
+			project: s.project,
+			platform: "android",
+			hash: "h1",
+			wardenHome: wh,
+		});
+		expect(res.success).toBe(true);
+		expect(readFileSync(join(wh, "logs", "build-android-h1.log"), "utf8")).toContain("BUILD SUCCESSFUL");
+	});
+
 	test("fingerprint changed during build, native dir already there → error (a real native edit)", async () => {
 		const s = setup(["h2"]);
 		mkdirSync(join(s.root, "android"), { recursive: true });
@@ -412,6 +518,7 @@ describe("runLocalBuild compiler cache env", () => {
 				gitCalls.push(joined);
 				return { exitCode: 0, stdout: `${root}\n${root}/.git\nrefs/heads/main\n`, stderr: "" };
 			}
+			if (joined === "which ccache") return { exitCode: 0, stdout: "/opt/homebrew/bin/ccache\n", stderr: "" };
 			if (joined === "xcode-select -p") return { exitCode: 0, stdout: "/X/Xcode.app/Contents/Developer\n", stderr: "" };
 			if (joined.startsWith("plutil -extract CFBundleShortVersionString"))
 				return { exitCode: 0, stdout: "26.0\n", stderr: "" };
@@ -452,6 +559,61 @@ describe("runLocalBuild compiler cache env", () => {
 		expect(readFileSync(logPath, "utf8")).toContain(bad);
 	});
 
+	test("a failed iOS build with a fresh result bundle reports its errors and names the bundle", async () => {
+		const s = iosSetup();
+		const fixture = readFileSync(
+			join(import.meta.dir, "..", "__fixtures__", "xcresult", "build-results.failed.json"),
+			"utf8"
+		);
+		const bundle = join(s.root, "ios", IOS_DEVICE_RESULT_BUNDLE);
+		const exec: Exec = async (cmd, opts) => {
+			if (cmd[2] === "xb") {
+				mkdirSync(bundle, { recursive: true });
+				return { exitCode: 65, stdout: "noise\n", stderr: "** BUILD FAILED **\n" };
+			}
+			if (cmd[0] === "xcrun" && cmd.includes(bundle)) return { exitCode: 0, stdout: fixture, stderr: "" };
+			return s.exec(cmd, opts);
+		};
+		const result = await runLocalBuild({
+			...common,
+			exec,
+			project: s.project,
+			platform: "ios",
+			hash: "h1",
+			env: { HOME: dir },
+			wardenHome: join(dir, "wh"),
+		});
+		expect(result.success).toBe(false);
+		if (result.success) return;
+		expect(result.error).toContain("1 error: /Users/dev/Demo/Sources/Demo/Demo.swift:1: Cannot convert");
+		expect(result.error).toContain(`result bundle: ${bundle}`);
+	});
+
+	test("a result bundle left by an earlier build is not read", async () => {
+		const s = iosSetup();
+		const bundle = join(s.root, "ios", IOS_DEVICE_RESULT_BUNDLE);
+		mkdirSync(bundle, { recursive: true });
+		utimesSync(bundle, new Date(0), new Date(0));
+		const xcrun: string[][] = [];
+		const exec: Exec = async (cmd, opts) => {
+			if (cmd[2] === "xb") return { exitCode: 65, stdout: "error: plain\n", stderr: "" };
+			if (cmd[0] === "xcrun") xcrun.push([...cmd]);
+			return s.exec(cmd, opts);
+		};
+		const result = await runLocalBuild({
+			...common,
+			exec,
+			project: s.project,
+			platform: "ios",
+			hash: "h1",
+			env: { HOME: dir },
+			wardenHome: join(dir, "wh"),
+		});
+		expect(result.success).toBe(false);
+		expect(xcrun).toEqual([]);
+		if (!result.success) expect(result.error).toContain("1 error: plain");
+	});
+
 	test("iOS build gets ccache env", async () => {
 		const s = iosSetup();
 		await runLocalBuild({
@@ -468,8 +630,40 @@ describe("runLocalBuild compiler cache env", () => {
 			CCACHE_DIR: "/w/ccache",
 			CCACHE_BASEDIR: s.root,
 			COMPILATION_CACHE_ENABLE_CACHING: "YES",
+			CCACHE_BINARY: "/opt/homebrew/bin/ccache",
 			EXPO_NO_TELEMETRY: "1",
 		});
+	});
+
+	test("no ccache on PATH → no CCACHE_BINARY, the build still runs", async () => {
+		const s = iosSetup();
+		const exec: Exec = async (cmd, opts) =>
+			cmd.join(" ") === "which ccache" ? { exitCode: 1, stdout: "", stderr: "" } : s.exec(cmd, opts);
+		await runLocalBuild({
+			...common,
+			exec,
+			project: s.project,
+			platform: "ios",
+			hash: "h1",
+			env: { HOME: dir },
+			wardenHome: "/w",
+		});
+		expect(s.envs[0]?.USE_CCACHE).toBe("1");
+		expect(s.envs[0]?.CCACHE_BINARY).toBeUndefined();
+	});
+
+	test("a caller's own CCACHE_BINARY wins over the PATH lookup", async () => {
+		const s = iosSetup();
+		await runLocalBuild({
+			...common,
+			exec: s.exec,
+			project: s.project,
+			platform: "ios",
+			hash: "h1",
+			env: { HOME: dir, CCACHE_BINARY: "/custom/ccache" },
+			wardenHome: "/w",
+		});
+		expect(s.envs[0]?.CCACHE_BINARY).toBe("/custom/ccache");
 	});
 
 	test("the ccache base dir is the git facts' toplevel: one rev-parse, shared through the git cache", async () => {
@@ -860,18 +1054,21 @@ describe("runLocalBuild: a stale CNG native dir is regenerated before the build"
 		writeFileSync(join(root, "android", "stale"), "old prebuild");
 		const command = opts.command ?? EXPO_RUN;
 		const seen = { staleAtBuild: undefined as boolean | undefined };
+		/** the build command: records whether the stale marker survived, then fails or makes the apk */
+		const build = () => {
+			seen.staleAtBuild = existsSync(join(root, "android", "stale"));
+			const buildExit = opts.buildExit ?? 0;
+			if (buildExit !== 0) return { exitCode: buildExit, stdout: "", stderr: "BUILD FAILED" };
+			mkdirSync(apkDir(root), { recursive: true });
+			writeFileSync(join(apkDir(root), "app-debug.apk"), "apk");
+			return { exitCode: 0, stdout: "", stderr: "" };
+		};
+		const ignoredExit = opts.ignored === false ? 1 : 0;
 		const exec: Exec = async (cmd) => {
 			const joined = cmd.join(" ");
-			if (cmd[2] === command) {
-				seen.staleAtBuild = existsSync(join(root, "android", "stale"));
-				if ((opts.buildExit ?? 0) !== 0) return { exitCode: opts.buildExit ?? 1, stdout: "", stderr: "BUILD FAILED" };
-				mkdirSync(apkDir(root), { recursive: true });
-				writeFileSync(join(apkDir(root), "app-debug.apk"), "apk");
-				return { exitCode: 0, stdout: "", stderr: "" };
-			}
+			if (cmd[2] === command) return build();
 			if (cmd[2] === "fp") return { exitCode: 0, stdout: '{"hash":"h1"}', stderr: "" };
-			if (joined === "git check-ignore -q android")
-				return { exitCode: opts.ignored === false ? 1 : 0, stdout: "", stderr: "" };
+			if (joined === "git check-ignore -q android") return { exitCode: ignoredExit, stdout: "", stderr: "" };
 			if (joined.startsWith("git status --porcelain")) return { exitCode: 0, stdout: "", stderr: "" };
 			return { exitCode: 127, stdout: "", stderr: joined };
 		};
@@ -917,6 +1114,26 @@ describe("runLocalBuild: a stale CNG native dir is regenerated before the build"
 		expect((await result).success).toBe(true);
 		expect(s.seen.staleAtBuild).toBe(true);
 		expect(written).toEqual(["h1"]);
+	});
+
+	test("an Android build reports the keystore Gradle signed with, read from the prebuilt project", async () => {
+		const s = cng();
+		const app = join(dir, "app", "android", "app");
+		mkdirSync(app, { recursive: true });
+		writeFileSync(join(app, "debug.keystore"), "ks");
+		writeFileSync(
+			join(app, "build.gradle"),
+			"signingConfigs { debug { storeFile file('debug.keystore') storePassword 'android' keyAlias 'androiddebugkey' keyPassword 'android' } }\nbuildTypes { debug { signingConfig signingConfigs.debug } }"
+		);
+		const { result } = s.run("h1");
+		const built = await result;
+		if (!built.success) throw new Error(built.error);
+		expect(built.data.signing).toEqual({
+			path: join(app, "debug.keystore"),
+			alias: "androiddebugkey",
+			storePass: "android",
+			keyPass: "android",
+		});
 	});
 
 	test("a committed (not git-ignored) native dir is never removed", async () => {

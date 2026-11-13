@@ -1,5 +1,23 @@
 import { describe, expect, test } from "bun:test";
-import { decodeMarkdownUrl, encodeMarkdownUrl, isFileHref } from "./shared";
+import { appDescription, decodeMarkdownUrl, encodeMarkdownUrl, isFileHref, metaDescription } from "./shared";
+
+describe("the search snippets", () => {
+	test("lead with the queries warden answers", () => {
+		expect(metaDescription).toMatch(/^AI agent toolkit for React Native and Expo/);
+		expect(metaDescription).toContain("E2E testing");
+		expect(metaDescription).toContain("iOS simulator");
+		expect(metaDescription).toContain("Android emulator");
+		expect(metaDescription).toContain("AI coding agent");
+		expect(metaDescription.length).toBeGreaterThanOrEqual(120);
+		expect(metaDescription.length).toBeLessThanOrEqual(160);
+	});
+
+	test("the long description names React Native and end-to-end testing too", () => {
+		expect(appDescription).toMatch(/AI agent toolkit/);
+		expect(appDescription).toMatch(/React Native/);
+		expect(appDescription).toMatch(/end-to-end/);
+	});
+});
 
 describe("encodeMarkdownUrl", () => {
 	test("root page is index.md", () => {

@@ -37,4 +37,12 @@ final class ReadyTests: XCTestCase {
   func testHealthGolden() throws {
     try Fixture.assertGolden(RunnerInfo.health(fields: fields, uptimeMs: 0, state: "serving"), named: "health.golden.json")
   }
+
+  func testBusyHealthNamesTheOpHoldingXCUITest() {
+    let busy: JSON = ["op": "tap", "id": "7", "ms": 4200]
+    let health = RunnerInfo.health(fields: fields, uptimeMs: 5, state: "busy", busy: busy)
+    XCTAssertEqual(health["state"], "busy")
+    XCTAssertEqual(health["busy"], busy)
+    XCTAssertNil(RunnerInfo.health(fields: fields, uptimeMs: 5, state: "serving")["busy"])
+  }
 }

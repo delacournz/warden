@@ -7,9 +7,16 @@ import type { PidAlive } from "../liveness";
 import { androidTools, forgetAndroidEmulator } from "../providers/android";
 import { type Store, wardenHome } from "../store";
 import type { Lease, Platform } from "../types";
+import {
+	androidA11yResets,
+	androidScreenReaderResets,
+	iosDefaultsDeleteArgvs,
+	iosDefaultsFields,
+	iosDefaultsMissing,
+} from "./a11y-keys";
 import { cameraFeedDir, clearCameraFeeds } from "./camera-media";
 import { activeConditions, clearCondition } from "./conditions";
-import type { ConditionArea, ConditionRecord } from "./conditions.types";
+import { type ConditionArea, type ConditionRecord, IME_STASH_DEFAULT, IME_STASH_ENABLED } from "./conditions.types";
 import { injectStatePath, neutralizeInjectState } from "./inject-state";
 import { launchSettingsPath, writeLaunchSettings } from "./launch-settings";
 
@@ -45,11 +52,14 @@ function resetCommands(
 				return [["xcrun", "simctl", "location", serial, "clear"]];
 			case "permission":
 				return [["xcrun", "simctl", "privacy", serial, "reset", "all"]];
-			case "a11y":
+			case "a11y": {
+				const written = iosDefaultsFields(record.value);
 				return [
 					["xcrun", "simctl", "ui", serial, "content_size", "large"],
 					["xcrun", "simctl", "ui", serial, "increase_contrast", "disabled"],
+					...iosDefaultsDeleteArgvs(serial, written),
 				];
+			}
 			case "battery":
 				return [["xcrun", "simctl", "status_bar", serial, "clear"]];
 			default:
@@ -77,14 +87,49 @@ function resetCommands(
 			return [
 				[...base, "shell", "settings", "put", "system", "font_scale", "1.0"],
 				[...base, "shell", "settings", "put", "secure", "font_weight_adjustment", "0"],
+				...androidA11yResets(record.value).map((argv) => [...base, "shell", ...argv]),
+				...androidScreenReaderResets(record.value).map((argv) => [...base, "shell", ...argv]),
 			];
 		case "locale":
 			return androidLocaleResets(base, record, deps);
 		case "battery":
 			return [[...base, "shell", "dumpsys", "battery", "reset"]];
+		case "keyboard":
+			return androidKeyboardResets(base, record);
 		default:
 			return [];
 	}
+}
+
+/**
+ * Android `hardware` mode disabled every IME, with the originals stashed in `warden_ime_*` global settings (and
+ * recorded on the lease): put them back exactly, then drop the stash. Without a recorded state the stash itself
+ * is read on the device; with neither, there is nothing to restore.
+ */
+function androidKeyboardResets(base: string[], record: ConditionRecord): string[][] {
+	const drop = [
+		[...base, "shell", "settings", "delete", "global", IME_STASH_ENABLED],
+		[...base, "shell", "settings", "delete", "global", IME_STASH_DEFAULT],
+	];
+	const previous = record.area === "keyboard" ? record.value.previousIme : undefined;
+	if (previous === undefined) {
+		const script = [
+			`e=$(settings get global ${IME_STASH_ENABLED})`,
+			`d=$(settings get global ${IME_STASH_DEFAULT})`,
+			`if [ -n "$e" ] && [ "$e" != null ]; then settings put secure enabled_input_methods "$e"; fi`,
+			`if [ -n "$d" ] && [ "$d" != null ]; then settings put secure default_input_method "$d"; fi`,
+		].join("; ");
+		return [[...base, "shell", "sh", "-c", `'${script}'`], ...drop];
+	}
+	return [
+		...(previous.enabled === ""
+			? []
+			: [[...base, "shell", "settings", "put", "secure", "enabled_input_methods", `'${previous.enabled}'`]]),
+		...(previous.default === ""
+			? []
+			: [[...base, "shell", "settings", "put", "secure", "default_input_method", previous.default]]),
+		...drop,
+	];
 }
 
 /** Android: the timezone back to what it was (or the host's), and the app's locale override removed. */
@@ -115,7 +160,8 @@ async function runResets(exec: Exec, cmds: readonly string[][]): Promise<string[
 	for (const cmd of cmds) {
 		try {
 			const result = await exec(cmd);
-			if (result.exitCode !== 0) failures.push(execError(cmd, result));
+			const alreadyGone = cmd[4] === "defaults" && iosDefaultsMissing(`${result.stderr}${result.stdout}`);
+			if (result.exitCode !== 0 && !alreadyGone) failures.push(execError(cmd, result));
 		} catch (error) {
 			failures.push(`${cmd.join(" ")}: ${message(error)}`);
 		}
@@ -176,9 +222,9 @@ function stopOwned(deps: UndoDeps, record: ConditionRecord): { killed: number[];
  * online on the real clock with blank camera feeds; the camera's staged host files are then removed.
  */
 function resetIosInjected(deps: UndoDeps, udid: string, area: ConditionRecord["area"]): string[] {
-	if (area !== "clock" && area !== "network" && area !== "camera") return [];
+	if (area !== "clock" && area !== "network" && area !== "camera" && area !== "keyboard") return [];
 	const home = wardenHome(deps.env);
-	const failed = neutralizeInjectState(injectStatePath(home, udid));
+	const failed = neutralizeInjectState(injectStatePath(home, udid), area);
 	const out = failed ? [failed] : [];
 	if (area !== "camera") return out;
 	try {

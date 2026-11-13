@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
 	DEFAULT_JS_INPUTS,
 	defaultBuildCommand,
+	IOS_DEVICE_RESULT_BUNDLE,
 	iosDeviceBuildCommand,
 	simulatorBuildCommand,
 } from "./builds.defaults";
@@ -12,6 +13,7 @@ import {
 	DEFAULT_UI_KIND,
 	deviceTarget,
 	kindBuildCommand,
+	kindlessIsDev,
 	projectForKind,
 	resolveKind,
 	withDeviceBundleId,
@@ -30,6 +32,13 @@ describe("simulatorBuildCommand", () => {
 		const cmd = simulatorBuildCommand("ios");
 		expect(cmd).toContain("SKIP_BUNDLING=1 bunx expo run:ios --configuration Release --no-install --no-bundler");
 		expect(cmd.startsWith("{ [ -f ios/Podfile ]")).toBe(true);
+	});
+
+	test("iosDeviceBuildCommand: errors land in a fresh result bundle under ios/build", () => {
+		const cmd = iosDeviceBuildCommand("Release", "expo", { team: "ABCDE12345" });
+		expect(IOS_DEVICE_RESULT_BUNDLE).toBe("build/warden.xcresult");
+		expect(cmd).toContain(`&& rm -rf ios/${IOS_DEVICE_RESULT_BUNDLE} && cd ios &&`);
+		expect(cmd).toContain(`-allowProvisioningUpdates -resultBundlePath ${IOS_DEVICE_RESULT_BUNDLE} CODE_SIGN_STYLE`);
 	});
 
 	test("bare React Native iOS", () => {
@@ -136,7 +145,7 @@ describe("device builds", () => {
 		expect(cmd).toContain(
 			'&& cd ios && ws="$(ls -d *.xcworkspace | head -n 1)" && RCT_NO_LAUNCH_PACKAGER=1 xcodebuild'
 		);
-		expect(cmd).toContain('-workspace "$ws" -scheme "${ws%.xcworkspace}" -configuration Release');
+		expect(cmd).toContain(`-workspace "$ws" -scheme "\${ws%.xcworkspace}" -configuration Release`);
 		expect(cmd).toContain("-destination generic/platform=iOS -derivedDataPath build -allowProvisioningUpdates");
 		expect(cmd).toContain("CODE_SIGN_STYLE=Automatic DEVELOPMENT_TEAM=ABCDE12345 build");
 		expect(cmd).not.toContain("PRODUCT_BUNDLE_IDENTIFIER");
@@ -183,5 +192,43 @@ describe("device builds", () => {
 	test("withDeviceBundleId leaves a project without an override alone", () => {
 		const project = testProject();
 		expect(withDeviceBundleId(project)).toBe(project);
+	});
+});
+
+describe("kindlessIsDev", () => {
+	test("the default kind-less project builds exactly the dev kind's build", () => {
+		expect(kindlessIsDev(testProject(), "ios")).toBe(true);
+		expect(
+			kindlessIsDev(
+				testProject({
+					framework: "react-native",
+					build: {
+						ios: defaultBuildCommand("ios", "Debug", "react-native"),
+						android: defaultBuildCommand("android", "Debug", "react-native"),
+					},
+				}),
+				"android"
+			)
+		).toBe(true);
+	});
+
+	test("kinds.dev.build matching the kind-less build is still the same build", () => {
+		const project = testProject({
+			build: { ios: "my build", android: "x" },
+			kinds: { dev: { build: { ios: "my build" } } },
+		});
+		expect(kindlessIsDev(project, "ios")).toBe(true);
+		expect(kindlessIsDev(project, "android")).toBe(false);
+	});
+
+	test("any setting that makes the kind-less build differ is not the dev build", () => {
+		const own = testProject();
+		expect(kindlessIsDev({ ...own, build: { ...own.build, ios: "custom" } }, "ios")).toBe(false);
+		expect(kindlessIsDev({ ...own, buildConfiguration: "Release" }, "ios")).toBe(false);
+		expect(kindlessIsDev({ ...own, variant: "staging" }, "ios")).toBe(false);
+		expect(kindlessIsDev({ ...own, jsInputs: ["src/**"] }, "ios")).toBe(false);
+		expect(kindlessIsDev({ ...own, kind: "dev" }, "ios")).toBe(false);
+		expect(kindlessIsDev({ ...own, target: "device" }, "ios")).toBe(false);
+		expect(kindlessIsDev({ ...own, kinds: { dev: { env: { FOO: "1" } } } }, "ios")).toBe(false);
 	});
 });

@@ -1,3 +1,4 @@
+import { a11yTargetOf, registerA11yTarget } from "./a11y/a11y-target";
 import { createApp } from "./app";
 import { type AlertAction, createDevice, createSessionConditions, type Device } from "./device";
 import { linkInFlight } from "./device-link";
@@ -65,10 +66,13 @@ export async function defaultFixtureFactory(ctx: FixtureContext): Promise<BaseFi
 	const driver = await session.driver();
 	const conditions = createSessionConditions(session, driver, session.env);
 	const device = traceDevice(createDevice({ session, driver, env: session.env, conditions }), session.span);
+	const screen = createScreen(screenHostFor(ctx, device));
+	const a11yTarget = a11yTargetOf(device);
+	if (a11yTarget !== undefined) registerA11yTarget(screen, a11yTarget);
 	return {
 		app: createApp({ session, driver, env: session.env, injectWanted: conditions.internals.wantsInject }),
 		device,
-		screen: createScreen(screenHostFor(ctx, device)),
+		screen,
 		platform: session.env.platform,
 	};
 }

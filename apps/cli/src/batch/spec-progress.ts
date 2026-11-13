@@ -1,4 +1,5 @@
 import { realpathSync } from "node:fs";
+import { formatDuration } from "@delacour/warden-core/duration";
 import { readResults, type TestResult } from "@delacour/warden-e2e/runner/results";
 
 /** A spec finished inside a spec process, read off its `results.jsonl`. */
@@ -118,8 +119,13 @@ export function resultsMarks(
 
 const SYMBOL: Record<TestResult["status"], string> = { passed: "✓", failed: "✗", "timed-out": "✗", skipped: "-" };
 
-/** `✓ <spec> › <describe> › <title> (1.25s)`: one finished test, for the batch log. */
-export function testLine(specId: string, result: TestResult): string {
+/**
+ * `✓ <spec> › <describe> › <title> (1.25s)`: one finished test, for the batch log. Given the run's
+ * start (epoch ms), it adds the run's total at the test's end: `(1.25s · total 1m26s)`.
+ */
+export function testLine(specId: string, result: TestResult, runStartedAt?: number): string {
 	const secs = (result.durationMs / 1000).toFixed(2);
-	return `${SYMBOL[result.status]} ${[specId, ...result.title].join(" › ")} (${secs}s)`;
+	const total =
+		runStartedAt === undefined ? "" : ` · total ${formatDuration(result.startedAt + result.durationMs - runStartedAt)}`;
+	return `${SYMBOL[result.status]} ${[specId, ...result.title].join(" › ")} (${secs}s${total})`;
 }

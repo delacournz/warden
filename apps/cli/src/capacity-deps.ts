@@ -1,7 +1,8 @@
-import { type Budget, type CapacityConfig, hostBudget } from "@delacour/warden-core/capacity";
+import { type Budget, type CapacityConfig, hostBudget, UNLIMITED_BUDGET } from "@delacour/warden-core/capacity";
 import type { CapacityDeps } from "@delacour/warden-core/claim";
 import { type HostFacts, type MemoryPressure, memoryPressure, readHostFacts } from "@delacour/warden-core/host";
 import { markWardenDevices } from "@delacour/warden-core/inventory";
+import { isCi } from "@delacour/warden-core/owner";
 import type { InventoryDevice, Owner, Platform } from "@delacour/warden-core/types";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import { stopHelperAfter } from "./agent-ui/stop-helper-after";
@@ -11,14 +12,19 @@ import { providerFor } from "./providers";
 
 export const CAPACITY_PLATFORMS: readonly Platform[] = ["ios", "android"];
 
-/** `WARDEN_CAPACITY=off` (or 0 / false / no) turns the gate and the boot queue off. */
+/**
+ * Host-spec limits (the RAM / CPU budget, the boot queue, a `--max` grown to the budget) are opt-in:
+ * `WARDEN_CAPACITY=on` (or 1 / true / yes). Anything else, including unset, enforces nothing and warden
+ * boots what is asked for. An explicit `--max` / profile `max` is a user choice and always holds.
+ */
 export function capacityEnabled(env: Record<string, string | undefined>): boolean {
 	const value = env.WARDEN_CAPACITY?.trim().toLowerCase();
-	return !(value === "off" || value === "0" || value === "false" || value === "no");
+	return value === "on" || value === "1" || value === "true" || value === "yes";
 }
 
 /**
  * Capacity overrides from env: `WARDEN_CAPACITY_MAX` (hard unit cap) and `WARDEN_CAPACITY_HEADROOM_GB`.
+ * In CI the headroom defaults to 0 (a 7 GB runner has nothing to spare); an explicit value wins.
  * A bad value is skipped and reported in `problems`. There is no `~/.warden` user config file, and the
  * project `warden.config.ts` is per repo, so env is the one machine-wide override for now.
  */
@@ -42,6 +48,7 @@ export function capacityConfigFromEnv(env: Record<string, string | undefined>): 
 	if (max !== undefined) config.max = max;
 	const headroom = read("WARDEN_CAPACITY_HEADROOM_GB", 0, false);
 	if (headroom !== undefined) config.headroomGb = headroom;
+	else if (isCi(env)) config.headroomGb = 0;
 	return { config, problems };
 }
 
@@ -70,7 +77,12 @@ export function hostInventoryOf(ctx: CommandContext, owner: Owner): () => AsyncR
 
 export const pressureOf = (ctx: CommandContext) => (): AsyncResult<MemoryPressure> => memoryPressure(ctx.exec);
 
-/** Capacity gate deps for a claim; undefined when `WARDEN_CAPACITY=off`. */
+/** The budget something that sizes itself to the host should use: the real one when limits are on, else none. */
+export function enforcedBudget(env: Record<string, string | undefined>, basis: CapacityBasis): Budget {
+	return capacityEnabled(env) ? basis.budget : UNLIMITED_BUDGET;
+}
+
+/** Capacity gate deps for a claim; undefined unless opted in with `WARDEN_CAPACITY=on`. */
 export async function buildCapacityDeps(ctx: CommandContext, owner: Owner): Promise<CapacityDeps | undefined> {
 	if (!capacityEnabled(ctx.env)) return undefined;
 	const { budget, config } = await readCapacityBasis(ctx);

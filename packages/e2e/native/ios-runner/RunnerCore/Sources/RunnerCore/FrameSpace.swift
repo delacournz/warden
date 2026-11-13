@@ -44,7 +44,8 @@ struct FrameSpace: Equatable, Sendable {
   }
 
   /// `rootFrame` is the foreground application's frame as XCUITest reports it now.
-  static func resolve(device: DeviceOrientation, rootFrame: Rect) -> FrameSpace {
+  static func resolve(device: DeviceOrientation, rootFrame raw: Rect) -> FrameSpace {
+    let rootFrame = raw.finiteOrZero
     let short = min(rootFrame.width, rootFrame.height)
     let long = max(rootFrame.width, rootFrame.height)
     let landscape = rootFrame.width > rootFrame.height
@@ -89,5 +90,17 @@ struct FrameSpace: Equatable, Sendable {
     case .landscapeLeft: return Point(x: width - point.y, y: point.x)
     case .landscapeRight: return Point(x: point.y, y: height - point.x)
     }
+  }
+}
+
+extension Rect {
+  /// No screen is this many points; `CGRect.infinite` is ±8.9e307, finite but meaningless.
+  static let maxMagnitude = 1e9
+
+  /// XCUITest reports `CGRect.null` (origin at +infinity) or `CGRect.infinite` for an element it cannot place. Such a
+  /// frame is `.zero` on the wire: no area, not hittable, no tap point, and never a non-finite number.
+  var finiteOrZero: Rect {
+    let placed = [x, y, width, height].allSatisfy { $0.isFinite && abs($0) < Self.maxMagnitude }
+    return placed ? self : .zero
   }
 }

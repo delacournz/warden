@@ -14,8 +14,7 @@ export const TEXTAREA_DEFAULT_MAX_ROWS = 10;
  * A paragraph needs more leading than the one line `Input` sets `leading-tight`
  * for, and a row count only becomes a height once the height of a line is a
  * number. So the number lives here, and the `leading-*` class that sets it lives
- * in {@link textareaVariants} beside it; `textarea.variants.test.ts` reads the
- * class back and fails if the two ever disagree.
+ * in {@link textareaVariants} beside it; the two must never disagree.
  */
 export const TEXTAREA_LINE_HEIGHTS: Record<InputSize, number> = { sm: 20, md: 24, lg: 28 };
 
@@ -56,9 +55,13 @@ export const textareaVariants = tv({
 			md: { field: "leading-6" },
 			lg: { field: "leading-7" },
 		},
+		// Inside an `Input.Group` the wrapper shares the group's row with the
+		// decorators, so it takes the width they leave, as a grouped `Input` does.
+		isGrouped: { true: { root: "flex-1" }, false: {} },
 	},
 	defaultVariants: {
 		size: "md",
+		isGrouped: false,
 	},
 });
 
@@ -71,7 +74,7 @@ export type TextareaVariantProps = VariantProps<typeof textareaVariants>;
  * the `leading-tight` that slot sets rather than sitting beside it — and a
  * caller's className, merged last here, still wins over both.
  *
- * Pure, so it is reachable from `bun test`. See AGENTS.md.
+ * Pure, so it is unit-testable. See AGENTS.md.
  */
 export function resolveTextareaFieldClass({ size, className }: { size: InputSize; className?: string }): string {
 	return textareaVariants({ size }).field({ className });
@@ -89,7 +92,7 @@ function wholeRows(value: number | undefined, fallback: number): number {
  * A ceiling below the floor is lifted up to it — otherwise a growing field
  * would shrink as it grew.
  *
- * Pure, so it is reachable from `bun test`. See AGENTS.md.
+ * Pure, so it is unit-testable. See AGENTS.md.
  */
 export function resolveTextareaRows({ rows, maxRows }: { rows?: number; maxRows?: number }): {
 	rows: number;
@@ -103,10 +106,23 @@ export function resolveTextareaRows({ rows, maxRows }: { rows?: number; maxRows?
  * Points tall a box of `rows` lines is: the lines, plus the padding and the
  * border either side.
  *
- * Pure, so it is reachable from `bun test`. See AGENTS.md.
+ * Inside an `Input.Group` the group draws the box — border and vertical
+ * padding — around every section at once, so a grouped field is its lines and
+ * nothing else. Adding the box back gives exactly the lone height.
+ *
+ * Pure, so it is unit-testable. See AGENTS.md.
  */
-export function resolveTextareaRowsHeight({ rows, size }: { rows: number; size: InputSize }): number {
-	return rows * TEXTAREA_LINE_HEIGHTS[size] + 2 * TEXTAREA_PADDING_Y[size] + 2 * TEXTAREA_BORDER_WIDTH;
+export function resolveTextareaRowsHeight({
+	rows,
+	size,
+	isGrouped = false,
+}: {
+	rows: number;
+	size: InputSize;
+	isGrouped?: boolean;
+}): number {
+	const lines = rows * TEXTAREA_LINE_HEIGHTS[size];
+	return isGrouped ? lines : lines + 2 * TEXTAREA_PADDING_Y[size] + 2 * TEXTAREA_BORDER_WIDTH;
 }
 
 /**
@@ -121,24 +137,27 @@ export function resolveTextareaRowsHeight({ rows, size }: { rows: number; size: 
  * own multiline `TextInput` sizes itself to its content — no measuring pass, so
  * no frame drawn at the old height after a line is added.
  *
- * Pure, so it is reachable from `bun test`. See AGENTS.md.
+ * Pure, so it is unit-testable. See AGENTS.md.
  */
 export function resolveTextareaHeightStyle({
 	size,
 	rows,
 	maxRows,
 	autoGrow = false,
+	isGrouped = false,
 }: {
 	size: InputSize;
 	rows?: number;
 	maxRows?: number;
 	autoGrow?: boolean;
+	/** Inside an `Input.Group`, which draws the box. */
+	isGrouped?: boolean;
 }): { height: number } | { minHeight: number; maxHeight: number } {
 	const lines = resolveTextareaRows({ maxRows, rows });
-	if (!autoGrow) return { height: resolveTextareaRowsHeight({ rows: lines.rows, size }) };
+	if (!autoGrow) return { height: resolveTextareaRowsHeight({ isGrouped, rows: lines.rows, size }) };
 	return {
-		maxHeight: resolveTextareaRowsHeight({ rows: lines.maxRows, size }),
-		minHeight: resolveTextareaRowsHeight({ rows: lines.rows, size }),
+		maxHeight: resolveTextareaRowsHeight({ isGrouped, rows: lines.maxRows, size }),
+		minHeight: resolveTextareaRowsHeight({ isGrouped, rows: lines.rows, size }),
 	};
 }
 
@@ -158,7 +177,7 @@ export type TextareaCount = {
  * can never see, and the count has to say something at the moment typing stops
  * working. A controlled value set past the limit in code still reads as at it.
  *
- * Pure, so it is reachable from `bun test`. See AGENTS.md.
+ * Pure, so it is unit-testable. See AGENTS.md.
  */
 export function resolveTextareaCount({ length, maxLength }: { length: number; maxLength: number }): TextareaCount {
 	const isAtLimit = length >= maxLength;

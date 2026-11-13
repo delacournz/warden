@@ -45,10 +45,16 @@ export function compareRuntimeDesc(a: InventoryDevice, b: InventoryDevice): numb
 	return 0;
 }
 
+/** A version-only request (`26.5`, `iOS 26.5`, `iOS-26-5`): `26` also matches 26.x, `26.5` also 26.5.1. */
+const VERSION_REQUEST = /^(?:iOS[- ])?\d+(?:[.-]\d+)*$/i;
+
 function runtimeMatches(device: InventoryDevice, runtime: string | undefined): boolean {
 	if (runtime === undefined || runtime === "latest") return true;
 	if (device.runtime === undefined) return false;
-	return device.runtime === runtime || device.runtime.endsWith(runtime);
+	if (device.runtime === runtime || device.runtime.endsWith(runtime)) return true;
+	if (!VERSION_REQUEST.test(runtime)) return false;
+	const have = runtimeVersion(device.runtime);
+	return runtimeVersion(runtime).every((n, i) => have[i] === n);
 }
 
 function profileMatches(device: InventoryDevice, profile: string): boolean {

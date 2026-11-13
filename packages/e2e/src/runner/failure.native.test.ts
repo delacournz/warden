@@ -34,6 +34,22 @@ describe("captureNativeArtifacts", () => {
 		);
 		expect(capture.files).toEqual(["native.log"]);
 	});
+	test("passes the tail of the readable lines through", async () => {
+		const withTail: Exec = async (cmd) =>
+			cmd.includes("get_app_container") || cmd.includes("plutil")
+				? { exitCode: 0, stdout: "App\n", stderr: "" }
+				: {
+						exitCode: 0,
+						stdout: `${JSON.stringify({ eventType: "logEvent", messageType: "Error", timestamp: "2026-11-05 18:45:56.413920+0000", eventMessage: "SecError" })}\n`,
+						stderr: "",
+					};
+		const capture = await captureNativeArtifacts(
+			target,
+			{ exec: withTail, adb: "adb", fs, reportsDir: "/r" },
+			{ dir: "/o", sinceMs: Date.now() }
+		);
+		expect(capture.tail).toEqual(["18:45:56.413 error SecError"]);
+	});
 	test("spent budget skips with a problem", async () => {
 		const capture = await captureNativeArtifacts(
 			target,

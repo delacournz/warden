@@ -21,7 +21,6 @@ A content surface with a header, a body and a footer, built on
 | `card.context.tsx` | `CardProvider`, `useCard()`, `useCardContext()`, `useCardPart()` |
 | `card.types.ts` | Prop types shared by two or more parts |
 | `card.variants.ts` | The slotted `tv()`, `resolveCardFooterFill`, `splitCardHeaderChildren` — no RN imports |
-| `card.variants.test.ts` | |
 
 ## Design
 
@@ -65,7 +64,7 @@ A content surface with a header, a body and a footer, built on
   as `flex-1` with the actions after it. The title wraps in the width an action
   leaves instead of pushing it off the edge. The helper takes its predicate as
   an argument so it stays in `card.variants.ts`, free of the part and of React
-  Native, and reachable from `bun test`.
+  Native, and unit-testable.
 - **Bare text in a header is its title.** A raw string inside a `View` is a
   red box, and a header's text is its heading — the same wrap, for the same
   reason, as [`ListGroup.Item`](../list-group/AGENTS.md).
@@ -86,3 +85,7 @@ A content surface with a header, a body and a footer, built on
   that knows what the press means. The playground's plan picker is the example.
 - **No text treatment on the root, header, content or footer** (rule 1). The
   tests assert it across every combination.
+
+- **`material` passes straight to `Surface`.** `etched` lifts the card with the edge highlight;
+  `tray` frames panels. A card inside a tray takes the xl corner and the card fill. Pair `etched`
+  with `className="rounded-2xl"` for the 18-point corner; the radius is not part of the material.

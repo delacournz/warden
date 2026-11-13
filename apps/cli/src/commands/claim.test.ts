@@ -155,7 +155,7 @@ describe("warden claim", () => {
 			["ios", "--json", "--no-wait", "--priority", "high"],
 			fakeSimctl([wardenSim(1, "Booted"), wardenSim(2)])
 		);
-		c.env = { ...c.env, WARDEN_CAPACITY_MAX: "1" };
+		c.env = { ...c.env, WARDEN_CAPACITY: "on", WARDEN_CAPACITY_MAX: "1" };
 		c.db.insertLease(
 			{
 				resource: { kind: "device", platform: "ios", id: "U1", name: "warden-iphone-17-1" },
@@ -176,9 +176,9 @@ describe("warden claim", () => {
 		expect(c.db.listQueue()).toEqual([]);
 	});
 
-	test("WARDEN_CAPACITY=off never queues", async () => {
+	test("by default a claim never queues on host specs, even with WARDEN_CAPACITY_MAX set", async () => {
 		const c = setup(["ios", "--json", "--no-wait"], fakeSimctl([wardenSim(1, "Booted"), wardenSim(2)]));
-		c.env = { ...c.env, WARDEN_CAPACITY_MAX: "1", WARDEN_CAPACITY: "off" };
+		c.env = { ...c.env, WARDEN_CAPACITY_MAX: "1" };
 		c.db.insertLease(
 			{
 				resource: { kind: "device", platform: "ios", id: "U1", name: "warden-iphone-17-1" },
@@ -189,6 +189,27 @@ describe("warden claim", () => {
 		);
 		expect(await claimCommand.run(c)).toBe(0);
 		expect((c.ui as ScriptedUi).events.join("\n")).not.toContain("queued #");
+	});
+
+	test("by default a claim on a low-memory host boots at once; opted in, with a device already up, it has no room", async () => {
+		const tiny = { totalMem: 4 * 1024 ** 3, perfCores: 2, effCores: 0, os: "darwin" } as const;
+		const c = setup(["ios", "--json", "--no-wait"], fakeSimctl([wardenSim(1)]));
+		c.hostFacts = async () => tiny;
+		expect(await claimCommand.run(c)).toBe(0);
+		ctx?.cleanup();
+		const d = setup(["ios", "--json", "--no-wait"], fakeSimctl([wardenSim(1, "Booted"), wardenSim(2)]));
+		d.hostFacts = async () => tiny;
+		d.env = { ...d.env, WARDEN_CAPACITY: "on" };
+		d.db.insertLease(
+			{
+				resource: { kind: "device", platform: "ios", id: "U1", name: "warden-iphone-17-1" },
+				owner: { kind: "agent", sessionId: "other", cwd: "/" },
+				ttlMs: 60_000,
+			},
+			d.now()
+		);
+		expect(await claimCommand.run(d)).toBe(7);
+		expect(JSON.parse(d.stdout.join("\n")).error.capacityReason).toBe("ram-budget");
 	});
 
 	test("bad flags → exit 1", async () => {

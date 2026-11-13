@@ -62,8 +62,7 @@ export const EMPTY_STATE_MEDIA_FOREGROUND_TOKEN: Record<EmptyStateMediaVariant, 
  * cascade colour to a `Text` descendant, so colour lives on `title` and
  * `description`, and a glyph's colour on {@link EMPTY_STATE_MEDIA_FOREGROUND_TOKEN}.
  *
- * Free of React Native imports so it stays unit-testable — `bun test` cannot
- * parse React Native's Flow-typed source. See AGENTS.md.
+ * Free of React Native imports so it stays pure and unit-testable. See AGENTS.md.
  */
 export const emptyStateVariants = tv({
 	slots: {

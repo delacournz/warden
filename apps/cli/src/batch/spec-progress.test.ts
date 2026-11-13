@@ -107,4 +107,12 @@ describe("testLine", () => {
 		expect(testLine("todos", result(file("todos"), "add", "timed-out"))).toStartWith("✗ ");
 		expect(testLine("todos", result(file("todos"), "add", "skipped"))).toStartWith("- ");
 	});
+
+	test("with the run's start: the time since then at the test's end, as `· total <elapsed>`", () => {
+		const at = (startedAt: number, durationMs: number) =>
+			testLine("todos", result(file("todos"), "add", "passed", { startedAt, durationMs }), 1_000);
+		expect(at(1_000, 1_250)).toBe("✓ todos › add (1.25s · total 1s)");
+		expect(at(80_000, 6_000)).toBe("✓ todos › add (6.00s · total 1m25s)");
+		expect(at(0, 500)).toBe("✓ todos › add (0.50s · total 0s)");
+	});
 });

@@ -16,9 +16,7 @@ Compound root plus `Avatar.Badge` and `Avatar.Group`.
 | `avatar-group.tsx` | `Avatar.Group`, plus its internal `Item` and `Overflow` leaves |
 | `avatar.context.tsx` | `AvatarProvider`, `AvatarGroupProvider`, `useAvatar()`, `useAvatarContext()`, `useAvatarGroupContext()`, `useAvatarPart()` |
 | `avatar.variants.ts` | Pure `tv()` slots, `AVATAR_SIZE_POINTS`, `resolveAvatarSize`, `resolveAvatarOverlap`, `resolveAvatarInteractive` |
-| `avatar.variants.test.ts` | |
-| `avatar.utils.ts` | Pure non-styling logic — initials, the image-retry key, group overflow maths, the spoken label |
-| `avatar.utils.test.ts` | |
+| `avatar.utils.ts` | Pure non-styling logic — initials, the image-retry key, flattening a group's fragments, group overflow maths, the spoken label |
 
 ## Design
 
@@ -28,8 +26,10 @@ Compound root plus `Avatar.Badge` and `Avatar.Group`.
   showing rather than an empty circle — there is no loading state to manage
   because there is nothing to swap.
 - **A failure is remembered by key, not by object.** `resolveAvatarSourceKey`
-  turns the source into a string — URI plus sorted headers, or the asset's module
-  id — and `onError` stores the key that failed. Keyed by object identity, an
+  turns the source into a JSON string — every request field (URI, bundle,
+  method, sorted headers, body, cache mode) and the entry's width, height and
+  scale, or the asset's module id — and
+  `onError` stores the key that failed. Keyed by object identity, an
   inline `source={{ uri }}` is new every render and a dead URL would retry
   forever; keyed by URI alone, a token refresh in the headers would never retry.
   A consumer's `imageProps.onError` fires after the fallback has taken over.
@@ -44,11 +44,11 @@ Compound root plus `Avatar.Badge` and `Avatar.Group`.
   the clipped circle. An `Avatar.Badge` hangs over the circle's edge, and a
   single clipped box would cut it in half. A test asserts `overflow-hidden` is on
   `face` and never on `root`.
-- **Initials are the first letter of the first and last word.** `Mary Jane
-  Watson` is `MW`, the way a person signs, and `Cher` is `C`.
+- **Initials are the first letter of the first and last word.** `Anahera Rose
+  Tui` is `AT`, the way a person signs, and `Mihi` is `M`.
   `resolveAvatarInitials` walks code points rather than UTF-16 units, so a letter
   outside the basic plane is never split into a replacement box, and skips
-  leading punctuation so `"(Kate)"` still gives `K`. `fallback` overrides the
+  leading punctuation so `"(Aria)"` still gives `A`. `fallback` overrides the
   drawn text only; `name` is still what a screen reader reads.
 - **Two axes paint the fallback, on `Badge`'s six colours.** `variant` is `soft`
   or `solid`, `color` is `default` … `info`, and the twelve cells live in
@@ -62,8 +62,11 @@ Compound root plus `Avatar.Badge` and `Avatar.Group`.
   `border-border` inside the box, so nothing moves, and the edge goes while a
   photo is mounted (`hasImage`), since a grey line around a face reads as a
   frame. The coloured fallbacks have fill enough without one.
-- **A size is a fixed edge, unlike a badge.** `sm`/`md`/`lg`/`xl` are
-  32/40/48/64 points. Faces line up against each other and against list rows, and
+- **A size is a fixed edge, unlike a badge.** `sm`/`md`/`lg`/`xl`/`2xl` are
+  32/40/48/64/96 points. `2xl` is the face a profile leads with — what
+  [`PageHeader`](../page-header/AGENTS.md) draws by default — and it is a step on
+  the scale rather than a `size-24` override so `AVATAR_SIZE_POINTS` never lies
+  about the edge the group maths and initials sizing read. Faces line up against each other and against list rows, and
   a circle that grew with OS font scaling would break the stack; the initials
   therefore set `allowFontScaling={false}` and are sized to fit the smallest
   step. `AVATAR_SIZE_POINTS` restates the scale as numbers because the group's
@@ -77,7 +80,7 @@ Compound root plus `Avatar.Badge` and `Avatar.Group`.
 - **The avatar is one element to assistive technology.** The root is
   `accessible`, so an `Avatar.Badge` inside it is never focused on its own. A
   presence dot has no words; put the status into the avatar's
-  `accessibilityLabel` (`"Kate Austen, online"`).
+  `accessibilityLabel` (`"Aria Whitlock, online"`).
 - **`Avatar.Badge` is a pin, and a dot only when empty.** Given children — a
   `Badge` with a count, an `Icon` — it positions them and adds nothing else, so a
   count keeps the look it has everywhere else. Empty, it draws a dot sized to

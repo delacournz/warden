@@ -224,6 +224,74 @@ describe("battery", () => {
 	});
 });
 
+describe("keyboard", () => {
+	test("hardware sets the mode and records it; software clears the record", async () => {
+		const h = setup("ios");
+		expect(await h.run("keyboard", "hardware", "--json")).toBe(0);
+		expect(h.driver.callsOf("keyboard")[0]?.mode).toBe("hardware");
+		expect(row(h, "keyboard")?.value).toEqual({ mode: "hardware" });
+		expect(doc(h.c)).toMatchObject({
+			ok: true,
+			command: "keyboard hardware",
+			result: { action: "keyboard-set", mode: "hardware" },
+		});
+		expect(await h.run("keyboard", "software")).toBe(0);
+		expect(h.driver.callsOf("keyboard").at(-1)?.mode).toBe("software");
+		expect(row(h, "keyboard")).toBeUndefined();
+	});
+
+	test("toggle flips the mode the driver reports", async () => {
+		const h = setup("android");
+		await h.run("keyboard", "toggle");
+		expect(h.driver.callsOf("keyboard").at(-1)?.mode).toBe("hardware");
+		await h.run("keyboard", "toggle");
+		expect(h.driver.callsOf("keyboard").at(-1)?.mode).toBe("software");
+	});
+
+	test("status prints the mode and whether a keyboard is up", async () => {
+		const h = setup("ios");
+		expect(await h.run("keyboard", "status", "--json")).toBe(0);
+		expect(doc(h.c)).toMatchObject({ result: { action: "keyboard-status", mode: "software", visible: false } });
+	});
+
+	test("reset restores software and forgets the record", async () => {
+		const h = setup("ios");
+		await h.run("keyboard", "hardware");
+		expect(await h.run("keyboard", "reset", "--json")).toBe(0);
+		expect(h.driver.callsOf("keyboard").at(-1)?.mode).toBe("software");
+		expect(row(h, "keyboard")).toBeUndefined();
+	});
+
+	test("reset with nothing recorded changes nothing", async () => {
+		const h = setup("ios");
+		expect(await h.run("keyboard", "reset", "--json")).toBe(0);
+		expect(h.driver.callsOf("keyboard")).toHaveLength(0);
+	});
+
+	test("appliesOnLaunch warns", async () => {
+		const h = setup("ios", (call) =>
+			call.method === "keyboard" ? { data: { mode: "hardware", appliesOnLaunch: true } } : undefined
+		);
+		await h.run("keyboard", "hardware", "--json");
+		expect(doc(h.c).warnings[0]).toContain("next");
+	});
+
+	test("E_UNSUPPORTED surfaces and records nothing", async () => {
+		const h = setup("ios", (call) =>
+			call.method === "keyboard" ? failWith("E_UNSUPPORTED", "physical iOS") : undefined
+		);
+		expect(await h.run("keyboard", "hardware", "--json")).toBe(1);
+		expect(doc(h.c).error.message).toContain("E_UNSUPPORTED");
+		expect(row(h, "keyboard")).toBeUndefined();
+	});
+
+	test("an unknown action is a usage error", async () => {
+		const h = setup("ios");
+		expect(await h.run("keyboard", "both", "--json")).toBe(1);
+		expect(doc(h.c).error.code).toBe("usage");
+	});
+});
+
 describe("memory-warning and push", () => {
 	test("memory-warning goes to --app", async () => {
 		const h = setup();

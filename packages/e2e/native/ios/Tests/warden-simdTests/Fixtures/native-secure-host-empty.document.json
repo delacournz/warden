@@ -1,0 +1,158 @@
+{
+ "automation": null,
+ "backend": "ax",
+ "coverage": null,
+ "elements": [
+  {
+   "children": [
+    {
+     "children": [],
+     "enabled": true,
+     "focused": false,
+     "frame": {
+      "height": 20.333333333333314,
+      "width": 45.33333333333334,
+      "x": 178.33333333333334,
+      "y": 311.83333333333337
+     },
+     "hidden": false,
+     "identifier": null,
+     "label": "Probe",
+     "pid": 36284,
+     "placeholder": null,
+     "traits": [
+      "StaticText",
+      "Scrollable"
+     ],
+     "type": "StaticText",
+     "value": null
+    },
+    {
+     "children": [],
+     "enabled": true,
+     "focused": false,
+     "frame": {
+      "height": 34,
+      "width": 370,
+      "x": 16,
+      "y": 348.3333333333333
+     },
+     "hidden": false,
+     "identifier": "swiftui-secure",
+     "label": null,
+     "pid": 36284,
+     "placeholder": "SwiftUI password",
+     "traits": [
+      "TextEntry",
+      "SecureTextField",
+      "Scrollable",
+      "TextOperationsAvailable"
+     ],
+     "type": "TextField",
+     "value": "SwiftUI password"
+    },
+    {
+     "children": [],
+     "enabled": true,
+     "focused": false,
+     "frame": {
+      "height": 40,
+      "width": 370,
+      "x": 16,
+      "y": 398.3333333333333
+     },
+     "hidden": false,
+     "identifier": "uikit-secure",
+     "label": null,
+     "pid": 36284,
+     "placeholder": "UIKit password",
+     "traits": [
+      "TextEntry",
+      "SecureTextField",
+      "Scrollable",
+      "TextOperationsAvailable"
+     ],
+     "type": "TextField",
+     "value": "UIKit password"
+    },
+    {
+     "children": [],
+     "enabled": true,
+     "focused": false,
+     "frame": {
+      "height": 40,
+      "width": 370,
+      "x": 16,
+      "y": 454.3333333333333
+     },
+     "hidden": false,
+     "identifier": null,
+     "label": null,
+     "pid": 36284,
+     "placeholder": "",
+     "traits": [
+      "TextEntry",
+      "SecureTextField",
+      "Scrollable",
+      "TextOperationsAvailable"
+     ],
+     "type": "TextField",
+     "value": ""
+    }
+   ],
+   "enabled": true,
+   "focused": false,
+   "frame": {
+    "height": 874,
+    "width": 402,
+    "x": 0,
+    "y": 0
+   },
+   "hidden": false,
+   "identifier": null,
+   "label": "Probe",
+   "pid": 36284,
+   "placeholder": null,
+   "traits": [
+    "None"
+   ],
+   "type": "Application",
+   "value": null
+  }
+ ],
+ "frames": {
+  "framed": 5,
+  "total": 5,
+  "zero_frame": 0
+ },
+ "interaction": null,
+ "modal": null,
+ "narrowing": {
+  "filter": "all",
+  "ignore_case": null,
+  "match": null,
+  "match_key": null,
+  "matched": 5,
+  "walked": 5
+ },
+ "profile": null,
+ "screen": {
+  "coordinate_space": "screen",
+  "display": {
+   "rotation": 0,
+   "scale": 3,
+   "unique_id": "CAF35824-F1BE-4C58-B261-BD6D089BDED7"
+  },
+  "height": 874,
+  "width": 402
+ },
+ "target": {
+  "kind": "frontmost",
+  "match_key": null,
+  "pid": null,
+  "value": null,
+  "x": null,
+  "y": null
+ },
+ "truncated": false
+}

@@ -23,7 +23,7 @@ The screens show real device conditions on a real simulator, driven by warden: t
 
 - Recorded by `bun run demo <feature>/<clip>` (`scripts/demo/`) on a leased simulator: 9:41 status bar, dark appearance, the docs frame around the phone, the caption "real simulator · not an animation".
 - Driven in specs by `@delacour/warden-e2e` (`device.network`, `device.location`, `device.clock`) in the `conditions` suite, which launches the iOS app with warden's network dylib.
-- `/conditions` stays the plain screen the existing `network-*`, `location-*` and `clock-*` specs drive; the showcase screens are separate routes with their own specs.
+- `/conditions` stays the plain screen the `conditions/*` specs drive; the showcase screens are separate routes with their own specs.
 
 ## Capabilities and Constraints
 

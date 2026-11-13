@@ -25,9 +25,9 @@ export type SeparatorOrientation = (typeof SEPARATOR_ORIENTATIONS)[number];
  *
  * Declared here rather than in a `*.variants.ts` sibling because a separator is
  * a single styled element with no compound parts and no pure resolvers — there
- * is no slot set for another file to share. The cost is that `bun test` cannot
- * reach it: this module imports React Native, whose Flow-typed source Bun's
- * transpiler cannot parse. See AGENTS.md.
+ * is no slot set for another file to share. The cost is that a plain
+ * unit test cannot reach it: this module imports React Native, whose Flow-typed
+ * source a bare JS runtime cannot parse. See AGENTS.md.
  */
 export const separatorVariants = tv({
 	base: "self-stretch bg-border",

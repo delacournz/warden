@@ -1,0 +1,100 @@
+{
+	"count": 5,
+	"issues": [
+		{
+			"auditType": "hitRegion",
+			"auditTypes": ["hitRegion"],
+			"compactDescription": "Hit area is too small",
+			"detailedDescription": "The size of this element is too small for user to interact.",
+			"element": {
+				"frame": {
+					"height": 22,
+					"width": 17.333333333333314,
+					"x": 335.6666666666667,
+					"y": 811
+				},
+				"identifier": "Dictate",
+				"label": "Dictate",
+				"type": "Button"
+			}
+		},
+		{
+			"auditType": "trait",
+			"auditTypes": ["trait"],
+			"compactDescription": "Label duplicates traits",
+			"detailedDescription": "The accessibilityLabel of this element duplicates information that is available in the traits.",
+			"element": {
+				"frame": {
+					"height": 52,
+					"width": 370,
+					"x": 16,
+					"y": 397.3333333333333
+				},
+				"identifier": "com.apple.settings.actionButton",
+				"label": "Action Button",
+				"type": "Button"
+			}
+		},
+		{
+			"auditType": "contrast",
+			"auditTypes": ["contrast"],
+			"compactDescription": "Contrast nearly passed",
+			"detailedDescription": "Contrast is not high enough for element unless font size is larger.",
+			"element": {
+				"frame": {
+					"height": 33.666666666666686,
+					"width": 236,
+					"x": 100,
+					"y": 209.66666666666666
+				},
+				"identifier": "",
+				"label": "Sign in to access your iCloud data, the App Store, Apple services, and more.",
+				"type": "StaticText"
+			}
+		},
+		{
+			"auditType": "contrast",
+			"auditTypes": ["contrast"],
+			"compactDescription": "Contrast failed",
+			"detailedDescription": "Contrast failed for element",
+			"element": {
+				"frame": {
+					"height": 29,
+					"width": 137.6666717529297,
+					"x": 29.66666603088379,
+					"y": 756
+				},
+				"identifier": "",
+				"label": "Screen Time",
+				"type": "StaticText"
+			}
+		},
+		{
+			"auditType": "contrast",
+			"auditTypes": ["contrast"],
+			"compactDescription": "Contrast failed",
+			"detailedDescription": "Contrast failed for element",
+			"element": {
+				"frame": {
+					"height": 29,
+					"width": 116.33333587646484,
+					"x": 29.66666603088379,
+					"y": 843
+				},
+				"identifier": "",
+				"label": "Passcode",
+				"type": "StaticText"
+			}
+		}
+	],
+	"ms": 2749.3,
+	"types": [
+		"contrast",
+		"elementDetection",
+		"hitRegion",
+		"sufficientElementDescription",
+		"dynamicType",
+		"textClipped",
+		"trait"
+	]
+}

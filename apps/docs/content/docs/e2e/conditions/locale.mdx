@@ -1,6 +1,6 @@
 ---
 title: Locale and timezone
-description: Run the app in another language, region or timezone, to test translations, date formats and day boundaries.
+description: Test translations, date formats and day boundaries by running the app in another language, region or timezone from a spec or a suite.
 icon: Languages
 ---
 
@@ -17,14 +17,7 @@ await app.open(); // iOS: the next launch picks both up
 | `locale(tag \| null, { bundleId? })` | a BCP 47 tag (`"fr-FR"`) for the app |
 | `timezone(tz \| null)` | an IANA name (`"Asia/Tokyo"`) |
 
-## Per platform
-
-| | iOS simulator | Android emulator |
-|---|---|---|
-| Locale | applies to the app launched next (`-AppleLanguages` / `-AppleLocale`) | Android 13+ (API 33): per app, live |
-| Timezone | applies to the app launched next (`TZ`); the result has `appliesOnLaunch: true` | live and device-wide |
-
-On iOS, set both before `app.open()`, or relaunch the app.
+On iOS, set both before `app.open()`, or relaunch the app. Android changes them live; the per-app locale needs Android 13+ ([per platform](/docs/sims/conditions/locale#per-platform)).
 
 ## In a suite
 
@@ -32,13 +25,4 @@ On iOS, set both before `app.open()`, or relaunch the app.
 conditions: { locale: "fr-FR", timezone: "Asia/Tokyo" },
 ```
 
-## By hand
-
-```bash
-warden ui locale fr-FR
-warden ui timezone Asia/Tokyo
-warden ui locale status
-warden ui timezone reset
-```
-
-On iOS the change is staged for the next launch (`staged: true` and a warning): `warden ui open --relaunch`. Release clears the app locale and puts the timezone back.
+By hand with `warden ui locale` and `warden ui timezone`: [Locale and timezone on a simulator](/docs/sims/conditions/locale).

@@ -1,6 +1,7 @@
 import { type ReactElement, useCallback, useState } from "react";
 import { View } from "react-native";
 import { Input, type InputProps } from "@/components/ui/input";
+import { useInputGroupContext } from "@/components/ui/input/input.context";
 import { Text } from "@/components/ui/text";
 import {
 	resolveTextareaCount,
@@ -81,6 +82,10 @@ export type TextareaProps = Omit<InputProps, "multiline" | "numberOfLines" | "ma
  * Label, description and error come from `Field`, exactly as they do for
  * `Input` — there is no `label` prop.
  *
+ * Inside an `Input.Group` it is the group's field: the group draws the box,
+ * owns the axes, and can stack an `Input.Group.Block` above or below it — a
+ * message composer with a toolbar and a Send button is one box.
+ *
  * @example
  * <Field>
  *   <Field.Label>Notes</Field.Label>
@@ -92,6 +97,14 @@ export type TextareaProps = Omit<InputProps, "multiline" | "numberOfLines" | "ma
  *
  * @example
  * <Textarea maxLength={280} onChangeText={setStatus} showCount value={status} />
+ *
+ * @example
+ * <Input.Group>
+ *   <Textarea autoGrow rows={2} placeholder="Message" />
+ *   <Input.Group.Block position="end">
+ *     <Input.Group.Button variant="secondary" onPress={send}>Send</Input.Group.Button>
+ *   </Input.Group.Block>
+ * </Input.Group>
  */
 export function Textarea({
 	rows,
@@ -108,8 +121,13 @@ export function Textarea({
 	onChangeText,
 	...props
 }: TextareaProps): ReactElement {
-	const resolvedSize = size ?? "md";
-	const slots = textareaVariants({ size: resolvedSize });
+	// Inside an `Input.Group` the group owns the box and its size, exactly as it
+	// does for an `Input`: the field reads them from there, and its height counts
+	// only its lines because the group draws the padding and border around it.
+	const group = useInputGroupContext();
+	const isGrouped = group !== null;
+	const resolvedSize = group?.size ?? size ?? "md";
+	const slots = textareaVariants({ isGrouped, size: resolvedSize });
 
 	// The count reads the value's length whether or not the caller owns the
 	// value. Controlled, `value` is the truth; uncontrolled, the last text the
@@ -138,7 +156,7 @@ export function Textarea({
 				multiline
 				onChangeText={handleChangeText}
 				size={resolvedSize}
-				style={[resolveTextareaHeightStyle({ autoGrow, maxRows, rows, size: resolvedSize }), style]}
+				style={[resolveTextareaHeightStyle({ autoGrow, isGrouped, maxRows, rows, size: resolvedSize }), style]}
 				value={value}
 			/>
 			{count ? (

@@ -1,12 +1,10 @@
 ---
 title: Network
-description: Take the device offline, slow it to 3G, flap the connection or fail one host, from a spec, a suite or warden ui.
+description: Test the app offline, on 3G, on a flapping link or with one host failing, from a spec or a suite.
 icon: Wifi
 ---
 
-<DemoTabs ids={["network", "fault"]} />
-
-`device.network` shapes what the app's own requests see: offline, a preset speed, a flapping link or one host that fails. The rest of the Mac's traffic is untouched, and the network is back online when the lease ends.
+`device.network` shapes what the app's own requests see: offline, a preset speed, a flapping link or one host that fails. The rest of the Mac's traffic is untouched, and the network is back to the suite's baseline when the test ends.
 
 ```ts title="e2e/network-offline.e2e.ts"
 import { expect, test } from "@delacour/warden-e2e";
@@ -23,19 +21,7 @@ test("cold start offline shows the banner, going online recovers the fetch", asy
 
 ## Set a condition
 
-`device.network.set(condition)` takes `"online"`, `"offline"`, a preset or a custom shape.
-
-| Preset | Latency | Jitter | Down | Up | Loss |
-|---|---|---|---|---|---|
-| `edge` | 400 ms | 25 ms | 240 kbps | 200 kbps | 0 |
-| `3g` | 100 ms | 10 ms | 780 kbps | 330 kbps | 0 |
-| `4g` | 170 ms | 15 ms | 9 Mbps | 9 Mbps | 0 |
-| `lte` | 50 ms | 5 ms | 50 Mbps | 10 Mbps | 0 |
-| `wifi` | 2 ms | 0 | 40 Mbps | 33 Mbps | 0 |
-| `slow` | 2000 ms | 100 ms | 400 kbps | 400 kbps | 0 |
-| `lossy` | 500 ms | 50 ms | 1 Mbps | 1 Mbps | 10% |
-
-`{ kind: "custom", latencyMs?, jitterMs?, downKbps?, upKbps?, lossPct? }` sets your own.
+`device.network.set(condition)` takes `"online"`, `"offline"`, a preset (`edge`, `3g`, `4g`, `lte`, `wifi`, `slow`, `lossy`: [values](/docs/sims/conditions/network#presets)) or `{ kind: "custom", latencyMs?, jitterMs?, downKbps?, upKbps?, lossPct? }`.
 
 ```ts
 await device.network.set("3g");
@@ -53,6 +39,8 @@ await device.network.reset(); // back to the suite's conditions.network (online 
 | `fault(rule \| rules)` | per-host faults; `[]` clears |
 | `status()` | `{ condition, faults, flapping }` |
 | `reset()` | stop the flap, clear faults, back to the baseline |
+
+On iOS a condition reaches only an app launched with warden's network dylib: declare `conditions.network` for the suite, or pass `{ relaunch: true }`. A running app without it fails `E_NETWORK_RELAUNCH` ([how it reaches the app](/docs/sims/conditions/network#how-it-reaches-the-app)).
 
 ## Flapping
 
@@ -76,40 +64,17 @@ Actions: `{ kind: "status", code }`, `{ kind: "reset" }`, `{ kind: "delay", ms }
 
 HTTPS requests are tunnelled without being opened, so a `status` fault cannot answer one: an `https://` request matching it is reset, and `fault()` returns a note saying so. Use `reset` (or `delay` / `blackhole`) for HTTPS hosts and `status` for plain HTTP.
 
-## How it reaches the app
-
-| | iOS simulator | Android emulator |
-|---|---|---|
-| Speed, delay, offline | per-app proxy (a dylib routes the app's `NSURLSession` traffic through the lease's shaping proxy) and a reachability signal | native: `adb emu network`, airplane mode |
-| Loss, faults | the proxy | the proxy, through the system `http_proxy` |
-
-A simulator shares the Mac's network, so on iOS a condition reaches only an app that was launched with warden's network dylib. A running app without it fails `E_NETWORK_RELAUNCH`. Either declare `conditions.network` for the suite ([suite baseline](/docs/e2e/conditions#suite-baseline-the-conditions-key)), so every launch carries the dylib, or pass `{ relaunch: true }`.
-
-The shaping proxy binds loopback, and only while it shapes traffic.
-
 ## In a suite
 
 ```ts title="warden.config.ts"
 conditions: { network: "online" },
 ```
 
-`network` takes `"online"`, `"offline"`, a preset or `{ latencyMs, jitterMs, downKbps, upKbps, lossPct }`. Every spec starts from it, and `reset()` returns to it.
+`network` takes `"online"`, `"offline"`, a preset or `{ latencyMs, jitterMs, downKbps, upKbps, lossPct }`. Every spec starts from it, and `reset()` returns to it. On iOS, declaring it launches every app with the dylib.
 
-## By hand
+## Practice
 
-```bash
-warden ui network set 3g
-warden ui network flap --up 10s --down 3s
-warden ui network fault api.example.com reset
-warden ui network status
-warden ui network reset
-```
-
-`warden ui network log` is the request log of the dev client. See [warden ui](/docs/agents/ui) for every flag, including `--relaunch`.
-
-## Limitations
-
-- iOS shapes the app's `NSURLSession` traffic only. Raw sockets, `NWConnection` and `CFStream` bypass the proxy.
-- Android loss and faults go through the system `http_proxy`: an app that ignores it (a raw socket, `Proxy.NO_PROXY`) is not covered. Speed, delay and offline are native and reach everything.
-- A `status` fault cannot answer an HTTPS request (it is reset).
 - Shaping applies to new traffic through the proxy, and an open connection keeps its cost: after warming a connection, a 3g request pays one round trip (the preset's latency), not the three or four of a cold connection. Assert an ordering with a margin, not an absolute number.
+- Set `offline` before `app.open()` to test a cold start offline.
+
+Platform details, limitations and `warden ui network`: [Network on a simulator](/docs/sims/conditions/network).

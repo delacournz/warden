@@ -50,12 +50,15 @@ export type LayoutOptions = {
 	phoneAspect: number;
 	/** Terminal gif width / height. */
 	terminalAspect: number;
+	/** Set for a fixed-height canvas (16:9): phones on the right, the terminal card as a left column. */
+	height?: number;
 };
 
 const even = (n: number) => Math.max(2, Math.round(n / 2) * 2);
 
 /** Phones in one row, labels under each, terminal pane full-width underneath. */
 export function computeLayout(opts: LayoutOptions): Layout {
+	if (opts.height !== undefined) return computeWideLayout(opts, opts.height);
 	const width = even(opts.width);
 	const u = width / 1920;
 	const margin = Math.round(48 * u);
@@ -105,6 +108,70 @@ export function computeLayout(opts: LayoutOptions): Layout {
 	return {
 		width,
 		height: even(cardTop + cardH + margin),
+		margin,
+		headerY,
+		headerSize,
+		nameSize,
+		jobSize,
+		phones,
+		card,
+		cardRadius: Math.round(14 * u),
+		terminal,
+	};
+}
+
+/** Fixed canvas: phones in a row on the right, labels under each, the terminal card a centred left column. */
+function computeWideLayout(opts: LayoutOptions, canvasHeight: number): Layout {
+	const width = even(opts.width);
+	const height = even(canvasHeight);
+	const u = width / 1920;
+	const margin = Math.round(48 * u);
+	const gap = Math.round(32 * u);
+	const headerSize = Math.round(30 * u);
+	const nameSize = Math.round(20 * u);
+	const jobSize = Math.round(24 * u);
+	const headerY = margin;
+	const phonesTop = headerY + headerSize + Math.round(32 * u);
+	const labels = Math.round(20 * u) + nameSize + Math.round(10 * u) + jobSize;
+	const avail = height - phonesTop - margin - labels;
+
+	const bezelW = Math.max(4, Math.round(avail * opts.phoneAspect * 0.035));
+	const screenH = even(avail - 2 * bezelW);
+	const screenW = even(screenH * opts.phoneAspect);
+	const radius = Math.round(screenW * 0.12);
+	const slotW = screenW + 2 * bezelW;
+	const rowW = opts.phones * slotW + (opts.phones - 1) * gap;
+	const rowX = width - margin - rowW;
+	const bezelH = screenH + 2 * bezelW;
+	const labelTop = phonesTop + bezelH + Math.round(20 * u);
+	const phones: PhoneSlot[] = Array.from({ length: opts.phones }, (_, i) => {
+		const bx = rowX + i * (slotW + gap);
+		return {
+			screen: { x: bx + bezelW, y: phonesTop + bezelW, w: screenW, h: screenH },
+			bezel: { x: bx, y: phonesTop, w: slotW, h: bezelH },
+			radius,
+			labelX: bx + Math.round(slotW / 2),
+			nameY: labelTop,
+			jobY: labelTop + nameSize + Math.round(10 * u),
+		};
+	});
+
+	const pad = Math.round(24 * u);
+	const cardW = rowX - gap - margin;
+	let termW = even(cardW - 2 * pad);
+	let termH = even(termW / opts.terminalAspect);
+	if (termH > bezelH - 2 * pad) {
+		termH = even(bezelH - 2 * pad);
+		termW = even(termH * opts.terminalAspect);
+	}
+	const cardH = termH + 2 * pad;
+	const cardTop = phonesTop + Math.round((bezelH - cardH) / 2);
+	const card = { x: margin, y: cardTop, w: cardW, h: cardH };
+	const terminal = { x: margin + Math.round((cardW - termW) / 2), y: cardTop + pad, w: termW, h: termH };
+
+	return {
+		width,
+		height,
 		margin,
 		headerY,
 		headerSize,

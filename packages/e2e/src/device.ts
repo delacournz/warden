@@ -1,5 +1,6 @@
 import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { registerA11yTarget } from "./a11y/a11y-target";
 import {
 	ACCEPT_BUTTONS,
 	ANDROID_NEGATIVE_ID,
@@ -28,6 +29,7 @@ import {
 	type TimelineStepInput,
 } from "./conditions/device-conditions";
 import { type ConditionRecorder, leaseRecorderFor } from "./conditions/lease-recorder";
+import { createDeviceA11y, type DeviceA11y, withA11yRead } from "./device-a11y";
 import { createDeviceDevtools, type DeviceDevtools } from "./device-devtools";
 import {
 	isOpenInSheet,
@@ -52,6 +54,7 @@ import type {
 import {
 	DEFAULT_SETTLE_QUIET_MS,
 	DEFAULT_SETTLE_TIMEOUT_MS,
+	hashFallbackQuietMs,
 	type SettleDetail,
 	settleByHash,
 	settleDetailOf,
@@ -82,7 +85,11 @@ export type OpenLinkOptions = {
 	waitMs?: number;
 };
 
-export type SnapshotTextOptions = { interactiveOnly?: boolean };
+export type SnapshotTextOptions = {
+	interactiveOnly?: boolean;
+	/** append hint, actions, focus and live-region facts to each line (the iOS injected read is merged in when available) */
+	a11y?: boolean;
+};
 
 export type SettleOptions = {
 	/** how long the UI must stay unchanged. Default 250 ms. */
@@ -112,7 +119,33 @@ export type DeviceBiometrics = {
 	fail(): Promise<BiometricState>;
 };
 
-export type Device = {
+/**
+ * Values per platform for `device.select`: both `ios` and `android`, or a `default` for whichever is left out.
+ * A platform key wins over `default` even when its value is `undefined`.
+ */
+export type PlatformSelect<T> = { ios: T; android: T; default?: T } | { ios?: T; android?: T; default: T };
+
+/** The value of `options` for `platform`: its own key when present, else `default`. */
+export function selectForPlatform<T>(platform: Platform, options: PlatformSelect<T>): T {
+	if (Object.hasOwn(options, platform)) return options[platform] as T;
+	return options.default as T;
+}
+
+export type Device = DeviceA11y & {
+	/**
+	 * The platform under test (`"ios"` | `"android"`), like React Native's `Platform.OS`. Branch a flow on it:
+	 * `if (device.isAndroid) await device.back();`. To skip a whole test use `test(title, { platforms: ["ios"] }, …)`.
+	 */
+	readonly os: Platform;
+	/** `device.os === "ios"`. */
+	readonly isIOS: boolean;
+	/** `device.os === "android"`. */
+	readonly isAndroid: boolean;
+	/**
+	 * The value for the platform under test, like React Native's `Platform.select`:
+	 * `screen.getByText(device.select({ ios: "Done", android: "OK" }))`. Give both platforms, or a `default`.
+	 */
+	select<T>(options: PlatformSelect<T>): T;
 	/**
 	 * Answers the system alert / sheet on top. `accept` presses the first present of OK, Allow, Open,
 	 * Continue, Yes, Done, Allow While Using App, Allow Once (else the last button); `dismiss` the first
@@ -140,8 +173,8 @@ export type Device = {
 	clipboard(): Promise<string>;
 	setClipboard(text: string): Promise<void>;
 	/**
-	 * Dismisses the soft keyboard when the snapshot shows one, else does nothing. iOS presses Enter
-	 * (which may submit the focused field); Android presses back.
+	 * Dismisses the soft keyboard when the snapshot shows one, else does nothing. iOS resigns the first responder
+	 * (an app launched without the injected library gets Enter, which may submit the field); Android presses back.
 	 */
 	hideKeyboard(): Promise<void>;
 	/** Saves `<attemptDir>/screenshots/NNN-<name>.png` and returns the path. */
@@ -184,6 +217,14 @@ export type Device = {
 	a11y: DeviceConditions["a11y"];
 	/** Battery level and charging: real on Android emulators, status bar only on iOS (`cosmetic: true`). */
 	battery: DeviceConditions["battery"];
+	/**
+	 * The on-screen keyboard mode: `"software"` (the default: it stays up while the spec types), `"hardware"` (hidden,
+	 * as with a connected keyboard) or `"toggle"`. Live. Put back to the suite's `conditions.keyboard` when the test
+	 * ends. Physical iPhones: `E_UNSUPPORTED`.
+	 */
+	keyboard: DeviceConditions["keyboard"];
+	/** Whether the on-screen keyboard is up now, read from the accessibility tree. `expect(device).toHaveKeyboard()` polls it. */
+	keyboardVisible(): Promise<boolean>;
 	/**
 	 * Simulated camera: `set("fixtures/qr.png", { facing })`, `clear`, `status`. The asset (png, jpg, heic, mp4, mov; path relative
 	 * to the spec file) plays in the app's real camera. iOS: live in an app launched with the camera, else from the next launch.
@@ -357,7 +398,32 @@ export function createDevice({
 			: {}),
 	});
 
+	const a11y = createDeviceA11y({
+		driver,
+		env,
+		signal,
+		step: (label, fn) => (session.step === undefined ? fn() : session.step("locator", label, fn)),
+	});
+
+	/** Closes the autofill "Save password?" sheet with Back; a named button is refused. */
+	async function closeAutofillSaveSheet(action: Parameters<Device["alert"]>[0]): Promise<void> {
+		if (typeof action !== "string") {
+			throw new E2eError(
+				"ACTION_FAILED",
+				`the autofill "Save password?" sheet is closed with Back only, never "${action.button}": use accept or dismiss`
+			);
+		}
+		await unwrap(() => driver.pressButton("back"), "dismiss autofill save sheet", signal());
+	}
+
 	const device: Device = {
+		os: driver.platform,
+		isIOS: driver.platform === "ios",
+		isAndroid: driver.platform === "android",
+		select: (options) => selectForPlatform(driver.platform, options),
+		a11yAudit: a11y.a11yAudit,
+		screenReader: a11y.screenReader,
+		announcements: a11y.announcements,
 		get devtools() {
 			return lazyDevtools();
 		},
@@ -370,6 +436,10 @@ export function createDevice({
 		locale: conditions.locale,
 		a11y: conditions.a11y,
 		battery: conditions.battery,
+		keyboard: conditions.keyboard,
+		async keyboardVisible() {
+			return (await unwrap(() => driver.keyboardState(), "read the keyboard", signal())).visible;
+		},
 		camera: conditions.camera,
 		memoryWarning: conditions.memoryWarning,
 		push: conditions.push,
@@ -383,13 +453,7 @@ export function createDevice({
 			if (isOpenInSheet(info) && typeof action === "string" && linkInFlight(session)) return false;
 			// "Never" and "Continue" both change the user's Google account: only Back closes the sheet
 			if (driver.platform === "android" && isAutofillSaveSheet(info.buttons)) {
-				if (typeof action !== "string") {
-					throw new E2eError(
-						"ACTION_FAILED",
-						`the autofill "Save password?" sheet is closed with Back only, never "${action.button}": use accept or dismiss`
-					);
-				}
-				await unwrap(() => driver.pressButton("back"), "dismiss autofill save sheet", signal());
+				await closeAutofillSaveSheet(action);
 				return true;
 			}
 			const target = alertTarget(info, action, driver.platform);
@@ -458,10 +522,8 @@ export function createDevice({
 		},
 
 		async hideKeyboard() {
-			const snapshot = await readSnapshot();
-			if (!snapshot.flat.some((element) => element.role === "keyboard")) return;
-			if (driver.platform === "ios") await unwrap(() => driver.key("Enter"), "hide keyboard", signal());
-			else await unwrap(() => driver.pressButton("back"), "hide keyboard", signal());
+			if (!(await device.keyboardVisible())) return;
+			await unwrap(() => driver.dismissKeyboard(), "hide keyboard", signal());
 		},
 
 		async screenshot(name) {
@@ -478,8 +540,18 @@ export function createDevice({
 
 		async snapshot(options = {}) {
 			const interactiveOnly = options.interactiveOnly ?? false;
-			const snapshot = await readSnapshot({ interactiveOnly });
-			const rendered = renderSnapshot(snapshot, { interactiveOnly, refs: new Map() });
+			const taken = await readSnapshot({ interactiveOnly });
+			let snapshot = taken;
+			if (options.a11y === true) {
+				const merged = await withA11yRead(driver, taken);
+				if (!merged.success) throw toE2eError(merged.error, "read accessibility facts");
+				snapshot = merged.data;
+			}
+			const rendered = renderSnapshot(snapshot, {
+				interactiveOnly,
+				refs: new Map(),
+				...(options.a11y === true ? { a11y: true } : {}),
+			});
 			return [renderHeader({ snapshot, rendered, interactiveOnly }), ...rendered.lines].join("\n");
 		},
 
@@ -490,7 +562,7 @@ export function createDevice({
 			if (native.success) return settleDetailOf(native.data);
 			if (native.error.code !== "E_UNSUPPORTED") throw toE2eError(native.error, "settle");
 			const polled = await settleByHash(async () => snapshotHash(await readSnapshot()), {
-				quietMs,
+				quietMs: hashFallbackQuietMs(quietMs),
 				timeoutMs,
 				now: clock.now,
 				sleep: clock.sleep,
@@ -499,6 +571,7 @@ export function createDevice({
 		},
 	};
 	registerConditions(device, conditions.internals);
+	registerA11yTarget(device, a11y.target);
 	return device;
 }
 

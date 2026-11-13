@@ -41,7 +41,11 @@ export type SimdEventMap = {
 	exit: { exitCode: number | null; expected: boolean };
 };
 
-export type RequestOptions = { timeoutMs?: number };
+export type RequestOptions = {
+	timeoutMs?: number;
+	/** a floor for this request's timeout (a cold bridge read): raises the default or `timeoutMs`, never lowers it */
+	minTimeoutMs?: number;
+};
 
 export type SimdClient = {
 	/** the handshake of the current helper process (refreshed after a respawn) */
@@ -313,7 +317,7 @@ export async function createSimdClient(
 		if (!session.success) return session;
 		const transport = session.data.transport;
 		if (!transport) return { success: false, error: driverError("E_INTERNAL", "warden-simd transport missing") };
-		const timeoutMs = opts.timeoutMs ?? defaultTimeoutMs;
+		const timeoutMs = Math.max(opts.timeoutMs ?? defaultTimeoutMs, opts.minTimeoutMs ?? 0);
 		const id = String(++seq);
 		const result = await new Promise<Result<unknown, DriverError>>((resolve) => {
 			const timer = setTimeout(() => {

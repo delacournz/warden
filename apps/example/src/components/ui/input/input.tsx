@@ -1,5 +1,5 @@
-import { type ReactElement, type Ref, useCallback, useState } from "react";
-import { TextInput, type TextInputProps } from "react-native";
+import { type ReactElement, type Ref, useCallback, useLayoutEffect, useState } from "react";
+import { TextInput, type TextInputInstance, type TextInputProps } from "react-native";
 import { composeRefs } from "@/lib/compose-refs";
 import { useButtonGroupItemContext } from "@/components/ui/button/button.context";
 import { resolveButtonSizeStep } from "@/components/ui/button/button.variants";
@@ -8,6 +8,7 @@ import { useInputGroupContext } from "./input.context";
 import {
 	type InputSize,
 	type InputVariant,
+	resolveInputAccessibilityLabel,
 	resolveInputFieldClass,
 	resolvePlaceholderAccentClass,
 	resolveSelectionAccentClass,
@@ -49,7 +50,7 @@ export type InputProps = Omit<TextInputProps, "placeholderTextColorClassName"> &
 	 * primary token, or the destructive one while the field is invalid.
 	 */
 	selectionColorClassName?: string;
-	ref?: Ref<TextInput>;
+	ref?: Ref<TextInputInstance>;
 };
 
 function InputRoot({
@@ -60,6 +61,7 @@ function InputRoot({
 	className,
 	placeholderColorClassName,
 	selectionColorClassName,
+	accessibilityLabel,
 	editable,
 	multiline,
 	onBlur,
@@ -95,6 +97,17 @@ function InputRoot({
 	// focus of, so focus is reported upward when there is a group and held here
 	// when there is not. Picking the setter is a plain branch, not a hook, so
 	// hook order is the same either way.
+	// A multiline field in a group tells the box, which trades its fixed height
+	// for a floor and tops the row. A layout effect, so the box is right before
+	// the first frame is drawn rather than one frame after it.
+	const setGroupMultiline = group?.setMultiline;
+	const isMultiline = multiline === true;
+	useLayoutEffect(() => {
+		if (!setGroupMultiline) return;
+		setGroupMultiline(isMultiline);
+		return () => setGroupMultiline(false);
+	}, [setGroupMultiline, isMultiline]);
+
 	const isFocused = group ? group.isFocused : ownFocused;
 	const setFocused = group ? group.setFocused : setOwnFocused;
 
@@ -137,6 +150,7 @@ function InputRoot({
 			selectionColorClassName={selectionAccent}
 			textAlignVertical={multiline ? "top" : undefined}
 			{...props}
+			accessibilityLabel={resolveInputAccessibilityLabel(accessibilityLabel, field?.label)}
 			editable={resolved.isDisabled ? false : editable}
 			onBlur={handleBlur}
 			onFocus={handleFocus}
@@ -158,7 +172,7 @@ function InputRoot({
  * Focus styling is driven from React state rather than a `focus:` class.
  * Uniwind tracks focus per component, so a `focus:` utility would light up a
  * lone field and do nothing for the box `Input.Group` draws around a grouped
- * one — and the decision would sit somewhere `bun test` cannot reach.
+ * one — and the decision would sit somewhere a unit test cannot reach.
  *
  * Everything `TextInput` accepts is accepted here, with one name removed:
  * uniwind's `placeholderTextColorClassName` is replaced by
@@ -167,6 +181,10 @@ function InputRoot({
  *
  * Wrap it in an `Input.Group` to put an icon, an affix or a control inside the
  * field's own box.
+ *
+ * Inside a `Field`, the text of its `Field.Label` becomes the field's accessible
+ * name when no `accessibilityLabel` is given, so a screen reader announces
+ * which value the editor wants.
  *
  * @example
  * <Input onChangeText={setEmail} placeholder="Email" value={email} />

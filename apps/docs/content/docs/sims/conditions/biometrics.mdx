@@ -1,0 +1,37 @@
+---
+title: Biometrics
+description: Drive Face ID, Touch ID and Android fingerprint on a leased simulator or emulator with warden ui - enroll, match, fail - and the +bio device pool.
+icon: FingerprintPattern
+---
+
+<DemoClip src="/demos/biometrics/faceid" label="warden ui biometrics fail and match answering the real Face ID prompt on a leased simulator" />
+
+`warden ui biometrics status`, `press`, `fail`, `match` and `wait text "Unlocked"` against the example app's vault screen on a leased simulator: the real Face ID prompt, no app-side bypass.
+
+[`warden ui`](/docs/sims/ui) controls the simulator's biometric sensor, so the real `LAContext` / `BiometricPrompt` flow runs. Simulators and emulators only: a physical device fails with `E_UNSUPPORTED`.
+
+```bash
+warden ui biometrics                 # status
+warden ui biometrics enroll
+warden ui biometrics match           # or fail, unenroll
+```
+
+With `--json` the answer is `result.biometrics`. `enroll` and `unenroll` are iOS only. `fail` does not end the prompt: iOS shows "Face Not Recognized" (Try Face ID Again / Cancel), Android shows "Not recognized". From a spec: [Biometrics in E2E tests](/docs/e2e/conditions/biometrics).
+
+## Enrolled devices
+
+`--biometrics` on `claim`, `run`, `batch` and `e2e` (or `biometrics: true` in `warden.config.ts`) gives an enrolled device, with the profile `<profile>+bio`: its own pool and golden, never mixed with plain devices.
+
+```bash
+warden claim android --biometrics
+```
+
+- **Android.** The golden snapshot is built with a fingerprint enrolled (screen-lock PIN `1111`), saved past the lock screen with the screen kept on, and the AVD gets `hw.fingerprint=yes`. A claim builds a missing snapshot inline (about 80 s); prebuild it with `warden golden ensure --platform android --profile pixel-10+bio`. A claim returns only once adb, the package manager and the unlocked screen answer; an emulator that never gets there is shut down rather than left locked. Emulators have fingerprint only.
+- **iOS.** Enrollment does not survive a reboot, so warden enrolls every `+bio` simulator on boot and again when a spec process starts, before the app is installed.
+
+## Practice
+
+- Enroll before the app is installed or launched: a new enrollment invalidates keys bound to the current biometry set.
+- The first prompt per iOS app shows "Allow X to use Face ID?": answer it before `match`.
+
+Errors and fixes are in [Debugging](/docs/e2e/debugging).

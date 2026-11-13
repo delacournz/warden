@@ -1,25 +1,50 @@
-// libwarden-inject: injected into an iOS-simulator app by `DYLD_INSERT_LIBRARIES` (SIMCTL_CHILD_*), only when a
-// network or clock condition is active for the lease. Without the env below it is never loaded, so a run with no
-// condition pays nothing.
+// libwarden-inject: injected into an iOS-simulator app by `DYLD_INSERT_LIBRARIES` (SIMCTL_CHILD_*), whenever warden
+// launches it with a condition active (network, clock, camera, software keyboard: the default, so nearly always).
+// Without the env below it is never loaded.
 //
 // Env (set by warden at launch):
 //   WARDEN_NET_PROXY=127.0.0.1:<port>   route NSURLSession HTTP+HTTPS through the lease's shaping proxy
-//   WARDEN_INJECT_STATE=<file>          control file, watched live: {"seq":n,"offline":bool,"clockOffsetMs":n,"clockFrozenMs":n?,"camera":{"back"?:{kind,path,loop},"front"?:…}}
+//   WARDEN_INJECT_STATE=<file>          control file, watched live: {"seq":n,"offline":bool,"clockOffsetMs":n,"clockFrozenMs":n?,"keyboard":"software"|"hardware"?,"camera":{"back"?:{kind,path,loop},"front"?:…}}
 //   WARDEN_CLOCK_OFFSET_MS=<n>          initial wall-clock offset (the state file overrides it)
 //   WARDEN_CLOCK_FROZEN_MS=<n>          initial frozen wall time, ms since the epoch (the state file overrides it)
 //   WARDEN_CAMERA=1                     fake the AVFoundation capture stack from the state file's `camera` feeds (see "camera")
+//   WARDEN_KEYBOARD=software|hardware   initial keyboard mode (the state file's `keyboard` overrides it live); see "keyboard"
 //   WARDEN_INJECT_DEBUG=1               log to stderr
 //
 // Control channel: the simulator shares the host filesystem, so the channel is a file. The host replaces
 // `WARDEN_INJECT_STATE` atomically (write + rename); a vnode watch on its directory fires, the new state is applied
 // and `<file>.ack` is written with `{"seq":n,"pid":p,"proxy":bool,"camera":bool,"bundle":id}` (`proxy`: launched with WARDEN_NET_PROXY; `camera`: launched with WARDEN_CAMERA=1; `bundle`: so the host ignores another injected app). No sockets, no polling, nothing running while idle.
 //
+// Accessibility read (A11Y-1): a state with `"a11yRead":true` makes the app walk its UIKit accessibility tree on the main
+// thread and write `<file>.a11y` = {"req":seq,"nodes":[{cls,ae,label,hint,value,id,traits:"0x..",frame:[x,y,w,h] (screen
+// points),actions:[names],order?:n}]} (traversal order; `order` = index in the container's accessibilityElements, only
+// when the app set that array) BEFORE the ack for that seq is written. Hidden views (hidden, alpha 0,
+// accessibilityElementsHidden) are skipped with their subtree; if the main thread does not answer in 3 s the file says
+// {"req":seq,"error":"main thread busy"}. Not iOS (the macOS test harness): {"req":seq,"nodes":[],"unsupported":true}.
+//
+// Accessibility events (A11Y-8): `UIAccessibilityPostNotification` is interposed (the original is always called) and
+// announcements (argument NSString or NSAttributedString), screen-changed and layout-changed are appended as JSON lines
+// {"kind":"announcement"|"screen-changed"|"layout-changed","text"?:s,"at":epoch ms} to `<file>.events` (append-only;
+// the host's cursor is a byte offset, and a line is only complete once it ends in a newline). Needs WARDEN_INJECT_STATE.
+//
+// Keyboard (KBD-2): HID typing makes iOS treat a hardware keyboard as attached and minimise the on-screen keyboard. In
+// `software` mode `-[UIKeyboardImpl isMinimized]` answers NO, so the keyboard stays up while warden types; `hardware`
+// answers YES (it never depends on whether iOS has seen a HID keyboard event). Every mode change runs `reloadInputViews` on the main thread, so the keyboard shows or hides at
+// once, no relaunch. The initial mode is `WARDEN_KEYBOARD`; a state file without a `keyboard` field leaves the mode as is.
+// A state with `"dismissKeyboard":true` resigns the first responder (a one-shot, like `a11yRead`): the keyboard goes away
+// without a Return that could submit the focused form.
+// Private API: re-verify on each iOS release (a missing class or selector makes the mode a no-op, never a crash).
+//
 // Covered: NSURLSession (default/ephemeral/background configurations and sessionWithConfiguration:*), network path
 // APIs (nw_path_get_status, nw_path_uses_interface_type, NWPathMonitor update handlers re-fired on change),
 // SCNetworkReachability (flags, callbacks re-fired on change), wall clocks (clock_gettime(CLOCK_REALTIME),
 // gettimeofday, time, CFAbsoluteTimeGetCurrent), shifted by an offset or held at a fixed instant (`clockFrozenMs`). NSURLSession.sharedSession is replaced by a session on the routed
 // default configuration (sharing the shared session's cache, cookie and credential stores). Not covered: raw sockets / NWConnection / CFStream (they bypass the proxy), monotonic clocks (left real on purpose).
+#import <TargetConditionals.h>
 #import <Foundation/Foundation.h>
+#if TARGET_OS_IOS
+#import <UIKit/UIKit.h>
+#endif
 #import <Network/Network.h>
 #import <SystemConfiguration/SystemConfiguration.h>
 #import <objc/runtime.h>
@@ -299,6 +324,119 @@ static CFAbsoluteTime rep_cf_abs(void) {
   return (double)ts.tv_sec + (double)ts.tv_nsec / 1e9 - kCFAbsoluteTimeIntervalSince1970;
 }
 INTERPOSE(rep_cf_abs, CFAbsoluteTimeGetCurrent);
+
+#pragma mark - accessibility read
+
+#if TARGET_OS_IOS
+#define A11Y_MAX_NODES 5000
+#define A11Y_MAX_DEPTH 80
+
+static NSString *nz(NSString *s) { return s.length ? s : nil; }
+
+static void a11y_visit(id node, NSInteger order, int depth, NSMutableArray *out) {
+  if (!node || depth > A11Y_MAX_DEPTH || out.count >= A11Y_MAX_NODES) return;
+  if ([node isKindOfClass:[UIView class]]) {
+    UIView *v = node;
+    if (v.hidden || v.alpha < 0.01 || v.accessibilityElementsHidden) return;
+  }
+  BOOL ae = [node isAccessibilityElement];
+  NSString *label = nz([node accessibilityLabel]);
+  NSString *hint = nz([node accessibilityHint]);
+  NSString *value = nz([node accessibilityValue]);
+  NSString *ident = nil;
+  if ([node conformsToProtocol:@protocol(UIAccessibilityIdentification)]) ident = nz([(id<UIAccessibilityIdentification>)node accessibilityIdentifier]);
+  NSMutableArray *actions = [NSMutableArray array];
+  for (UIAccessibilityCustomAction *a in [node accessibilityCustomActions] ?: @[]) if (a.name.length) [actions addObject:a.name];
+  if (ae || label || hint || ident || actions.count) {
+    CGRect f = [node accessibilityFrame];
+    NSMutableDictionary *d = [NSMutableDictionary dictionary];
+    d[@"cls"] = NSStringFromClass([node class]);
+    d[@"ae"] = @(ae);
+    if (label) d[@"label"] = label;
+    if (hint) d[@"hint"] = hint;
+    if (value) d[@"value"] = value;
+    if (ident) d[@"id"] = ident;
+    d[@"traits"] = [NSString stringWithFormat:@"0x%llx", (unsigned long long)[node accessibilityTraits]];
+    d[@"frame"] = @[ @(f.origin.x), @(f.origin.y), @(f.size.width), @(f.size.height) ];
+    if (actions.count) d[@"actions"] = actions;
+    if (order >= 0) d[@"order"] = @(order);
+    [out addObject:d];
+  }
+  // what VoiceOver walks: the explicit order, else the container protocol, else the subviews
+  NSArray *explicitOrder = [node respondsToSelector:@selector(accessibilityElements)] ? [node accessibilityElements] : nil;
+  if (explicitOrder.count) {
+    NSInteger i = 0;
+    for (id child in explicitOrder) a11y_visit(child, i++, depth + 1, out);
+    return;
+  }
+  NSInteger count = [node accessibilityElementCount];
+  if (count != NSNotFound && count > 0) {
+    for (NSInteger i = 0; i < count; i++) a11y_visit([node accessibilityElementAtIndex:i], -1, depth + 1, out);
+    return;
+  }
+  if ([node isKindOfClass:[UIView class]]) for (UIView *sub in ((UIView *)node).subviews) a11y_visit(sub, -1, depth + 1, out);
+}
+
+static NSArray *a11y_collect(void) {
+  NSMutableArray *out = [NSMutableArray array];
+  for (UIWindow *w in UIApplication.sharedApplication.windows) a11y_visit(w, -1, 0, out);
+  return out;
+}
+#endif
+
+static void write_a11y(long long seq) {
+  NSMutableDictionary *body = [NSMutableDictionary dictionaryWithObject:@(seq) forKey:@"req"];
+#if TARGET_OS_IOS
+  __block NSArray *nodes = nil;
+  dispatch_semaphore_t done = dispatch_semaphore_create(0);
+  dispatch_async(dispatch_get_main_queue(), ^{ nodes = a11y_collect(); dispatch_semaphore_signal(done); });
+  if (dispatch_semaphore_wait(done, dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC)) == 0) body[@"nodes"] = nodes;
+  else body[@"error"] = @"main thread busy";
+#else
+  body[@"nodes"] = @[];
+  body[@"unsupported"] = @YES;
+#endif
+  NSData *data = [NSJSONSerialization dataWithJSONObject:body options:0 error:nil];
+  [data writeToFile:[g_state_path stringByAppendingString:@".a11y"] atomically:YES];
+}
+
+#if TARGET_OS_IOS
+#pragma mark - accessibility events
+
+static void append_a11y_event(NSString *kind, NSString *text) {
+  if (!g_state_path) return;
+  struct timespec now = real_now();
+  long long at = (long long)now.tv_sec * 1000 + now.tv_nsec / 1000000;
+  NSMutableDictionary *line = [NSMutableDictionary dictionaryWithObjectsAndKeys:kind, @"kind", @(at), @"at", nil];
+  if (text.length) line[@"text"] = text;
+  NSData *json = [NSJSONSerialization dataWithJSONObject:line options:0 error:nil];
+  if (!json) return;
+  NSMutableData *out = [json mutableCopy];
+  [out appendBytes:"\n" length:1];
+  int fd = open([g_state_path stringByAppendingString:@".events"].fileSystemRepresentation, O_WRONLY | O_APPEND | O_CREAT, 0644);
+  if (fd < 0) return;
+  (void)write(fd, out.bytes, out.length);  // one write on an O_APPEND fd: lines never interleave
+  close(fd);
+}
+
+static void rep_post_notification(UIAccessibilityNotifications n, id argument) {
+  @try {
+    if (n == UIAccessibilityAnnouncementNotification) {
+      NSString *text = [argument isKindOfClass:[NSAttributedString class]] ? [(NSAttributedString *)argument string]
+                     : [argument isKindOfClass:[NSString class]] ? argument : nil;
+      append_a11y_event(@"announcement", text);
+    } else if (n == UIAccessibilityScreenChangedNotification) {
+      append_a11y_event(@"screen-changed", nil);
+    } else if (n == UIAccessibilityLayoutChangedNotification) {
+      append_a11y_event(@"layout-changed", nil);
+    }
+  } @catch (NSException *e) {
+    DLOG("a11y event skipped: %s", e.reason.UTF8String);
+  }
+  UIAccessibilityPostNotification(n, argument);
+}
+INTERPOSE(rep_post_notification, UIAccessibilityPostNotification);
+#endif
 
 #pragma mark - camera
 // A simulated camera: the simulator has no camera hardware, so AVFoundation answers "no device". With WARDEN_CAMERA=1
@@ -761,11 +899,22 @@ static char kWCConnection, kWCDiscovery, kWCMetaTypes, kWCMetaRoi, kWCRecorderKe
   NSURL *_url;
   CFTimeInterval _t0;
   CMTime _last;
-  BOOL _started, _ready;
+  BOOL _started, _ready, _finishing;
+  /** samples the writer took; a session that ends with none fails the file (-11800 <- -16364) */
+  long _samples;
+  /** the newest frame dropped while the encoder was not ready yet, kept until one sample landed */
+  CVPixelBufferRef _held;
+  /** AVAssetWriter is not thread-safe: the pump queue appends, `startRecording` appends its first frame and
+      `stopRecording` finishes on the main thread. Every writer call goes through this one serial queue. */
+  dispatch_queue_t _q;
 }
 @synthesize writer = _writer, url = _url, ready = _ready;
+- (void)dealloc {
+  if (_held) CVPixelBufferRelease(_held);
+}
 - (instancetype)initWithURL:(NSURL *)url width:(size_t)w height:(size_t)h {
   if (!(self = [super init])) return nil;
+  _q = dispatch_queue_create("nz.co.delacour.warden.camera.recorder", DISPATCH_QUEUE_SERIAL);
   _url = url;
   [[NSFileManager defaultManager] removeItemAtURL:url error:nil];
   NSError *err = nil;
@@ -784,30 +933,65 @@ static char kWCConnection, kWCDiscovery, kWCMetaTypes, kWCMetaRoi, kWCRecorderKe
   return self;
 }
 - (void)append:(CVPixelBufferRef)pb {
-  if (!_ready || _writer.status != AVAssetWriterStatusWriting) return;
   CFTimeInterval now = CACurrentMediaTime();
-  if (!_started) {
-    _started = YES;
-    _t0 = now;
-    [_writer startSessionAtSourceTime:kCMTimeZero];
-  }
-  CMTime t = CMTimeMakeWithSeconds(now - _t0, 600);
-  if (_last.value != 0 && CMTimeCompare(t, _last) <= 0) t = CMTimeAdd(_last, CMTimeMake(1, 600));
-  if (!_input.isReadyForMoreMediaData) return;
-  if ([_adaptor appendPixelBuffer:pb withPresentationTime:t]) _last = t;
+  dispatch_sync(_q, ^{
+    if (!self->_ready || self->_finishing || self->_writer.status != AVAssetWriterStatusWriting) return;
+    if (!self->_started) {
+      self->_started = YES;
+      self->_t0 = now;
+      [self->_writer startSessionAtSourceTime:kCMTimeZero];
+    }
+    CMTime t = CMTimeMakeWithSeconds(now - self->_t0, 600);
+    if (self->_samples > 0 && CMTimeCompare(t, self->_last) <= 0) t = CMTimeAdd(self->_last, CMTimeMake(1, 600));
+    if (!self->_input.isReadyForMoreMediaData) {
+      if (self->_samples == 0) {
+        if (self->_held) CVPixelBufferRelease(self->_held);
+        self->_held = CVPixelBufferRetain(pb);
+      }
+      return;
+    }
+    [self appendOnQueue:pb at:t];
+  });
 }
-- (CMTime)duration { return _last; }
+/** On `_q` only. */
+- (void)appendOnQueue:(CVPixelBufferRef)pb at:(CMTime)t {
+  if (![_adaptor appendPixelBuffer:pb withPresentationTime:t]) return;
+  _last = t;
+  _samples += 1;
+  if (_held) { CVPixelBufferRelease(_held); _held = NULL; }
+}
+- (CMTime)duration {
+  __block CMTime d;
+  dispatch_sync(_q, ^{ d = self->_last; });
+  return d;
+}
 - (void)finish:(void (^)(NSError *))done {
-  if (!_ready || !_started) {
-    NSError *e = _writer.error ?: [NSError errorWithDomain:@"warden.camera" code:1 userInfo:@{ NSLocalizedDescriptionKey: @"no frames were recorded" }];
-    if (_writer.status == AVAssetWriterStatusWriting) [_writer cancelWriting];
-    done(e);
-    return;
-  }
-  [_input markAsFinished];
-  AVAssetWriter *w = _writer;
-  [w endSessionAtSourceTime:CMTimeAdd(_last, CMTimeMake(1, 30))];
-  [w finishWritingWithCompletionHandler:^{ done(w.status == AVAssetWriterStatusCompleted ? nil : w.error); }];
+  dispatch_async(_q, ^{
+    if (self->_finishing) return;
+    self->_finishing = YES;
+    if (!self->_ready || !self->_started) {
+      NSError *e = self->_writer.error ?: [NSError errorWithDomain:@"warden.camera" code:1 userInfo:@{ NSLocalizedDescriptionKey: @"no frames were recorded" }];
+      if (self->_writer.status == AVAssetWriterStatusWriting) [self->_writer cancelWriting];
+      done(e);
+      return;
+    }
+    // a take stopped before the encoder took a frame still holds the frame it started on: wait for the encoder
+    // (a fresh or busy VideoToolbox session) rather than end a session with no samples, which fails the file
+    if (self->_samples == 0 && self->_held) {
+      for (int i = 0; i < 400 && !self->_input.isReadyForMoreMediaData && self->_writer.status == AVAssetWriterStatusWriting; i++) usleep(5000);
+      if (self->_input.isReadyForMoreMediaData) [self appendOnQueue:self->_held at:kCMTimeZero];
+    }
+    if (self->_samples == 0) {
+      NSError *e = self->_writer.error ?: [NSError errorWithDomain:@"warden.camera" code:1 userInfo:@{ NSLocalizedDescriptionKey: @"no frames were recorded" }];
+      if (self->_writer.status == AVAssetWriterStatusWriting) [self->_writer cancelWriting];
+      done(e);
+      return;
+    }
+    [self->_input markAsFinished];
+    AVAssetWriter *w = self->_writer;
+    [w endSessionAtSourceTime:CMTimeAdd(self->_last, CMTimeMake(1, 30))];
+    [w finishWritingWithCompletionHandler:^{ done(w.status == AVAssetWriterStatusCompleted ? nil : w.error); }];
+  });
 }
 @end
 
@@ -1913,6 +2097,49 @@ static void write_ack(long long seq) {
   [body writeToFile:ack atomically:YES encoding:NSUTF8StringEncoding error:nil];
 }
 
+#if TARGET_OS_IOS
+// 0 = unset (iOS decides: the original answer), 1 = software (never minimised), 2 = hardware (always minimised). Hardware
+// must not depend on whether iOS has seen a HID keyboard event in this process, so it forces YES instead of asking.
+static _Atomic int g_keyboard_mode = 0;
+
+static void keyboard_install_swizzle(void) {
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    Class c = NSClassFromString(@"UIKeyboardImpl");
+    SEL sel = NSSelectorFromString(@"isMinimized");
+    Method m = c ? class_getInstanceMethod(c, sel) : NULL;
+    if (!m) return;
+    BOOL (*orig)(id, SEL) = (void *)method_getImplementation(m);
+    method_setImplementation(m, imp_implementationWithBlock(^BOOL(id self_) {
+      int mode = atomic_load(&g_keyboard_mode);
+      if (mode == 1) return NO;
+      if (mode == 2) return YES;
+      return orig(self_, sel);
+    }));
+  });
+}
+
+static void keyboard_apply(NSString *mode) {
+  int next = [mode isEqualToString:@"software"] ? 1 : ([mode isEqualToString:@"hardware"] ? 2 : 0);
+  int was = atomic_exchange(&g_keyboard_mode, next);
+  keyboard_install_swizzle();
+  DLOG("keyboard=%s (was %d)", mode.UTF8String, was);
+  if (was == next) return;
+  dispatch_async(dispatch_get_main_queue(), ^{
+    [UIApplication.sharedApplication sendAction:NSSelectorFromString(@"reloadInputViews") to:nil from:nil forEvent:nil];
+  });
+}
+
+// `"dismissKeyboard":true` (one-shot): resign the first responder on the main thread. Unlike Return it cannot
+// trigger onSubmitEditing, so a spec dismissing a covering keyboard never submits a form.
+static void keyboard_dismiss(void) {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    [UIApplication.sharedApplication sendAction:@selector(resignFirstResponder) to:nil from:nil forEvent:nil];
+    DLOG("keyboard dismissed");
+  });
+}
+#endif
+
 static void apply_state_file(void) {
   NSData *data = [NSData dataWithContentsOfFile:g_state_path];
   if (!data) return;
@@ -1930,7 +2157,12 @@ static void apply_state_file(void) {
   if (frozen) atomic_store(&g_clock_frozen_ms, [state[@"clockFrozenMs"] longLongValue]);
   atomic_store(&g_clock_frozen, frozen ? 1 : 0);
   atomic_store(&g_applied_seq, seq);
+#if TARGET_OS_IOS
+  if ([state[@"keyboard"] isKindOfClass:[NSString class]]) keyboard_apply(state[@"keyboard"]);
+  if ([state[@"dismissKeyboard"] respondsToSelector:@selector(boolValue)] && [state[@"dismissKeyboard"] boolValue]) keyboard_dismiss();
+#endif
   if (g_camera_enabled) camera_apply([state[@"camera"] isKindOfClass:[NSDictionary class]] ? state[@"camera"] : @{});
+  if ([state[@"a11yRead"] respondsToSelector:@selector(boolValue)] && [state[@"a11yRead"] boolValue]) write_a11y(seq);
   DLOG("state seq=%lld offline=%d clockOffsetMs=%lld frozen=%d", seq, offline, off, frozen);
   if (wasOffline != offline) notify_connectivity_changed();
   write_ack(seq);
@@ -1966,6 +2198,12 @@ __attribute__((constructor)) static void warden_inject_init(void) {
     }
     NSString *proxy = env[@"WARDEN_NET_PROXY"];
     if (proxy.length) install_proxy(proxy);
+#if TARGET_OS_IOS
+    if ([env[@"WARDEN_KEYBOARD"] isEqualToString:@"software"] || [env[@"WARDEN_KEYBOARD"] isEqualToString:@"hardware"]) {
+      atomic_store(&g_keyboard_mode, [env[@"WARDEN_KEYBOARD"] isEqualToString:@"software"] ? 1 : 2);
+      keyboard_install_swizzle();
+    }
+#endif
     NSString *state = env[@"WARDEN_INJECT_STATE"];
     if ([env[@"WARDEN_CAMERA"] isEqualToString:@"1"]) {
       g_camera_enabled = YES;

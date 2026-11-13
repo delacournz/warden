@@ -1,10 +1,15 @@
-import type { Driver, DriverError, Snapshot } from "../driver/driver.types";
+import { accessibleName, announce } from "../a11y/speech";
+import { renderA11yScreen, withA11yRead } from "../device-a11y";
+import type { Driver, DriverError, Element, Platform, Snapshot } from "../driver/driver.types";
 import { canObserve } from "../driver/observation-cache";
 import { E2eError } from "../errors";
-import { fieldValue } from "../screen/actions";
+import { fieldValue, isOnScreen } from "../screen/actions";
+import type { Observed } from "../screen/context";
+import type { DegradedRead } from "../screen/degraded-read";
 import { type Locator, pickOne, textOf } from "../screen/locator";
 import type { NodeEntry } from "../screen/nodes";
-import { resolve } from "../screen/query";
+import type { ReactMatch } from "../screen/react-locator";
+import type { QueryRole } from "../screen/roles";
 import { matchesText, normalizeText, type TextMatch } from "../screen/text";
 
 /**
@@ -44,6 +49,13 @@ export type AssertionContext = {
 /** What one read of the screen says about a matcher's condition. */
 type Judgement = { kind: "missing" } | { kind: "judged"; matches: boolean; received: string };
 
+/** What a judge may ask beyond the entry: the platform, and the element with the screen-reader facts merged in. */
+type JudgeContext = {
+	platform: Platform;
+	/** `entry.element` as the a11y-enriched snapshot has it (the same element when nothing was merged) */
+	element(entry: NodeEntry): Element;
+};
+
 type Spec = {
 	/** `toHaveText("a")`: the call as it appears in messages and step labels */
 	call: string;
@@ -51,10 +63,38 @@ type Spec = {
 	expected: string;
 	/** everything but `toHaveCount` needs exactly one match */
 	strict: boolean;
-	judge(entry: NodeEntry | undefined, count: number): Judgement;
+	judge(entry: NodeEntry | undefined, count: number, ctx: JudgeContext): Judgement;
+	/**
+	 * Judges a degraded read the React tree answered (the component is there, no accessibility node has its rect).
+	 * Absent, or undefined for this look = the matcher needs what the React tree did not report (text, value, state):
+	 * the look stays unknown.
+	 */
+	judgeReact?(matches: readonly ReactMatch[], screen: ScreenSize): Judgement | undefined;
+	/** reads the iOS injected a11y facts into the snapshot before judging, and fails with the `--a11y` screen */
+	a11y?: boolean;
 };
 
 const NOT_FOUND = "element not found";
+const UNKNOWN = "unknown (degraded read)";
+
+/** What the last poll of a matcher saw, for its failure. */
+type Last = { received: string; snapshot?: Snapshot; degraded?: DegradedRead };
+
+type JudgedLook = { kind: "judged"; judgement: Judgement; seen: Snapshot } | { kind: "unsettled"; last: Last };
+
+type ScreenSize = Snapshot["screen"];
+
+/** Whether the one React match of a degraded read shows on screen; several are judged by the strict rule first. */
+function reactShown(matches: readonly ReactMatch[], screen: ScreenSize): boolean {
+	const [only] = matches;
+	return only !== undefined && only.frame.width > 0 && only.frame.height > 0 && isOnScreen(only.tapPoint, screen);
+}
+
+/** The text the React tree reported for the one match of a degraded read; undefined when it reported none. */
+function reactText(matches: readonly ReactMatch[]): string | undefined {
+	const [only] = matches;
+	return only?.text === undefined ? undefined : normalizeText(only.text);
+}
 
 function missing(): Judgement {
 	return { kind: "missing" };
@@ -131,6 +171,10 @@ export class LocatorAssertions {
 					entry === undefined
 						? judged(false, "not found")
 						: judged(entry.visible, entry.visible ? "visible" : "hidden"),
+				judgeReact: (matches, screen) => {
+					const shown = reactShown(matches, screen);
+					return judged(shown, shown ? "visible (React tree)" : "hidden (React tree)");
+				},
 			},
 			options
 		);
@@ -147,6 +191,10 @@ export class LocatorAssertions {
 					entry === undefined
 						? judged(true, "not found")
 						: judged(!entry.visible, entry.visible ? "visible" : "hidden"),
+				judgeReact: (matches, screen) => {
+					const shown = reactShown(matches, screen);
+					return judged(!shown, shown ? "visible (React tree)" : "hidden (React tree)");
+				},
 			},
 			options
 		);
@@ -166,6 +214,11 @@ export class LocatorAssertions {
 					const value = textOf(entry);
 					return judged(matchesText(value, expected, { exact }), JSON.stringify(value));
 				},
+				judgeReact: (matches) => {
+					const value = reactText(matches);
+					if (value === undefined) return undefined;
+					return judged(matchesText(value, expected, { exact }), `${JSON.stringify(value)} (React tree)`);
+				},
 			},
 			options
 		);
@@ -184,6 +237,11 @@ export class LocatorAssertions {
 					if (entry === undefined) return missing();
 					const value = textOf(entry);
 					return judged(containsText(value, expected, ignoreCase), JSON.stringify(value));
+				},
+				judgeReact: (matches) => {
+					const value = reactText(matches);
+					if (value === undefined) return undefined;
+					return judged(containsText(value, expected, ignoreCase), `${JSON.stringify(value)} (React tree)`);
 				},
 			},
 			options
@@ -266,6 +324,102 @@ export class LocatorAssertions {
 		);
 	}
 
+	/** The computed accessible name (label, else text, else merged child text) equals the string (whitespace normalised) or matches the RegExp. */
+	async toHaveAccessibleName(expected: TextMatch, options: AssertionOptions = {}): Promise<void> {
+		assertOptions("toHaveAccessibleName", options, ["timeout"]);
+		return this.assert(
+			{
+				call: `toHaveAccessibleName(${show(expected)})`,
+				expected: show(expected),
+				strict: true,
+				a11y: true,
+				judge: (entry, _count, ctx) => {
+					if (entry === undefined) return missing();
+					const name = accessibleName(ctx.element(entry), ctx.platform) ?? "";
+					return judged(matchesText(name, expected, { exact: true }), JSON.stringify(name));
+				},
+			},
+			options
+		);
+	}
+
+	/** The element's role in the `getByRole` vocabulary (`button`, `switch`, `heading`, …). */
+	async toHaveRole(expected: QueryRole, options: AssertionOptions = {}): Promise<void> {
+		assertOptions("toHaveRole", options, ["timeout"]);
+		return this.assert(
+			{
+				call: `toHaveRole(${JSON.stringify(expected)})`,
+				expected: JSON.stringify(expected),
+				strict: true,
+				judge: (entry) =>
+					entry === undefined ? missing() : judged(entry.role === expected, JSON.stringify(entry.role)),
+			},
+			options
+		);
+	}
+
+	/** The accessibility hint equals the string or matches the RegExp. iOS needs the app launched with the injected library to see hints. */
+	async toHaveHint(expected: TextMatch, options: AssertionOptions = {}): Promise<void> {
+		assertOptions("toHaveHint", options, ["timeout"]);
+		return this.assert(
+			{
+				call: `toHaveHint(${show(expected)})`,
+				expected: show(expected),
+				strict: true,
+				a11y: true,
+				judge: (entry, _count, ctx) => {
+					if (entry === undefined) return missing();
+					const hint = ctx.element(entry).a11y?.hint;
+					if (hint === undefined || hint === "") return judged(false, "(no hint)");
+					return judged(matchesText(hint, expected, { exact: true }), JSON.stringify(hint));
+				},
+			},
+			options
+		);
+	}
+
+	/**
+	 * The announcement warden's speech model composes for the element ("Save, button, double tap to save") equals the
+	 * string (`exact: false`: contains it, ignoring case) or matches the RegExp. Simulated: never what the real reader says.
+	 */
+	async toAnnounce(expected: TextMatch, options: TextAssertionOptions = {}): Promise<void> {
+		assertOptions("toAnnounce", options, ["exact", "timeout"]);
+		const exact = options.exact ?? true;
+		return this.assert(
+			{
+				call: `toAnnounce(${show(expected)})`,
+				expected: exact ? show(expected) : `${show(expected)} (substring, ignoring case)`,
+				strict: true,
+				a11y: true,
+				judge: (entry, _count, ctx) => {
+					if (entry === undefined) return missing();
+					const text = announce(ctx.element(entry), ctx.platform).text;
+					return judged(matchesText(text, expected, { exact }), JSON.stringify(text));
+				},
+			},
+			options
+		);
+	}
+
+	/** The element holds screen-reader focus (Android TalkBack's accessibility focus; iOS does not report it). */
+	async toBeA11yFocused(options: AssertionOptions = {}): Promise<void> {
+		assertOptions("toBeA11yFocused", options, ["timeout"]);
+		return this.assert(
+			{
+				call: "toBeA11yFocused()",
+				expected: "a11y-focused",
+				strict: true,
+				a11y: true,
+				judge: (entry, _count, ctx) => {
+					if (entry === undefined) return missing();
+					const focused = ctx.element(entry).a11y?.a11yFocused === true;
+					return judged(focused, focused ? "a11y-focused" : "not a11y-focused");
+				},
+			},
+			options
+		);
+	}
+
 	/** Exactly `expected` current matches (zero included). */
 	async toHaveCount(expected: number, options: AssertionOptions = {}): Promise<void> {
 		assertOptions("toHaveCount", options, ["timeout"]);
@@ -278,6 +432,7 @@ export class LocatorAssertions {
 				expected: String(expected),
 				strict: false,
 				judge: (_entry, count) => judged(count === expected, String(count)),
+				judgeReact: (matches) => judged(matches.length === expected, `${matches.length} (React tree)`),
 			},
 			options
 		);
@@ -302,7 +457,6 @@ export class LocatorAssertions {
 		const rt = this.locator.runtime;
 		const { negate } = this.context;
 		const hold = conditionHold(negate, Math.min(NEGATION_GRACE_MS, timeoutMs), rt.clock.now);
-		type Last = { received: string; snapshot?: Snapshot };
 		const result = await rt.poll<true, Last>(async (attempt) => {
 			const observation = await rt.tryObserve({ reuse: attempt === 1 });
 			if (!observation.ok) {
@@ -311,22 +465,56 @@ export class LocatorAssertions {
 				return { done: false, state: { received: "(screen unreadable)" } };
 			}
 			const { observed } = observation;
-			const entries = resolve(this.locator.expr, observed.index);
-			if (spec.strict && entries.length > 1) pickOne(rt, this.locator.expr, entries, observed);
-			const judgement = spec.judge(entries[0], entries.length);
+			const look = await this.judgeLook(spec, observed);
+			if (look.kind === "unsettled") {
+				// a degraded read that cannot say whether the locator is there settles nothing, either way
+				hold.broken();
+				return { done: false, state: look.last };
+			}
+			const { judgement, seen } = look;
 			const verdict = await hold.next(judgement.kind === "judged" && judgement.matches !== negate, observed.driver);
 			if (verdict === "pass") return { done: true, value: true };
 			return {
 				done: false,
 				state: {
 					received: judgement.kind === "missing" ? NOT_FOUND : judgement.received,
-					snapshot: observed.snapshot,
+					snapshot: seen,
 				},
 				...(verdict.wakeMs === undefined ? {} : { maxWaitMs: verdict.wakeMs }),
 			};
 		}, timeoutMs);
 		if (result.status === "done") return;
+		const degraded = result.last?.degraded;
+		if (degraded !== undefined) throw this.locator.degradedFailure(degraded, timeoutMs, result.last?.snapshot);
 		throw this.failure(spec, result.last);
+	}
+
+	/**
+	 * What one look says about `spec`: a judgement (from the accessibility tree, or from the React tree for a degraded
+	 * read it answered), or `unsettled` when the read was degraded and nothing could say whether the locator is there.
+	 */
+	private async judgeLook(spec: Spec, observed: Observed): Promise<JudgedLook> {
+		const rt = this.locator.runtime;
+		const resolved = await this.locator.resolveIn(observed);
+		if (resolved.kind === "unknown") {
+			return { kind: "unsettled", last: { received: UNKNOWN, snapshot: observed.snapshot, degraded: resolved.read } };
+		}
+		if (resolved.kind === "react") {
+			const { matches } = resolved;
+			if (spec.strict && matches.length > 1 && spec.judgeReact !== undefined) {
+				const message = `${this.locator} matched ${matches.length} components in the React tree`;
+				throw new E2eError("LOCATOR_AMBIGUOUS", message, rt.excerpt(observed.snapshot), matches.length);
+			}
+			const judgement = spec.judgeReact?.(matches, observed.snapshot.screen);
+			if (judgement === undefined) {
+				return { kind: "unsettled", last: { received: "only in the React tree", snapshot: observed.snapshot } };
+			}
+			return { kind: "judged", judgement, seen: observed.snapshot };
+		}
+		const { entries } = resolved;
+		if (spec.strict && entries.length > 1) pickOne(rt, this.locator.expr, entries, observed);
+		const { seen, context } = await judgementContext(spec, observed);
+		return { kind: "judged", judgement: spec.judge(entries[0], entries.length, context), seen };
 	}
 
 	/** The screen is rendered here, from the last snapshot read, because only a failure needs the text. */
@@ -337,10 +525,32 @@ export class LocatorAssertions {
 			`Expected: ${negate ? "not " : ""}${spec.expected}`,
 			`Received: ${last?.received ?? NOT_FOUND}`,
 		];
-		const screen = last?.snapshot === undefined ? undefined : this.locator.runtime.excerpt(last.snapshot);
+		const screen =
+			last?.snapshot === undefined
+				? undefined
+				: spec.a11y === true
+					? renderA11yScreen(last.snapshot)
+					: this.locator.runtime.excerpt(last.snapshot);
 		const message = screen === undefined ? lines.join("\n") : `${lines.join("\n")}\n\n${screen}`;
 		return new E2eError("ASSERTION", message, screen);
 	}
+}
+
+/** The snapshot a judge sees (with the iOS injected read merged in for the a11y matchers) and what it may ask of it. */
+async function judgementContext(
+	spec: Spec,
+	observed: { driver: Driver; snapshot: Snapshot }
+): Promise<{ seen: Snapshot; context: JudgeContext }> {
+	let seen = observed.snapshot;
+	if (spec.a11y === true) {
+		const merged = await withA11yRead(observed.driver, observed.snapshot);
+		if (merged.success) seen = merged.data;
+	}
+	const byId = new Map(seen.flat.map((element) => [element.id, element]));
+	return {
+		seen,
+		context: { platform: seen.platform, element: (entry) => byId.get(entry.element.id) ?? entry.element },
+	};
 }
 
 /** What one poll means for a matcher: it passes, or poll again, waking within `wakeMs` when a hold is running. */

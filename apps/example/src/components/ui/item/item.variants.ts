@@ -104,8 +104,8 @@ export function resolveItemRender(options: {
  * No slot but the two text slots holds a `text-*` colour — a React Native
  * `View` does not cascade one to a `Text`.
  *
- * Free of React Native imports so it stays unit-testable — `bun test` cannot
- * parse React Native's Flow-typed source. See AGENTS.md.
+ * Free of React Native imports so it stays unit-testable — it must not
+ * pull in React Native's Flow-typed source. See AGENTS.md.
  */
 export const itemVariants = tv({
 	slots: {

@@ -19,7 +19,6 @@ and `Chip.CloseButton`.
 | `chip.context.tsx` | `ChipContext`, `useChip()`, `useChipContext()`, `useChipPart()` |
 | `chip.types.ts` | Prop types shared by two or more parts |
 | `chip.variants.ts` | Pure `tv()` slots, the foreground map, hit slops, `resolveChipMode` / `resolveChipSurface` / `resolveChipForegroundToken` — no RN imports |
-| `chip.variants.test.ts` | |
 
 ## Design
 

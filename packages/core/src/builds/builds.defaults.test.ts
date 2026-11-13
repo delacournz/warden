@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { defaultBuildCommand, IOS_NATIVE_PREPARE } from "./builds.defaults";
+import { ANDROID_NATIVE_PREPARE, defaultBuildCommand, IOS_NATIVE_PREPARE } from "./builds.defaults";
 
 describe("defaultBuildCommand", () => {
 	test("ios: generates the native project and installs pods only when they are missing or stale, then builds", () => {
@@ -15,10 +15,14 @@ describe("defaultBuildCommand", () => {
 		);
 	});
 
-	test("android: expo run:android prebuilds on its own", () => {
-		expect(defaultBuildCommand("android", "Debug")).toBe("bunx expo run:android --no-install --no-bundler");
-		expect(defaultBuildCommand("android", "Release")).toBe(
-			"bunx expo run:android --variant release --no-install --no-bundler"
+	test("android: prebuilds when android/ is missing, then runs gradle alone (expo run:android would install on whatever device is booted)", () => {
+		const abi = '-PreactNativeArchitectures="$([ "$(uname -m)" = arm64 ] && echo arm64-v8a || echo x86_64)"';
+		expect(defaultBuildCommand("android", "Debug")).toBe(
+			`${ANDROID_NATIVE_PREPARE} && cd android && ./gradlew app:assembleDebug ${abi}`
 		);
+		expect(defaultBuildCommand("android", "Release")).toBe(
+			`${ANDROID_NATIVE_PREPARE} && cd android && ./gradlew app:assembleRelease ${abi}`
+		);
+		expect(defaultBuildCommand("android", "Release")).not.toContain("expo run:android");
 	});
 });

@@ -1,0 +1,28 @@
+---
+title: Clock
+description: Move a leased simulator or emulator's wall clock forward or back to real time with warden ui, and what each platform's clock can do.
+icon: Clock
+---
+
+<DemoTabs ids={["clock"]} />
+
+`warden ui clock` moves the wall clock the app reads with `Date.now()`. The real time comes back on release.
+
+```bash
+warden ui clock advance 15d
+warden ui clock set 2027-01-01T00:00:00Z --frozen   # iOS only
+warden ui clock reset
+```
+
+Durations are milliseconds or `10s`, `2m`, `2d`. The wall clock moves; monotonic clocks do not, so timers and animations keep running. See [warden ui](/docs/sims/ui) for every flag. From a spec or a suite: [Clock in E2E tests](/docs/e2e/conditions/clock).
+
+## Per platform
+
+- **iOS:** the clock changes for an app launched with the network dylib (the same rule as the [network](/docs/sims/conditions/network#how-it-reaches-the-app)); without it the clock applies from the next launch, or pass `--relaunch`. A frozen clock holds the wall clock at one instant.
+- **Android:** the emulator's clock changes. It cannot be frozen (`E_UNSUPPORTED`).
+
+## Limitations
+
+- A frozen clock is iOS only.
+- HTTPS fails while the clock is far from real time: certificates look expired or not yet valid.
+- A JS timer armed while the clock was ahead waits for the shifted time once the clock goes back: relaunch the app after `reset`.

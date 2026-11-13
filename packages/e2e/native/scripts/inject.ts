@@ -44,7 +44,10 @@ const FRAMEWORKS = [
 	"CoreGraphics",
 ];
 
-/** UIKit is only linked into the simulator dylib: the camera's `UIImagePickerController` overlay lives behind `TARGET_OS_IOS`. */
+/**
+ * UIKit is only linked into the simulator dylib: the camera's `UIImagePickerController` overlay and the accessibility
+ * read (A11Y-1), which walks UIKit, live behind `TARGET_OS_IOS`.
+ */
 const IOS_ONLY_FRAMEWORKS = ["-framework", "UIKit"];
 
 /** `xcrun clang` argv for the injected dylib on `target`. */

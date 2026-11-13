@@ -1,0 +1,1603 @@
+{
+ "automation": {
+  "asserted": false,
+  "enabled": true
+ },
+ "backend": "axbridge-exclusive",
+ "coverage": null,
+ "elements": [
+  {
+   "children": [
+    {
+     "children": [
+      {
+       "children": [
+        {
+         "children": [
+          {
+           "children": [
+            {
+             "children": [
+              {
+               "children": [
+                {
+                 "children": [
+                  {
+                   "children": [],
+                   "enabled": null,
+                   "focused": false,
+                   "frame": {
+                    "height": 49,
+                    "width": 402,
+                    "x": 0,
+                    "y": 0
+                   },
+                   "hidden": false,
+                   "identifier": null,
+                   "label": null,
+                   "pid": 32311,
+                   "placeholder": null,
+                   "traits": [
+                    "Scrollable"
+                   ],
+                   "type": "UIView",
+                   "value": null
+                  },
+                  {
+                   "children": [],
+                   "enabled": null,
+                   "focused": false,
+                   "frame": {
+                    "height": 49,
+                    "width": 402,
+                    "x": 0,
+                    "y": 0
+                   },
+                   "hidden": false,
+                   "identifier": null,
+                   "label": null,
+                   "pid": 32311,
+                   "placeholder": null,
+                   "traits": [
+                    "Scrollable"
+                   ],
+                   "type": "UIVisualEffectView",
+                   "value": null
+                  }
+                 ],
+                 "enabled": null,
+                 "focused": false,
+                 "frame": {
+                  "height": 49,
+                  "width": 402,
+                  "x": 0,
+                  "y": 0
+                 },
+                 "hidden": false,
+                 "identifier": null,
+                 "label": null,
+                 "pid": 32311,
+                 "placeholder": null,
+                 "traits": [
+                  "Scrollable"
+                 ],
+                 "type": "SFThemeColorEffectView",
+                 "value": null
+                },
+                {
+                 "children": [],
+                 "enabled": null,
+                 "focused": false,
+                 "frame": {
+                  "height": 62,
+                  "width": 402,
+                  "x": 0,
+                  "y": 0
+                 },
+                 "hidden": false,
+                 "identifier": null,
+                 "label": null,
+                 "pid": 32311,
+                 "placeholder": null,
+                 "traits": [
+                  "Scrollable"
+                 ],
+                 "type": "BarContainerView",
+                 "value": null
+                },
+                {
+                 "children": [
+                  {
+                   "children": [
+                    {
+                     "children": [],
+                     "enabled": null,
+                     "focused": false,
+                     "frame": {
+                      "height": 102,
+                      "width": 402,
+                      "x": 0,
+                      "y": 0
+                     },
+                     "hidden": false,
+                     "identifier": null,
+                     "label": null,
+                     "pid": 32311,
+                     "placeholder": null,
+                     "traits": [
+                      "Scrollable"
+                     ],
+                     "type": "BackdropView",
+                     "value": null
+                    }
+                   ],
+                   "enabled": null,
+                   "focused": false,
+                   "frame": {
+                    "height": 874,
+                    "width": 402,
+                    "x": 0,
+                    "y": 0
+                   },
+                   "hidden": false,
+                   "identifier": null,
+                   "label": null,
+                   "pid": 32311,
+                   "placeholder": null,
+                   "traits": [
+                    "Scrollable"
+                   ],
+                   "type": "_UITouchPassthroughView",
+                   "value": null
+                  },
+                  {
+                   "children": [],
+                   "enabled": null,
+                   "focused": false,
+                   "frame": {
+                    "height": 874,
+                    "width": 402,
+                    "x": 0,
+                    "y": 0
+                   },
+                   "hidden": false,
+                   "identifier": null,
+                   "label": null,
+                   "pid": 32311,
+                   "placeholder": null,
+                   "traits": [
+                    "Scrollable"
+                   ],
+                   "type": "_UITouchPassthroughView",
+                   "value": null
+                  },
+                  {
+                   "children": [
+                    {
+                     "children": [
+                      {
+                       "children": [
+                        {
+                         "children": [
+                          {
+                           "children": [],
+                           "enabled": null,
+                           "focused": false,
+                           "frame": {
+                            "height": 89,
+                            "width": 402,
+                            "x": 0,
+                            "y": 0
+                           },
+                           "hidden": false,
+                           "identifier": null,
+                           "label": null,
+                           "pid": 32311,
+                           "placeholder": null,
+                           "traits": [
+                            "Scrollable"
+                           ],
+                           "type": "BackdropView",
+                           "value": null
+                          },
+                          {
+                           "children": [],
+                           "enabled": null,
+                           "focused": false,
+                           "frame": {
+                            "height": 138,
+                            "width": 402,
+                            "x": 0,
+                            "y": 736
+                           },
+                           "hidden": false,
+                           "identifier": null,
+                           "label": null,
+                           "pid": 32311,
+                           "placeholder": null,
+                           "traits": [
+                            "Scrollable"
+                           ],
+                           "type": "BackdropView",
+                           "value": null
+                          }
+                         ],
+                         "enabled": null,
+                         "focused": false,
+                         "frame": {
+                          "height": 874,
+                          "width": 402,
+                          "x": 0,
+                          "y": 0
+                         },
+                         "hidden": false,
+                         "identifier": null,
+                         "label": null,
+                         "pid": 32311,
+                         "placeholder": null,
+                         "traits": [
+                          "Scrollable"
+                         ],
+                         "type": "_UITouchPassthroughView",
+                         "value": null
+                        },
+                        {
+                         "children": [
+                          {
+                           "children": [
+                            {
+                             "children": [
+                              {
+                               "children": [
+                                {
+                                 "children": [
+                                  {
+                                   "children": [
+                                    {
+                                     "children": [
+                                      {
+                                       "children": [],
+                                       "enabled": null,
+                                       "focused": false,
+                                       "frame": {
+                                        "height": 20,
+                                        "width": 35,
+                                        "x": 8,
+                                        "y": 70
+                                       },
+                                       "hidden": false,
+                                       "identifier": null,
+                                       "label": "User",
+                                       "pid": 32311,
+                                       "placeholder": null,
+                                       "traits": [
+                                        "StaticText",
+                                        "WebContent",
+                                        "Scrollable",
+                                        "TextOperationsAvailable"
+                                       ],
+                                       "type": "StaticText",
+                                       "value": ""
+                                      },
+                                      {
+                                       "children": [],
+                                       "enabled": null,
+                                       "focused": false,
+                                       "frame": {
+                                        "height": 21,
+                                        "width": 155,
+                                        "x": 42,
+                                        "y": 71
+                                       },
+                                       "hidden": false,
+                                       "identifier": null,
+                                       "label": "User",
+                                       "pid": 32311,
+                                       "placeholder": null,
+                                       "traits": [
+                                        "WebContent",
+                                        "TextEntry",
+                                        "Scrollable",
+                                        "TextOperationsAvailable"
+                                       ],
+                                       "type": "WebAccessibilityObjectWrapper",
+                                       "value": "Username"
+                                      }
+                                     ],
+                                     "enabled": null,
+                                     "focused": false,
+                                     "frame": {
+                                      "height": 21,
+                                      "width": 188,
+                                      "x": 8,
+                                      "y": 70
+                                     },
+                                     "hidden": false,
+                                     "identifier": null,
+                                     "label": "",
+                                     "pid": 32311,
+                                     "placeholder": null,
+                                     "traits": [
+                                      "WebContent",
+                                      "Scrollable",
+                                      "TextOperationsAvailable"
+                                     ],
+                                     "type": "WebAccessibilityObjectWrapper",
+                                     "value": ""
+                                    },
+                                    {
+                                     "children": [
+                                      {
+                                       "children": [],
+                                       "enabled": null,
+                                       "focused": false,
+                                       "frame": {
+                                        "height": 19,
+                                        "width": 33,
+                                        "x": 8,
+                                        "y": 112
+                                       },
+                                       "hidden": false,
+                                       "identifier": null,
+                                       "label": "Pass",
+                                       "pid": 32311,
+                                       "placeholder": null,
+                                       "traits": [
+                                        "StaticText",
+                                        "WebContent",
+                                        "Scrollable",
+                                        "TextOperationsAvailable"
+                                       ],
+                                       "type": "StaticText",
+                                       "value": ""
+                                      },
+                                      {
+                                       "children": [],
+                                       "enabled": null,
+                                       "focused": false,
+                                       "frame": {
+                                        "height": 20,
+                                        "width": 155,
+                                        "x": 40,
+                                        "y": 113
+                                       },
+                                       "hidden": false,
+                                       "identifier": null,
+                                       "label": "Pass",
+                                       "pid": 32311,
+                                       "placeholder": null,
+                                       "traits": [
+                                        "WebContent",
+                                        "TextEntry",
+                                        "SecureTextField",
+                                        "Scrollable",
+                                        "TextOperationsAvailable"
+                                       ],
+                                       "type": "WebAccessibilityObjectWrapper",
+                                       "value": "Password"
+                                      }
+                                     ],
+                                     "enabled": null,
+                                     "focused": false,
+                                     "frame": {
+                                      "height": 21,
+                                      "width": 187,
+                                      "x": 8,
+                                      "y": 112
+                                     },
+                                     "hidden": false,
+                                     "identifier": null,
+                                     "label": "",
+                                     "pid": 32311,
+                                     "placeholder": null,
+                                     "traits": [
+                                      "WebContent",
+                                      "Scrollable",
+                                      "TextOperationsAvailable"
+                                     ],
+                                     "type": "WebAccessibilityObjectWrapper",
+                                     "value": ""
+                                    },
+                                    {
+                                     "children": [],
+                                     "enabled": null,
+                                     "focused": false,
+                                     "frame": {
+                                      "height": 21,
+                                      "width": 154,
+                                      "x": 8,
+                                      "y": 154
+                                     },
+                                     "hidden": false,
+                                     "identifier": null,
+                                     "label": "",
+                                     "pid": 32311,
+                                     "placeholder": null,
+                                     "traits": [
+                                      "WebContent",
+                                      "TextEntry",
+                                      "SecureTextField",
+                                      "Scrollable",
+                                      "TextOperationsAvailable"
+                                     ],
+                                     "type": "WebAccessibilityObjectWrapper",
+                                     "value": ""
+                                    },
+                                    {
+                                     "children": [],
+                                     "enabled": null,
+                                     "focused": false,
+                                     "frame": {
+                                      "height": 20,
+                                      "width": 60,
+                                      "x": 8,
+                                      "y": 176
+                                     },
+                                     "hidden": false,
+                                     "identifier": null,
+                                     "label": "Sign in",
+                                     "pid": 32311,
+                                     "placeholder": null,
+                                     "traits": [
+                                      "Button",
+                                      "WebContent",
+                                      "Scrollable",
+                                      "TextOperationsAvailable"
+                                     ],
+                                     "type": "Button",
+                                     "value": ""
+                                    }
+                                   ],
+                                   "enabled": null,
+                                   "focused": false,
+                                   "frame": {
+                                    "height": 126,
+                                    "width": 386,
+                                    "x": 8,
+                                    "y": 70
+                                   },
+                                   "hidden": false,
+                                   "identifier": null,
+                                   "label": "form",
+                                   "pid": 32311,
+                                   "placeholder": null,
+                                   "traits": [
+                                    "WebContent",
+                                    "Scrollable",
+                                    "TextOperationsAvailable"
+                                   ],
+                                   "type": "WebAccessibilityObjectWrapper",
+                                   "value": ""
+                                  }
+                                 ],
+                                 "enabled": null,
+                                 "focused": false,
+                                 "frame": {
+                                  "height": 714,
+                                  "width": 402,
+                                  "x": 0,
+                                  "y": 62
+                                 },
+                                 "hidden": false,
+                                 "identifier": null,
+                                 "label": "Login",
+                                 "pid": 32311,
+                                 "placeholder": null,
+                                 "traits": [
+                                  "WebContent",
+                                  "Scrollable",
+                                  "TextOperationsAvailable"
+                                 ],
+                                 "type": "WebAccessibilityObjectWrapper",
+                                 "value": ""
+                                }
+                               ],
+                               "enabled": null,
+                               "focused": false,
+                               "frame": {
+                                "height": 874,
+                                "width": 402,
+                                "x": 0,
+                                "y": 62
+                               },
+                               "hidden": false,
+                               "identifier": null,
+                               "label": "",
+                               "pid": 32311,
+                               "placeholder": null,
+                               "traits": [
+                                "WebContent",
+                                "Scrollable",
+                                "TextOperationsAvailable"
+                               ],
+                               "type": "WebAccessibilityObjectWrapper",
+                               "value": ""
+                              }
+                             ],
+                             "enabled": null,
+                             "focused": false,
+                             "frame": {
+                              "height": 874,
+                              "width": 402,
+                              "x": 0,
+                              "y": 0
+                             },
+                             "hidden": false,
+                             "identifier": null,
+                             "label": null,
+                             "pid": 32311,
+                             "placeholder": null,
+                             "traits": [
+                              "None"
+                             ],
+                             "type": "WKAccessibilityWebPageObject",
+                             "value": null
+                            }
+                           ],
+                           "enabled": null,
+                           "focused": false,
+                           "frame": {
+                            "height": 874,
+                            "width": 402,
+                            "x": 0,
+                            "y": 0
+                           },
+                           "hidden": false,
+                           "identifier": null,
+                           "label": null,
+                           "pid": 32311,
+                           "placeholder": null,
+                           "traits": [
+                            "None"
+                           ],
+                           "type": "RemoteElement",
+                           "value": null
+                          }
+                         ],
+                         "enabled": null,
+                         "focused": false,
+                         "frame": {
+                          "height": 874,
+                          "width": 402,
+                          "x": 0,
+                          "y": 0
+                         },
+                         "hidden": false,
+                         "identifier": null,
+                         "label": null,
+                         "pid": 32311,
+                         "placeholder": null,
+                         "traits": [
+                          "Scrollable",
+                          "TextOperationsAvailable"
+                         ],
+                         "type": "WebView",
+                         "value": null
+                        },
+                        {
+                         "children": [
+                          {
+                           "children": [],
+                           "enabled": null,
+                           "focused": false,
+                           "frame": {
+                            "height": 89,
+                            "width": 402,
+                            "x": 0,
+                            "y": 0
+                           },
+                           "hidden": false,
+                           "identifier": null,
+                           "label": null,
+                           "pid": 32311,
+                           "placeholder": null,
+                           "traits": [
+                            "Scrollable"
+                           ],
+                           "type": "UIKit.ScrollEdgeEffectView",
+                           "value": null
+                          }
+                         ],
+                         "enabled": null,
+                         "focused": false,
+                         "frame": {
+                          "height": 874,
+                          "width": 402,
+                          "x": 0,
+                          "y": 0
+                         },
+                         "hidden": false,
+                         "identifier": null,
+                         "label": null,
+                         "pid": 32311,
+                         "placeholder": null,
+                         "traits": [
+                          "Scrollable"
+                         ],
+                         "type": "_UITouchPassthroughView",
+                         "value": null
+                        },
+                        {
+                         "children": [
+                          {
+                           "children": [],
+                           "enabled": null,
+                           "focused": false,
+                           "frame": {
+                            "height": 744,
+                            "width": 3,
+                            "x": 396,
+                            "y": 65
+                           },
+                           "hidden": false,
+                           "identifier": null,
+                           "label": null,
+                           "pid": 32311,
+                           "placeholder": null,
+                           "traits": [
+                            "Scrollable"
+                           ],
+                           "type": "UIView",
+                           "value": null
+                          }
+                         ],
+                         "enabled": null,
+                         "focused": false,
+                         "frame": {
+                          "height": 750,
+                          "width": 30,
+                          "x": 369,
+                          "y": 62
+                         },
+                         "hidden": false,
+                         "identifier": null,
+                         "label": "Vertical scroll bar, 1 page",
+                         "pid": 32311,
+                         "placeholder": null,
+                         "traits": [
+                          "Adjustable",
+                          "Scrollable"
+                         ],
+                         "type": "_UIScrollViewScrollIndicator",
+                         "value": "0%"
+                        },
+                        {
+                         "children": [
+                          {
+                           "children": [],
+                           "enabled": null,
+                           "focused": false,
+                           "frame": {
+                            "height": 3,
+                            "width": 272,
+                            "x": 65,
+                            "y": 868
+                           },
+                           "hidden": false,
+                           "identifier": null,
+                           "label": null,
+                           "pid": 32311,
+                           "placeholder": null,
+                           "traits": [
+                            "Scrollable"
+                           ],
+                           "type": "UIView",
+                           "value": null
+                          }
+                         ],
+                         "enabled": null,
+                         "focused": false,
+                         "frame": {
+                          "height": 30,
+                          "width": 278,
+                          "x": 62,
+                          "y": 841
+                         },
+                         "hidden": false,
+                         "identifier": null,
+                         "label": "Horizontal scroll bar, 1 page",
+                         "pid": 32311,
+                         "placeholder": null,
+                         "traits": [
+                          "Adjustable",
+                          "Scrollable"
+                         ],
+                         "type": "_UIScrollViewScrollIndicator",
+                         "value": "0%"
+                        }
+                       ],
+                       "enabled": null,
+                       "focused": false,
+                       "frame": {
+                        "height": 874,
+                        "width": 402,
+                        "x": 0,
+                        "y": 0
+                       },
+                       "hidden": false,
+                       "identifier": null,
+                       "label": null,
+                       "pid": 32311,
+                       "placeholder": null,
+                       "traits": [
+                        "Scrollable"
+                       ],
+                       "type": "WebView",
+                       "value": null
+                      }
+                     ],
+                     "enabled": null,
+                     "focused": false,
+                     "frame": {
+                      "height": 874,
+                      "width": 402,
+                      "x": 0,
+                      "y": 0
+                     },
+                     "hidden": false,
+                     "identifier": "WebView",
+                     "label": null,
+                     "pid": 32311,
+                     "placeholder": null,
+                     "traits": [
+                      "Scrollable",
+                      "TextOperationsAvailable"
+                     ],
+                     "type": "WebView",
+                     "value": null
+                    }
+                   ],
+                   "enabled": null,
+                   "focused": false,
+                   "frame": {
+                    "height": 874,
+                    "width": 402,
+                    "x": 0,
+                    "y": 0
+                   },
+                   "hidden": false,
+                   "identifier": "TabDocument?IsLoadedUsingDesktopUserAgent=false&InReaderMode=false&UUID=D379E595-EF91-4784-952B-E48729A7562E&IsPrivate=false&IsPageLoaded=true&WebViewProcessID=32391",
+                   "label": null,
+                   "pid": 32311,
+                   "placeholder": null,
+                   "traits": [
+                    "Scrollable"
+                   ],
+                   "type": "TabDocumentView",
+                   "value": null
+                  },
+                  {
+                   "children": [
+                    {
+                     "children": [],
+                     "enabled": null,
+                     "focused": false,
+                     "frame": {
+                      "height": 3,
+                      "width": 7,
+                      "x": 334.3333333333333,
+                      "y": 868
+                     },
+                     "hidden": false,
+                     "identifier": null,
+                     "label": null,
+                     "pid": 32311,
+                     "placeholder": null,
+                     "traits": [
+                      "Scrollable"
+                     ],
+                     "type": "UIView",
+                     "value": null
+                    }
+                   ],
+                   "enabled": null,
+                   "focused": false,
+                   "frame": {
+                    "height": 30,
+                    "width": 278,
+                    "x": 62,
+                    "y": 841
+                   },
+                   "hidden": false,
+                   "identifier": null,
+                   "label": "Horizontal scroll bar, 1 page",
+                   "pid": 32311,
+                   "placeholder": null,
+                   "traits": [
+                    "Adjustable",
+                    "Scrollable"
+                   ],
+                   "type": "_UIScrollViewScrollIndicator",
+                   "value": "0%"
+                  }
+                 ],
+                 "enabled": null,
+                 "focused": false,
+                 "frame": {
+                  "height": 874,
+                  "width": 402,
+                  "x": 0,
+                  "y": 0
+                 },
+                 "hidden": false,
+                 "identifier": null,
+                 "label": null,
+                 "pid": 32311,
+                 "placeholder": null,
+                 "traits": [
+                  "Scrollable"
+                 ],
+                 "type": "ScrollView",
+                 "value": null
+                }
+               ],
+               "enabled": null,
+               "focused": false,
+               "frame": {
+                "height": 874,
+                "width": 402,
+                "x": 0,
+                "y": 0
+               },
+               "hidden": false,
+               "identifier": null,
+               "label": null,
+               "pid": 32311,
+               "placeholder": null,
+               "traits": [
+                "Scrollable"
+               ],
+               "type": "SFOrderedContainerView",
+               "value": null
+              }
+             ],
+             "enabled": null,
+             "focused": false,
+             "frame": {
+              "height": 874,
+              "width": 402,
+              "x": 0,
+              "y": 0
+             },
+             "hidden": false,
+             "identifier": null,
+             "label": null,
+             "pid": 32311,
+             "placeholder": null,
+             "traits": [
+              "Scrollable"
+             ],
+             "type": "ViewWithCustomNextResponder",
+             "value": null
+            },
+            {
+             "children": [
+              {
+               "children": [
+                {
+                 "children": [
+                  {
+                   "children": [
+                    {
+                     "children": [
+                      {
+                       "children": [
+                        {
+                         "children": [
+                          {
+                           "children": [],
+                           "enabled": null,
+                           "focused": false,
+                           "frame": {
+                            "height": 98,
+                            "width": 402,
+                            "x": 0,
+                            "y": 776
+                           },
+                           "hidden": false,
+                           "identifier": null,
+                           "label": null,
+                           "pid": 32311,
+                           "placeholder": null,
+                           "traits": [
+                            "Scrollable"
+                           ],
+                           "type": "UIView",
+                           "value": null
+                          }
+                         ],
+                         "enabled": null,
+                         "focused": false,
+                         "frame": {
+                          "height": 98,
+                          "width": 402,
+                          "x": 0,
+                          "y": 776
+                         },
+                         "hidden": false,
+                         "identifier": null,
+                         "label": null,
+                         "pid": 32311,
+                         "placeholder": null,
+                         "traits": [
+                          "Scrollable"
+                         ],
+                         "type": "UIKit.UISDFView",
+                         "value": null
+                        }
+                       ],
+                       "enabled": null,
+                       "focused": false,
+                       "frame": {
+                        "height": 98,
+                        "width": 402,
+                        "x": 0,
+                        "y": 776
+                       },
+                       "hidden": false,
+                       "identifier": null,
+                       "label": null,
+                       "pid": 32311,
+                       "placeholder": null,
+                       "traits": [
+                        "Scrollable"
+                       ],
+                       "type": "UIKit.UISDFBackdropView",
+                       "value": null
+                      },
+                      {
+                       "children": [
+                        {
+                         "children": [],
+                         "enabled": null,
+                         "focused": false,
+                         "frame": {
+                          "height": 98,
+                          "width": 402,
+                          "x": 0,
+                          "y": 776
+                         },
+                         "hidden": false,
+                         "identifier": null,
+                         "label": null,
+                         "pid": 32311,
+                         "placeholder": null,
+                         "traits": [
+                          "Scrollable"
+                         ],
+                         "type": "_UIPortalView",
+                         "value": null
+                        }
+                       ],
+                       "enabled": null,
+                       "focused": false,
+                       "frame": {
+                        "height": 98,
+                        "width": 402,
+                        "x": 0,
+                        "y": 776
+                       },
+                       "hidden": false,
+                       "identifier": null,
+                       "label": null,
+                       "pid": 32311,
+                       "placeholder": null,
+                       "traits": [
+                        "Scrollable"
+                       ],
+                       "type": "UIKit.UISDFView",
+                       "value": null
+                      }
+                     ],
+                     "enabled": null,
+                     "focused": false,
+                     "frame": {
+                      "height": 98,
+                      "width": 402,
+                      "x": 0,
+                      "y": 776
+                     },
+                     "hidden": false,
+                     "identifier": null,
+                     "label": null,
+                     "pid": 32311,
+                     "placeholder": null,
+                     "traits": [
+                      "Scrollable"
+                     ],
+                     "type": "UIKit._UIMaterialDefinitionView",
+                     "value": null
+                    }
+                   ],
+                   "enabled": null,
+                   "focused": false,
+                   "frame": {
+                    "height": 98,
+                    "width": 402,
+                    "x": 0,
+                    "y": 776
+                   },
+                   "hidden": false,
+                   "identifier": null,
+                   "label": null,
+                   "pid": 32311,
+                   "placeholder": null,
+                   "traits": [
+                    "Scrollable"
+                   ],
+                   "type": "GlassGroupLayerView",
+                   "value": null
+                  }
+                 ],
+                 "enabled": null,
+                 "focused": false,
+                 "frame": {
+                  "height": 98,
+                  "width": 402,
+                  "x": 0,
+                  "y": 776
+                 },
+                 "hidden": false,
+                 "identifier": null,
+                 "label": null,
+                 "pid": 32311,
+                 "placeholder": null,
+                 "traits": [
+                  "Scrollable"
+                 ],
+                 "type": "UIKit._GlassGroupView",
+                 "value": null
+                },
+                {
+                 "children": [
+                  {
+                   "children": [
+                    {
+                     "children": [],
+                     "enabled": null,
+                     "focused": false,
+                     "frame": {
+                      "height": 48,
+                      "width": 48,
+                      "x": 34,
+                      "y": 792
+                     },
+                     "hidden": false,
+                     "identifier": "BackButton",
+                     "label": "Back",
+                     "pid": 32311,
+                     "placeholder": null,
+                     "traits": [
+                      "Button",
+                      "NotEnabled",
+                      "Scrollable"
+                     ],
+                     "type": "Button",
+                     "value": null
+                    }
+                   ],
+                   "enabled": null,
+                   "focused": false,
+                   "frame": {
+                    "height": 48,
+                    "width": 48,
+                    "x": 34,
+                    "y": 792
+                   },
+                   "hidden": false,
+                   "identifier": null,
+                   "label": null,
+                   "pid": 32311,
+                   "placeholder": null,
+                   "traits": [
+                    "Scrollable"
+                   ],
+                   "type": "UIStackView",
+                   "value": null
+                  }
+                 ],
+                 "enabled": null,
+                 "focused": false,
+                 "frame": {
+                  "height": 48,
+                  "width": 48,
+                  "x": 34,
+                  "y": 792
+                 },
+                 "hidden": false,
+                 "identifier": null,
+                 "label": null,
+                 "pid": 32311,
+                 "placeholder": null,
+                 "traits": [
+                  "Scrollable"
+                 ],
+                 "type": "MobileSafariUI.SFMinibarButtonBar",
+                 "value": null
+                },
+                {
+                 "children": [
+                  {
+                   "children": [
+                    {
+                     "children": [
+                      {
+                       "children": [
+                        {
+                         "children": [
+                          {
+                           "children": [],
+                           "enabled": null,
+                           "focused": false,
+                           "frame": {
+                            "height": 0,
+                            "width": 0,
+                            "x": 90,
+                            "y": 792
+                           },
+                           "hidden": false,
+                           "identifier": null,
+                           "label": null,
+                           "pid": 32311,
+                           "placeholder": null,
+                           "traits": [
+                            "StaticText",
+                            "Scrollable"
+                           ],
+                           "type": "StaticText",
+                           "value": null
+                          }
+                         ],
+                         "enabled": null,
+                         "focused": false,
+                         "frame": {
+                          "height": 48,
+                          "width": 48,
+                          "x": 90,
+                          "y": 792
+                         },
+                         "hidden": false,
+                         "identifier": "MoreMenuButton",
+                         "label": "Page Menu",
+                         "pid": 32311,
+                         "placeholder": null,
+                         "traits": [
+                          "Button",
+                          "Scrollable"
+                         ],
+                         "type": "Button",
+                         "value": null
+                        },
+                        {
+                         "children": [],
+                         "enabled": null,
+                         "focused": false,
+                         "frame": {
+                          "height": 20.33333333333337,
+                          "width": 66,
+                          "x": 168,
+                          "y": 806
+                         },
+                         "hidden": false,
+                         "identifier": "TabBarItemTitle",
+                         "label": "Address",
+                         "pid": 32311,
+                         "placeholder": null,
+                         "traits": [
+                          "TextEntry",
+                          "Scrollable"
+                         ],
+                         "type": "SFUnifiedTabBarItemTitleContainerView",
+                         "value": "‎127.0.0.1"
+                        },
+                        {
+                         "children": [],
+                         "enabled": null,
+                         "focused": false,
+                         "frame": {
+                          "height": 21,
+                          "width": 17.666666666666686,
+                          "x": 281.33333333333337,
+                          "y": 805.6666666666666
+                         },
+                         "hidden": false,
+                         "identifier": "ReloadButton",
+                         "label": "refresh",
+                         "pid": 32311,
+                         "placeholder": null,
+                         "traits": [
+                          "Button",
+                          "Scrollable"
+                         ],
+                         "type": "Button",
+                         "value": null
+                        }
+                       ],
+                       "enabled": null,
+                       "focused": false,
+                       "frame": {
+                        "height": 48,
+                        "width": 222,
+                        "x": 90,
+                        "y": 792
+                       },
+                       "hidden": false,
+                       "identifier": "CapsuleNavigationBar?isSelected=true&isDistractionControlOverlayUp=false",
+                       "label": null,
+                       "pid": 32311,
+                       "placeholder": null,
+                       "traits": [
+                        "Selected",
+                        "Scrollable"
+                       ],
+                       "type": "SFCapsuleNavigationBar",
+                       "value": null
+                      }
+                     ],
+                     "enabled": null,
+                     "focused": false,
+                     "frame": {
+                      "height": 48,
+                      "width": 222,
+                      "x": 90,
+                      "y": 792
+                     },
+                     "hidden": false,
+                     "identifier": null,
+                     "label": null,
+                     "pid": 32311,
+                     "placeholder": null,
+                     "traits": [
+                      "Scrollable"
+                     ],
+                     "type": "UIView",
+                     "value": null
+                    }
+                   ],
+                   "enabled": null,
+                   "focused": false,
+                   "frame": {
+                    "height": 48,
+                    "width": 222,
+                    "x": 90,
+                    "y": 792
+                   },
+                   "hidden": false,
+                   "identifier": null,
+                   "label": null,
+                   "pid": 32311,
+                   "placeholder": null,
+                   "traits": [
+                    "Scrollable"
+                   ],
+                   "type": "UIView",
+                   "value": null
+                  }
+                 ],
+                 "enabled": null,
+                 "focused": false,
+                 "frame": {
+                  "height": 48,
+                  "width": 222,
+                  "x": 90,
+                  "y": 792
+                 },
+                 "hidden": false,
+                 "identifier": null,
+                 "label": null,
+                 "pid": 32311,
+                 "placeholder": null,
+                 "traits": [
+                  "Scrollable"
+                 ],
+                 "type": "SFCapsuleView",
+                 "value": null
+                },
+                {
+                 "children": [
+                  {
+                   "children": [
+                    {
+                     "children": [],
+                     "enabled": null,
+                     "focused": false,
+                     "frame": {
+                      "height": 48,
+                      "width": 48,
+                      "x": 320,
+                      "y": 792
+                     },
+                     "hidden": false,
+                     "identifier": "TabOverviewButton",
+                     "label": "Tabs",
+                     "pid": 32311,
+                     "placeholder": null,
+                     "traits": [
+                      "Button",
+                      "Scrollable"
+                     ],
+                     "type": "Button",
+                     "value": null
+                    }
+                   ],
+                   "enabled": null,
+                   "focused": false,
+                   "frame": {
+                    "height": 48,
+                    "width": 48,
+                    "x": 320,
+                    "y": 792
+                   },
+                   "hidden": false,
+                   "identifier": null,
+                   "label": null,
+                   "pid": 32311,
+                   "placeholder": null,
+                   "traits": [
+                    "Scrollable"
+                   ],
+                   "type": "UIStackView",
+                   "value": null
+                  }
+                 ],
+                 "enabled": null,
+                 "focused": false,
+                 "frame": {
+                  "height": 48,
+                  "width": 48,
+                  "x": 320,
+                  "y": 792
+                 },
+                 "hidden": false,
+                 "identifier": null,
+                 "label": null,
+                 "pid": 32311,
+                 "placeholder": null,
+                 "traits": [
+                  "Scrollable"
+                 ],
+                 "type": "MobileSafariUI.SFMinibarButtonBar",
+                 "value": null
+                }
+               ],
+               "enabled": null,
+               "focused": false,
+               "frame": {
+                "height": 98,
+                "width": 402,
+                "x": 0,
+                "y": 776
+               },
+               "hidden": false,
+               "identifier": null,
+               "label": null,
+               "pid": 32311,
+               "placeholder": null,
+               "traits": [
+                "Scrollable"
+               ],
+               "type": "SFTouchPassthroughView",
+               "value": null
+              }
+             ],
+             "enabled": null,
+             "focused": false,
+             "frame": {
+              "height": 874,
+              "width": 402,
+              "x": 0,
+              "y": 0
+             },
+             "hidden": false,
+             "identifier": "CapsuleViewController",
+             "label": null,
+             "pid": 32311,
+             "placeholder": null,
+             "traits": [
+              "Scrollable"
+             ],
+             "type": "SFCapsuleCollectionView",
+             "value": null
+            }
+           ],
+           "enabled": null,
+           "focused": false,
+           "frame": {
+            "height": 874,
+            "width": 402,
+            "x": 0,
+            "y": 0
+           },
+           "hidden": false,
+           "identifier": "SafariWindow?View=Narrow&BarsKeptMinimized=false&UUID=9ADA4C26-1670-4318-B944-1A66BE1D6BA5&UsingLoweredBar=true&IsSecure=false&IsTabBarAvailable=false",
+           "label": null,
+           "pid": 32311,
+           "placeholder": null,
+           "traits": [
+            "Scrollable"
+           ],
+           "type": "SFOrderedContainerView",
+           "value": null
+          }
+         ],
+         "enabled": null,
+         "focused": false,
+         "frame": {
+          "height": 874,
+          "width": 402,
+          "x": 0,
+          "y": 0
+         },
+         "hidden": false,
+         "identifier": null,
+         "label": null,
+         "pid": 32311,
+         "placeholder": null,
+         "traits": [
+          "None"
+         ],
+         "type": "UIDropShadowView",
+         "value": null
+        }
+       ],
+       "enabled": null,
+       "focused": false,
+       "frame": {
+        "height": 874,
+        "width": 402,
+        "x": 0,
+        "y": 0
+       },
+       "hidden": false,
+       "identifier": null,
+       "label": null,
+       "pid": 32311,
+       "placeholder": null,
+       "traits": [
+        "None"
+       ],
+       "type": "UITransitionView",
+       "value": null
+      }
+     ],
+     "enabled": null,
+     "focused": false,
+     "frame": {
+      "height": 874,
+      "width": 402,
+      "x": 0,
+      "y": 0
+     },
+     "hidden": false,
+     "identifier": null,
+     "label": null,
+     "pid": 32311,
+     "placeholder": null,
+     "traits": [
+      "None"
+     ],
+     "type": "Application",
+     "value": null
+    },
+    {
+     "children": [
+      {
+       "children": [
+        {
+         "children": [],
+         "enabled": null,
+         "focused": false,
+         "frame": {
+          "height": 874,
+          "width": 402,
+          "x": 0,
+          "y": 0
+         },
+         "hidden": false,
+         "identifier": null,
+         "label": null,
+         "pid": 32311,
+         "placeholder": null,
+         "traits": [
+          "Scrollable"
+         ],
+         "type": "UIEditingOverlayGestureView",
+         "value": null
+        }
+       ],
+       "enabled": null,
+       "focused": false,
+       "frame": {
+        "height": 874,
+        "width": 402,
+        "x": 0,
+        "y": 0
+       },
+       "hidden": false,
+       "identifier": null,
+       "label": null,
+       "pid": 32311,
+       "placeholder": null,
+       "traits": [
+        "Scrollable"
+       ],
+       "type": "UITrackingWindowView",
+       "value": null
+      }
+     ],
+     "enabled": null,
+     "focused": false,
+     "frame": {
+      "height": 874,
+      "width": 402,
+      "x": 0,
+      "y": 0
+     },
+     "hidden": false,
+     "identifier": null,
+     "label": null,
+     "pid": 32311,
+     "placeholder": null,
+     "traits": [
+      "None"
+     ],
+     "type": "Application",
+     "value": null
+    }
+   ],
+   "enabled": null,
+   "focused": false,
+   "frame": {
+    "height": 874,
+    "width": 402,
+    "x": 0,
+    "y": 0
+   },
+   "hidden": false,
+   "identifier": null,
+   "label": "Safari",
+   "pid": 32311,
+   "placeholder": null,
+   "traits": [
+    "None"
+   ],
+   "type": "Other",
+   "value": null
+  }
+ ],
+ "frames": {
+  "framed": 69,
+  "total": 70,
+  "zero_frame": 1
+ },
+ "interaction": null,
+ "modal": null,
+ "narrowing": {
+  "filter": "all",
+  "ignore_case": null,
+  "match": null,
+  "match_key": null,
+  "matched": 70,
+  "walked": 70
+ },
+ "profile": null,
+ "screen": {
+  "coordinate_space": "screen",
+  "display": {
+   "rotation": 0,
+   "scale": 3,
+   "unique_id": "CAF35824-F1BE-4C58-B261-BD6D089BDED7"
+  },
+  "height": 874,
+  "width": 402
+ },
+ "target": {
+  "kind": "frontmost",
+  "match_key": null,
+  "pid": null,
+  "value": null,
+  "x": null,
+  "y": null
+ },
+ "truncated": false
+}

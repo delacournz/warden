@@ -1,5 +1,3 @@
-import { PENDING_PREFIX } from "@delacour/warden-core/claim";
-import { wardenNameProfile } from "@delacour/warden-core/inventory";
 import { describeOwner, type Lease, sameOwner } from "@delacour/warden-core/types";
 import { resolveOwner } from "../claim-flags";
 import { defineCommand } from "../command";
@@ -16,34 +14,18 @@ import {
 } from "../lease-select";
 import { emit, note, plural, reportError } from "../output";
 import { releaseAfter } from "../perf/release-after";
+import { quarantineLeases } from "../quarantine";
 import { withSpinner } from "../spinner-context";
 import { describeResource } from "./ls";
 
 type ReleaseOpts = SelectOptionValues & { shutdown?: true; bad?: true | string; json?: true };
 
-/**
- * `--bad`: quarantine the devices behind the released leases so no claim hands them out again.
- * Only warden devices (a store record or a `warden-<profile>-N` name); foreign ones are released
- * only. Returns the quarantined ids + notes.
- */
-function quarantineReleased(ctx: CommandContext, leases: Lease[], reason: string | undefined) {
-	const store = ctx.store();
-	const quarantined: string[] = [];
-	const notes: string[] = [];
-	const records = store.listDevices();
-	for (const l of leases) {
-		if (l.resource.kind !== "device" || l.resource.id.startsWith(PENDING_PREFIX)) continue;
-		const { platform, id, name } = l.resource;
-		const record = records.find((r) => r.platform === platform && r.id === id);
-		const profile = record?.profile ?? wardenNameProfile(name);
-		if (!record && profile === undefined) {
-			notes.push(`${name} (${id}) is not a warden device — released, not quarantined`);
-			continue;
-		}
-		store.quarantineDevice({ platform, id, name, ...(profile !== undefined ? { profile } : {}) }, reason, ctx.now());
-		quarantined.push(id);
-	}
-	return { quarantined, notes };
+/** `--bad`: quarantine the released warden devices; a foreign one is only released (a note says so). */
+function quarantineBad(ctx: CommandContext, leases: Lease[], bad: ReleaseOpts["bad"]) {
+	if (bad === undefined) return { quarantined: [], notes: [] };
+	const done = quarantineLeases(ctx.store(), leases, typeof bad === "string" ? bad : undefined, ctx.now());
+	const notes = done.foreign.map((d) => `${d.name} (${d.id}) is not a warden device — released, not quarantined`);
+	return { quarantined: done.quarantined, notes };
 }
 
 type Picked = { kind: "ids"; ids: string[] } | { kind: "exit"; code: number };
@@ -93,10 +75,7 @@ async function release(ctx: CommandContext, ids: string[], opts: ReleaseOpts): P
 	const { leases, unknown } = selectLeases(ctx, { ...selector, ids: picked.ids });
 	const devices = leases.filter((l) => l.resource.kind === "device");
 	// quarantine before the shutdown: an ephemeral sim is deleted once shut down, a bad one must be kept
-	const bad =
-		opts.bad !== undefined
-			? quarantineReleased(ctx, leases, typeof opts.bad === "string" ? opts.bad : undefined)
-			: { quarantined: [], notes: [] };
+	const bad = quarantineBad(ctx, leases, opts.bad);
 	const { shutdown, notes, deleted }: ShutdownOutcome =
 		opts.shutdown && devices.length > 0
 			? await withSpinner(ctx, `shutting down ${devices.length} device(s)…`, async (sctx, spinner) => {

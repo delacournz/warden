@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { locateHelper } from "./locate-helper";
+import { locateHelper, resolveHelper } from "./locate-helper";
 
 let root: string;
 
@@ -152,5 +152,38 @@ describe("locateHelper failures", () => {
 		});
 		expect(result.success).toBe(false);
 		expect(seen).toEqual(["/opt/warden/bin/warden-simd", "/repo/packages/e2e/native/dist/warden-simd"]);
+	});
+});
+
+describe("resolveHelper finds the helper `warden doctor --fetch-helper` staged", () => {
+	const options = (l: ReturnType<typeof layout>, extra: Record<string, unknown>) =>
+		({
+			udid: "U1",
+			exec: async () => ({ exitCode: 0, stdout: "", stderr: "" }),
+			execPath: join(l.binDir, "warden"),
+			importDir: l.importDir,
+			wardenHome: l.home,
+			...extra,
+		}) as Parameters<typeof resolveHelper>[0];
+
+	test("the warden version the run started under (WARDEN_VERSION in the spec env) selects $WARDEN_HOME/simd/<version>", () => {
+		const l = layout();
+		const staged = touch(join(l.home, "simd", "1.2.3", "warden-simd"));
+		const result = resolveHelper(options(l, { env: { wardenVersion: "1.2.3" } }));
+		expect(result).toEqual({ success: true, data: staged });
+	});
+
+	test("an explicit version option wins over the env's", () => {
+		const l = layout();
+		const staged = touch(join(l.home, "simd", "2.0.0", "warden-simd"));
+		touch(join(l.home, "simd", "1.2.3", "warden-simd"));
+		const result = resolveHelper(options(l, { version: "2.0.0", env: { wardenVersion: "1.2.3" } }));
+		expect(result).toEqual({ success: true, data: staged });
+	});
+
+	test("no version anywhere: the staged helper is not guessed at", () => {
+		const l = layout();
+		touch(join(l.home, "simd", "1.2.3", "warden-simd"));
+		expect(resolveHelper(options(l, {})).success).toBe(false);
 	});
 });

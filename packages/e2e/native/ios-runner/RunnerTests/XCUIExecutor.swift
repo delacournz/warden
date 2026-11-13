@@ -3,11 +3,19 @@ import XCTest
 
 /// Collects the issues XCTest records while an op runs. With `continueAfterFailure = true` a failed `typeText` or `tap`
 /// records an issue instead of ending `testServe`; the executor turns those into one wire error (`ErrorClassifier`).
+/// `RunnerTests.record(_:)` hands it the transient snapshot issues it mutes (never recorded, so never observed) via
+/// `mute`; `muted` counts them for `health`.
 final class IssueCollector: NSObject, XCTestObservation {
   var messages: [String] = []
+  private(set) var muted = 0
 
   func testCase(_ testCase: XCTestCase, didRecord issue: XCTIssue) {
     messages.append(issue.compactDescription)
+  }
+
+  func mute(_ message: String) {
+    muted += 1
+    messages.append(message)
   }
 }
 
@@ -92,8 +100,10 @@ final class XCUIExecutor: CommandExecutor {
   private func run(_ command: RunnerCommand) throws -> JSON {
     switch command {
     case .health:
+      var fields = readyFields()
+      fields["mutedIssues"] = .int(issues.muted)
       return RunnerInfo.health(
-        fields: readyFields(), uptimeMs: Int(Date().timeIntervalSince(started) * 1000), state: "serving")
+        fields: fields, uptimeMs: Int(Date().timeIntervalSince(started) * 1000), state: "serving")
     case let .snapshot(params): return try snapshot(params)
     case let .tap(point, count, holdMs, bundleId): return tap(point, count: count, holdMs: holdMs, bundleId: bundleId)
     case let .longPress(point, durationMs, bundleId):
@@ -115,14 +125,20 @@ final class XCUIExecutor: CommandExecutor {
     case let .pressButton(button):
       switch button {
       case .home: XCUIDevice.shared.press(.home)
-      case .volumeUp: XCUIDevice.shared.press(.volumeUp)
-      case .volumeDown: XCUIDevice.shared.press(.volumeDown)
+      case .volumeUp, .volumeDown:
+        // XCUIDevice.Button.volumeUp / .volumeDown are unavailable in the Simulator (the runner also builds for it, A11Y-4)
+        #if targetEnvironment(simulator)
+        throw WireError(.unsupported, "volume buttons are not available in the Simulator", detail: ["op": "pressButton"])
+        #else
+        XCUIDevice.shared.press(button == .volumeUp ? .volumeUp : .volumeDown)
+        #endif
       }
       return [:]
     case let .screenshot(scale): return screenshot(scale: scale)
     case .orientation: return ["orientation": .string(deviceOrientation.rawValue), "source": "device"]
     case .alertButtons: return try alertButtons()
     case let .frontmost(bundleId): return ["frontmost": .bool(app(bundleId).state == .runningForeground)]
+    case let .audit(params): return try audit(params)
     case let .appState(bundleId): return ["state": .string(Self.stateName(app(bundleId).state))]
     case let .launch(params): return launch(params)
     case let .terminate(bundleId): return terminate(bundleId)
@@ -143,7 +159,10 @@ final class XCUIExecutor: CommandExecutor {
         detail: ["bundleId": .string(params.bundleId ?? activeBundleId ?? Self.springboardId)])
     }
     let began = Date()
-    let snapshot = try application.snapshot()
+    // One retry after a transient accessibility refusal (busy or deep screen), then the error is the answer.
+    let snapshot = try SnapshotIssue.retryOnce(
+      isTransient: SnapshotIssue.isTransient(error:), pause: { Thread.sleep(forTimeInterval: 0.3) }
+    ) { try readSnapshot(application) }
     let root = Self.rawNode(snapshot)
     let readMs = Date().timeIntervalSince(began) * 1000
     let space = space(rootFrame: root.frame)
@@ -153,6 +172,19 @@ final class XCUIExecutor: CommandExecutor {
       params.axbridgeRequested
       ? ["from": "axbridge", "to": "ax", "reason": "a physical device has no AX bridge; read through XCUITest"] : nil
     return SnapshotEncoder.snapshotData(output, screen: info, ms: readMs, fallback: fallback)
+  }
+
+  /// `application.snapshot()`, failing on a transient issue `RunnerTests.record(_:)` muted during the read (the call
+  /// itself may still return a tree, or throw).
+  private func readSnapshot(_ application: XCUIApplication) throws -> XCUIElementSnapshot {
+    issues.messages.removeAll()
+    let snapshot = try application.snapshot()
+    if !issues.messages.isEmpty {
+      let failure = ErrorClassifier.classify(op: "snapshot", messages: issues.messages)
+      issues.messages.removeAll()
+      throw failure
+    }
+    return snapshot
   }
 
   private static func rawNode(_ snapshot: XCUIElementSnapshot) -> RawNode {
@@ -173,6 +205,55 @@ final class XCUIExecutor: CommandExecutor {
       hasFocus: snapshot.hasFocus,
       children: snapshot.children.map(rawNode)
     )
+  }
+
+  /// `performAccessibilityAudit` on an app that is already running (never launched or restarted here). The handler
+  /// records every issue and returns `true`, so XCTest records no failure (`continueAfterFailure` stays on). A
+  /// not-running app is answered `E_APP_UNAVAILABLE` first: the audit itself throws error -51 for it (A11Y-0 spike).
+  private func audit(_ params: AuditParams) throws -> JSON {
+    let application = app(params.bundleId)
+    guard application.state != .notRunning else {
+      throw WireError(
+        .appUnavailable, "\(params.bundleId) is not running; the audit needs a running app",
+        detail: ["bundleId": .string(params.bundleId)])
+    }
+    if application.state != .runningForeground { application.activate() }
+    var mask: XCUIAccessibilityAuditType = []
+    for name in params.types { mask.insert(Self.auditType(name)) }
+    var found: [RawAuditIssue] = []
+    let began = Date()
+    try application.performAccessibilityAudit(for: mask) { issue in
+      found.append(Self.rawIssue(issue))
+      return true
+    }
+    let ms = Date().timeIntervalSince(began) * 1000
+    return AuditEncoder.auditData(issues: found, types: params.types, space: space(of: application), ms: ms)
+  }
+
+  private static func auditType(_ name: String) -> XCUIAccessibilityAuditType {
+    switch name {
+    case "contrast": return .contrast
+    case "elementDetection": return .elementDetection
+    case "hitRegion": return .hitRegion
+    case "sufficientElementDescription": return .sufficientElementDescription
+    case "dynamicType": return .dynamicType
+    case "textClipped": return .textClipped
+    default: return .trait
+    }
+  }
+
+  private static func rawIssue(_ issue: XCUIAccessibilityAuditIssue) -> RawAuditIssue {
+    let types = AuditEncoder.knownTypes.filter { issue.auditType.contains(auditType($0)) }
+    var element: RawAuditIssue.Element?
+    if let found = issue.element {
+      let frame = found.frame
+      element = RawAuditIssue.Element(
+        type: elementTypeName(found.elementType), identifier: found.identifier, label: found.label,
+        frame: Rect(x: frame.minX, y: frame.minY, width: frame.width, height: frame.height))
+    }
+    return RawAuditIssue(
+      auditTypes: types, compactDescription: issue.compactDescription, detailedDescription: issue.detailedDescription,
+      element: element)
   }
 
   private func alertButtons() throws -> JSON {

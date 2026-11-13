@@ -18,6 +18,7 @@ export const TEXT_VARIANTS = [
 	"label",
 	"caption",
 	"overline",
+	"kicker",
 	"strong",
 	"emphasis",
 	"link",
@@ -116,7 +117,7 @@ export const TEXT_MAX_FONT_SIZE_MULTIPLIER = 1.4;
  * `--text-paragraph--line-height` *pair* in `tokens.css` and register the
  * bespoke name in `tokens.ts` — one utility carrying both.
  *
- * Free of React Native imports so it stays unit-testable — `bun test` cannot
+ * Free of React Native imports so it stays unit-testable — a bare JS runtime cannot
  * parse React Native's Flow-typed source. See AGENTS.md.
  */
 export const textVariants = tv({
@@ -136,6 +137,10 @@ export const textVariants = tv({
 			label: "font-medium text-sm text-foreground",
 			caption: "text-sm text-muted-foreground",
 			overline: "font-semibold text-muted-foreground text-xs uppercase tracking-wide",
+			// The tiny tracked mono label over a group or a screen. `font-mono`
+			// rather than `font-sans`, which is the point of it: it reads as a
+			// measurement, not a sentence. Tokens, not literals — see tokens.css.
+			kicker: "font-mono text-kicker text-muted-foreground uppercase tracking-kicker",
 			// The four below emit a delta and nothing else. See TEXT_INLINE_VARIANTS.
 			strong: "font-semibold",
 			emphasis: "italic",
@@ -217,7 +222,7 @@ export function isInlineTextVariant(variant: TextVariant): boolean {
  * rather than a guess, which is what makes skipping the provider safe.
  *
  * Deliberately typed on `unknown` rather than `ReactNode`: keeping this module
- * free of even a type import is what lets `bun test` reach it.
+ * free of even a type import is what lets a unit test reach it.
  */
 export function canNestText(children: unknown): boolean {
 	return typeof children !== "string" && typeof children !== "number";
@@ -248,7 +253,7 @@ export function canNestText(children: unknown): boolean {
  * composed into a `Button` matches it without being told to. See
  * `resolveIconSizeClass`.
  *
- * Pure, so the whole ladder is reachable from `bun test`. See AGENTS.md.
+ * Pure, so the whole ladder is unit-testable. See AGENTS.md.
  */
 export function resolveTextClass({
 	align,

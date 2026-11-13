@@ -19,9 +19,15 @@ export type FetchHelperInput = {
 	/** warden's version: selects release tag `v<version>` and `$WARDEN_HOME/simd/<version>/` */
 	version: string;
 	wardenHome: string;
+	/**
+	 * When release `v<version>` does not exist (404), take the latest release's helper instead. For builds from a
+	 * checkout, whose version can be ahead of every release (a version-bump branch). Never with `WARDEN_HELPER_URL`.
+	 */
+	fallbackToLatest?: boolean;
 };
 
-export type FetchedHelper = { dir: string; url: string; sha256: string };
+/** `version`: the release `v<version>`; `latest`: the latest release, because `v<version>` has none. */
+export type FetchedHelper = { dir: string; url: string; sha256: string; release: "version" | "latest" };
 
 /** `$WARDEN_HOME/simd/<version>`: the last place `locateHelper` looks. */
 export function helperHomeDir(wardenHome: string, version: string): string {
@@ -38,41 +44,65 @@ export function helperBaseUrl(env: Readonly<Record<string, string | undefined>>,
 	return `https://github.com/${releaseRepo(env)}/releases/download/v${version}`;
 }
 
-async function get(fetch: Fetch, url: string): AsyncResult<Uint8Array> {
+/** The latest GitHub release's download directory: where `fallbackToLatest` looks. */
+export function latestHelperBaseUrl(env: Readonly<Record<string, string | undefined>>): string {
+	return `https://github.com/${releaseRepo(env)}/releases/latest/download`;
+}
+
+type Got = { kind: "ok"; data: Uint8Array } | { kind: "not-found"; error: string } | { kind: "failed"; error: string };
+
+async function get(fetch: Fetch, url: string): Promise<Got> {
 	try {
 		const response = await fetch(url);
-		if (response.status === 404) return err(`${url} not found (does the release include ${HELPER_ASSET}?)`);
-		if (!response.ok) return err(`GET ${url} → HTTP ${response.status}`);
-		return ok(new Uint8Array(await response.arrayBuffer()));
+		if (response.status === 404) {
+			return { kind: "not-found", error: `${url} not found (does the release include ${HELPER_ASSET}?)` };
+		}
+		if (!response.ok) return { kind: "failed", error: `GET ${url} → HTTP ${response.status}` };
+		return { kind: "ok", data: new Uint8Array(await response.arrayBuffer()) };
 	} catch (error) {
-		return err(`GET ${url} failed: ${error instanceof Error ? error.message : String(error)}`);
+		return { kind: "failed", error: `GET ${url} failed: ${error instanceof Error ? error.message : String(error)}` };
 	}
 }
 
+/** `SHA256SUMS` of release `v<version>`, else (on a 404, when allowed) of the latest release. */
+async function getSums(
+	input: FetchHelperInput
+): AsyncResult<{ base: string; body: Uint8Array; release: FetchedHelper["release"] }> {
+	const base = helperBaseUrl(input.env, input.version);
+	const sums = await get(input.fetch, `${base}/${HELPER_SUMS_ASSET}`);
+	if (sums.kind === "ok") return ok({ base, body: sums.data, release: "version" });
+	if (sums.kind === "failed" || !input.fallbackToLatest || input.env.WARDEN_HELPER_URL) return err(sums.error);
+	const latest = latestHelperBaseUrl(input.env);
+	const latestSums = await get(input.fetch, `${latest}/${HELPER_SUMS_ASSET}`);
+	if (latestSums.kind === "ok") return ok({ base: latest, body: latestSums.data, release: "latest" });
+	return err(`${sums.error}; ${latestSums.error}`);
+}
+
 /**
- * Download the helper tarball for this warden version, verify it against `SHA256SUMS`, and extract it into
- * `$WARDEN_HOME/simd/<version>/`. Nothing is extracted unless the checksum matches.
+ * Download the helper tarball for this warden version (or the latest release's, see `fallbackToLatest`), verify it
+ * against `SHA256SUMS`, and extract it into `$WARDEN_HOME/simd/<version>/`. Nothing is extracted unless the
+ * checksum matches.
  */
 export async function fetchHelper(input: FetchHelperInput): AsyncResult<FetchedHelper> {
-	const { env, platform, arch, version } = input;
+	const { platform, arch, version } = input;
 	if (`${platform}-${arch}` !== HELPER_TARGET) return err(`no helper for ${platform}-${arch} in this version`);
-	const base = helperBaseUrl(env, version);
 
-	const sumsBody = await get(input.fetch, `${base}/${HELPER_SUMS_ASSET}`);
-	if (!sumsBody.success) return sumsBody;
-	const expected = parseChecksums(new TextDecoder().decode(sumsBody.data)).get(HELPER_ASSET);
+	const sums = await getSums(input);
+	if (!sums.success) return sums;
+	const { base, release } = sums.data;
+	const expected = parseChecksums(new TextDecoder().decode(sums.data.body)).get(HELPER_ASSET);
 	if (!expected) return err(`${base}/${HELPER_SUMS_ASSET} has no entry for ${HELPER_ASSET}`);
 
 	const url = `${base}/${HELPER_ASSET}`;
 	const tgz = await get(input.fetch, url);
-	if (!tgz.success) return tgz;
+	if (tgz.kind !== "ok") return err(tgz.error);
 	const actual = createHash("sha256").update(tgz.data).digest("hex");
 	if (actual !== expected) return err(`checksum mismatch for ${url}: expected ${expected}, got ${actual}`);
 
 	const dir = helperHomeDir(input.wardenHome, version);
 	const extracted = await input.extract(tgz.data, dir);
 	if (!extracted.success) return extracted;
-	return ok({ dir, url, sha256: actual });
+	return ok({ dir, url, sha256: actual, release });
 }
 
 /**

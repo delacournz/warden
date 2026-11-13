@@ -51,6 +51,28 @@ describe("locateByTestIdViaReact", () => {
 		expect(ios[0]?.pixelRatio).toBeUndefined();
 	});
 
+	test("a component with no text of its own reports the text rendered by its descendants (a Badge around a Text)", async () => {
+		const rect = { x: 330, y: 76, width: 50, height: 28 };
+		const facet = facetOf([
+			comp(0, "remaining", rect),
+			{ id: 1, name: "Text", parent: 0, text: "1", rect: { x: 342, y: 80, width: 10, height: 20 } },
+			{ id: 2, name: "View", parent: 0 },
+			{ id: 3, name: "Text", parent: 2, text: "left" },
+			{ id: 4, name: "Text", parent: null, text: "outside" },
+		]);
+		const [match] = await locateByTestIdViaReact(facet, "remaining", IOS);
+		expect(match?.text).toBe("1 left");
+	});
+
+	test("a component's own text wins over its descendants'", async () => {
+		const facet = facetOf([
+			{ ...comp(0, "title", { x: 0, y: 0, width: 10, height: 10 }), text: "Own" },
+			{ id: 1, name: "Text", parent: 0, text: "child" },
+		]);
+		const [match] = await locateByTestIdViaReact(facet, "title", IOS);
+		expect(match?.text).toBe("Own");
+	});
+
 	test("passes the screen name through", async () => {
 		const calls: (TreeOptions | undefined)[] = [];
 		await locateByTestIdViaReact(facetOf([], calls), "pay", IOS, { screenName: "Settings" });

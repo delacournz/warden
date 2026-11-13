@@ -265,4 +265,72 @@ describe("runBatch elastic workers", () => {
 		m.take("a").settle(0);
 		expect((await done).stopped).toBe(true);
 	});
+
+	describe("admit", () => {
+		test("a worker refused before its first job pulls nothing; the others drain the queue", async () => {
+			const m = manual();
+			const events: BatchEvent[] = [];
+			const done = runBatch({
+				workers: WORKERS,
+				jobs: ["a", "b"],
+				retry: 0,
+				run: m.run,
+				now: () => 0,
+				admit: async (w) => w.worker !== 0,
+				onEvent: (e) => events.push(e),
+			});
+			await flush();
+			expect(m.pending.map((p) => [p.worker, p.job])).toEqual([[1, "a"]]);
+			m.take("a").settle(0);
+			await flush();
+			m.take("b").settle(0);
+			const summary = await done;
+			expect(summary.ok).toBe(true);
+			expect(summary.unrun).toBeUndefined();
+			expect(events.filter((e) => e.type === "worker-idle").map((e) => e.worker)).toEqual([0, 1]);
+		});
+
+		test("every worker refused: the jobs are unrun and the batch is not ok", async () => {
+			const m = manual();
+			const summary = await runBatch({
+				workers: WORKERS,
+				jobs: ["a", "b"],
+				retry: 0,
+				run: m.run,
+				now: () => 0,
+				admit: async () => false,
+			});
+			expect(m.pending).toEqual([]);
+			expect(summary).toMatchObject({ ok: false, stopped: false, failed: [], unrun: ["a", "b"] });
+		});
+
+		test("a worker added mid-run is asked too", async () => {
+			const m = manual();
+			const asked: number[] = [];
+			let handle: BatchHandle | undefined;
+			const done = runBatch({
+				workers: [WORKERS[0] as BatchWorker],
+				jobs: ["a", "b"],
+				retry: 0,
+				run: m.run,
+				now: () => 0,
+				admit: async (w) => {
+					asked.push(w.worker);
+					return w.worker === 0;
+				},
+				onStart: (h) => {
+					handle = h;
+				},
+			});
+			await flush();
+			expect(handle?.addWorker({ worker: 1, udid: "U1" })).toBe(true);
+			await flush();
+			expect(asked).toEqual([0, 1]);
+			expect(m.pending.map((p) => p.worker)).toEqual([0]);
+			m.take("a").settle(0);
+			await flush();
+			m.take("b").settle(0);
+			expect((await done).ok).toBe(true);
+		});
+	});
 });

@@ -101,6 +101,9 @@ function describeWait(wait: unknown): string {
 }
 
 /** The app under test (`WARDEN_BUNDLE_ID`). */
+/** expo-dev-launcher's own flags (read off the deep link): no first-run onboarding sheet, no menu at launch, no floating button, as iOS's `DEV_MENU_OFF_ARGS` do */
+const DEV_CLIENT_QUIET = "disableOnboarding=1&disableAutoLaunch=1&disableFab=1";
+
 export type App = {
 	/**
 	 * Launches the app (terminating a running instance first) with `WARDEN_LAUNCH_ARGS` + `args`, then
@@ -141,13 +144,25 @@ export function createApp({ session, driver, env, log = stderrLog, clock = syste
 	const bundleId = env.bundleId;
 	let droppedLogged = false;
 	/**
-	 * `WARDEN_LAUNCH_ARGS` as this platform can take them. Android launches have no args (the dev client reaches Metro
-	 * through `adb reverse` and its default url), so the env's args (Metro's `--initialUrl`, `spec.launchArgs`) are
-	 * dropped there, with one log line; explicit `open({ args })` are kept so they still fail loudly.
+	 * Metro's `--initialUrl <url>` from `WARDEN_LAUNCH_ARGS`, as the dev-client deep link an Android launch opens after it
+	 * starts (Android launches take no args). Needs `WARDEN_DEV_CLIENT_SCHEME`.
+	 */
+	const devClientLink = (): string | undefined => {
+		if (driver.platform !== "android" || env.devClientScheme === undefined) return undefined;
+		const at = env.launchArgs.indexOf("--initialUrl");
+		const metro = at < 0 ? undefined : env.launchArgs[at + 1];
+		return metro === undefined
+			? undefined
+			: `${env.devClientScheme}://expo-development-client/?url=${encodeURIComponent(metro)}&${DEV_CLIENT_QUIET}`;
+	};
+	/**
+	 * `WARDEN_LAUNCH_ARGS` as this platform can take them. Android launches have no args (Metro's `--initialUrl` is
+	 * opened as a dev-client deep link instead, see `devClientLink`), so the env's args are dropped there, with one
+	 * log line; explicit `open({ args })` are kept so they still fail loudly.
 	 */
 	const envLaunchArgs = (): readonly string[] => {
 		if (driver.platform !== "android" || env.launchArgs.length === 0) return env.launchArgs;
-		if (!droppedLogged) {
+		if (!droppedLogged && devClientLink() === undefined) {
 			droppedLogged = true;
 			log(`[warden-e2e] Android launch takes no args: ignoring WARDEN_LAUNCH_ARGS ${JSON.stringify(env.launchArgs)}`);
 		}
@@ -189,6 +204,15 @@ export function createApp({ session, driver, env, log = stderrLog, clock = syste
 		if (!quiet.success && quiet.error.code !== "E_UNSUPPORTED") throw toE2eError(quiet.error, `wait for ${bundleId}`);
 	};
 
+	/** after the launch: Android points the dev client at Metro, a dev client gets devtools attached, then the caller's `url` opens */
+	const afterLaunch = async (url: string | undefined): Promise<void> => {
+		const link = devClientLink();
+		if (link !== undefined) await unwrap(() => driver.app.openUrl(link), `open dev client ${link}`, session.signal);
+		// a dev client: attach devtools in the background, which keeps LogBox off in every JS context from now on
+		if (env.metroUrl !== undefined) void session.devtools?.();
+		if (url !== undefined) await unwrap(() => driver.app.openUrl(url), `open ${url}`, session.signal);
+	};
+
 	const launch = async (options: OpenOptions = {}): Promise<void> => {
 		const wait = parseWait(options.wait);
 		const opts: LaunchOptions = {
@@ -198,12 +222,7 @@ export function createApp({ session, driver, env, log = stderrLog, clock = syste
 		if (options.env !== undefined) opts.env = options.env;
 		if (driver.platform === "ios" && injectWanted?.() === true) opts.inject = true;
 		await unwrap(() => driver.app.launch(bundleId, opts), `launch ${bundleId}`, session.signal);
-		// a dev client: attach devtools in the background, which keeps LogBox off in every JS context from now on
-		if (env.metroUrl !== undefined) void session.devtools?.();
-		if (options.url !== undefined) {
-			const url = options.url;
-			await unwrap(() => driver.app.openUrl(url), `open ${url}`, session.signal);
-		}
+		await afterLaunch(options.url);
 		if (wait.kind === "quiet") {
 			await waitForContent();
 			await waitUntilQuiet();

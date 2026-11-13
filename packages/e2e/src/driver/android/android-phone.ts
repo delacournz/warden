@@ -119,6 +119,32 @@ export type SettingsGuardDeps = {
 
 const SETTING_VALUE = /^(null|\d)$/;
 
+/** The shell commands that put the remembered rotation settings and night mode back, rotation first. */
+function restoreCommands(rotation: RotationValues | undefined, uimode: UimodeValue | undefined): string[][] {
+	const commands: string[][] = [];
+	if (rotation) {
+		for (const key of ["accelerometer_rotation", "user_rotation"] as const) {
+			commands.push(
+				rotation[key] === "null"
+					? ["settings", "delete", "system", key]
+					: ["settings", "put", "system", key, rotation[key]]
+			);
+		}
+	}
+	if (uimode) commands.push(["cmd", "uimode", "night", uimode]);
+	return commands;
+}
+
+/** Runs every command even after one fails; true when any did. */
+async function runAll(session: AdbSession, commands: readonly string[][]): Promise<boolean> {
+	let failed = false;
+	for (const argv of commands) {
+		const res = await session.run(shellCommand(argv));
+		if (!res.success || res.data.exitCode !== 0) failed = true;
+	}
+	return failed;
+}
+
 /**
  * Rotation (`accelerometer_rotation`, `user_rotation`) and dark mode (`cmd uimode night`) are settings that
  * outlive the driver. On a phone the originals are read and written to the state file BEFORE the first change
@@ -161,23 +187,9 @@ export async function createSettingsGuard(deps: SettingsGuardDeps): Promise<Sett
 		},
 
 		async restore() {
-			const commands: string[][] = [];
-			if (rotation) {
-				for (const key of ["accelerometer_rotation", "user_rotation"] as const) {
-					commands.push(
-						rotation[key] === "null"
-							? ["settings", "delete", "system", key]
-							: ["settings", "put", "system", key, rotation[key]]
-					);
-				}
-			}
-			if (uimode) commands.push(["cmd", "uimode", "night", uimode]);
+			const commands = restoreCommands(rotation, uimode);
 			if (commands.length === 0) return;
-			let failed = false;
-			for (const argv of commands) {
-				const res = await session.run(shellCommand(argv));
-				if (!res.success || res.data.exitCode !== 0) failed = true;
-			}
+			const failed = await runAll(session, commands);
 			if (failed) {
 				log?.("could not restore the rotation / night mode; the next driver on this device will");
 				return;

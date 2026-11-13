@@ -84,12 +84,13 @@ function CheckboxRoot({
 	const checked = group && groupValue !== undefined ? group.checked.includes(groupValue) : ownChecked;
 
 	const toggle = useCallback(() => {
+		if (axes.isDisabled) return;
 		if (group && groupValue !== undefined) {
 			group.toggle(groupValue);
 			return;
 		}
 		setOwnChecked(!checked);
-	}, [checked, group, groupValue, setOwnChecked]);
+	}, [axes.isDisabled, checked, group, groupValue, setOwnChecked]);
 
 	// Offered to an enclosing `Field` so tapping the label or the description
 	// beside the box ticks it. A checkbox in a form is a small square next to a

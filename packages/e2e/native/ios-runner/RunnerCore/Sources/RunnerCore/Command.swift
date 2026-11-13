@@ -27,6 +27,12 @@ struct SnapshotParams: Equatable, Sendable {
   var axbridgeRequested: Bool
 }
 
+struct AuditParams: Equatable, Sendable {
+  var bundleId: String
+  /// Audit-type names (`AuditEncoder.knownTypes`), never empty.
+  var types: [String]
+}
+
 struct LaunchParams: Equatable, Sendable {
   var bundleId: String
   var arguments: [String]
@@ -50,6 +56,7 @@ enum RunnerCommand: Equatable, Sendable {
   case alertButtons
   case frontmost(bundleId: String)
   case appState(bundleId: String)
+  case audit(AuditParams)
   case launch(LaunchParams)
   case terminate(bundleId: String)
   case openUrl(URL)
@@ -141,6 +148,17 @@ enum CommandParser {
     case "alertButtons": return .alertButtons
     case "frontmost": return .frontmost(bundleId: try params.requiredString("bundleId", op: "frontmost"))
     case "appState": return .appState(bundleId: try params.requiredString("bundleId", op: "appState"))
+    case "audit":
+      let requested = try params.json["types"].map { raw -> [String] in
+        guard raw == .null || raw.arrayValue != nil else { throw WireError(.badRequest, "\"types\" must be an array of strings") }
+        return try (raw.arrayValue ?? []).map { item in
+          guard let name = item.stringValue else { throw WireError(.badRequest, "\"types\" must be an array of strings") }
+          return name
+        }
+      }
+      return .audit(
+        AuditParams(
+          bundleId: try params.requiredString("bundleId", op: "audit"), types: try AuditEncoder.resolveTypes(requested).get()))
     case "launch": return .launch(try launch(params))
     case "terminate": return .terminate(bundleId: try params.requiredString("bundleId", op: "terminate"))
     case "openUrl":

@@ -5,6 +5,7 @@ import {
 	type HelpConfiguration,
 } from "@commander-js/extra-typings";
 import type { CommandContext, FailureExtra } from "./context";
+import type { Finished } from "./telemetry/tracker";
 import { SYMBOLS, type Ui } from "./ui";
 
 /**
@@ -91,6 +92,12 @@ export type JsonFailure = {
 	error: { code: "usage" | "failed"; message: string } | ({ message: string } & FailureExtra);
 };
 
+/** How a run ended, from its exit code: 130 is an interrupt, anything else non-zero is an error. */
+function outcomeOf(code: number): Finished {
+	if (code === 0) return { outcome: "success" };
+	return { outcome: code === 130 ? "cancelled" : "error", exitCode: code };
+}
+
 /** `ui snapshot` from `["ui", "snapshot", "--json"]`: the command words of `argv`, as registered. */
 function commandPath(program: CommandUnknownOpts, argv: readonly string[]): string {
 	const path: string[] = [];
@@ -139,13 +146,19 @@ export async function runProgram(
 	const program = buildProgram(commands, argv, tracked, known, (n) => {
 		code = n;
 	});
-	program.hook("preAction", (_root, action) => {
+	let acted = false;
+	program.hook("preAction", async (_root, action) => {
 		json = action.opts().json === true;
+		acted = true;
+		await ctx.tracker?.begin(action);
 	});
 	try {
 		await program.parseAsync(argv, { from: "user" });
 	} catch (error) {
-		if (!(error instanceof CommanderError)) throw error;
+		if (!(error instanceof CommanderError)) {
+			if (acted) await ctx.tracker?.finish({ outcome: "error", error, exitCode: 1 });
+			throw error;
+		}
 		if (error.exitCode === 0) return 0;
 		code = 1;
 		// no action ran, so `--json` is read off argv: before `--`, past it the words are a child's
@@ -159,6 +172,7 @@ export async function runProgram(
 		const doc: JsonFailure = { ok: false, command, error };
 		ctx.out(JSON.stringify(doc));
 	}
+	if (acted) await ctx.tracker?.finish(outcomeOf(code));
 	return code;
 }
 

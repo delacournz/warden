@@ -39,6 +39,14 @@ describe("providerFor ios", () => {
 		expect(created.success && created.data.id).toMatch(/^NEW-/);
 		expect(host.calls.some((c) => c[2] === "clone")).toBe(false);
 	});
+
+	test("golden: false (a suite without golden) → plain simctl create", async () => {
+		const host = fakeHost();
+		ctx = testContext([], { exec: host.exec });
+		const created = await providerFor("ios", ctx, owner, { golden: false }).create("warden-iphone-17-1", "iphone-17");
+		expect(created.success && created.data.id).toMatch(/^NEW-/);
+		expect(host.calls.some((c) => c[2] === "clone")).toBe(false);
+	});
 });
 
 describe("android snapshot hook (16-3)", () => {

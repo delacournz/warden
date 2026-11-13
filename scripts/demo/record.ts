@@ -4,9 +4,9 @@
  * it against the video clock, stop. Writes `take.mp4` + `steps.json`. The lease
  * is released by id even on failure.
  */
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { DemoDefinition, RecordedStep, RecordedTake } from "./demo.types";
+import type { DemoDefinition, DemoStep, RecordedStep, RecordedTake, SetupStep } from "./demo.types";
 
 /** The take only needs a short tail: the renderer holds the last frame for tailHoldMs. */
 const TAIL_RECORD_MS = 1000;
@@ -93,14 +93,38 @@ async function prepare(
 	udid: string,
 	cwd: string,
 	deps: RecordDeps,
-	must: (args: readonly string[]) => Promise<ExecResult>
+	must: (args: readonly string[]) => Promise<ExecResult>,
+	run: (args: readonly string[]) => Promise<ExecResult>
 ): Promise<void> {
 	const dev = ["--udid", udid];
+	/** `{udid}` in an argv is substituted (for commands that take the udid positionally); else `--udid` is appended. */
+	const withDevice = (argv: readonly string[]): string[] =>
+		argv.some((a) => a.includes("{udid}")) ? argv.map((a) => a.replaceAll("{udid}", udid)) : [...argv, ...dev];
 	await deps.exec(["xcrun", "simctl", "status_bar", udid, "override", ...STATUS_BAR], { cwd });
 	await must(["ui", "open", def.app.bundleId, "--kind", def.app.kind, "--relaunch", ...dev]);
-	for (const argv of def.setup ?? []) await must([...argv, ...dev]);
+	for (const entry of def.setup ?? []) {
+		const step: SetupStep = Array.isArray(entry) ? { argv: entry } : (entry as SetupStep);
+		if (!step.optional) {
+			await must(withDevice(step.argv));
+			continue;
+		}
+		const r = await run(withDevice(step.argv));
+		if (r.code !== 0)
+			deps.log(
+				`optional setup warden ${step.argv.join(" ")} -> ${r.code}: ${(r.stderr.trim() || r.stdout.trim()).slice(0, 120)}`
+			);
+	}
 	if (def.app.deepLink) await must(["ui", "open", def.app.deepLink, "--settle", ...dev]);
 	for (const selector of def.ready) await must(["ui", "wait", selector, "--timeout", "30000", ...dev]);
+}
+
+/** A `quote`d step must have printed lines that are really in its file: no line is ever invented. */
+async function checkQuote(step: DemoStep, projectDir: string): Promise<void> {
+	if (!step.quote || step.output.kind !== "lines") return;
+	const body = await readFile(join(projectDir, step.quote.file), "utf8");
+	for (const line of step.output.text) {
+		if (!body.includes(line.trim())) throw new Error(`quoted line not in ${step.quote.file}: ${line}`);
+	}
 }
 
 export async function record(
@@ -135,7 +159,7 @@ export async function record(
 	let restoreAppearance: string | undefined;
 	try {
 		restoreAppearance = await applyAppearance(def, lease.udid, projectDir, deps);
-		await prepare(def, lease.udid, projectDir, deps, must);
+		await prepare(def, lease.udid, projectDir, deps, must, run);
 		await must(["ui", "screen", "video", "start", takePath, ...dev]);
 		videoStarted = true;
 		const t0 = deps.now();
@@ -149,6 +173,7 @@ export async function record(
 			deps.log(`${startS.toFixed(2)}-${endS.toFixed(2)}s  warden ${step.argv.join(" ")}  -> ${r.code}`);
 			if (r.code !== 0)
 				throw new Error(`step ${index} (warden ${step.argv.join(" ")}) failed: ${r.stderr.trim() || r.stdout.trim()}`);
+			await checkQuote(step, projectDir);
 			steps.push({ index, startS, endS });
 			await deps.sleep(step.pauseAfterMs);
 		}

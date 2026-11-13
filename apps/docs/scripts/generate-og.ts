@@ -30,7 +30,7 @@ const CONTENT = join(HERE, "../content/docs");
 const HOST = new URL(siteUrl).host;
 /** The landing headline already says the first half of `appDescription`; the card carries the rest. */
 const PITCH =
-	"Simulators, emulators, ports and app builds, leased across every worktree on your Mac, so parallel agents never collide.";
+	"An AI agent toolkit to drive, debug, profile and E2E test React Native apps, on simulators leased per worktree.";
 
 const SHEET = join(HERE, "../../../node_modules/.temp/og/index.html");
 

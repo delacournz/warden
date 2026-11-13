@@ -59,6 +59,44 @@ function lockedHint(d: InventoryDevice): string | undefined {
 		: undefined;
 }
 
+type DeviceRecordOf =
+	ReturnType<CommandContext["store"]> extends infer S
+		? S extends { listDevices(platform: Platform): (infer R)[] }
+			? R
+			: never
+		: never;
+
+/** `quarantined` for a device reported bad, with its reason when one was recorded. */
+function quarantineField(record: DeviceRecordOf | undefined): Pick<DeviceRow, "quarantined"> {
+	if (record?.quarantinedAt === undefined) return {};
+	return { quarantined: record.quarantineReason !== undefined ? { reason: record.quarantineReason } : {} };
+}
+
+/** One inventory device as a row: its warden record (golden, slimmed, quarantined) and lease folded in. */
+function deviceRow(
+	platform: Platform,
+	d: InventoryDevice,
+	record: DeviceRecordOf | undefined,
+	lease: Lease | undefined
+): DeviceRow {
+	const hint = physicalNotReadyReason(d) ?? lockedHint(d);
+	return {
+		platform,
+		kind: d.physical ? ("physical" as const) : ("virtual" as const),
+		name: d.name,
+		id: d.id,
+		state: d.state,
+		...(d.runtime !== undefined ? { runtime: d.runtime } : {}),
+		warden: d.wardenCreated,
+		...(d.golden ? { golden: true as const } : {}),
+		...quarantineField(record),
+		...(record?.slimmedAt !== undefined ? { slimmed: true as const } : {}),
+		...(d.physical ? { physical: true as const, transport: d.physical.transport } : {}),
+		...(hint !== undefined ? { hint } : {}),
+		...(lease ? { lease: leaseInfo(lease) } : {}),
+	};
+}
+
 /** One platform's rows: every device (booted or not) plus, for Android, every AVD. */
 async function platformRows(ctx: CommandContext, platform: Platform, leases: Map<string, Lease>): Promise<DeviceRow[]> {
 	const store = ctx.store();
@@ -68,28 +106,9 @@ async function platformRows(ctx: CommandContext, platform: Platform, leases: Map
 		return [];
 	}
 	const records = new Map(store.listDevices(platform).map((r) => [r.id, r]));
-	const rows: DeviceRow[] = markWardenDevices(inventory.data, [...records.values()]).map((d) => {
-		const lease = leases.get(`${platform}:${d.id}`);
-		const record = records.get(d.id);
-		const hint = physicalNotReadyReason(d) ?? lockedHint(d);
-		return {
-			platform,
-			kind: d.physical ? ("physical" as const) : ("virtual" as const),
-			name: d.name,
-			id: d.id,
-			state: d.state,
-			...(d.runtime !== undefined ? { runtime: d.runtime } : {}),
-			warden: d.wardenCreated,
-			...(d.golden ? { golden: true as const } : {}),
-			...(record?.quarantinedAt !== undefined
-				? { quarantined: record.quarantineReason !== undefined ? { reason: record.quarantineReason } : {} }
-				: {}),
-			...(record?.slimmedAt !== undefined ? { slimmed: true as const } : {}),
-			...(d.physical ? { physical: true as const, transport: d.physical.transport } : {}),
-			...(hint !== undefined ? { hint } : {}),
-			...(lease ? { lease: leaseInfo(lease) } : {}),
-		};
-	});
+	const rows: DeviceRow[] = markWardenDevices(inventory.data, [...records.values()]).map((d) =>
+		deviceRow(platform, d, records.get(d.id), leases.get(`${platform}:${d.id}`))
+	);
 	if (platform === "android") {
 		const avds = await listAvds({ exec: ctx.exec, env: ctx.env });
 		if (avds.success)

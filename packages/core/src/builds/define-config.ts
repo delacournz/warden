@@ -446,6 +446,29 @@ export interface WardenPerfConfig {
 	budgets?: WardenPerfBudgets | undefined;
 }
 
+/** `a11y` (top level, or `e2e.<suite>.a11y`): how accessibility audits judge a screen. */
+export interface WardenA11yConfig {
+	/** Findings to drop: a rule everywhere, or only on the element with that `identifier` (testID). */
+	ignore?: Array<{ rule: WardenA11yRule; identifier?: string | undefined }> | undefined;
+	/** Lowest severity that fails an audit. @default "error" */
+	minSeverity?: "error" | "warning" | undefined;
+	/** Run only these rules (default: all). */
+	rules?: WardenA11yRule[] | undefined;
+}
+
+/** A rule id an audit reports; `native` = XCUITest / ATF findings. */
+export type WardenA11yRule =
+	| "missing-name"
+	| "image-no-name"
+	| "target-size"
+	| "target-size-platform"
+	| "duplicate-name"
+	| "role-in-name"
+	| "label-in-name"
+	| "hidden-focusable"
+	| "text-clipped"
+	| "native";
+
 /** `conditions.network` as a custom shape: the fields of a `custom` network condition. */
 export interface WardenCustomNetwork {
 	/** Added round-trip time, ms. */
@@ -559,6 +582,8 @@ export interface WardenE2eSuite {
 	perf?: WardenPerfConfig | undefined;
 	/** Device conditions every spec of this suite starts from; each area replaces the top-level one. */
 	conditions?: WardenConditionsConfig | undefined;
+	/** Accessibility audit settings for this suite; each key replaces the top-level `a11y` one. */
+	a11y?: WardenA11yConfig | undefined;
 	/**
 	 * The simulated camera every spec of this suite starts from, applied before the first `app.open()`: a path, or
 	 * `{ path, loop }` (video loop, default true), per facing. Paths are relative to the config file. Android devices of
@@ -584,7 +609,7 @@ export interface WardenE2eSuite {
 	 * `"idle"`: leave them booted, so the next run skips the 10-30 s boot, and let `warden gc` shut
 	 * them down once they have sat idle. A failed run always leaves them up. `--no-shutdown` wins.
 	 *
-	 * @default "always"
+	 * @default "always" locally, "idle" under `CI` / `GITHUB_ACTIONS` (the runner is thrown away)
 	 */
 	shutdown?: "always" | "idle" | undefined;
 	/**
@@ -692,6 +717,16 @@ export interface WardenE2eSuite {
 	count?: number | undefined;
 	/** Device profile (not with `devices`). */
 	profile?: string | undefined;
+	/**
+	 * iOS simulator runtime the run's devices boot on, and whose golden they clone: `latest`, `iOS-26-5` or `26.5`.
+	 * Pin it so the run (locally and on CI) sees one accessibility tree: values change between iOS releases.
+	 * A runtime that is not installed fails the run before any device is claimed, listing the installed ones; it never
+	 * falls back to another. Applies to every `devices` leg. Skipped on Android. `--runtime` overrides it.
+	 * `warden golden key --profile <profile> --runtime <runtime>` names the golden archive the run uses.
+	 *
+	 * @example "27.0"
+	 */
+	runtime?: string | undefined;
 	/** Ensure the app on every device first. */
 	app?: WardenAppOption | undefined;
 	/** Ports leased for the run (`<from>[:<span>]`), exported as `WARDEN_PORT_<i>` / `WARDEN_PORTS` to serve, setup and every spec process. */
@@ -726,6 +761,14 @@ export interface WardenE2eSuite {
 	 * `biometrics`. Default false.
 	 */
 	biometrics?: boolean | undefined;
+	/**
+	 * iOS: simulators the run creates are cloned from a golden image (a first-booted, settled simulator built once
+	 * per profile and runtime). Off: each is a fresh `simctl create` and first boot, and `warden ci cache --suite`
+	 * prints no golden group. Existing pool devices are reused either way; `WARDEN_GOLDEN=0` turns it off everywhere.
+	 *
+	 * @default false
+	 */
+	golden?: boolean | undefined;
 	/**
 	 * What happens to the state of the devices of this run when they are released: `"erase"` (iOS: shutdown +
 	 * `simctl erase`; Android: uninstalls the third-party apps), `"uninstall"` (removes the user-installed apps) or
@@ -805,6 +848,8 @@ export interface WardenConfig {
 	perf?: WardenPerfConfig | undefined;
 	/** Device conditions every `e2e` suite starts from (a suite's own `conditions` replace them per area). */
 	conditions?: WardenConditionsConfig | undefined;
+	/** Accessibility audit settings every `e2e` suite starts from (a suite's own `a11y` keys replace them). */
+	a11y?: WardenA11yConfig | undefined;
 	/** Android emulator settings. */
 	android?: WardenAndroidSettings | undefined;
 	/** Physical iPhone settings. */

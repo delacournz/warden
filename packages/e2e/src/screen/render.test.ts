@@ -217,3 +217,40 @@ describe("describeEntry", () => {
 		expect(describeEntry(entry)).toBe('[button] "Sign in" id=sign-in-submit');
 	});
 });
+
+describe("render a11y option", () => {
+	const snapshot = snap([
+		el("button", {
+			identifier: "archive",
+			label: "Archive",
+			frame: { x: 0, y: 0, width: 100, height: 40 },
+			a11y: {
+				hint: "Moves it",
+				actions: ["Snooze", "Delete"],
+				a11yFocused: true,
+				important: false,
+				liveRegion: "polite",
+			},
+		}),
+		el("text", {
+			label: "plain",
+			frame: { x: 0, y: 40, width: 10, height: 10 },
+			a11y: { important: true, focusable: true },
+		}),
+		el("text", { label: "bare", frame: { x: 0, y: 50, width: 10, height: 10 } }),
+	]);
+	const lines = (a11y: boolean): string[] =>
+		renderSnapshot(snapshot, { interactiveOnly: false, refs: new Map(), a11y }).lines;
+
+	test("appends hint, actions, focus, importance and live region", () => {
+		expect(lines(true)[0]).toEndWith(
+			'(0,0 100×40) hint="Moves it" actions=["Snooze","Delete"] a11y-focused not-important live=polite'
+		);
+	});
+
+	test("adds nothing for important elements, elements without a11y, or when the option is off", () => {
+		expect(lines(true)[1]).toEndWith("(0,40 10×10)");
+		expect(lines(true)[2]).toEndWith("(0,50 10×10)");
+		expect(lines(false)[0]).toEndWith("(0,0 100×40)");
+	});
+});

@@ -16,6 +16,8 @@ describe("physicalConditionOps", () => {
 			ops.locale("fr-FR"),
 			ops.a11y(null),
 			ops.battery(null),
+			ops.keyboard("hardware"),
+			ops.keyboardState(),
 			ops.memoryWarning(),
 			ops.push({ aps: { alert: "hi" } }),
 		];

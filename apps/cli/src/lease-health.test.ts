@@ -68,7 +68,14 @@ function setup(udids: string[], opts: { physical?: boolean; foreign?: boolean; e
 	const aborts: ForwardedSignal[] = [];
 	const stop = holdLeases(
 		c,
-		{ every: (_ms, fn) => (ticks.push(fn), () => {}), onSignal: () => () => {}, health },
+		{
+			every: (_ms, fn) => {
+				ticks.push(fn);
+				return () => {};
+			},
+			onSignal: () => () => {},
+			health,
+		},
 		ids,
 		(s) => aborts.push(s)
 	);
