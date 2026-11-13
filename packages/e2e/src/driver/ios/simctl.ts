@@ -165,6 +165,44 @@ export const automationReadArgv = (plist: string): string[] => [
 	plist,
 ];
 
+/**
+ * The keyboard's typing aids that rewrite what a spec types: autocorrect (seen on an EAS worker: `"Buy" + " milk"`
+ * read back as `"But milk"`), predictive text (an inline prediction is accepted by the next space) and spell check.
+ * Key names are the iOS runtime's own (`TextInput.framework`). Autocapitalization stays as the user has it.
+ */
+export const TYPING_AID_KEYS = ["KeyboardAutocorrection", "KeyboardPrediction", "KeyboardCheckSpelling"] as const;
+export type TypingAidKey = (typeof TYPING_AID_KEYS)[number];
+
+const KEYBOARD_DOMAIN = "com.apple.keyboard.preferences";
+
+/** One `simctl spawn defaults write` per key: the sim's `defaults` takes one key per call (see `a11y-keys.ts`). */
+export const typingAidOffArgv = (udid: string, key: TypingAidKey): string[] => [
+	...XCRUN,
+	"spawn",
+	udid,
+	"defaults",
+	"write",
+	KEYBOARD_DOMAIN,
+	key,
+	"-bool",
+	"NO",
+];
+
+export const keyboardPlistPath = (devicesRoot: string, udid: string): string =>
+	join(devicesRoot, udid, "data", "Library", "Preferences", `${KEYBOARD_DOMAIN}.plist`);
+
+/** `plutil -extract <key> raw -o - <plist>`: one key at a time (~10 ms); the keyboard plist holds dates, so a whole-file
+ * `-convert json` always fails. */
+export const plistBoolReadArgv = (plist: string, key: string): string[] => [
+	"plutil",
+	"-extract",
+	key,
+	"raw",
+	"-o",
+	"-",
+	plist,
+];
+
 export type StatusBarOverrides = {
 	time?: string;
 	batteryLevel?: number;
@@ -346,6 +384,8 @@ export type Simctl = {
 	screenshot(path?: string): DriverResult<{ path?: string; png?: Uint8Array }>;
 	/** `defaults write com.apple.Accessibility AutomationEnabled -bool true` inside the sim */
 	enableAutomation(): DriverResult<void>;
+	/** Turns the keyboard's {@link TYPING_AID_KEYS} off inside the sim; spawns nothing when the plist has them off */
+	disableTypingAids(): DriverResult<void>;
 };
 
 const ok = <T>(data: T) => ({ success: true as const, data });
@@ -517,6 +557,17 @@ export function createSimctl(deps: SimctlDeps): Simctl {
 			const current = await exec(automationReadArgv(plist), { timeoutMs: PLIST_READ_MS }).catch(() => undefined);
 			if (current?.exitCode === 0 && current.stdout.trim() === "true") return ok(undefined);
 			return runVoid(automationArgv(udid));
+		},
+		disableTypingAids: async () => {
+			const plist = keyboardPlistPath(deps.devicesRoot ?? defaultDevicesRoot(), udid);
+			const isOff = async (key: TypingAidKey): Promise<boolean> => {
+				const read = await exec(plistBoolReadArgv(plist, key), { timeoutMs: PLIST_READ_MS }).catch(() => undefined);
+				return read?.exitCode === 0 && read.stdout.trim() === "false";
+			};
+			const off = await Promise.all(TYPING_AID_KEYS.map(isOff));
+			const on = TYPING_AID_KEYS.filter((_, i) => !off[i]);
+			const writes = await Promise.all(on.map((key) => runVoid(typingAidOffArgv(udid, key))));
+			return writes.find((write) => !write.success) ?? ok(undefined);
 		},
 	};
 }

@@ -1193,7 +1193,8 @@ function helperPreflight(o: OpenIosDriverOptions): { success: false; error: Driv
 }
 
 /**
- * Open the iOS driver for `udid`. Writes `AutomationEnabled` (best effort) while the helper starts.
+ * Open the iOS driver for `udid`. Writes `AutomationEnabled` and turns the keyboard's typing aids off (autocorrect,
+ * prediction, spell check: they rewrite typed text) while the helper starts, both best effort.
  * `E_HELPER_MISSING` (with the `warden doctor` hint) when no helper binary can be found.
  */
 export async function openIosDriver(o: OpenIosDriverOptions): DriverResult<Driver> {
@@ -1208,8 +1209,13 @@ export async function openIosDriver(o: OpenIosDriverOptions): DriverResult<Drive
 	const connecting = o.client
 		? Promise.resolve<Result<SimdClient, DriverError>>({ success: true, data: o.client })
 		: connect(o, log);
-	const [client, automation] = await Promise.all([connecting, simctl.enableAutomation()]);
+	const [client, automation, typingAids] = await Promise.all([
+		connecting,
+		simctl.enableAutomation(),
+		simctl.disableTypingAids(),
+	]);
 	if (!automation.success) log(`[ios] could not enable AX automation: ${automation.error.message}`);
+	if (!typingAids.success) log(`[ios] could not turn the keyboard's typing aids off: ${typingAids.error.message}`);
 	if (!client.success) return client;
 	const swap = swappableClient(client.data, {
 		now,
