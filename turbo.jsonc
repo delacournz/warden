@@ -49,11 +49,12 @@
 
 		// `skill.ts` embeds skills/warden/**; skill.test + skill-coverage.test read it. Sibling
 		// workspaces (core, e2e, perf, types) are dependencies, so `transit` covers fixtures read there.
+		// contracts/json-schema.test compares the generated JSON Schemas in apps/docs/public/schemas.
 		"@delacour/warden#test": {
 			"dependsOn": ["transit"],
 			"cache": true,
 			"outputs": [],
-			"inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/skills/**"]
+			"inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/skills/**", "$TURBO_ROOT$/apps/docs/public/schemas/**"]
 		},
 
 		// ios-runner/stage.test packs the Swift sources `collectRunnerSources` walks (pack.ts) from

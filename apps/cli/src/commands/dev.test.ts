@@ -6,6 +6,7 @@ import { allowAutoGc, autoGcConsidered, autoGcOrder } from "../autogc.testing";
 import { resolveOwner } from "../claim-flags";
 import { main } from "../cli";
 import type { CommandContext } from "../context";
+import { expectContract } from "../contracts/contracts.testing";
 import type { Broker } from "../dev-broker/broker";
 import { callDevControl } from "../dev-control";
 import { listDevSessions } from "../dev-session";
@@ -555,6 +556,7 @@ describe("warden dev", () => {
 		expect(lines).toHaveLength(1);
 		const doc = JSON.parse(lines[0] ?? "");
 		expect(doc).toMatchObject({ udid: "U1", port: 8081, metroUrl: "http://127.0.0.1:8081" });
+		expectContract("warden.dev", doc, { name: "ready" });
 		expect([...doc.leaseIds].sort()).toEqual([...leaseIds].sort());
 		expect(h.spawned[0]?.stdout).toBe("stderr");
 		expect(calls.some((cmd) => cmd.includes("launch"))).toBe(false);

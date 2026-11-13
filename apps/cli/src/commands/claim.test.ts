@@ -10,6 +10,7 @@ import {
 import { simctlDevicesJson } from "@delacour/warden-core/providers/ios.fixture";
 import { DEFAULT_SLIM_PROFILE, desiredLabels } from "@delacour/warden-core/sims/slim.profile";
 import { allowAutoGc, autoGcConsidered, autoGcOrder } from "../autogc.testing";
+import { expectContract } from "../contracts/contracts.testing";
 import { fakeSimctl, OWNER_ENV, wardenSim } from "../simctl.testing";
 import { fakeExec, type ScriptedUi, scriptedUi, type TestContext, testContext } from "../testing";
 import { claimCommand } from "./claim";
@@ -64,6 +65,7 @@ describe("warden claim", () => {
 		expect(await claimCommand.run(c)).toBe(0);
 		const out = JSON.parse(c.stdout.join("\n"));
 		expect(out.udids).toEqual(["U2"]);
+		expectContract("warden.claim", out, { name: "reuse-labelled" });
 		expect(out.leases[0]).toMatchObject({ udid: "U2", name: "warden-iphone-17-2", action: "reuse", label: "e2e" });
 		const [lease] = c.db.listLeases();
 		expect(lease?.owner).toMatchObject({ kind: "agent", sessionId: "me" });
@@ -171,6 +173,7 @@ describe("warden claim", () => {
 			command: "claim",
 			error: { code: "NO_CAPACITY", capacityReason: "cpu-budget", hint: expect.stringContaining("warden capacity") },
 		});
+		expectContract("warden.failure", JSON.parse(c.stdout[0] ?? ""), { name: "no-capacity" });
 		// withSpinner routes ctx.err progress through spinner.log, which the real UI writes to stderr
 		expect((c.ui as ScriptedUi).events.join("\n")).toMatch(/log: warden: queued #1 of 1 \(high\) — no room, /);
 		expect(c.db.listQueue()).toEqual([]);
@@ -432,6 +435,7 @@ ${WIFI}      device product:husky model:Pixel_8_Pro device:husky transport_id:5
 		const c = twoPhones(["android", "--physical", "--no-wait", "--json"], scriptedUi({ interactive: true }));
 		expect(await claimCommand.run(c)).toBe(2);
 		const doc = JSON.parse(c.stdout.join("\n"));
+		expectContract("warden.failure", doc, { name: "ambiguous-device" });
 		expect(doc).toMatchObject({
 			ok: false,
 			command: "claim",
@@ -525,11 +529,14 @@ describe("warden claim of a locked iPhone", () => {
 	test("--no-wait --json: device_locked, exit 2, the hint, no lease", async () => {
 		const c = locked(["ios", "--udid", FAKE_IPHONE_UDID, "--no-wait", "--json"]);
 		expect(await claimCommand.run(c)).toBe(2);
-		expect(JSON.parse(c.stdout.join("\n"))).toEqual({
+		const doc = JSON.parse(c.stdout.join("\n"));
+		expect(doc).toEqual({
 			ok: false,
+			schemaVersion: 1,
 			command: "claim",
 			error: { code: "device_locked", message: "Test iPhone is locked", hint: "unlock the phone, then retry" },
 		});
+		expectContract("warden.failure", doc, { name: "device-locked" });
 		expect(c.db.listLeases()).toEqual([]);
 	});
 

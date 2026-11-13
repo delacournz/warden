@@ -1,0 +1,101 @@
+{
+	"ok": true,
+	"schemaVersion": 1,
+	"command": "snapshot",
+	"device": {
+		"udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+		"platform": "ios",
+		"name": "sim"
+	},
+	"generation": 2,
+	"durationMs": 500,
+	"result": {
+		"backend": "axbridge",
+		"screen": {
+			"width": 390,
+			"height": 844,
+			"scale": 3
+		},
+		"truncated": false,
+		"hash": "19oqnhrbdw9vq",
+		"generation": 2,
+		"elements": [
+			{
+				"ref": "@e1",
+				"role": "other",
+				"enabled": true,
+				"frame": {
+					"x": 0,
+					"y": 0,
+					"width": 390,
+					"height": 44
+				}
+			},
+			{
+				"ref": "@e2",
+				"role": "text",
+				"name": "Welcome",
+				"enabled": true,
+				"frame": {
+					"x": 0,
+					"y": 50,
+					"width": 390,
+					"height": 44
+				}
+			},
+			{
+				"ref": "@e3",
+				"role": "textbox",
+				"name": "Email",
+				"id": "email",
+				"value": "a@b.co",
+				"enabled": true,
+				"frame": {
+					"x": 0,
+					"y": 100,
+					"width": 390,
+					"height": 44
+				}
+			},
+			{
+				"ref": "@e4",
+				"role": "button",
+				"name": "Sign in",
+				"id": "sign-in-submit",
+				"enabled": true,
+				"hittable": true,
+				"frame": {
+					"x": 0,
+					"y": 150,
+					"width": 390,
+					"height": 44
+				}
+			},
+			{
+				"ref": "@e5",
+				"role": "image",
+				"name": "logo",
+				"enabled": true,
+				"frame": {
+					"x": 0,
+					"y": 200,
+					"width": 390,
+					"height": 44
+				}
+			}
+		],
+		"total": 5,
+		"shown": 5,
+		"omitted": 0,
+		"settle": {
+			"quiet": true,
+			"waitedMs": 500
+		},
+		"diff": {
+			"added": [],
+			"removed": [],
+			"unchanged": 5,
+			"against": 1
+		}
+	}
+}

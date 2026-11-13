@@ -4,7 +4,15 @@ import type { CommandContext } from "../context";
 import { errorMessage } from "../hooks/json";
 import { resolveUiDevice, type UiDevice, type UiDeviceFlags } from "./device";
 import type { UiDeps } from "./driver";
-import { reportError, reportOk, type UiError, type UiExitCode, type UiSuccess, uiError } from "./output";
+import {
+	reportError,
+	reportOk,
+	type UiError,
+	type UiExitCode,
+	type UiResultOf,
+	type UiSuccess,
+	uiError,
+} from "./output";
 import { DEFAULT_UI_TIMEOUT_MS } from "./ui-options";
 
 /** Subcommands that only read: a device a live warden process holds is reported on, not refused. */
@@ -53,12 +61,12 @@ function parseTimeout(raw: string | undefined): Result<number, UiError> {
  * `work`, print the result as text or the `--json` envelope, return the exit code. Any throw becomes a
  * `failed` error (exit 1) so `--json` always gets one document.
  */
-export async function runUi(
+export async function runUi<C extends string>(
 	ctx: CommandContext,
 	deps: UiDeps,
-	command: string,
+	command: C,
 	opts: UiOptionValues,
-	work: (device: UiDevice, env: UiRunEnv) => Promise<Result<UiSuccess, UiError>>
+	work: (device: UiDevice, env: UiRunEnv) => Promise<Result<UiSuccess<UiResultOf<C>>, UiError>>
 ): Promise<UiExitCode> {
 	const report = { command, json: opts.json === true, startedAt: ctx.now() };
 	try {

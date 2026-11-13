@@ -6,6 +6,7 @@ import type { Snapshot } from "@delacour/warden-e2e/driver/driver.types";
 import type { UiDeps } from "../agent-ui/driver";
 import { readState, updateState } from "../agent-ui/state";
 import type { VideoSpec } from "../agent-ui/video";
+import { expectContract } from "../contracts/contracts.testing";
 import { cleanupHarnesses, doc, harness, LOGIN, UDID } from "./ui.testing";
 
 afterEach(cleanupHarnesses);
@@ -173,6 +174,7 @@ describe("fill", () => {
 		expect(h.driver.callsOf("key").every((call) => call.key === "Backspace")).toBe(true);
 		expect(h.driver.callsOf("typeText").map((call) => call.text)).toEqual(["new@x.co"]);
 		expect(doc(h.c).result).toMatchObject({ action: "fill", verified: true, characters: 8 });
+		expectContract("warden.ui.fill", doc(h.c), { name: "verified" });
 		expect(h.steps[0]?.args).toEqual({ text: "new@x.co" });
 	});
 

@@ -1,0 +1,16 @@
+{
+	"schemaVersion": 1,
+	"leases": [
+		{
+			"leaseId": "l_622412d78baa",
+			"platform": "ios",
+			"udid": "U2",
+			"name": "warden-iphone-17-2",
+			"action": "reuse",
+			"ttlMs": 300000,
+			"label": "e2e"
+		}
+	],
+	"udids": ["U2"],
+	"reclaimed": []
+}

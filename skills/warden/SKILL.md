@@ -86,7 +86,7 @@ By hand, specs need the preload: `bun test --preload @delacour/warden-e2e/preloa
 
 ## Facts
 
-- `--json`: stdout is one JSON document, success or failure; progress, Metro and child output go to stderr. A failure without its own report is `{"ok":false,"command":"builds rm","error":{"code":"usage"|"failed","message":"…"}}`, exit code unchanged. `warden dev` / `run` keep running: their document is the first stdout line.
+- `--json`: stdout is one JSON document, success or failure; progress, Metro and child output go to stderr. A failure without its own report is `{"ok":false,"schemaVersion":1,"command":"builds rm","error":{"code":"usage"|"failed","message":"…"}}`, exit code unchanged. `warden dev` / `run` keep running: their document is the first stdout line. Versioned outputs (`claim`, `release`, `dev`, `app ensure`, `e2e`, `ui snapshot`/`press`/`fill`/`wait`/`is`/`get`/`open`/`close`, failures) carry `schemaVersion` (bumped only on a breaking change) and a JSON Schema at `https://warden.co.nz/schemas/<schema>/<N>.json` (`index.json` lists them).
 - Lease TTL 30 min; a bare agent claim 5 min.
 - gc shuts a stale sim down 10+ min after it went stale, and never while a non-Apple app is in the foreground. It also shuts down unleased warden devices idle 20 min (`--idle`).
 - A declined `warden.config.ts` offer from `warden dev` is kept in `~/.warden/projects/<key>/`, shared by every worktree; nothing is written to the repo.

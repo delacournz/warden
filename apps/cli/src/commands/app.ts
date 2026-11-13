@@ -24,6 +24,8 @@ import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/r
 import { parsePlatform, resolveOwner, resolvePlatform } from "../claim-flags";
 import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
+import type { AppEnsureJson } from "../contracts/app.schema";
+import { SCHEMA_VERSIONS } from "../contracts/versions";
 import { installModeOption, kindOption, legacyCleanOption, parseInstallFlags } from "../install-flags";
 import { emit, heading, reportError } from "../output";
 import { projectContextFor } from "../project-context";
@@ -387,21 +389,41 @@ function projectOptions(opts: ProjectOpts): Pick<EnsureOptions, "project" | "bun
 }
 
 /** The `--json` facts of a kind build: the kind it became, the repack's key and, after a fallback, why. */
-export function kindJson(app: KindApp): Record<string, unknown> {
+/** What `app ensure --json` adds for a kind build: the kind built, the one asked for, and the repack or fallback facts. */
+export type KindJson =
+	| {
+			kind: "simulator";
+			requestedKind: BuildKind;
+			jsKey: string;
+			baseHash: string;
+			reused: boolean;
+			bundleMs?: number;
+			fromBase?: true;
+	  }
+	| { kind: "dev" | "release"; requestedKind: BuildKind; fallbackReason?: string };
+
+export function kindJson(app: KindApp): KindJson {
+	if (app.kind === "simulator")
+		return {
+			kind: app.kind,
+			requestedKind: app.requested,
+			jsKey: app.repack.jsKey,
+			baseHash: app.repack.baseHash,
+			reused: app.repack.reused,
+			...(app.repack.bundleMs !== undefined ? { bundleMs: app.repack.bundleMs } : {}),
+			...(app.repack.fromBase ? { fromBase: true as const } : {}),
+		};
 	return {
 		kind: app.kind,
 		requestedKind: app.requested,
-		...(app.kind === "simulator"
-			? {
-					jsKey: app.repack.jsKey,
-					baseHash: app.repack.baseHash,
-					reused: app.repack.reused,
-					bundleMs: app.repack.bundleMs,
-					...(app.repack.fromBase ? { fromBase: true } : {}),
-				}
-			: {}),
-		...(app.kind !== "simulator" && app.fallbackReason !== undefined ? { fallbackReason: app.fallbackReason } : {}),
+		...(app.fallbackReason !== undefined ? { fallbackReason: app.fallbackReason } : {}),
 	};
+}
+
+/** `app ensure --json`: the resolved build, plus the kind facts when a kind was ensured. */
+function ensureJson(r: EnsureResult, kindApp: KindApp | undefined): AppEnsureJson {
+	const base = { schemaVersion: SCHEMA_VERSIONS["warden.app.ensure"], ...r };
+	return kindApp === undefined ? base : { ...base, ...kindJson(kindApp) };
 }
 
 function fail(ctx: CommandContext, sub: string, message: string): number {
@@ -465,7 +487,7 @@ async function ensureCmd(
 	emit(
 		ctx,
 		opts.json === true,
-		kindApp === undefined ? r : { ...r, ...kindJson(kindApp) },
+		ensureJson(r, kindApp),
 		`${color.green(r.source)}: ${r.appPath || "(already installed)"} ${color.dim(`[${r.hash}]`)}${where}`
 	);
 	return 0;

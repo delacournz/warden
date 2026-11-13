@@ -44,6 +44,8 @@ import {
 } from "../claim-flags";
 import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
+import type { E2eEventJson, E2eReportJson } from "../contracts/e2e.schema";
+import { SCHEMA_VERSIONS } from "../contracts/versions";
 import {
 	findBun,
 	NETPROXY_SUBCOMMAND,
@@ -114,6 +116,8 @@ export type E2eOpts = ClaimFlagValues &
 	};
 
 export type E2eReport = {
+	/** the `warden.e2e.report` contract version */
+	schemaVersion: (typeof SCHEMA_VERSIONS)["warden.e2e.report"];
 	suite: string;
 	platform: Platform;
 	base?: string;
@@ -356,12 +360,16 @@ async function metroPlan(suite: Suite, bundleId: string): Promise<Result<MetroPl
 }
 
 /** Write the report (batch dir + `--report`), print it for `--json` / as the last `--json-lines` event. */
-async function publish(ctx: CommandContext, deps: BatchDeps, opts: E2eOpts, report: E2eReport): Promise<void> {
+async function publish(ctx: CommandContext, deps: BatchDeps, opts: E2eOpts, built: E2eReport): Promise<void> {
+	// the published contract: a field the schema lacks fails to compile here
+	const report: E2eReportJson = built;
 	const text = `${JSON.stringify(report, null, 2)}\n`;
 	if (report.batchDir) await deps.writeFile(join(report.batchDir, "e2e-report.json"), text);
 	if (opts.report) await deps.writeFile(opts.report, text);
-	if (opts.jsonLines) ctx.out(`${JSON.stringify({ event: "report", report })}\n`);
-	else if (opts.json) emit(ctx, true, report, "");
+	if (opts.jsonLines) {
+		const event: E2eEventJson = { schemaVersion: SCHEMA_VERSIONS["warden.e2e.event"], event: "report", report };
+		ctx.out(`${JSON.stringify(event)}\n`);
+	} else if (opts.json) emit(ctx, true, report, "");
 }
 
 /**
@@ -435,7 +443,12 @@ const jsonOut = (opts: E2eOpts): true | undefined => opts.json ?? opts.jsonLines
 /** `--json-lines`: each finished test as one event on stdout. */
 function jsonLinesHook(ctx: CommandContext, opts: E2eOpts): { onTest?: (spec: string, result: TestResult) => void } {
 	if (!opts.jsonLines) return {};
-	return { onTest: (id, result) => ctx.out(`${JSON.stringify(testEvent(id, result))}\n`) };
+	return {
+		onTest: (id, result) => {
+			const event: E2eEventJson = testEvent(id, result);
+			ctx.out(`${JSON.stringify(event)}\n`);
+		},
+	};
 }
 
 /** Failed / not-run specs with their failing tests, any `test.only`, then the one-line gate verdict. */
@@ -512,6 +525,7 @@ async function publishNotRun(
 	if (specs.length === 0) success(ctx, "warden e2e: no affected specs — nothing to run");
 	const notRun = specs.map((f): SpecVerdict => ({ ...f, verdict: "not-run", attempts: 0 }));
 	await publish(ctx, deps, opts, {
+		schemaVersion: SCHEMA_VERSIONS["warden.e2e.report"],
 		...base,
 		isolate: runIsolation(suite.config, opts, passed),
 		ok: true,
@@ -677,6 +691,7 @@ function buildReport(
 	timing: E2eTiming | undefined
 ): E2eReport {
 	return {
+		schemaVersion: SCHEMA_VERSIONS["warden.e2e.report"],
 		...base,
 		isolate,
 		ok: result.ok,

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { Chalk } from "chalk";
 import { type Command, type CommandEntry, defineCommand, runLazyProgram, runProgram } from "./command";
+import { expectContract } from "./contracts/contracts.testing";
 import { reportError } from "./output";
 import { withSpinner } from "./spinner-context";
 import { commandPathOf } from "./telemetry/properties";
@@ -194,13 +195,24 @@ describe("runProgram --json failures", () => {
 	test("a reported failure → one envelope on stdout with the first error, exit code kept, stderr still says it", async () => {
 		expect(await runJson(["delta", "--json"])).toBe(1);
 		expect(ctx?.stdout).toHaveLength(1);
-		expect(doc()).toEqual({ ok: false, command: "delta", error: { code: "failed", message: "boom" } });
+		expect(doc()).toEqual({
+			ok: false,
+			schemaVersion: 1,
+			command: "delta",
+			error: { code: "failed", message: "boom" },
+		});
 		expect(ctx?.stderr.join("\n")).toContain("warden delta: boom");
+		expectContract("warden.failure", doc(), { name: "failed" });
 	});
 
 	test("the command path names the subcommand", async () => {
 		expect(await runJson(["eps", "sub", "--json"])).toBe(2);
-		expect(doc()).toEqual({ ok: false, command: "eps sub", error: { code: "failed", message: "nope" } });
+		expect(doc()).toEqual({
+			ok: false,
+			schemaVersion: 1,
+			command: "eps sub",
+			error: { code: "failed", message: "nope" },
+		});
 	});
 
 	test("an error reported from under a spinner is still the envelope's", async () => {
@@ -215,16 +227,23 @@ describe("runProgram --json failures", () => {
 
 	test("a failure nobody reported still gets an envelope, naming the exit code", async () => {
 		expect(await runJson(["delta", "--json", "--silent"])).toBe(4);
-		expect(doc()).toEqual({ ok: false, command: "delta", error: { code: "failed", message: "warden delta exited 4" } });
+		expect(doc()).toEqual({
+			ok: false,
+			schemaVersion: 1,
+			command: "delta",
+			error: { code: "failed", message: "warden delta exited 4" },
+		});
 	});
 
 	test("a usage error under --json → code usage", async () => {
 		expect(await runJson(["delta", "--json", "--nope"])).toBe(1);
 		expect(doc()).toEqual({
 			ok: false,
+			schemaVersion: 1,
 			command: "delta",
 			error: { code: "usage", message: "unknown option '--nope'" },
 		});
+		expectContract("warden.failure", doc(), { name: "usage" });
 	});
 
 	test("without --json (or with it only after --) stdout stays empty", async () => {

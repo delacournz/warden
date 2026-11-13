@@ -17,6 +17,8 @@ import {
 } from "../claim-flags";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
+import type { ClaimJson } from "../contracts/claim.schema";
+import { SCHEMA_VERSIONS } from "../contracts/versions";
 import { emit, heading, reportError, table, warn } from "../output";
 import { reportClaimFailure } from "../physical-lock";
 import { canPrompt, pickPhysical, reportPick } from "../physical-pick";
@@ -87,10 +89,16 @@ async function claim(ctx: CommandContext, platformArg: string | undefined, opts:
 		);
 	}
 	const leases = claimedJson(outcome.data);
+	const doc: ClaimJson = {
+		schemaVersion: SCHEMA_VERSIONS["warden.claim"],
+		leases,
+		udids: leases.map((l) => l.udid),
+		reclaimed: outcome.data.reclaimed,
+	};
 	emit(
 		ctx,
 		opts.json === true,
-		{ leases, udids: leases.map((l) => l.udid), reclaimed: outcome.data.reclaimed },
+		doc,
 		table(
 			ctx,
 			["LEASE", "UDID", "NAME", "ACTION"],

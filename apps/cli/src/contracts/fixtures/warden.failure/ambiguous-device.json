@@ -1,0 +1,30 @@
+{
+	"ok": false,
+	"schemaVersion": 1,
+	"command": "claim",
+	"error": {
+		"message": "several physical android devices are available: R5CT1234ABC (SM-A546E), 192.168.1.20:5555 (Pixel 8 Pro)",
+		"code": "ambiguous_device",
+		"hint": "pass --udid <id> (iOS) / --serial <id> (Android), or set WARDEN_PHYSICAL_IDS",
+		"details": {
+			"candidates": [
+				{
+					"id": "R5CT1234ABC",
+					"name": "SM-A546E",
+					"platform": "android",
+					"model": "SM-A546E",
+					"osVersion": "API 34",
+					"transport": "usb"
+				},
+				{
+					"id": "192.168.1.20:5555",
+					"name": "Pixel 8 Pro",
+					"platform": "android",
+					"model": "Pixel 8 Pro",
+					"osVersion": "API 35",
+					"transport": "wifi"
+				}
+			]
+		}
+	}
+}

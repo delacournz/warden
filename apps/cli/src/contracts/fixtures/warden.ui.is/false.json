@@ -1,0 +1,17 @@
+{
+	"ok": true,
+	"schemaVersion": 1,
+	"command": "is",
+	"device": {
+		"udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+		"platform": "ios",
+		"name": "sim"
+	},
+	"durationMs": 0,
+	"result": {
+		"matched": false,
+		"state": "visible",
+		"waitedMs": 0,
+		"reason": "target_absent"
+	}
+}
