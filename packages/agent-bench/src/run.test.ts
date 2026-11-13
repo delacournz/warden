@@ -224,7 +224,8 @@ describe("runAgentBench", () => {
 		if (!out.success) throw new Error(String(out.error));
 		const { report, runDir } = out.data;
 		expect(runDir).toBe(join(root, ".bench", RUN_ID));
-		expect(report.reportVersion).toBe(2);
+		expect(report.reportVersion).toBe(3);
+		expect(report.reps).toBe(1);
 		expect(report.udid).toBe("SIM-1");
 		expect(report.tools.map((t) => `${t.tool}:${t.outcome}`)).toEqual([
 			"warden:passed",
@@ -290,6 +291,35 @@ describe("runAgentBench", () => {
 		expect(exec.calls.filter((c) => c.args[1] === "ui" && c.args[2] === "wait")).toHaveLength(3);
 		expect(exec.calls.filter((c) => c.args[1] === "release").map((c) => c.args[2])).toEqual(["L1"]);
 		expect(lines).toContain("released L1");
+	});
+
+	test("--reps interleaves the tools rep by rep, each rep from a fresh install, in its own dir", async () => {
+		const exec = fakeExec(rules());
+		const { deps: d, lines } = deps(exec);
+		const out = await runAgentBench({ loaded: loaded(), repoRoot: repo(), tools: ["warden", "argent"], reps: 2 }, d);
+		if (!out.success) throw new Error(String(out.error));
+		const { report, runDir } = out.data;
+		expect(report.reps).toBe(2);
+		expect(report.tools.map((t) => `${t.tool}#${t.rep}:${t.outcome}`)).toEqual([
+			"warden#1:passed",
+			"warden#2:passed",
+			"argent#1:passed",
+			"argent#2:passed",
+		]);
+		expect(exec.calls.filter((c) => c.cmd === "claude").map((c) => toolOf(c.args))).toEqual([
+			"warden",
+			"argent",
+			"warden",
+			"argent",
+		]);
+		for (const dir of ["warden/rep-1", "warden/rep-2", "argent/rep-1", "argent/rep-2"])
+			expect(existsSync(join(runDir, dir, "transcript.ndjson"))).toBe(true);
+		const installs = exec.calls.filter((c) => c.cmd === "xcrun" && c.args[1] === "install");
+		expect(installs).toHaveLength(4);
+		expect(lines).toContain("argent 0.27.0: rep 2/2: starting");
+		expect(readFileSync(join(runDir, "report.md"), "utf8")).toContain("✅ 2/2 passed");
+		expect(exec.calls.filter((c) => c.args[1] === "claim")).toHaveLength(1);
+		expect(exec.calls.filter((c) => c.args[1] === "release")).toHaveLength(1);
 	});
 
 	test("--tools runs only the named tools", async () => {
@@ -400,5 +430,28 @@ describe("abort", () => {
 		expect(out.data.report.tools.map((t) => t.outcome)).toEqual(["aborted", "not_run", "not_run"]);
 		expect(exec.calls.filter((c) => c.cmd === "claude")).toHaveLength(1);
 		expect(exec.calls.filter((c) => c.args[1] === "release")).toHaveLength(1);
+	});
+
+	test("with reps, every later tool and rep is not_run", async () => {
+		const controller = new AbortController();
+		const exec = fakeExec(
+			rules({
+				claude: () => {
+					controller.abort();
+					return { code: 143, stdout: "" };
+				},
+			})
+		);
+		const out = await runAgentBench(
+			{ loaded: loaded(), repoRoot: repo(), tools: ["warden", "argent"], reps: 2 },
+			deps(exec, { signal: controller.signal, kill: () => {} }).deps
+		);
+		if (!out.success) throw new Error(String(out.error));
+		expect(out.data.report.tools.map((t) => `${t.tool}#${t.rep}:${t.outcome}`)).toEqual([
+			"warden#1:aborted",
+			"warden#2:not_run",
+			"argent#1:not_run",
+			"argent#2:not_run",
+		]);
 	});
 });

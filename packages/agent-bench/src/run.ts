@@ -52,6 +52,8 @@ export type RunInput = {
 	outDir?: string;
 	/** narrow the suite's tools (kept in the suite's order) */
 	tools?: readonly ToolId[];
+	/** run every tool this many times, interleaved rep by rep (default 1) */
+	reps?: number;
 };
 
 export type RunDeps = {
@@ -172,6 +174,7 @@ type RunCtx = {
 	session: string;
 	udid: string;
 	model: string;
+	reps: number;
 };
 
 /** The e2e-bench adapter's context, so its doctor / prepare / teardown see the same env as the agent. */
@@ -289,7 +292,7 @@ async function drive(ctx: RunCtx, kit: Kit, actx: RunContext, toolDir: string): 
 	return { agent, metrics: parser.metrics(), checks };
 }
 
-type ToolInput = { kit: Kit; prepareMs: number; driven: Driven };
+type ToolInput = { kit: Kit; rep: number; prepareMs: number; driven: Driven };
 
 export function buildToolReport(suite: LoadedSuite["suite"], r: ToolInput): RanReport {
 	const { agent, metrics, checks } = r.driven;
@@ -297,6 +300,7 @@ export function buildToolReport(suite: LoadedSuite["suite"], r: ToolInput): RanR
 	const diff = diffBaseline(suite.baseline?.[r.kit.tool], metrics, agent.wallMs);
 	return {
 		tool: r.kit.tool,
+		rep: r.rep,
 		ran: true,
 		version: r.kit.version,
 		outcome,
@@ -311,8 +315,12 @@ export function buildToolReport(suite: LoadedSuite["suite"], r: ToolInput): RanR
 	};
 }
 
-const skipped = (tool: ToolId, outcome: "unavailable" | "setup_failed" | "not_run", reason: string): ToolReport => ({
+type SkipOutcome = "unavailable" | "setup_failed" | "not_run";
+
+/** A row for a tool that did not run; `rep` absent = it could not run at all (no kit). */
+const skipped = (tool: ToolId, outcome: SkipOutcome, reason: string, rep?: number): ToolReport => ({
 	tool,
+	...(rep !== undefined ? { rep } : {}),
 	ran: false,
 	outcome,
 	reason,
@@ -320,14 +328,20 @@ const skipped = (tool: ToolId, outcome: "unavailable" | "setup_failed" | "not_ru
 
 const errText = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
-/** One tool, start to finish; `previous` is the kit that ran before it on this device (for isolation). */
-async function runTool(ctx: RunCtx, kit: Kit, previous: Kit | undefined): Promise<ToolReport> {
-	const toolDir = join(ctx.runDir, kit.tool);
+/** `<run>/<tool>` for a single rep (as before), `<run>/<tool>/rep-<n>` with `--reps`. */
+export function toolDirFor(runDir: string, tool: ToolId, rep: number, reps: number): string {
+	return reps === 1 ? join(runDir, tool) : join(runDir, tool, `rep-${rep}`);
+}
+
+/** One tool's rep, start to finish; `previous` is the kit that ran before it on this device (for isolation). */
+async function runTool(ctx: RunCtx, kit: Kit, rep: number, previous: Kit | undefined): Promise<ToolReport> {
+	const toolDir = toolDirFor(ctx.runDir, kit.tool, rep, ctx.reps);
 	mkdirSync(toolDir, { recursive: true });
 	const actx = adapterContext(ctx, kit, toolDir);
+	const skip = (outcome: SkipOutcome, reason: string): ToolReport => skipped(kit.tool, outcome, reason, rep);
 	if (kit.tool !== "warden") {
 		const doctor = await kit.adapter.doctor(actx);
-		if (!doctor.ok) return { ...skipped(kit.tool, "unavailable", `${doctor.reason} (${doctor.installHint})`) };
+		if (!doctor.ok) return skip("unavailable", `${doctor.reason} (${doctor.installHint})`);
 	}
 	const isolated = await isolate({
 		exec: ctx.exec,
@@ -345,19 +359,19 @@ async function runTool(ctx: RunCtx, kit: Kit, previous: Kit | undefined): Promis
 		ownedPaths: [ctx.runDir, ...Object.values(kit.env), ...Object.values(previous?.env ?? {})],
 		...(ctx.deps.sleep !== undefined ? { sleep: ctx.deps.sleep } : {}),
 	});
-	if (!isolated.success) return skipped(kit.tool, "setup_failed", `isolate: ${errText(isolated.error)}`);
+	if (!isolated.success) return skip("setup_failed", `isolate: ${errText(isolated.error)}`);
 	const installed = await freshInstall(ctx);
-	if (!installed.success) return skipped(kit.tool, "setup_failed", `install: ${errText(installed.error)}`);
+	if (!installed.success) return skip("setup_failed", `install: ${errText(installed.error)}`);
 	const t0 = performance.now();
 	const prepared = await prepareTool(ctx, kit, actx);
 	const prepareMs = performance.now() - t0;
 	if (!prepared.success) {
 		await stopToolHelpers(ctx, kit, actx);
-		return skipped(kit.tool, "setup_failed", `prepare: ${errText(prepared.error)}`);
+		return skip("setup_failed", `prepare: ${errText(prepared.error)}`);
 	}
 	ctx.deps.log(`${kit.tool}: prepared in ${(prepareMs / 1000).toFixed(1)} s`);
 	const driven = await drive(ctx, kit, actx, toolDir);
-	return buildToolReport(ctx.input.loaded.suite, { kit, prepareMs, driven });
+	return buildToolReport(ctx.input.loaded.suite, { kit, rep, prepareMs, driven });
 }
 
 /** Resolves every selected tool's kit; the ones that cannot run here become `unavailable` rows. */
@@ -409,20 +423,26 @@ function setup(input: RunInput, deps: RunDeps): Result<Setup> {
 	return ok({ app: app.data, tools, kits, unavailable, runId, startedAt, session: session.data, runDir, cliPath });
 }
 
-/** Every available tool in turn on the claimed device; an interrupted run marks the rest `not_run`. */
+/**
+ * Every available tool on the claimed device, rep by rep (rep 1 of each tool, then rep 2, ...), so a drift in host
+ * load lands on every tool alike; an interrupted run marks the rest `not_run`. Rows come back in tool, then rep
+ * order.
+ */
 async function runTools(ctx: RunCtx, s: Setup): Promise<ToolReport[]> {
 	const results: ToolReport[] = [...s.unavailable];
 	let previous: Kit | undefined;
-	for (const kit of s.kits) {
-		if (ctx.deps.signal?.aborted) {
-			results.push(skipped(kit.tool, "not_run", "the run was interrupted before this tool"));
-			continue;
+	for (let rep = 1; rep <= ctx.reps; rep++) {
+		for (const kit of s.kits) {
+			if (ctx.deps.signal?.aborted) {
+				results.push(skipped(kit.tool, "not_run", "the run was interrupted before this tool", rep));
+				continue;
+			}
+			ctx.deps.log(`${kit.tool} ${kit.version}: ${ctx.reps > 1 ? `rep ${rep}/${ctx.reps}: ` : ""}starting`);
+			results.push(await runTool(ctx, kit, rep, previous));
+			previous = kit;
 		}
-		ctx.deps.log(`${kit.tool} ${kit.version}: starting`);
-		results.push(await runTool(ctx, kit, previous));
-		previous = kit;
 	}
-	return results.sort((a, b) => s.tools.indexOf(a.tool) - s.tools.indexOf(b.tool));
+	return results.sort((a, b) => s.tools.indexOf(a.tool) - s.tools.indexOf(b.tool) || (a.rep ?? 0) - (b.rep ?? 0));
 }
 
 /**
@@ -469,16 +489,18 @@ export async function runAgentBench(input: RunInput, deps: RunDeps): AsyncResult
 		session: s.session,
 		udid: device.udid,
 		model,
+		reps: input.reps ?? 1,
 	};
 	try {
 		const report: AgentReport = {
-			reportVersion: 2,
+			reportVersion: 3,
 			runId: s.runId,
 			suite: suite.name,
 			model,
 			platform: suite.platform,
 			udid: device.udid,
 			startedAt: s.startedAt.toISOString(),
+			reps: ctx.reps,
 			tools: await runTools(ctx, s),
 		};
 		writeFileAtomic(join(s.runDir, REPORT_FILE), `${JSON.stringify(report, null, 2)}\n`);

@@ -17,6 +17,7 @@ function runInput(args: Extract<Args, { kind: "run" }>, loaded: LoadedSuite): Ru
 		...(args.model !== undefined ? { model: args.model } : {}),
 		...(args.out !== undefined ? { outDir: resolve(args.out) } : {}),
 		...(args.tools !== undefined ? { tools: args.tools } : {}),
+		...(args.reps !== undefined ? { reps: args.reps } : {}),
 	};
 }
 

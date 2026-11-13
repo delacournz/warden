@@ -59,8 +59,12 @@ export type DiffRow = z.infer<typeof diffRowSchema>;
 
 const checkResultSchema = z.strictObject({ check: successCheckSchema, passed: z.boolean(), output: z.string() });
 
+const repSchema = z.number().int().positive();
+
 const ranSchema = z.strictObject({
 	tool: toolIdSchema,
+	/** 1-based; with `--reps`, each tool runs once per rep */
+	rep: repSchema,
 	ran: z.literal(true),
 	version: z.string(),
 	outcome: z.enum(OUTCOMES),
@@ -79,6 +83,8 @@ const ranSchema = z.strictObject({
 
 const skippedSchema = z.strictObject({
 	tool: toolIdSchema,
+	/** absent for a tool that could not run at all (`unavailable` before the device was claimed) */
+	rep: repSchema.optional(),
 	ran: z.literal(false),
 	version: z.string().optional(),
 	outcome: z.enum(SKIPS),
@@ -90,13 +96,16 @@ export type ToolReport = z.infer<typeof toolReportSchema>;
 export type RanReport = z.infer<typeof ranSchema>;
 
 export const reportSchema = z.strictObject({
-	reportVersion: z.literal(2),
+	reportVersion: z.literal(3),
 	runId: z.string(),
 	suite: z.string(),
 	model: z.string(),
 	platform: z.enum(["ios", "android"]),
 	udid: z.string(),
 	startedAt: z.string(),
+	/** how many times each tool ran (`--reps`, default 1) */
+	reps: repSchema,
+	/** one row per tool and rep, in tool order then rep order */
 	tools: z.array(toolReportSchema).min(1),
 });
 export type AgentReport = z.infer<typeof reportSchema>;
@@ -207,83 +216,188 @@ function toolSection(t: ToolReport): string[] {
 	];
 }
 
-type Row = { label: string; cell: (t: RanReport) => string; value?: (t: RanReport) => number | undefined };
+/** The middle value (mean of the middle two for an even count); undefined for none. */
+export function median(values: readonly number[]): number | undefined {
+	if (values.length === 0) return undefined;
+	const sorted = [...values].sort((a, b) => a - b);
+	const mid = Math.floor(sorted.length / 2);
+	const upper = sorted[mid] ?? 0;
+	return sorted.length % 2 === 1 ? upper : ((sorted[mid - 1] ?? 0) + upper) / 2;
+}
 
 const tokensIn = (t: RanReport): number | undefined => {
 	const k = t.metrics.result?.tokens;
 	return k === undefined ? undefined : k.input + k.cacheRead + k.cacheWrite;
 };
 
-/** Comparison rows; `value` marks the row "lower is better", and the best tool that passed is bolded. */
-const ROWS: Row[] = [
-	{ label: "checks", cell: (t) => `${t.checks.filter((c) => c.passed).length}/${t.checks.length}` },
-	{ label: "agent wall", cell: (t) => secs(t.wallMs), value: (t) => t.wallMs },
-	{ label: "prepare", cell: (t) => secs(t.prepareMs) },
-	{ label: "turns", cell: (t) => String(t.metrics.assistantTurns), value: (t) => t.metrics.assistantTurns },
-	{ label: "tool calls", cell: (t) => String(t.metrics.toolCalls), value: (t) => t.metrics.toolCalls },
-	{ label: "driver calls", cell: (t) => String(t.metrics.driverCalls), value: (t) => t.metrics.driverCalls },
-	{ label: "stumbles", cell: (t) => String(t.metrics.stumbles), value: (t) => t.metrics.stumbles },
-	{
-		label: "cost",
-		cell: (t) => (t.metrics.result === undefined ? "n/a" : `$${t.metrics.result.costUsd.toFixed(2)}`),
-		value: (t) => t.metrics.result?.costUsd,
-	},
-	{
-		label: "tokens in",
-		cell: (t) => {
-			const v = tokensIn(t);
-			return v === undefined ? "n/a" : v.toLocaleString("en-US");
-		},
-		value: tokensIn,
-	},
-	{
-		label: "tokens out",
-		cell: (t) => t.metrics.result?.tokens.output.toLocaleString("en-US") ?? "n/a",
-		value: (t) => t.metrics.result?.tokens.output,
-	},
-	{ label: "version", cell: (t) => `\`${t.version}\`` },
+const num = (v: number): string => (Number.isInteger(v) ? String(v) : v.toFixed(1));
+const count = (v: number): string => Math.round(v).toLocaleString("en-US");
+
+/**
+ * A numeric comparison row. `best` = lower is better, and the best tool that passed is bolded; `range` adds the
+ * min–max over the reps behind the median.
+ */
+type Metric = {
+	label: string;
+	get: (t: RanReport) => number | undefined;
+	format: (v: number) => string;
+	best?: true;
+	range?: true;
+};
+
+const METRIC_ROWS: Metric[] = [
+	{ label: "agent wall", get: (t) => t.wallMs, format: secs, best: true, range: true },
+	{ label: "prepare", get: (t) => t.prepareMs, format: secs },
+	{ label: "turns", get: (t) => t.metrics.assistantTurns, format: num, best: true },
+	{ label: "tool calls", get: (t) => t.metrics.toolCalls, format: num, best: true },
+	{ label: "driver calls", get: (t) => t.metrics.driverCalls, format: num, best: true },
+	{ label: "stumbles", get: (t) => t.metrics.stumbles, format: num, best: true },
+	{ label: "cost", get: (t) => t.metrics.result?.costUsd, format: (v) => `$${v.toFixed(2)}`, best: true },
+	{ label: "tokens in", get: tokensIn, format: count, best: true },
+	{ label: "tokens out", get: (t) => t.metrics.result?.tokens.output, format: count, best: true },
 ];
 
-function comparisonRow(row: Row, tools: readonly ToolReport[]): string {
-	const passed = tools.filter((t): t is RanReport => t.ran && t.outcome === "passed");
-	const values = row.value === undefined ? [] : passed.map(row.value).filter((v) => v !== undefined);
-	const best = passed.length > 1 && values.length > 0 ? Math.min(...values) : undefined;
-	const cells = tools.map((t) => {
-		if (!t.ran) return "—";
-		const cell = row.cell(t);
-		const v = row.value?.(t);
-		return best !== undefined && t.outcome === "passed" && v === best ? `**${cell}**` : cell;
-	});
-	return `| ${row.label} | ${cells.join(" | ")} |`;
+/** One tool's rows across reps; `pool` = the reps its medians come from (passing ones, else every one that ran). */
+type Group = { tool: ToolId; rows: ToolReport[]; ran: RanReport[]; passed: RanReport[]; pool: RanReport[] };
+
+function groupOf(tool: ToolId, rows: ToolReport[]): Group {
+	const ran = rows.filter((t): t is RanReport => t.ran);
+	const passed = ran.filter((t) => t.outcome === "passed");
+	return { tool, rows, ran, passed, pool: passed.length > 0 ? passed : ran };
 }
 
-/** The side-by-side table that ends the report: one column per tool, best passing value in bold. */
+/** Tool groups in `TOOL_IDS` order, each tool's rows in rep order. */
+function groups(r: AgentReport): Group[] {
+	return TOOL_IDS.flatMap((tool) => {
+		const rows = r.tools.filter((t) => t.tool === tool).sort((a, b) => (a.rep ?? 0) - (b.rep ?? 0));
+		return rows.length === 0 ? [] : [groupOf(tool, rows)];
+	});
+}
+
+/** `✅ passed` for one rep; `✅ 3/3 passed` / `⚠️ 2/3 passed` / `❌ 0/3 passed` across reps; a tool that never ran keeps its skip. */
+function outcomeCell(g: Group, reps: number): string {
+	const first = g.rows[0];
+	if (reps === 1 && first !== undefined) return `${MARK[first.outcome]} ${first.outcome}`;
+	if (g.ran.length === 0 && first !== undefined && g.rows.every((t) => t.outcome === first.outcome))
+		return `${MARK[first.outcome]} ${first.outcome}`;
+	const mark = g.passed.length === g.rows.length ? "✅" : g.passed.length === 0 ? "❌" : "⚠️";
+	return `${mark} ${g.passed.length}/${g.rows.length} passed`;
+}
+
+function checksCell(g: Group): string {
+	if (g.ran.length === 0) return "—";
+	const checks = g.ran.flatMap((t) => t.checks);
+	return `${checks.filter((c) => c.passed).length}/${checks.length}`;
+}
+
+/** The median over the group's pool (undefined when no rep has the value). */
+function medianOf(metric: Metric, g: Group): number | undefined {
+	return median(g.pool.map(metric.get).filter((v) => v !== undefined));
+}
+
+function metricCell(metric: Metric, g: Group, best: number | undefined): string {
+	const values = g.pool.map(metric.get).filter((v) => v !== undefined);
+	const mid = median(values);
+	if (g.ran.length === 0) return "—";
+	if (mid === undefined) return "n/a";
+	const spread =
+		metric.range && values.length > 1
+			? ` (${metric.format(Math.min(...values)).replace(/ s$/, "")}–${metric.format(Math.max(...values)).replace(/ s$/, "")})`
+			: "";
+	const cell = `${metric.format(mid)}${spread}`;
+	return best !== undefined && g.passed.length > 0 && mid === best ? `**${cell}**` : cell;
+}
+
+/** The lowest median among tools with a passing rep; undefined unless at least two tools passed. */
+function bestOf(metric: Metric, all: readonly Group[]): number | undefined {
+	if (!metric.best) return undefined;
+	const passing = all.filter((g) => g.passed.length > 0);
+	const values = passing.map((g) => medianOf(metric, g)).filter((v) => v !== undefined);
+	return passing.length > 1 && values.length > 0 ? Math.min(...values) : undefined;
+}
+
+/**
+ * The side-by-side table that ends the report: one column per tool, best passing value in bold. With reps, each
+ * cell is the median over the tool's passing reps (all its reps when none passed), wall time with its range.
+ */
 export function renderComparison(r: AgentReport): string[] {
-	const tools = [...r.tools].sort((a, b) => TOOL_IDS.indexOf(a.tool) - TOOL_IDS.indexOf(b.tool));
-	const head = tools.map((t) => t.tool);
+	const all = groups(r);
+	const row = (label: string, cells: string[]): string => `| ${label} | ${cells.join(" | ")} |`;
 	return [
-		`| | ${head.join(" | ")} |`,
-		`|---|${head.map(() => "---").join("|")}|`,
-		`| outcome | ${tools.map((t) => `${MARK[t.outcome]} ${t.outcome}`).join(" | ")} |`,
-		...ROWS.map((row) => comparisonRow(row, tools)),
+		`| | ${all.map((g) => g.tool).join(" | ")} |`,
+		`|---|${all.map(() => "---").join("|")}|`,
+		row(
+			"outcome",
+			all.map((g) => outcomeCell(g, r.reps))
+		),
+		row("checks", all.map(checksCell)),
+		...METRIC_ROWS.map((m) => {
+			const best = bestOf(m, all);
+			return row(
+				m.label,
+				all.map((g) => metricCell(m, g, best))
+			);
+		}),
+		row(
+			"version",
+			all.map((g) => (g.ran[0] === undefined ? "—" : `\`${g.ran[0].version}\``))
+		),
 	];
 }
 
 const toolName = (id: ToolId): string => `\`${id}\``;
 
+const cost = (t: RanReport): string =>
+	t.metrics.result === undefined ? "n/a" : `$${t.metrics.result.costUsd.toFixed(2)}`;
+
+/** One row per rep: what the comparison's medians are made of. */
+function repRow(t: ToolReport): string {
+	const head = `| ${t.rep ?? "—"} | ${MARK[t.outcome]} ${t.outcome} |`;
+	if (!t.ran) return `${head} ${t.reason} | | | | | | |`;
+	const m = t.metrics;
+	return `${head} ${secs(t.wallMs)} | ${secs(t.prepareMs)} | ${m.assistantTurns} | ${m.driverCalls} | ${m.stumbles} | ${cost(t)} | ${counts(m.errorCodes)} |`;
+}
+
+/** With reps: one section per tool (version, notes, checks that failed) and a row per rep. */
+function repsSection(g: Group, reps: number): string[] {
+	const failedChecks = [
+		...new Set(g.ran.flatMap((t) => t.checks.filter((c) => !c.passed).map((c) => describeCheck(c.check)))),
+	];
+	const first = g.ran[0];
+	return [
+		`## ${g.tool} ${outcomeCell(g, reps)}`,
+		"",
+		...(first !== undefined ? [`- version \`${first.version}\``, ...first.notes.map((n) => `- note: ${n}`)] : []),
+		...failedChecks.map((c) => `- ❌ \`${c}\` failed in some reps`),
+		`- transcripts: \`${g.tool}/rep-<n>/\``,
+		"",
+		"| rep | outcome | agent wall | prepare | turns | driver calls | stumbles | cost | error codes |",
+		"|---|---|---|---|---|---|---|---|---|",
+		...g.rows.map(repRow),
+		"",
+	];
+}
+
+const FOOTNOTE =
+	"Same model, prompt task, device and pinned app for every tool; each starts from a fresh install. Bold = best among tools that passed (lower is better). Driver calls = calls to the tool under test (its CLI via Bash, or its MCP tools). Checks run through `warden ui` after the tool's own helpers are stopped.";
+const REPS_FOOTNOTE =
+	"Medians over passing reps (over every rep when a tool never passed); agent wall shows min–max. Tools run interleaved, rep by rep, so drift in host load is spread across them.";
+
 /** The human summary written next to `report.json`; the comparison table comes last. */
 export function renderMarkdown(r: AgentReport): string {
+	const all = groups(r);
+	const reps = r.reps > 1 ? ` · ${r.reps} reps` : "";
 	return [
 		`# agent bench: ${r.suite} — ${allPassed(r) ? "all passed" : "not all passed"}`,
 		"",
-		`Run \`${r.runId}\` · model \`${r.model}\` · ${r.platform} \`${r.udid}\` · started ${r.startedAt} · tools ${r.tools.map((t) => toolName(t.tool)).join(", ")}`,
+		`Run \`${r.runId}\` · model \`${r.model}\` · ${r.platform} \`${r.udid}\` · started ${r.startedAt} · tools ${all.map((g) => toolName(g.tool)).join(", ")}${reps}`,
 		"",
-		...r.tools.flatMap(toolSection),
+		...(r.reps > 1 ? all.flatMap((g) => repsSection(g, r.reps)) : r.tools.flatMap(toolSection)),
 		"## Comparison",
 		"",
 		...renderComparison(r),
 		"",
-		"Same model, prompt task, device and pinned app for every tool; each starts from a fresh install. Bold = best among tools that passed (lower is better). Driver calls = calls to the tool under test (its CLI via Bash, or its MCP tools). Checks run through `warden ui` after the tool's own helpers are stopped.",
+		r.reps > 1 ? `${FOOTNOTE} ${REPS_FOOTNOTE}` : FOOTNOTE,
 		"",
 	].join("\n");
 }

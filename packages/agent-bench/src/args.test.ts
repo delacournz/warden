@@ -19,6 +19,15 @@ describe("parseArgs", () => {
 		expect(parseArgs(["login", "--tools"]).success).toBe(false);
 	});
 
+	test("--reps runs each tool N times (1..20)", () => {
+		expect(parseArgs(["login", "--reps", "3"])).toEqual({
+			success: true,
+			data: { kind: "run", suite: "login", reps: 3, json: false },
+		});
+		for (const bad of ["0", "21", "2.5", "x", "-1"]) expect(parseArgs(["login", "--reps", bad]).success).toBe(false);
+		expect(parseArgs(["login", "--reps"]).success).toBe(false);
+	});
+
 	test("list and help", () => {
 		expect(parseArgs(["list"])).toEqual({ success: true, data: { kind: "list" } });
 		expect(parseArgs([])).toEqual({ success: true, data: { kind: "help" } });

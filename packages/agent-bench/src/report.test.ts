@@ -3,6 +3,7 @@ import {
 	type AgentReport,
 	allPassed,
 	diffBaseline,
+	median,
 	type RanReport,
 	renderComparison,
 	renderMarkdown,
@@ -35,6 +36,7 @@ const BASELINE = { toolCalls: 10, driverCalls: 10, stumbles: 0, wallMs: 100_000 
 function ran(overrides: Partial<RanReport> = {}): RanReport {
 	return {
 		tool: "warden",
+		rep: 1,
 		ran: true,
 		version: "0.20.0",
 		outcome: "passed",
@@ -49,18 +51,29 @@ function ran(overrides: Partial<RanReport> = {}): RanReport {
 	};
 }
 
-function report(tools: AgentReport["tools"] = [ran()]): AgentReport {
+function report(tools: AgentReport["tools"] = [ran()], reps = 1): AgentReport {
 	return {
-		reportVersion: 2,
+		reportVersion: 3,
 		runId: "agent-login-20261109T000000Z",
 		suite: "login",
 		model: "claude-sonnet-5-5",
 		platform: "ios",
 		udid: "U",
 		startedAt: "2026-11-09T00:00:00.000Z",
+		reps,
 		tools,
 	};
 }
+
+/** warden 3 reps (one failed), argent 3 passing reps. */
+const REPS: AgentReport["tools"] = [
+	ran({ rep: 1, wallMs: 40_000 }),
+	ran({ rep: 2, wallMs: 30_000, metrics: { ...METRICS, assistantTurns: 10 } }),
+	ran({ rep: 3, wallMs: 90_000, outcome: "failed", checks: [{ check: { wait: "id=x" }, passed: false, output: "" }] }),
+	ran({ tool: "argent", rep: 1, wallMs: 26_000, diff: undefined }),
+	ran({ tool: "argent", rep: 2, wallMs: 28_000, diff: undefined }),
+	ran({ tool: "argent", rep: 3, wallMs: 20_000, diff: undefined }),
+];
 
 const THREE: AgentReport["tools"] = [
 	ran(),
@@ -118,6 +131,29 @@ describe("renderComparison", () => {
 		const rows = renderComparison(report([ran(), ran({ tool: "argent", outcome: "failed" })]));
 		expect(rows.join("\n")).not.toContain("**");
 	});
+
+	test("with reps: pass rate, medians over passing reps with the wall range, checks summed", () => {
+		const rows = renderComparison(report(REPS, 3));
+		expect(rows[0]).toBe("| | warden | argent |");
+		expect(rows).toContain("| outcome | ⚠️ 2/3 passed | ✅ 3/3 passed |");
+		expect(rows).toContain("| checks | 2/3 | 3/3 |");
+		expect(rows).toContain("| agent wall | 35.0 s (30.0–40.0) | **26.0 s (20.0–28.0)** |");
+		expect(rows).toContain("| turns | **12** | 14 |");
+	});
+
+	test("with reps, a tool that never passed shows medians over its reps, unbolded", () => {
+		const failed = REPS.map((t) => (t.tool === "warden" && t.ran ? { ...t, outcome: "failed" as const } : t));
+		const rows = renderComparison(report(failed, 3));
+		expect(rows).toContain("| outcome | ❌ 0/3 passed | ✅ 3/3 passed |");
+		expect(rows).toContain("| agent wall | 40.0 s (30.0–90.0) | 26.0 s (20.0–28.0) |");
+	});
+});
+
+describe("median", () => {
+	test("middle value, mean of the middle two for an even count", () => {
+		expect(median([3, 1, 2])).toBe(2);
+		expect(median([4, 1, 3, 2])).toBe(2.5);
+	});
 });
 
 describe("renderMarkdown", () => {
@@ -134,5 +170,18 @@ describe("renderMarkdown", () => {
 		expect(md).toContain("- agent-device is not on PATH");
 		expect(md).toContain("$0.30");
 		expect(md.indexOf("## Comparison")).toBeGreaterThan(md.indexOf("## agent-device"));
+		expect(md).not.toContain("rep-");
+	});
+
+	test("with reps: one section per tool with a row per rep and where its transcript is", () => {
+		const md = renderMarkdown(report(REPS, 3));
+		expect(md).toContain("· 3 reps");
+		expect(md).toContain("## warden ⚠️ 2/3 passed");
+		expect(md).toContain(
+			"| rep | outcome | agent wall | prepare | turns | driver calls | stumbles | cost | error codes |"
+		);
+		expect(md).toContain("| 3 | ❌ failed | 90.0 s | 1.5 s | 14 | 10 | 2 | $0.30 | `stale_ref` 1 |");
+		expect(md).toContain("- transcripts: `warden/rep-<n>/`");
+		expect(md).toContain("Medians over passing reps");
 	});
 });

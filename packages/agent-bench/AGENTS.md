@@ -10,6 +10,7 @@ bun run bench app build --platform ios      # once: pins the example app under .
 bun run bench:agent list
 bun run bench:agent login                   # suites/login.yml: warden, then argent, then agent-device
 bun run bench:agent login --tools warden,argent
+bun run bench:agent login --reps 5            # 5 runs per tool, interleaved; the table shows medians
 bun run bench:agent form --model claude-opus-5-5 --json
 bun run bench:agent scroll --udid $UDID     # a device you leased; needs WARDEN_SESSION_ID of that lease
 ```
@@ -20,7 +21,7 @@ argent (`bun add -g @swmansion/argent`) and agent-device (`bun add -g agent-devi
 
 | Path | Purpose |
 |---|---|
-| `src/cli.ts`, `src/args.ts` | `bench:agent <suite> [--tools a,b] [--model] [--udid] [--out] [--json]`, `list`; first Ctrl-C stops the running agent, still checks, reports and releases, later tools are `not_run`; a second exits 130 |
+| `src/cli.ts`, `src/args.ts` | `bench:agent <suite> [--tools a,b] [--reps n] [--model] [--udid] [--out] [--json]`, `list`; first Ctrl-C stops the running agent, still checks, reports and releases, later tools are `not_run`; a second exits 130 |
 | `src/kit.ts` | `TOOL_IDS`, `resolveKit`: per tool the files copied into the sandbox, shims, MCP servers, env, `allowedTools`, failure patterns, `Driver` (how calls are counted), prompt preamble, and the e2e-bench adapter reused for doctor / prepare / teardown / residue |
 | `src/bash-gate.ts` | the CLI kits' Bash gate, a `PreToolUse` hook (`bun bash-gate.ts <bin>`, via `claude --settings <sandbox>/settings.json`): allows a command when every segment (and `$(…)`) is `<bin>`, a variable assignment, a shell keyword or a read-only utility; denies the rest with a reason |
 | `kits/agent-device/` | agent-device's skills (`skills/*/SKILL.md`) and recommended rule, vendored unchanged from its GitHub repo at the tag in `SOURCE.json` (npm ships none); MIT `LICENSE` |
@@ -29,11 +30,11 @@ argent (`bun add -g @swmansion/argent`) and agent-device (`bun add -g agent-devi
 | `src/sandbox.ts` | fresh `CLAUDE_CONFIG_DIR` with only the kit's skills and rules, empty work dir, the kit's shims first on PATH (warden: this checkout's `apps/cli/src/cli.ts`), `mcp.json` for an MCP kit; `authEnv` |
 | `src/stream.ts` | stream-json parser (incremental; `onTurn` drives the turn limit) → `StreamMetrics` |
 | `src/check.ts` | success checks as `warden ui wait <sel>` / `wait absent <sel>` / `is <sel> <state>` (exit 0 = pass) |
-| `src/report.ts` | `report.json` schema (`reportVersion: 2`: one `tools[]` row per tool, ran or skipped), `diffBaseline`, `renderMarkdown` (per-tool sections, then `renderComparison`) |
+| `src/report.ts` | `report.json` schema (`reportVersion: 3`: `reps`, and one `tools[]` row per tool and rep, ran or skipped), `diffBaseline`, `median`, `renderMarkdown` (per-tool sections, or with reps a row per rep, then `renderComparison`) |
 | `suites/*.yml` | one suite per file; the file name is the suite name |
 | `prompts/*.md` | the task prompts the suites point at |
 | `src/fixtures/transcript.ndjson` | a real (trimmed) stream-json transcript the parser test reads |
-| `<repo>/.bench/<run-id>/` | gitignored output: `report.json`, `report.md`, and per tool `<tool>/{transcript.ndjson,claude-stderr.log,prompt.md,sandbox/,adapter/}` |
+| `<repo>/.bench/<run-id>/` | gitignored output: `report.json`, `report.md`, and per tool `<tool>/` (with `--reps`, `<tool>/rep-<n>/`) `{transcript.ndjson,claude-stderr.log,prompt.md,sandbox/,adapter/}` |
 
 ## Suite file
 
@@ -76,6 +77,7 @@ Refreshing agent-device's kit: bump the tag in `kits/agent-device/SOURCE.json`, 
 - `assistantTurns`: assistant messages while streaming (one model turn with parallel tool calls can be several), replaced by the final `result.num_turns`. The turn limit uses the streaming count, so it is conservative.
 - `wallMs`: the `claude` process only (not claim, install, prepare or checks); `prepareMs` is the tool's warm-up. Cost and tokens come from the final `result` event.
 - Comparison table (end of `report.md`): one column per tool; the lowest wall / turns / calls / stumbles / cost / tokens among tools that passed is bold.
+- `--reps n` (1-20): rep 1 of every tool, then rep 2, ... on the same device, each from a fresh install, so a drift in host load lands on every tool alike. A cell is the median over the tool's passing reps (every rep when none passed), agent wall with its min–max; outcome is `k/n passed`. One run per tool is noise: a single stumble moves the wall time by 10 s, so compare tools on `--reps 3` or more.
 
 ## Rules
 
@@ -84,6 +86,6 @@ Refreshing agent-device's kit: bump the tag in `kits/agent-device/SOURCE.json`, 
 - Never kill another session's argent tool-server or agent-device daemon: teardown and isolation go through the e2e-bench adapters and `killMatching`'s owner filter (udid / run dir / private state dir).
 - A new tool: an e2e-bench adapter first, then `TOOL_IDS`, a `resolveKit` branch, `baselinesSchema`, and the kit table above.
 - Never spawn in `bun test` (no real `claude`, `warden` or simctl): inject `Exec` (`fakeExec` from e2e-bench). `src/fixtures/transcript.ndjson` is a trimmed real transcript.
-- A new metric goes in `StreamMetrics`, the report schema (a compile-time guard ties the two), `renderMarkdown` and, when it compares tools, `ROWS` in `report.ts`. A breaking report change bumps `reportVersion`.
+- A new metric goes in `StreamMetrics`, the report schema (a compile-time guard ties the two), `renderMarkdown` and, when it compares tools, `METRIC_ROWS` in `report.ts`. A breaking report change bumps `reportVersion`.
 - Baselines are refreshed by hand, per tool, from a run the team agrees is representative (same model, same pinned app, same tool version), never from a run that stumbled on a flake.
 - `Result` / `AsyncResult` from `@delacour/warden-types/result`; no `any`; no barrels; colocated tests; TDD.

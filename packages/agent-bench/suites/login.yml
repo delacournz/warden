@@ -7,6 +7,8 @@ app: example
 model: claude-sonnet-5-5
 maxTurns: 40
 timeoutMs: 600000
+# The email is read off the Settings card (`settings-email`), not matched anywhere on screen: the sign-in field's
+# placeholder is the same address, so a bare `text` check passed for an agent stuck on the sign-in screen.
 success:
   - wait: id=settings-screen
-  - wait: text "ada@example.com"
+  - wait: id=settings-email text="ada@example.com"

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { checkArgs } from "./check";
 import { composePrompt, listSuites, loadSuite, renderPrompt, SUITES_DIR } from "./suite";
 import { DEFAULT_MODEL } from "./suite.schema";
 
@@ -93,5 +94,15 @@ describe("the committed suites", () => {
 			expect(loaded.data.suite.name).toBe(name);
 		}
 		expect(readdirSync(SUITES_DIR).filter((f) => f.endsWith(".yml"))).toHaveLength(names.length);
+	});
+
+	test("login reads the email off the Settings card, not anywhere on screen (the sign-in placeholder is the same)", () => {
+		const loaded = loadSuite(join(SUITES_DIR, "login.yml"));
+		if (!loaded.success) throw new Error(String(loaded.error));
+		const waits = loaded.data.suite.success.map((c) => ("wait" in c ? c.wait : ""));
+		expect(waits.some((w) => /^text\b/.test(w))).toBe(false);
+		const email = loaded.data.suite.success.find((c) => "wait" in c && c.wait.includes("settings-email"));
+		if (email === undefined) throw new Error("no settings-email check");
+		expect(checkArgs(email, "U").slice(0, 4)).toEqual(["ui", "wait", "id=settings-email", "text=ada@example.com"]);
 	});
 });
