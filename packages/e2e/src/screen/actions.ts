@@ -25,7 +25,7 @@ const MOMENTUM: Record<Momentum, { fraction: number; durationMs: number; momentu
 /** Share of a field's width, from its left edge, where a tap puts the caret after the text. */
 const FOCUS_X = 0.9;
 /** Never press more keys than this to empty a field. */
-const MAX_CLEAR_KEYS = 300;
+export const MAX_CLEAR_KEYS = 300;
 
 /** Where a tap on `entry` lands: `position` is an offset from its top-left corner, else the driver's tap point or the centre. */
 export function tapPointOf(entry: NodeEntry, position?: Point): Point {
@@ -122,7 +122,7 @@ export function graphemes(text: string): number {
 const SECURE_DOTS: ReadonlySet<string> = new Set(["\u2022", "\u25cf"]);
 
 /** The bullets in a secure field's value. Any other text it shows (iOS puts the placeholder there when empty) is not content. */
-function countDots(value: string): number {
+export function countDots(value: string): number {
 	let count = 0;
 	for (const part of segmenter.segment(value)) if (SECURE_DOTS.has(part.segment)) count += 1;
 	return count;

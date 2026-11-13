@@ -1,7 +1,16 @@
 import { ok } from "@delacour/warden-types/result";
 import type { Driver, DriverError, DriverResult, Element, Point } from "../driver/driver.types";
-import { canPasteText, canSelectAll, canSetText, pressKeys, type Sleep, typeText } from "../driver/typing";
-import { clearKeyPresses, fieldContent, fieldValue } from "./actions";
+import {
+	canPasteText,
+	canSelectAll,
+	canSetText,
+	pressKeys,
+	type SelectsAll,
+	type Sleep,
+	type TypePace,
+	typeText,
+} from "../driver/typing";
+import { clearKeyPresses, countDots, fieldContent, fieldValue, MAX_CLEAR_KEYS } from "./actions";
 import { entryOfElement, type NodeEntry } from "./nodes";
 
 /**
@@ -172,6 +181,15 @@ export function setTextOptedIn(env: Readonly<Record<string, string | undefined>>
  */
 export type FillVia = "paste" | "type";
 
+/**
+ * How a `fill` attempt paces its typing: `quick` only on the first attempt of a fill that reads the field back (the
+ * read-back catches a lost key and the retry types `paced`); `paced` for a retry and for a fill that cannot be read
+ * back (secure fields, `--no-verify`, a bare coordinate), so nothing unverified is ever typed quickly.
+ */
+export function fillPace(attempt: number, readBack: boolean): TypePace {
+	return attempt === 1 && readBack ? "quick" : "paced";
+}
+
 /** What `focusAndSelect` left behind: `selection` = the text is selected and the next key replaces it; `none` = already empty or already backspaced away. */
 type Prepared = { pending: "selection" } | { pending: "none" };
 
@@ -181,8 +199,8 @@ type Prepared = { pending: "selection" } | { pending: "none" };
  *
  * Plain text is selected whole when the driver offers select-all and the method is `auto`: the caller then types over
  * the selection (or presses one Backspace to delete it) and the whole text goes without one key per character. A
- * driver that rejects select-all gets the counted presses. Secure fields are always backspaced by their dots: they
- * cannot be read back, so a select-all that did nothing would go unnoticed.
+ * driver that rejects select-all gets the counted presses. A secure field is emptied the same way on iOS and then
+ * checked by its dots (`clearSecure`); elsewhere, and with the `counted` method, it is backspaced by its dots.
  */
 async function focusAndSelect(
 	driver: Driver,
@@ -210,8 +228,50 @@ async function prepareFocused(
 		const selected = await driver.selectAll();
 		if (selected.success) return ok({ pending: "selection" });
 	}
+	if (content.kind === "dots" && method !== "counted" && driver.platform === "ios" && canSelectAll(driver)) {
+		const left = await clearSecure(driver, sleep, entry, content.count);
+		if (!left.success) return left;
+		if (left.data === 0) return ok({ pending: "none" });
+		const pressed = await pressKeys(driver, sleep, "Backspace", Math.min(left.data + 1, MAX_CLEAR_KEYS));
+		return pressed.success ? ok({ pending: "none" }) : pressed;
+	}
 	const pressed = await pressKeys(driver, sleep, "Backspace", clearKeyPresses(entry));
 	return pressed.success ? ok({ pending: "none" }) : pressed;
+}
+
+/**
+ * Hit-tests (`FIELD_POLL_MS` apart) after a secure field's select-all + Backspace before its dots count as still there:
+ * about 0.4 s. The accessibility value lags a key by 100-200 ms on a simulator.
+ */
+export const SECURE_CLEAR_POLLS = 8;
+
+/**
+ * Empties an iOS secure field holding `dots` characters with select-all and one Backspace (two HID requests, ~0.2 s,
+ * where one Backspace per dot is one request each, ~0.11 s apiece), then hit-tests it until it shows no dots. A secure
+ * field cannot be read back, but its dots can be counted: an empty one shows its placeholder or nothing. Resolves to the
+ * dots it still shows after `SECURE_CLEAR_POLLS` reads (0 = empty), which the caller backspaces one by one; a refused
+ * select-all leaves them all.
+ */
+async function clearSecure(
+	driver: Driver & SelectsAll,
+	sleep: Sleep,
+	entry: NodeEntry,
+	dots: number
+): DriverResult<number> {
+	const selected = await driver.selectAll();
+	if (!selected.success) return ok(dots);
+	const deleted = await driver.key("Backspace");
+	if (!deleted.success) return deleted;
+	let shown = dots;
+	for (let poll = 1; poll <= SECURE_CLEAR_POLLS; poll += 1) {
+		const hit = await hitTestField(driver, entry);
+		if (hit.ok && hit.entry !== undefined) {
+			shown = countDots(hit.entry.element.value ?? "");
+			if (shown === 0) return ok(0);
+		}
+		if (poll < SECURE_CLEAR_POLLS) await sleep(FIELD_POLL_MS);
+	}
+	return ok(shown);
 }
 
 /**
@@ -243,10 +303,13 @@ export async function focusAndClear(
  * to select-all and typing, without a second tap.
  *
  * The text is typed by default. With `via: "paste"` on a driver with `pasteText` (iOS), it replaces the selection with
- * one paste, secure fields included (they keep their Backspace-per-dot clearing). A paste that fails (pasteboard write
+ * one paste, secure fields included (emptied first as `prepareFocused` does). A paste that fails (pasteboard write
  * not confirmed) is typed in the same attempt; nothing was pasted, so the selection is still there to be replaced.
  * Paste is opt-in because CoreDevice (Xcode 27) syncs every simulator's pasteboard with the Mac clipboard both ways:
  * pasted text lands in the user's clipboard history and, with several sims, on the other sims' pasteboards too.
+ *
+ * `pace` is how typed text is paced (`typing.ts` `TypePace`): `quick` only where the caller reads the field back and
+ * retypes `paced` on a mismatch (the first attempt of a verified `fill`).
  */
 export async function focusClearType(
 	driver: Driver,
@@ -256,7 +319,8 @@ export async function focusClearType(
 	text: string,
 	method: ClearMethod = "auto",
 	env: Readonly<Record<string, string | undefined>> = process.env,
-	via: FillVia = "type"
+	via: FillVia = "type",
+	pace: TypePace = "paced"
 ): DriverResult<void> {
 	const wantsSetText = method === "setText" || (method === "auto" && setTextOptedIn(env));
 	if (wantsSetText && entry !== undefined && fieldContent(entry).kind === "text" && canSetText(driver)) {
@@ -264,21 +328,22 @@ export async function focusClearType(
 		if (!focused.success) return focused;
 		const replaced = await driver.setText(text);
 		if (replaced.success) return replaced;
-		return typeOver(driver, sleep, await prepareFocused(driver, sleep, entry, method), text, "type");
+		return typeOver(driver, sleep, await prepareFocused(driver, sleep, entry, method), text, "type", pace);
 	}
-	return typeOver(driver, sleep, await focusAndSelect(driver, sleep, point, entry, method), text, via);
+	return typeOver(driver, sleep, await focusAndSelect(driver, sleep, point, entry, method), text, via, pace);
 }
 
 /**
  * Puts `text` over what `prepared` left: a selection is replaced by it, or deleted by one Backspace for empty text.
- * Pasted when `via` says so and the driver can, else (or when the paste fails) typed.
+ * Pasted when `via` says so and the driver can, else (or when the paste fails) typed at `pace`.
  */
 async function typeOver(
 	driver: Driver,
 	sleep: Sleep,
 	prepared: Awaited<DriverResult<Prepared>>,
 	text: string,
-	via: FillVia
+	via: FillVia,
+	pace: TypePace
 ): DriverResult<void> {
 	if (!prepared.success) return prepared;
 	if (text === "")
@@ -287,5 +352,5 @@ async function typeOver(
 		const pasted = await driver.pasteText(text);
 		if (pasted.success) return pasted;
 	}
-	return typeText(driver, sleep, text);
+	return typeText(driver, sleep, text, pace);
 }

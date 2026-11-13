@@ -13,6 +13,7 @@ import {
 	confirmFieldValue,
 	confirmReadsFor,
 	type FillVia,
+	fillPace,
 	focusClearType,
 	hitTestField,
 } from "@delacour/warden-e2e/screen/field";
@@ -227,6 +228,7 @@ async function fillAttempt(
 ): Promise<Result<FillRun | undefined, UiError>> {
 	const { entry, text } = plan;
 	const method: ClearMethod = attempt === 1 ? "auto" : "counted";
+	const readable = plan.verify && !plan.secure && entry !== undefined;
 	const typed = fromDriver(
 		await focusClearType(
 			driver,
@@ -236,11 +238,12 @@ async function fillAttempt(
 			text,
 			method,
 			ctx.env,
-			attempt === 1 ? plan.via : "type"
+			attempt === 1 ? plan.via : "type",
+			fillPace(attempt, readable)
 		)
 	);
 	if (!typed.success) return typed;
-	if (!(plan.verify && !plan.secure && entry !== undefined)) return ok(undefined);
+	if (!readable) return ok(undefined);
 	return readBack(ctx, deps, driver, entry, text, { budgetMs: plan.budgetMs, maxMs: plan.maxMs });
 }
 

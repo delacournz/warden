@@ -4448,9 +4448,13 @@ Commands:
                        --max-size (build-locked ones stay)
   rm|remove <hash...>  remove cached builds by hash (or a unique prefix) and
                        forget the installs at that hash
+  path <platform>      print where this project's cached dev build is (exit 2 on
+                       a miss); never builds or downloads. The Expo build-cache
+                       provider calls it
   import <path>        copy a local .app / .apk into the cache under a
                        fingerprint hash (--kind simulator-base: a CI-built
-                       Release simulator .app that repacks clone from)
+                       Release simulator .app that repacks clone from; --kind
+                       dev: a Debug simulator .app)
   help [command]       display help for command
 
 $ warden builds ls --help
@@ -4493,21 +4497,41 @@ Options:
   --json                 machine-readable output
   -h, --help             display help for command
 
+$ warden builds path --help
+Usage: warden builds path [options] <platform>
+
+print where this project's cached dev build is (exit 2 on a miss); never builds
+or downloads. The Expo build-cache provider calls it
+
+Arguments:
+  platform          ios | android
+
+Options:
+  --kind <kind>     dev (the only kind)
+  --hash <hash>     <nativeFp> or <nativeFp>:dev to look up (default: warden's
+                    own dev-kind fingerprint)
+  --project <dir>   project directory (default: cwd)
+  --bundle-id <id>  override the bundle id / package
+  --json            machine-readable output
+  -h, --help        display help for command
+
 $ warden builds import --help
 Usage: warden builds import [options] <path>
 
 copy a local .app / .apk into the cache under a fingerprint hash (--kind
-simulator-base: a CI-built Release simulator .app that repacks clone from)
+simulator-base: a CI-built Release simulator .app that repacks clone from;
+--kind dev: a Debug simulator .app)
 
 Arguments:
   path                   path.app | path.apk
 
 Options:
   --hash <hash>          fingerprint hash to file it under (required without
-                         --kind; simulator-base: <nativeFp>, default warden's
-                         own)
+                         --kind; simulator-base / dev: <nativeFp>, default
+                         warden's own)
   --kind <kind>          simulator-base: file it as the base \`warden repack\` /
-                         \`warden e2e\` reuse
+                         \`warden e2e\` reuse; dev: file a Debug simulator .app as
+                         the project's dev build (--hash <nativeFp>[:dev])
   --platform <platform>  ios | android (default: from the extension)
   --project <dir>        project directory (default: cwd)
   --profile <profile>    build profile (default: the project's EAS profile, else

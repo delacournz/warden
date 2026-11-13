@@ -14,6 +14,36 @@ warden ui wait id=todos-screen --udid $UDID   # verify with wait / is / get; a s
 warden ui close --release --udid $UDID
 ```
 
+## Drive efficiently
+
+Every stop to read output is a model turn. Batch the steps you already know in one Bash call, wait on where they lead, snapshot once at the end.
+
+| Do | Why |
+|---|---|
+| Target by `id=<testID>` (`press id=welcome-next`), not `@eN`, in a chain | a selector is matched against a fresh snapshot on every call, so it lands after the layout moved |
+| Use an `@eN` only for the next action after the snapshot that printed it | a recent `@eN` (< 30 s, no `--verify`) taps the frame stored with that snapshot, without looking again. After a `fill` opens the keyboard or a `press` moves the screen, it taps where the element was |
+| Never carry an `@eN` across a `snapshot`, `find`, `--settle`, matched `wait` or `scroll --until` | each stores a new generation numbered from scratch: an old `@eN` names whatever holds that number now, or `stale_ref` (exit 4) when nothing does |
+| Chain known steps with `&&` in ONE Bash call | a failing step exits non-zero and stops the chain; its stderr names the step |
+| `wait <sel>` on the destination instead of `snapshot` after each step | `wait` polls (100 ms for 1 s, then 250 ms, up to `--timeout`, default 5000) and prints the matched line. `press <sel>` looks once: a target that is still animating in fails `target_not_found` |
+| `wait id=x && press id=x` when `x` appears only after a transition | the press then resolves against a screen that has it |
+| `snapshot -i` once at the end, or when a step failed | the only full read you need |
+| `get <sel> <property>`, `is <sel> <state>` | selector only (`@eN` is `usage`); the last word is required: `text\|value\|label\|id\|role\|frame\|count` / `visible\|hittable\|enabled\|checked\|selected\|focused` |
+
+```bash
+U=<udid>
+warden ui press id=welcome-next --udid $U &&
+warden ui wait id=welcome-step-1 value=current --udid $U &&
+warden ui press id=welcome-next --udid $U &&
+warden ui wait id=welcome-get-started --udid $U &&
+warden ui press id=welcome-get-started --udid $U &&
+warden ui wait id=sign-in-email --udid $U &&
+warden ui fill id=sign-in-email ada@example.com --udid $U &&
+warden ui fill id=sign-in-password password1 --secure --udid $U &&
+warden ui press id=sign-in-submit --udid $U &&
+warden ui wait id=todos-screen --udid $U &&
+warden ui snapshot -i --udid $U
+```
+
 ## Device resolution (in order)
 
 1. `--udid` / `--serial` / `--lease <id>`
@@ -64,7 +94,7 @@ Line: `@eN [role] "name" id=<testID> value="..." placeholder="..." <states> (x,y
 
 - While a recording is active, `snapshot -i` appends `[no-id]` to interactive elements with no testID (`noId: true` in `--json`) and a hint. Add `testID` + `accessible` in the component, reload, `record undo`, redo by `id=`.
 - `-i` = interactive elements plus anything with a testID. Cap 200 lines (`--all` removes it). `--depth n` = first n levels.
-- The generation bumps on `snapshot`, `find`, any `--settle`, a matching `wait`, and `scroll --until`. Older refs then fail: exit 4 `stale_ref`, snapshot again.
+- The generation bumps on `snapshot`, `find`, any `--settle`, a matching `wait`, and `scroll --until`, and refs are numbered from scratch: an older `@eN` resolves against the new snapshot (another element, or exit 4 `stale_ref` when the number is gone). Snapshot again before using a ref.
 - A ref older than 30 s, or any ref with `--verify`, is re-checked against a fresh snapshot (same id, else role + name, else position). Prefer `id=` selectors for anything you touch twice.
 
 ## Subcommands
@@ -77,7 +107,7 @@ Line: `@eN [role] "name" id=<testID> value="..." placeholder="..." <states> (x,y
 | `find` | `<selector>` | matches with fresh `@eN` |
 | `open` | `<bundleId\|url> [--relaunch] [--metro url] [--args ...] [--kind dev\|simulator\|release] [--project dir] [--a11y] [--settle]` | URL on iOS accepts the "Open in ...?" sheet; running app is attached, not restarted. `--kind` installs that build first (`simulator` = the cached sim build with this worktree's JS repacked in, seconds; no Metro, so no `--metro`), relaunches when the build changed, and reports `kind` / `jsKey` (a repack fallback adds `fallbackReason`). Without `--kind` nothing is installed |
 | `press` / `tap` | `<@eN\|selector\|x y> [--verify] [--settle]` | |
-| `fill` | `<target> <text> [--secure] [--no-verify] [--via type\|paste] [--settle]` | `--` before text starting with `-`; types per key by default; `--via paste` pastes on iOS (one Cmd+V; Xcode 27 syncs every sim's pasteboard with the Mac clipboard both ways, so a paste lands in clipboard history and on other sims; the retry always types); reads back, retries once; `--secure` skips read-back and never echoes the text |
+| `fill` | `<target> <text> [--secure] [--no-verify] [--via type\|paste] [--settle]` | `--` before text starting with `-`; types per key by default (iOS: the first attempt of a read-back fill types at quick pacing, ~16-22 ms/char against ~38; a mismatch retypes at normal pacing; `--secure` / `--no-verify` / `x y` always normal pacing; any `WARDEN_SIMD_*` pacing var set turns quick off); iOS empties a secure field with select-all + one Backspace, checked by its dot count; `--via paste` pastes on iOS (one Cmd+V; Xcode 27 syncs every sim's pasteboard with the Mac clipboard both ways, so a paste lands in clipboard history and on other sims; the retry always types); reads back, retries once; `--secure` skips read-back and never echoes the text |
 | `type` | `<text> [--submit] [--settle]` | into whatever has focus |
 | `key` | `Enter\|Backspace\|Tab\|Space\|Escape\|Delete\|Up\|Down\|Left\|Right [--settle]` | |
 | `scroll` | `<dir> [amount=0.5] [--until <sel>] [--in <target>] [--max 10] [--settle]` | content direction: `scroll down` reveals what is below; amount 0-1; `--until` prints the fresh ref |

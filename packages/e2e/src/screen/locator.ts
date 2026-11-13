@@ -33,6 +33,7 @@ import {
 	confirmFieldValue,
 	confirmReadsFor,
 	type FillVia,
+	fillPace,
 	focusAndClear,
 	focusClearType,
 	hitTestField,
@@ -941,7 +942,8 @@ export class Locator {
 						text,
 						clearMethodFor(attempt),
 						process.env,
-						viaFor(attempt, via)
+						viaFor(attempt, via),
+						fillPace(attempt, verify)
 					)
 				);
 				if (!verify) return;

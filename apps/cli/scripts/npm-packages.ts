@@ -4,6 +4,7 @@
  *   dist/npm/warden-<target>/  → @delacour/warden-<target>: package.json + bin/warden (the compiled binary)
  *   dist/npm/warden/           → @delacour/warden: package.json + bin/warden.mjs (node shim) + README.md
  *                                + config/index.{mjs,d.ts} (`@delacour/warden/config`: defineConfig + types)
+ *                                + expo-build-cache/index.{js,d.ts} (`@delacour/warden/expo-build-cache`: Expo build cache provider)
  * darwin-arm64 also gets the simulator helper (`bin/{warden-simd, Resources/, *.framework, manifest.json}`) copied from
  * `packages/e2e/native/dist` (override: `WARDEN_E2E_NATIVE_DIST`) when it is built; `--require-helper` (release) makes
  * a missing helper an error.
@@ -25,6 +26,7 @@ import { atfAssetName, WORKSPACE_ATF_JAR } from "@delacour/warden-e2e/driver/and
 import cliPackage from "../package.json" with { type: "json" };
 import { buildConfigEntry } from "../src/npm/config-entry";
 import { stageE2e } from "../src/npm/e2e-stage";
+import { buildExpoBuildCache } from "../src/npm/expo-build-cache-entry";
 import { HELPER_TARGET, type StagedHelper } from "../src/npm/helper";
 import { stageHelper } from "../src/npm/helper-stage";
 import {
@@ -101,6 +103,8 @@ writeFileSync(shimPath, code.startsWith("#!") ? code : `#!/usr/bin/env node\n${c
 chmodSync(shimPath, 0o755);
 const configEntry = await buildConfigEntry(main);
 if (!configEntry.success) throw new Error(configEntry.error);
+const expoBuildCache = await buildExpoBuildCache(main);
+if (!expoBuildCache.success) throw new Error(expoBuildCache.error);
 copyFileSync(join(repoRoot, "README.md"), join(main, "README.md"));
 copyFileSync(join(repoRoot, LICENSE_FILE), join(main, LICENSE_FILE));
 console.log("staged dist/npm/warden");

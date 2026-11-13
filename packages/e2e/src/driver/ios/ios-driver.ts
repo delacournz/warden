@@ -38,7 +38,7 @@ import type { NetworkProxyPort } from "../network-proxy";
 import { readDeadlineRemaining } from "../read-deadline";
 import { hashFallbackQuietMs, type SettleDetail, settleByHash, snapshotHash } from "../settle";
 import { noteSpanDetail } from "../span-detail";
-import type { PastesText, SelectsAll } from "../typing";
+import type { PastesText, SelectsAll, TypesQuickly } from "../typing";
 import { createInjectChannel, INJECT_DYLIB_ENV, type InjectFs, injectStatePath, locateInjectDylib } from "./inject";
 import { createIosA11y, type IosA11y } from "./ios-a11y";
 import { createIosNativeAudit, type IosNativeAudit, type IosNativeAuditOptions } from "./ios-audit";
@@ -60,7 +60,7 @@ import type {
 	SnapshotData,
 } from "./simd-protocol";
 import type { SimdSpawn } from "./simd-transport";
-import { typeTextBudgetMs } from "./type-budget";
+import { keyPacingSet, QUICK_KEY_PACING, typeTextBudgetMs } from "./type-budget";
 
 /**
  * The iOS `Driver`: input, AX and app launch / terminate / openUrl through `warden-simd` (socket when
@@ -76,6 +76,7 @@ export type IosDriverEnv = Pick<E2eEnv, "simd" | "simdSocket" | "helperDir"> & P
 export type IosDriver = Driver &
 	SelectsAll &
 	PastesText &
+	Partial<TypesQuickly> &
 	ReadsAlertOn &
 	ProbesFrontmost &
 	RecoversAxWedge &
@@ -127,6 +128,11 @@ export type OpenIosDriverOptions = {
 	stagedSettings?: StagedSettings;
 	/** state-file operations of the injected dylib's control channel, injected for tests */
 	injectFs?: InjectFs;
+	/**
+	 * Where the `WARDEN_SIMD_*` key pacing variables are read (default `process.env`): any of them set turns
+	 * `typeTextQuick` off, so every key uses the pacing the user chose.
+	 */
+	keyPacingEnv?: Readonly<Record<string, string | undefined>>;
 	/**
 	 * Launch apps with the injected library so `readA11y` works (hint, custom actions, order). Default: `WARDEN_A11Y=1`.
 	 * Off, a launch pays nothing for it.
@@ -437,6 +443,8 @@ export function createIosDriver(
 		coldBridgeBudgetMs?: number;
 		/** told about every successful `clock` op */
 		clockRecorder?: ClockRecorder;
+		/** offer `typeTextQuick` (`QUICK_KEY_PACING`); off when the user set the helper's key pacing */
+		quickTyping?: boolean;
 		/** device settings (`ios-settings.ts`); absent: those ops answer `E_UNSUPPORTED` */
 		settings?: (ctx: { lastBundle: () => string | undefined }) => IosSettings;
 		/** screen-reader facts from the injected dylib (`ios-a11y.ts`); absent: `readA11y` answers `E_UNSUPPORTED` */
@@ -712,8 +720,9 @@ export function createIosDriver(
 		return result;
 	}
 
-	async function typeText(text: string): DriverResult<void> {
-		const typed = await sendVoid("typeText", { text }, typeTextBudgetMs(text));
+	/** `typeText` at the helper's pacing; `pacing` (per request) replaces it, e.g. `QUICK_KEY_PACING` for `typeTextQuick`. */
+	async function typeText(text: string, pacing?: typeof QUICK_KEY_PACING): DriverResult<void> {
+		const typed = await sendVoid("typeText", { text, ...pacing }, typeTextBudgetMs(text));
 		if (typed.success || typed.error.code !== "E_UNSUPPORTED_TEXT") return typed;
 		const rest = restOf(typed.error, text);
 		if (rest === undefined) return typed;
@@ -983,7 +992,8 @@ export function createIosDriver(
 			),
 		rotate: (center, degrees, o) => sendGesture(rotatePlan(center, degrees, o, DEFAULT_RADIUS)),
 		gesture: (paths, o) => sendGesture(planGesture(paths, o, 2)),
-		typeText,
+		typeText: (text) => typeText(text),
+		...(opts.quickTyping ? { typeTextQuick: (text: string) => typeText(text, QUICK_KEY_PACING) } : {}),
 		key: (key, modifiers) => sendVoid("key", params({ usage: KEY_USAGE[key], modifiers: modifiers && [...modifiers] })),
 		selectAll: () => sendVoid("selectAll"),
 		pasteText,
@@ -1239,6 +1249,7 @@ export async function openIosDriver(o: OpenIosDriverOptions): DriverResult<Drive
 			nativeAudit: (ctx) => nativeAuditFor(o, exec, log, ctx),
 			settings: (ctx) => settingsFor(o, exec, ctx),
 			...(o.clockRecorder ? { clockRecorder: o.clockRecorder } : {}),
+			quickTyping: !keyPacingSet(o.keyPacingEnv ?? process.env),
 		}),
 	};
 }

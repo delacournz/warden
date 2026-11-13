@@ -9,9 +9,12 @@ import {
 	storeArtifact,
 } from "@delacour/warden-core/builds/cache";
 import { ccacheCleanup } from "@delacour/warden-core/builds/compiler-cache";
+import { devBuildHash, findDevBuild } from "@delacour/warden-core/builds/dev-build";
 import { LOCAL_PROFILE, type ProjectContext } from "@delacour/warden-core/builds/ensure";
 import { checkSimulatorBase, hostSimulatorArch } from "@delacour/warden-core/builds/import-base";
+import { checkDevBuild } from "@delacour/warden-core/builds/import-dev";
 import { kindFingerprints } from "@delacour/warden-core/builds/kind-key";
+import { kindlessIsDev } from "@delacour/warden-core/builds/kinds";
 import { cacheCap, formatSize, pruneBuilds } from "@delacour/warden-core/builds/prune";
 import { removeBuilds } from "@delacour/warden-core/builds/remove";
 import { formatDuration } from "@delacour/warden-core/duration";
@@ -224,8 +227,8 @@ type ImportOpts = {
 	json?: true;
 };
 
-/** `--kind` values `builds import` accepts: the kind-less (legacy) row, or a simulator base repacks clone from. */
-const IMPORT_KINDS = ["simulator-base"] as const;
+/** `--kind` values `builds import` accepts: the kind-less (legacy) row, a simulator base repacks clone from, or the dev build. */
+const IMPORT_KINDS = ["simulator-base", "dev"] as const;
 type ImportKind = (typeof IMPORT_KINDS)[number];
 
 function parseImportKind(value: string | undefined): Result<ImportKind | undefined> {
@@ -286,6 +289,41 @@ async function simulatorBaseTarget(
 	});
 }
 
+/**
+ * A `dev` import: check the `.app` (Debug simulator build of the project's bundle id, slice for this Mac) and key it on
+ * `--hash` (`<nativeFp>` or `<nativeFp>:dev`) or warden's own dev-kind native fingerprint, where `warden app ensure --kind dev` looks.
+ */
+async function devTarget(
+	ctx: CommandContext,
+	project: ProjectContext,
+	artifact: string,
+	opts: ImportOpts
+): AsyncResult<ImportTarget> {
+	const bundleId = project.project.bundleId.ios;
+	if (bundleId === undefined) return err("the project has no iOS bundle id: pass --bundle-id");
+	const facts = await checkDevBuild(ctx.exec, artifact, { bundleId, arch: hostSimulatorArch() });
+	if (!facts.success) return facts;
+	let nativeFp = opts.hash === undefined ? undefined : devBuildHash(opts.hash).nativeFp;
+	if (nativeFp === undefined) {
+		const fps = await kindFingerprints({
+			exec: ctx.exec,
+			project: project.project,
+			platform: "ios",
+			kind: "dev",
+			env: ctx.env,
+			memo: { store: ctx.store(), now: ctx.now() },
+		});
+		if (!fps.success) return fps;
+		nativeFp = fps.data.nativeFp;
+	}
+	const key = { kind: "dev", nativeFp } as const;
+	return ok({
+		hash: kindHash(key),
+		profile: `${opts.profile ?? project.project.eas?.profile ?? LOCAL_PROFILE}:dev`,
+		layout: { dir: kindDir(ctx.env, project.projectKey, "ios", key), kind: "dev" },
+	});
+}
+
 /** The artifact path, its platform and `--kind`, checked against each other before any work. */
 function importArgs(
 	ctx: CommandContext,
@@ -299,8 +337,27 @@ function importArgs(
 	if (!kind.success) return kind;
 	if (kind.data === "simulator-base" && platform.data !== "ios")
 		return err("--kind simulator-base takes an iOS simulator .app (Android bases are built by warden)");
+	if (kind.data === "dev" && platform.data !== "ios") return err("--kind dev takes an iOS simulator .app (iOS only)");
 	if (kind.data === undefined && opts.hash === undefined) return err("--hash <hash> is required without --kind");
 	return ok({ artifact, platform: platform.data, kind: kind.data });
+}
+
+/** The cache key and layout of the import: `kind`'s own (checked, fingerprinted), or the plain `--hash`. */
+async function importTarget(
+	ctx: CommandContext,
+	kind: ImportKind | undefined,
+	project: ProjectContext,
+	artifact: string,
+	raw: string,
+	opts: ImportOpts
+): AsyncResult<ImportTarget> {
+	const resolveKind = kind === "simulator-base" ? simulatorBaseTarget : kind === "dev" ? devTarget : undefined;
+	if (resolveKind === undefined) {
+		return ok({ hash: opts.hash ?? "", profile: opts.profile ?? project.project.eas?.profile ?? LOCAL_PROFILE });
+	}
+	return withSpinner(ctx, `checking ${raw} and fingerprinting the project…`, (sctx) =>
+		resolveKind(sctx, project, artifact, opts)
+	);
 }
 
 async function importCmd(ctx: CommandContext, raw: string, opts: ImportOpts): Promise<number> {
@@ -315,12 +372,7 @@ async function importCmd(ctx: CommandContext, raw: string, opts: ImportOpts): Pr
 		...(bundle !== undefined ? { bundleId: { [platform]: bundle } } : {}),
 	});
 	if (!project.success) return fail(ctx, "import", project.error);
-	const target: Result<ImportTarget> =
-		kind === "simulator-base"
-			? await withSpinner(ctx, `checking ${raw} and fingerprinting the project…`, (sctx) =>
-					simulatorBaseTarget(sctx, project.data, artifact, opts)
-				)
-			: ok({ hash: opts.hash ?? "", profile: opts.profile ?? project.data.project.eas?.profile ?? LOCAL_PROFILE });
+	const target = await importTarget(ctx, kind, project.data, artifact, raw, opts);
 	if (!target.success) return fail(ctx, "import", target.error);
 	const { layout, strippedBundle, applicationIdentifier } = target.data;
 	if (applicationIdentifier === false) {
@@ -359,6 +411,64 @@ async function importCmd(ctx: CommandContext, raw: string, opts: ImportOpts): Pr
 	return 0;
 }
 
+type PathOpts = { kind?: string; hash?: string; project?: string; bundleId?: string; json?: true };
+
+/** Exit code of `builds path` when nothing is cached for the hash (1 is a usage / project error). */
+export const PATH_MISS_EXIT = 2;
+
+/**
+ * Where the cached dev build of this project is, without building, downloading or writing a row: `--hash`
+ * (`<nativeFp>` or `<nativeFp>:dev`, default warden's own dev-kind fingerprint) looked up the way `app ensure --kind dev`
+ * finds it. `defaultBuild` says whether the project's plain native build (what `expo run:ios` makes) is that dev build.
+ */
+async function pathCmd(ctx: CommandContext, platformArg: string, opts: PathOpts): Promise<number> {
+	const platform = parsePlatform(platformArg);
+	if (!platform.success) return fail(ctx, "path", platform.error);
+	if (opts.kind !== undefined && opts.kind !== "dev") return fail(ctx, "path", `--kind ${opts.kind}: expected dev`);
+	const start = projectStart(ctx, opts.project);
+	if (!start.success) return fail(ctx, "path", start.error);
+	const bundle = opts.bundleId;
+	const project = await projectContextFor(ctx, {
+		start: start.data,
+		...(bundle !== undefined ? { bundleId: { [platform.data]: bundle } } : {}),
+	});
+	if (!project.success) return fail(ctx, "path", project.error);
+	let nativeFp = opts.hash === undefined ? undefined : devBuildHash(opts.hash).nativeFp;
+	if (nativeFp === undefined) {
+		const fps = await kindFingerprints({
+			exec: ctx.exec,
+			project: project.data.project,
+			platform: platform.data,
+			kind: "dev",
+			env: ctx.env,
+			memo: { store: ctx.store(), now: ctx.now() },
+		});
+		if (!fps.success) return fail(ctx, "path", fps.error);
+		nativeFp = fps.data.nativeFp;
+	}
+	const defaultBuild = kindlessIsDev(project.data.project, platform.data);
+	const { hash } = devBuildHash(nativeFp);
+	const found = findDevBuild(ctx.store(), {
+		projectKey: project.data.projectKey,
+		platform: platform.data,
+		hash,
+		kindlessIsDev: defaultBuild,
+		now: ctx.now(),
+	});
+	if (!found) {
+		if (opts.json !== true) ctx.err(`no cached dev build for ${hash}`);
+		emit(ctx, opts.json === true, { found: false, hash, defaultBuild }, "");
+		return PATH_MISS_EXIT;
+	}
+	emit(
+		ctx,
+		opts.json === true,
+		{ found: true, hash, path: found.path, platform: platform.data, kind: "dev", defaultBuild },
+		found.path
+	);
+	return 0;
+}
+
 export const buildsCommand = defineCommand({
 	name: "builds",
 	group: "Builds",
@@ -391,16 +501,31 @@ export const buildsCommand = defineCommand({
 			.option("--json", "machine-readable output")
 			.action(async (hashes, opts) => done(await rmCmd(ctx, hashes, opts)));
 		cmd
+			.command("path")
+			.description(
+				"print where this project's cached dev build is (exit 2 on a miss); never builds or downloads. The Expo build-cache provider calls it"
+			)
+			.argument("<platform>", "ios | android")
+			.option("--kind <kind>", "dev (the only kind)")
+			.option("--hash <hash>", "<nativeFp> or <nativeFp>:dev to look up (default: warden's own dev-kind fingerprint)")
+			.option("--project <dir>", "project directory (default: cwd)")
+			.option("--bundle-id <id>", "override the bundle id / package")
+			.option("--json", "machine-readable output")
+			.action(async (platform, opts) => done(await pathCmd(ctx, platform, opts)));
+		cmd
 			.command("import")
 			.description(
-				"copy a local .app / .apk into the cache under a fingerprint hash (--kind simulator-base: a CI-built Release simulator .app that repacks clone from)"
+				"copy a local .app / .apk into the cache under a fingerprint hash (--kind simulator-base: a CI-built Release simulator .app that repacks clone from; --kind dev: a Debug simulator .app)"
 			)
 			.argument("<path>", "path.app | path.apk")
 			.option(
 				"--hash <hash>",
-				"fingerprint hash to file it under (required without --kind; simulator-base: <nativeFp>, default warden's own)"
+				"fingerprint hash to file it under (required without --kind; simulator-base / dev: <nativeFp>, default warden's own)"
 			)
-			.option("--kind <kind>", "simulator-base: file it as the base `warden repack` / `warden e2e` reuse")
+			.option(
+				"--kind <kind>",
+				"simulator-base: file it as the base `warden repack` / `warden e2e` reuse; dev: file a Debug simulator .app as the project's dev build (--hash <nativeFp>[:dev])"
+			)
 			.option("--platform <platform>", "ios | android (default: from the extension)")
 			.option("--project <dir>", "project directory (default: cwd)")
 			.option("--profile <profile>", "build profile (default: the project's EAS profile, else local)")
