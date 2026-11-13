@@ -1,0 +1,13 @@
+# Controls: two switches that must end in a known state. A slider joins once `warden ui slider` ships.
+name: form
+description: Sign in, then turn Notifications off and Dark mode on in Settings
+prompt: ../prompts/form.md
+platform: ios
+app: example
+model: claude-sonnet-5-5
+maxTurns: 50
+timeoutMs: 600000
+success:
+  - wait: id=settings-screen
+  - is: id=settings-dark-mode
+    state: checked

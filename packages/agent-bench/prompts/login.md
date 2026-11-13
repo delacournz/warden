@@ -1,0 +1,1 @@
+Task: open the app fresh, get past the onboarding screens, sign in with email `ada@example.com` and password `password1`, then open the Settings tab. Stop when the Settings screen shows the signed-in email.

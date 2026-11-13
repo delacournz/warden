@@ -12,6 +12,7 @@
 		"@delacour/warden-example",
 		"@delacour/warden-core",
 		"@delacour/warden-e2e-bench",
+		"@delacour/warden-agent-bench",
 		"@delacour/warden-biome-config",
 		"@delacour/warden-tsconfig",
 		"@delacour/warden-types",
