@@ -127,9 +127,6 @@ jobs:
       - name: Use the EAS build as the simulator base
         run: warden builds import "${{ steps.download_build.outputs.artifact_path }}" --kind simulator-base
 
-      - name: Repack this commit's JavaScript
-        run: warden e2e my-app --all --build-only
-
       - name: Run the specs
         run: warden e2e my-app --all --headless --report /Users/expo/warden-e2e/e2e-report.json
 
@@ -156,7 +153,7 @@ What each part does:
 | `set-env PATH` | Puts `warden` on `PATH` for the later steps; an `export` in one step does not reach the next. |
 | `WARDEN_GOLDEN: '0'` | Each simulator is a fresh `simctl create`. A hosted worker starts empty every run, so a [golden image](/docs/sims/golden-images) would be built and thrown away. |
 | `builds import --kind simulator-base` | Files the downloaded `.app` as the simulator base, under warden's own native fingerprint. |
-| `--build-only` | Repacks this commit's JavaScript into the base (the same kind and bundle env the run uses), then stops: no device, no spec. Keeps the bundle out of the spec run's timing. |
+| `warden e2e` | Repacks this commit's JavaScript into the imported base (seconds, logged as `simulator repack <jsKey>`), then claims a simulator, installs and runs the specs. |
 | `--headless --report` | Simulators stay windowless; `e2e-report.json` lands in the upload directory. |
 | `upload_artifact` with `if: always()` | The evidence is uploaded on a failed run too. |
 

@@ -6,8 +6,8 @@ name: e2e
 #    build one only when none matches.
 # 2. Install warden (cached per version) at the version of @delacour/warden-e2e the specs import.
 # 3. `warden builds import --kind simulator-base` files the downloaded .app as the base (its embedded JS is stripped),
-#    `warden e2e --build-only` repacks this checkout's JS into it (seconds, no native build), then `warden e2e`
-#    claims a simulator, installs and runs the specs.
+#    then `warden e2e` repacks this checkout's JS into it (seconds, no native build), claims a simulator, installs and
+#    runs the specs.
 #
 # Needs NPM_TOKEN (classic PAT, read:packages) as a secret in the `preview` EAS environment: `bun install` pulls
 # @delacournz/* from GitHub Packages. The build job reads the same environment (eas.json `bench.environment`).
@@ -108,9 +108,7 @@ jobs:
       - name: Use the EAS build as the simulator base
         run: warden builds import "${{ steps.download_build.outputs.artifact_path }}" --kind simulator-base
 
-      - name: Repack this checkout's JS
-        run: warden e2e ${{ inputs.suite }} --build-only ${{ inputs.args }}
-
+      # Repacks this checkout's JS into the imported base first (logged as `simulator repack <jsKey>`).
       - name: Run the specs
         run: warden e2e ${{ inputs.suite }} --headless --report /Users/expo/warden-e2e/e2e-report.json ${{ inputs.args }}
 

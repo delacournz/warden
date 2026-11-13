@@ -22,7 +22,6 @@ import { Cloud, GitBranch, Workflow } from "lucide-react";
 
    ```sh
    warden builds import path/to/App.app --kind simulator-base   # the native base, keyed on warden's fingerprint
-   warden e2e my-app --build-only                                # repack this checkout's JS into it
    ```
 
 4. **Run the suite and keep the report.**
@@ -31,7 +30,7 @@ import { Cloud, GitBranch, Workflow } from "lucide-react";
    warden e2e my-app --all --headless --report e2e-report.json
    ```
 
-   It exits 0 when every required spec passed and 1 when one failed, so the job fails with it. `--base origin/main` instead of `--all` runs only the specs the diff needs ([Affected](/docs/e2e/affected)).
+   It repacks this checkout's JavaScript into the base before the first device installs it. It exits 0 when every required spec passed and 1 when one failed, so the job fails with it. `--base origin/main` instead of `--all` runs only the specs the diff needs ([Affected](/docs/e2e/affected)).
 5. **Upload the evidence, on a failed run too.** `e2e-report.json`, `~/.warden/batches` (per failed test `failure.png`, `screen-at-failure.txt`, `trace.jsonl`) and `~/.warden/logs`. `screen-at-failure.txt` is the full accessibility tree at the failure: read it first ([Debugging](/docs/e2e/debugging)).
 
 ## Pick a setup

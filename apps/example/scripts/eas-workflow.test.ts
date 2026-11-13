@@ -122,13 +122,14 @@ describe("EAS e2e workflow", () => {
 		expect(install?.run).toContain("set-env PATH");
 	});
 
-	test("runs warden directly: import the EAS build, repack, then the specs", async () => {
+	test("runs warden directly: import the EAS build, then the specs", async () => {
 		const runs = (job(await loadWorkflow(), "e2e_ios").steps ?? []).flatMap((step) => (step.run ? [step.run] : []));
 		const at = (needle: string) => runs.findIndex((run) => run.includes(needle));
 		expect(at("warden builds import")).toBeGreaterThan(-1);
 		expect(runs[at("warden builds import")]).toContain("--kind simulator-base");
-		expect(at("--build-only")).toBeGreaterThan(at("warden builds import"));
-		expect(at("--report")).toBeGreaterThan(at("--build-only"));
+		// `--build-only` is not in a released warden yet; `warden e2e` repacks on its own.
+		expect(at("--build-only")).toBe(-1);
+		expect(at("--report")).toBeGreaterThan(at("warden builds import"));
 		expect(runs.some((run) => run.includes(".sh"))).toBe(false);
 	});
 

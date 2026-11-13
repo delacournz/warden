@@ -384,7 +384,7 @@ jobs:
 - No build for the fingerprint (a native change nobody built yet): `app-path` stays empty and the action builds the base on the runner, as without EAS.
 - `install-command: ""` because the dependencies are already installed for the fingerprint.
 
-Without the action, the same `.app` goes through `warden builds import "$APP" --kind simulator-base`, then `warden e2e my-app --build-only` (the repack) and `warden e2e my-app`.
+Without the action, the same `.app` goes through `warden builds import "$APP" --kind simulator-base`, then `warden e2e my-app`, which repacks the JavaScript into it before the first install.
 
 ## Start an EAS workflow from GitHub Actions
 
