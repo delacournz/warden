@@ -11,7 +11,7 @@ Lease registry + allocation + device providers + build cache. No CLI code here (
 | `liveness.ts` | lease alive = heartbeat within ttl OR pid alive; a supervised lease (pid + `heartbeat_ms`, stamped by `holdLeases`) with a dead pid only within `LOST_HEARTBEATS` (3) periods (pure; `processAlive` = kill 0) |
 | `allocate.ts` | pure `(inventory, leases, request) → assign{reuse/boot/create} | wait` |
 | `owner.ts` | detect owner: hook session → CI → session env → parent pid; git repo/worktree |
-| `git-facts.ts` / `headless.ts` / `node-bin.ts` / `shutdown-policy.ts` | `GitFacts` (toplevel / shared git dir / branch via injected `Exec`); `--headless` > config > `WARDEN_HEADLESS` precedence; nearest `node_modules/.bin/<name>`; `shouldShutdown` (only warden-created or owner-booted devices) |
+| `git-facts.ts` / `headless.ts` / `node-bin.ts` / `shutdown-policy.ts` | `GitFacts` (toplevel / shared git dir / branch: read from the checkout's `.git` / `HEAD` / `commondir` files, `git rev-parse` through the injected `Exec` only for anything unusual); `--headless` > config > `WARDEN_HEADLESS` precedence; nearest `node_modules/.bin/<name>`; `shouldShutdown` (only warden-created or owner-booted devices) |
 | `inventory.ts` | mark warden-created devices (store record or `warden-<profile>-N` name) |
 | `exec.ts` | injectable process runner (`Exec`) |
 | `claim.ts` | `claimDevices`: txn(reclaim → allocate → lease, pending placeholders for creates) then boot/create outside txn; all-or-nothing |
