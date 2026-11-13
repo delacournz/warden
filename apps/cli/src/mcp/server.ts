@@ -1,5 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import { createMcpLifecycle, type LifecycleProcess } from "./lifecycle";
 import type { ToolDef, ToolResult } from "./tools";
 
 type Env = Record<string, string | undefined>;
@@ -32,11 +33,16 @@ export function createWardenMcp(env: Env, tools: readonly ToolDef[], version: st
 	return server;
 }
 
-/** Serve on `transport` (stdio for `warden mcp`) until it closes. */
-export async function serveWardenMcp(server: McpServer, transport: Transport): Promise<void> {
+/**
+ * Serve on `transport` (stdio for `warden mcp`) until it closes. With `proc`, the server also ends with its client:
+ * stdin closed, stdout broken, a signal, or the parent gone (`createMcpLifecycle`); that path exits the process.
+ */
+export async function serveWardenMcp(server: McpServer, transport: Transport, proc?: LifecycleProcess): Promise<void> {
+	const lifecycle = proc ? createMcpLifecycle(proc, { close: () => server.close() }) : undefined;
 	const closed = new Promise<void>((resolve) => {
 		transport.onclose = () => resolve();
 	});
 	await server.connect(transport);
 	await closed;
+	await lifecycle?.shutdown({ kind: "transport_closed" });
 }

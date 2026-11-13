@@ -4,7 +4,8 @@ import type { CommandContext } from "../context";
 /**
  * `warden mcp`: an MCP server on stdio for agents that speak MCP rather than shell. Each tool calls the same function
  * as its CLI verb (`warden dev logs`, `warden ui console`, …), so nothing here has behaviour of its own. stdout is the
- * protocol: nothing else may print there.
+ * protocol: nothing else may print there. The server exits with its client (stdin closed, stdout broken, a signal, or
+ * the parent gone, polled every 2 s) so it never lingers as an orphan.
  */
 export async function runMcp(ctx: CommandContext): Promise<number> {
 	const [{ StdioServerTransport }, { createWardenMcp, serveWardenMcp }, { wardenTools }, { currentBuild }] =
@@ -15,7 +16,7 @@ export async function runMcp(ctx: CommandContext): Promise<number> {
 			import("../update/build-info"),
 		]);
 	const server = createWardenMcp(ctx.env, wardenTools({ now: ctx.now }), currentBuild().version);
-	await serveWardenMcp(server, new StdioServerTransport());
+	await serveWardenMcp(server, new StdioServerTransport(), process);
 	return 0;
 }
 
