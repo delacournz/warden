@@ -90,7 +90,7 @@ generation 4 · axbridge · 393×852@3x · 5 of 41 elements
 
 Line: `@eN [role] "name" id=<testID> value="..." placeholder="..." <states> (x,y w×h)`. States: `enabled`/`disabled`, `hittable`, `checked`/`unchecked`, `selected`, `focused`, `secure`, `hidden`, `expanded`/`collapsed`.
 
-- Text inputs print `placeholder="…"` (iOS placeholder, Android hint; `placeholder` in `--json`). No `value=` = the field is empty: iOS and Android report the placeholder as an empty field's value, so warden drops a value equal to the placeholder. `get … value` prints `""`, `wait text` / `text=` never match a placeholder. A field holding exactly its placeholder's text reads as empty too (the platforms report it identically); `fill` still confirms it.
+- Text inputs print `placeholder="…"` (iOS placeholder, Android hint; `placeholder` in `--json`). No `value=` = the field is empty: iOS and Android report the placeholder as an empty field's value, so warden drops a value equal to the placeholder. `get … value` prints `""`, `wait text` / `text=` never match a placeholder. On iOS a field holding exactly its placeholder's text reads as empty too (it reports it identically); `fill` still confirms it. Android is exact when warden-uiad answers (it says whether the field shows its hint): such a field prints `value=`; on the `uiautomator dump` fallback it reads as empty like iOS.
 
 - While a recording is active, `snapshot -i` appends `[no-id]` to interactive elements with no testID (`noId: true` in `--json`) and a hint. Add `testID` + `accessible` in the component, reload, `record undo`, redo by `id=`.
 - `-i` = interactive elements plus anything with a testID, minus 0×0 non-hittable elements without one. Cap 200 lines (`--all` removes it). `--depth n` = first n levels.

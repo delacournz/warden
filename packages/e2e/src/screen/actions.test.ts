@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { fakeDriver } from "../driver/driver.testing";
+import { NOT_SHOWING_HINT_TRAIT, SHOWING_HINT_TRAIT } from "../driver/hint-state";
 import { E2eError } from "../errors";
 import {
 	centreOf,
@@ -130,6 +131,37 @@ describe("fieldValue and clearKeyPresses", () => {
 		);
 		expect(fieldValue(hinted)).toBe("");
 		expect(fieldShows(hinted)).toBe("Email");
+	});
+
+	test("an Android field known to hold exactly its hint's text is filled: value and shown text are that text", () => {
+		const typed = entryOf(
+			el("textfield", {
+				rawType: "android.widget.EditText",
+				value: "Email",
+				text: "Email",
+				placeholder: "Email",
+				traits: [NOT_SHOWING_HINT_TRAIT],
+			}),
+			"android"
+		);
+		expect(fieldValue(typed)).toBe("Email");
+		expect(fieldShows(typed)).toBe("Email");
+		expect(fieldContent(typed)).toEqual({ kind: "text", text: "Email" });
+	});
+
+	test("an Android field known to show its hint is empty and shows the hint", () => {
+		const empty = entryOf(
+			el("textfield", {
+				rawType: "android.widget.EditText",
+				value: "",
+				placeholder: "Email",
+				traits: [SHOWING_HINT_TRAIT],
+			}),
+			"android"
+		);
+		expect(fieldValue(empty)).toBe("");
+		expect(fieldShows(empty)).toBe("Email");
+		expect(fieldContent(empty)).toEqual({ kind: "empty" });
 	});
 
 	test("fieldShows is what the field shows, placeholder and all", () => {
