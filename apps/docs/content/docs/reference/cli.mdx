@@ -411,6 +411,17 @@ Bundle this worktree's JS into the cached simulator build (building that base on
 - `import <path.app|path.apk> --hash <h> [--platform] [--project] [--profile] [--bundle-id]` — copy a local build into the cache.
 - `import <App.app> --kind simulator-base [--hash <nativeFp>] [--project] [--profile] [--bundle-id]` — file a Release simulator `.app` built elsewhere (a CI job) as the simulator base that `warden repack` / `warden e2e` clone, under `<nativeFp>:base`. `--hash` defaults to warden's own fingerprint of the project (`warden app fingerprint ios --kind simulator`); `<fp>:base` is accepted too. Refused: not a simulator build (`DTPlatformName`), no slice for this Mac's simulators, another bundle id, a Debug or expo-dev-client build (`<exe>.debug.dylib`, `EXDevLauncher`, `EXDevMenu`), or an executable without its mode bits. An embedded `main.jsbundle` is left out of the cached copy (`--json`: `strippedBundle: true`). iOS only. See [CI](/docs/e2e/ci#reuse-a-prebuilt-app-and-the-golden).
 
+### `warden pods install | ls | rm | prune`
+
+`pod install` through a machine-wide cache, so a worktree whose pods match one already installed anywhere on this Mac restores them instead of installing. See [Share CocoaPods across worktrees](/docs/sims/app-builds#share-cocoapods-across-worktrees).
+
+- `install [--project-directory <dir>] [--no-cache] [--json] [-- <pod args…>]` — run in the project root. `--project-directory` is the ios dir (default `ios`), as with `pod install`; args after `--` go to `pod install`; `--no-cache` runs a plain install and neither restores nor stores. One status line on stdout (`✓ pods restored <key> (0.8s)`, `✓ pods installed and cached <key> (31s)`, `· pods up to date`, `! pods installed, not cached: <reason>`); pod output streams to stderr. `--json` → `{ schemaVersion, outcome: "hit" | "miss" | "up-to-date" | "uncached", key, mode: "cng" | "committed", ms }` (`miss` adds `stored` and `storeError`; `uncached` has `reason` and no key). A restore or store failure never fails the install: it falls back to a real `pod install`.
+- `ls [--json]` — one row per entry: key, mode, project, size, last used, created.
+- `rm <key…> [--dry-run] [--json]` (alias `remove`) — remove entries by key or a unique prefix (at least 6 characters). A key being installed is an error.
+- `prune [--max-size 10G] [--older-than 30d] [--dry-run] [--json]` — remove entries unused for `--older-than`, then least-recently-used ones until the rest fit `--max-size`; installs in progress stay. Sizes are apparent: worktrees cloned from an entry share its blocks, so removing one frees less than it shows.
+
+`warden gc` also prunes entries unused for 30 days. `WARDEN_PODS_CACHE=0` makes warden's own iOS builds run a plain `pod install`.
+
 ## Drive a device
 
 ### `warden ui <subcommand>`

@@ -233,6 +233,12 @@ export const COMMANDS: readonly CommandEntry[] = [
 		load: async () => (await import("./builds")).buildsCommand,
 	},
 	{
+		name: "pods",
+		group: "Builds",
+		summary: "CocoaPods install shared across worktrees: install, list, remove, prune",
+		load: async () => (await import("./pods")).podsCommand,
+	},
+	{
 		name: "hook",
 		group: "Setup",
 		summary: "Claude Code / Codex hook: on session end shut down what the session booted + release its leases",

@@ -1,0 +1,111 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"anyOf": [
+		{
+			"type": "object",
+			"properties": {
+				"schemaVersion": {
+					"type": "number",
+					"const": 1
+				},
+				"ms": {
+					"type": "number"
+				},
+				"key": {
+					"type": "string"
+				},
+				"mode": {
+					"type": "string",
+					"enum": [
+						"cng",
+						"committed"
+					]
+				},
+				"outcome": {
+					"type": "string",
+					"enum": [
+						"hit",
+						"up-to-date"
+					]
+				}
+			},
+			"required": [
+				"schemaVersion",
+				"ms",
+				"key",
+				"mode",
+				"outcome"
+			],
+			"additionalProperties": false
+		},
+		{
+			"type": "object",
+			"properties": {
+				"schemaVersion": {
+					"type": "number",
+					"const": 1
+				},
+				"ms": {
+					"type": "number"
+				},
+				"key": {
+					"type": "string"
+				},
+				"mode": {
+					"type": "string",
+					"enum": [
+						"cng",
+						"committed"
+					]
+				},
+				"outcome": {
+					"type": "string",
+					"const": "miss"
+				},
+				"stored": {
+					"type": "boolean"
+				},
+				"storeError": {
+					"type": "string"
+				}
+			},
+			"required": [
+				"schemaVersion",
+				"ms",
+				"key",
+				"mode",
+				"outcome",
+				"stored"
+			],
+			"additionalProperties": false
+		},
+		{
+			"type": "object",
+			"properties": {
+				"schemaVersion": {
+					"type": "number",
+					"const": 1
+				},
+				"ms": {
+					"type": "number"
+				},
+				"outcome": {
+					"type": "string",
+					"const": "uncached"
+				},
+				"reason": {
+					"type": "string"
+				}
+			},
+			"required": [
+				"schemaVersion",
+				"ms",
+				"outcome",
+				"reason"
+			],
+			"additionalProperties": false
+		}
+	],
+	"$id": "https://warden.co.nz/schemas/warden.pods.install/1.json",
+	"title": "warden.pods.install"
+}
