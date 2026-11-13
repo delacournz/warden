@@ -150,6 +150,12 @@ Removed: `warmRunners` (use `warmDrivers`).
 - Android can't repack new image / raw resources (they live in the compiled resource table): that run builds the `release` kind instead and logs why (`new Android resource(s): … needs a full build`; `fallbackReason` in `--json`). A changed vector drawable is not detected: the base's copy is kept.
 - A project's `fingerprint.include: "native+js"` / `fingerprint.jsInputs` belong to the kind-less flow (variants, `warden app ensure` with no `--kind`): `--kind dev|simulator` warns once on stderr that they are ignored. Move them into `kinds.simulator.jsInputs`.
 - `warden builds ls` shows each build's kind, base (native fingerprint), jsKey, worktree and branch.
+- `warden builds import App.app --kind dev [--hash <fp>|<fp>:dev] [--project <dir>]` files a Debug simulator `.app` as the project's dev build under `<fp>:dev` (default: warden's own `app fingerprint ios --kind dev`), where `app ensure --kind dev` / `warden dev` find it. Refused (exit 1): Android, not a simulator build, no slice for this Mac, another bundle id, an embedded `main.jsbundle` (Release).
+- `warden builds path <ios|android> [--kind dev] [--hash <fp>|<fp>:dev] --json` never builds or downloads: exit 0 `{found: true, hash, path, platform, kind, defaultBuild}`, exit **2** `{found: false, hash, defaultBuild}`, 1 = error. A build cached under the plain `<fp>` is found when the project's own build is the dev build. `defaultBuild` = the project's plain native build is warden's dev build (no variant, custom `build`, `native+js`).
+
+### Expo `expo run:ios` build cache
+
+`buildCacheProvider: { plugin: "@delacour/warden/expo-build-cache" }` in the app config makes plain `expo run:ios` reuse the dev build in warden's cache (`builds path`) and file its own build after a miss (`builds import --kind dev`). Only an iOS simulator run in Debug of a project whose `defaultBuild` is true (no variant, custom `build` or `native+js`); anything else is left to Expo with one `warden:` line, and a warden problem is a `warden:` warning, never an Expo error. Expo still runs prebuild and `pod install` first, so it saves the compile only. It runs warden through the `@delacour/warden` package that holds it, else `warden` on PATH.
 
 ### Pods cache (`warden pods`)
 

@@ -74,8 +74,20 @@ describe("mainManifest", () => {
 		expect(manifest.name).toBe("@delacour/warden");
 		expect(manifest.license).toBe("MIT");
 		expect(manifest.bin).toEqual({ warden: "bin/warden.mjs" });
-		expect(manifest.files).toEqual(["bin/warden.mjs", "config/index.mjs", "config/index.d.ts", "README.md", "LICENSE"]);
+		expect(manifest.files).toEqual([
+			"bin/warden.mjs",
+			"config/index.mjs",
+			"config/index.d.ts",
+			"expo-build-cache/index.js",
+			"expo-build-cache/index.d.ts",
+			"README.md",
+			"LICENSE",
+		]);
 		expect(manifest.exports["./config"]).toEqual({ types: "./config/index.d.ts", default: "./config/index.mjs" });
+		expect(manifest.exports["./expo-build-cache"]).toEqual({
+			types: "./expo-build-cache/index.d.ts",
+			default: "./expo-build-cache/index.js",
+		});
 		expect(manifest.publishConfig).toEqual({ access: "public" });
 		expect(Object.keys(manifest.optionalDependencies)).toEqual(
 			RELEASE_TARGETS.map((target) => `@delacour/warden-${target}`)
