@@ -9,6 +9,8 @@ export const CONTRACT_OMISSIONS: Readonly<Record<string, string>> = {
 	arrange: "pending (AXL-2b)",
 	batch: "pending (AXL-2b)",
 	"builds import": "pending (AXL-2b)",
+	"builds path":
+		"read by the Expo build-cache provider; lands with the rest of builds (AXL-2b), pinned meanwhile by the provider tests",
 	"builds ls": "pending (AXL-2b)",
 	"builds prune": "pending (AXL-2b)",
 	"builds rm": "pending (AXL-2b)",

@@ -120,6 +120,23 @@ A build lock stops two agents from downloading or building the same hash twice.
 
 With no config, warden detects a single project from `app.json` / `app.config.*` (pass `--bundle-id` for a dynamic config). For monorepos or custom commands, add a [`warden.config.ts`](/docs/reference/configuration).
 
+## `expo run:ios` build cache
+
+Plain `expo run:ios` in any worktree can reuse the dev build warden already has, and file its own build into the cache after a miss, through Expo's build cache provider. Enable it in the app config:
+
+```ts
+export default {
+  // …
+  buildCacheProvider: { plugin: "@delacour/warden/expo-build-cache" },
+};
+```
+
+On a hit Expo installs the cached `.app` instead of running `xcodebuild`; on a miss it builds as usual and the provider runs `warden builds import --kind dev`, so the next worktree hits. The cache is the same `<fp>:dev` build `warden dev` and `warden app ensure --kind dev` share.
+
+The provider takes part only for an iOS simulator run in the Debug configuration whose native build is warden's default dev build. A project with a [variant](#variants-a-dev-client-next-to-an-e2e-build), a custom `build` command or `fingerprint.include: "native+js"` builds a binary that could differ, so the run is left to Expo (one `warden:` line says why). Release runs, device runs and Android are left to Expo too. Any warden problem is a `warden:` warning, never an error in Expo.
+
+Expo still runs prebuild and `pod install` before it asks the provider, so a cached build saves the compile, not those steps. The provider runs warden through the `@delacour/warden` package that holds it, else `warden` from `PATH`.
+
 ## Managing the cache
 
 ```bash
@@ -128,8 +145,12 @@ warden builds rm cd8e2dbeae5b             # drop one bad build (+ its install re
 warden builds prune --max-size 20G        # LRU; build-locked entries stay
 warden builds import App.app --hash <h>   # file a local build under a fingerprint
 warden builds import App.app --kind simulator-base   # a CI-built Release simulator .app as the repack base
+warden builds import App.app --kind dev              # a Debug simulator .app as this project's dev build
+warden builds path ios --kind dev                    # where the dev build is cached (exit 2 on a miss)
 ```
 
 `--kind simulator-base` takes a Release simulator `.app` built outside warden (another CI job's `xcodebuild … -configuration Release -sdk iphonesimulator`) and files it as the base the `simulator` kind repacks, keyed on warden's own native fingerprint of the project (`warden app fingerprint ios --kind simulator`). It checks the `.app` first (simulator build, a slice for this Mac, the project's bundle id, no Debug or dev-client payload) and leaves an embedded `main.jsbundle` out of the cached copy. See [CI](/docs/e2e/ci#reuse-a-prebuilt-app-and-the-golden).
+
+`--kind dev` files a Debug simulator `.app` as the dev build under `<nativeFp>:dev` (`--hash <nativeFp>` or `<nativeFp>:dev`, default warden's own fingerprint). It refuses another app, a device build, a missing slice for this Mac, and a Release build (an embedded `main.jsbundle`). `warden builds path ios --kind dev` prints the cached path without building anything and exits 2 on a miss.
 
 `--max-size` defaults to `20G` (or `$WARDEN_MAX_CACHE_SIZE`). `warden gc` runs the same prune (`--max-cache-size`), keeping builds used in the last 30 min, so the cache stays bounded without you calling it. The cache lives under `$WARDEN_HOME/builds` (`~/.warden/builds`).
