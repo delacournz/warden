@@ -90,18 +90,27 @@ final class OrientationTests: XCTestCase {
     XCTAssertGreaterThanOrEqual(waited, .milliseconds(80))
   }
 
+  /// The minimum counts from the write, so a read-back that already outlasted it settles at once. Measured as the gap
+  /// between the last read and the settle (no sleep on the right path), never as a sum of sleeps: a loaded runner
+  /// oversleeps every poll, and a total-time budget fails there with nothing wrong.
   func testASlowReadBackAddsNoExtraWait() async throws {
-    let started = ContinuousClock.now
+    let minimum: Duration = .milliseconds(200)
     var reads = 0
+    var lastReadAt: ContinuousClock.Instant?
+    var settledAt: ContinuousClock.Instant?
     _ = try await Session.rotate(
       to: .landscapeLeft, write: {},
       read: {
         reads += 1
+        lastReadAt = ContinuousClock.now
         return reads < 6 ? .portrait : .landscapeLeft
       },
-      settle: { true }, minimumBeforeSettle: .milliseconds(20), poll: .milliseconds(20))
-    let waited = ContinuousClock.now - started
-    XCTAssertLessThan(waited, .milliseconds(20 * 6 + 60))
+      settle: {
+        settledAt = ContinuousClock.now
+        return true
+      }, minimumBeforeSettle: minimum, poll: .milliseconds(50))
+    let gap = try XCTUnwrap(settledAt) - XCTUnwrap(lastReadAt)
+    XCTAssertLessThan(gap, minimum, "the minimum was waited again after the read-back")
   }
 
   func testTheSettleWindow() {
