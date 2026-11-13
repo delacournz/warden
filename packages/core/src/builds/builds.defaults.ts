@@ -60,6 +60,9 @@ export type IosDeviceBuild = { team: string; bundleIdentifier?: string | undefin
 /** The `xcodebuild -derivedDataPath` of a device build, relative to `ios/`: products land in `ios/build/Build/Products/<Config>-iphoneos`. */
 export const IOS_DEVICE_DERIVED_DATA = "build";
 
+/** The device build's `-resultBundlePath`, relative to `ios/`: replaced each build, read for file:line errors on failure. */
+export const IOS_DEVICE_RESULT_BUNDLE = "build/warden.xcresult";
+
 /**
  * Local build command of an iOS build for a physical device. A plain `xcodebuild` on the prebuilt workspace (the scheme
  * has the workspace's name, as in Expo and the React Native template): `expo run:ios` would install to a device itself
@@ -89,10 +92,11 @@ export function iosDeviceBuildCommand(
 		"-destination generic/platform=iOS",
 		`-derivedDataPath ${IOS_DEVICE_DERIVED_DATA}`,
 		"-allowProvisioningUpdates",
+		`-resultBundlePath ${IOS_DEVICE_RESULT_BUNDLE}`,
 		...settings,
 		"build",
 	].join(" ");
-	return `${pods} && cd ios && ws="$(ls -d *.xcworkspace | head -n 1)" && ${xcodebuild}`;
+	return `${pods} && rm -rf ios/${IOS_DEVICE_RESULT_BUNDLE} && cd ios && ws="$(ls -d *.xcworkspace | head -n 1)" && ${xcodebuild}`;
 }
 
 /** Android twin of `IOS_NATIVE_PREPARE`: generate `android/` when a CNG checkout has none. */

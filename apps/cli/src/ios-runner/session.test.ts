@@ -59,6 +59,13 @@ describe("xcodebuild line parsing", () => {
 		});
 	});
 
+	test("a result bundle path is passed as -resultBundlePath", () => {
+		expect(xcodebuildCommand(ARTIFACTS, UDID, "/cache/results/serve-x-1.xcresult").slice(-2)).toEqual([
+			"-resultBundlePath",
+			"/cache/results/serve-x-1.xcresult",
+		]);
+	});
+
 	test("classifies the lines that mean the runner cannot start", () => {
 		expect(classifyXcodebuildLine("Unlock Chris's iPhone to Continue")?.kind).toBe("device_locked");
 		expect(classifyXcodebuildLine("Developer Mode is disabled on this device")?.kind).toBe("developer_mode_off");
@@ -246,5 +253,82 @@ describe("startSession", () => {
 		h2.procs[0]?.exit(66);
 		const end2 = await second.data.ended;
 		expect(end2.kind === "fault" && end2.fault.kind).toBe("xcodebuild_exited");
+	});
+});
+
+describe("result bundles", () => {
+	function withResults(h: ReturnType<typeof harness>, failure: string | undefined) {
+		let n = 0;
+		const read: string[] = [];
+		return {
+			read,
+			deps: {
+				...h.deps,
+				resultBundle: () => `/cache/results/serve-${++n}.xcresult`,
+				readFailures: async (bundle: string) => {
+					read.push(bundle);
+					return failure;
+				},
+			},
+		};
+	}
+
+	test("each launch gets its own bundle on the command line", async () => {
+		const h = harness([["connected", "fd00::1"]]);
+		const r = withResults(h, undefined);
+		h.spawned.push((p) => setTimeout(() => p.emit(READY_LINE), 0));
+		const started = await startSession(r.deps, input);
+		if (!started.success) throw new Error(started.error.message);
+		expect(h.procs[0]?.cmd.slice(-2)).toEqual(["-resultBundlePath", "/cache/results/serve-1.xcresult"]);
+		await started.data.stop();
+	});
+
+	test("exiting before ready names the test failure and the bundle", async () => {
+		const h = harness([["connected", "fd00::1"]]);
+		const r = withResults(h, "RunnerTests/testServe(): /s/RunnerTests.swift:40: Failed to launch the host app");
+		h.spawned.push((p) =>
+			setTimeout(() => {
+				p.emit("** TEST EXECUTE FAILED **");
+				p.exit(65);
+			}, 0)
+		);
+		const started = await startSession(r.deps, input);
+		if (started.success) throw new Error("expected failure");
+		expect(started.error.kind).toBe("xcodebuild_exited");
+		expect(started.error.message).toContain("/s/RunnerTests.swift:40: Failed to launch the host app");
+		expect(started.error.message).toContain("result bundle: /cache/results/serve-1.xcresult");
+		expect(started.error.kind === "xcodebuild_exited" && started.error.resultBundle).toBe(
+			"/cache/results/serve-1.xcresult"
+		);
+		expect(r.read).toEqual(["/cache/results/serve-1.xcresult"]);
+	});
+
+	test("an unreadable bundle keeps the output tail", async () => {
+		const h = harness([["connected", "fd00::1"]]);
+		const r = withResults(h, undefined);
+		h.spawned.push((p) =>
+			setTimeout(() => {
+				p.emit("error: signing failed");
+				p.exit(65);
+			}, 0)
+		);
+		const started = await startSession(r.deps, input);
+		if (started.success) throw new Error("expected failure");
+		expect(started.error.message).toContain("signing failed");
+		expect(started.error.message).toContain("result bundle: /cache/results/serve-1.xcresult");
+	});
+
+	test("a crash after ready names the test failure", async () => {
+		const h = harness([["connected", "fd00::1"]]);
+		const r = withResults(h, "RunnerTests/testServe(): Lost connection to the test runner");
+		h.spawned.push((p) => setTimeout(() => p.emit(READY_LINE), 0));
+		const started = await startSession(r.deps, input);
+		if (!started.success) throw new Error(started.error.message);
+		h.procs[0]?.exit(66);
+		const end = await started.data.ended;
+		if (end.kind !== "fault") throw new Error("expected a fault");
+		expect(end.fault.kind).toBe("xcodebuild_exited");
+		expect(end.fault.message).toContain("Lost connection to the test runner");
+		expect(end.fault.kind === "xcodebuild_exited" && end.fault.resultBundle).toBe("/cache/results/serve-1.xcresult");
 	});
 });

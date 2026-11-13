@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
 	DEFAULT_JS_INPUTS,
 	defaultBuildCommand,
+	IOS_DEVICE_RESULT_BUNDLE,
 	iosDeviceBuildCommand,
 	simulatorBuildCommand,
 } from "./builds.defaults";
@@ -31,6 +32,13 @@ describe("simulatorBuildCommand", () => {
 		const cmd = simulatorBuildCommand("ios");
 		expect(cmd).toContain("SKIP_BUNDLING=1 bunx expo run:ios --configuration Release --no-install --no-bundler");
 		expect(cmd.startsWith("{ [ -f ios/Podfile ]")).toBe(true);
+	});
+
+	test("iosDeviceBuildCommand: errors land in a fresh result bundle under ios/build", () => {
+		const cmd = iosDeviceBuildCommand("Release", "expo", { team: "ABCDE12345" });
+		expect(IOS_DEVICE_RESULT_BUNDLE).toBe("build/warden.xcresult");
+		expect(cmd).toContain(`&& rm -rf ios/${IOS_DEVICE_RESULT_BUNDLE} && cd ios &&`);
+		expect(cmd).toContain(`-allowProvisioningUpdates -resultBundlePath ${IOS_DEVICE_RESULT_BUNDLE} CODE_SIGN_STYLE`);
 	});
 
 	test("bare React Native iOS", () => {

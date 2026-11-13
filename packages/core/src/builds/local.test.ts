@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Exec, ExecResult } from "../exec";
 import { createGitFactsCache } from "../git-facts";
+import { IOS_DEVICE_RESULT_BUNDLE } from "./builds.defaults";
 import { fakeApp, testProject } from "./builds.testing";
 import { releaseKey } from "./fingerprint";
 import { combineKey, jsInputsHash } from "./js-inputs";
@@ -556,6 +557,61 @@ describe("runLocalBuild compiler cache env", () => {
 		const logPath = /full log: (\S+)/.exec(result.error)?.[1] ?? "";
 		expect(logPath.startsWith(join(dir, "wh", "logs"))).toBe(true);
 		expect(readFileSync(logPath, "utf8")).toContain(bad);
+	});
+
+	test("a failed iOS build with a fresh result bundle reports its errors and names the bundle", async () => {
+		const s = iosSetup();
+		const fixture = readFileSync(
+			join(import.meta.dir, "..", "__fixtures__", "xcresult", "build-results.failed.json"),
+			"utf8"
+		);
+		const bundle = join(s.root, "ios", IOS_DEVICE_RESULT_BUNDLE);
+		const exec: Exec = async (cmd, opts) => {
+			if (cmd[2] === "xb") {
+				mkdirSync(bundle, { recursive: true });
+				return { exitCode: 65, stdout: "noise\n", stderr: "** BUILD FAILED **\n" };
+			}
+			if (cmd[0] === "xcrun" && cmd.includes(bundle)) return { exitCode: 0, stdout: fixture, stderr: "" };
+			return s.exec(cmd, opts);
+		};
+		const result = await runLocalBuild({
+			...common,
+			exec,
+			project: s.project,
+			platform: "ios",
+			hash: "h1",
+			env: { HOME: dir },
+			wardenHome: join(dir, "wh"),
+		});
+		expect(result.success).toBe(false);
+		if (result.success) return;
+		expect(result.error).toContain("1 error: /Users/dev/Demo/Sources/Demo/Demo.swift:1: Cannot convert");
+		expect(result.error).toContain(`result bundle: ${bundle}`);
+	});
+
+	test("a result bundle left by an earlier build is not read", async () => {
+		const s = iosSetup();
+		const bundle = join(s.root, "ios", IOS_DEVICE_RESULT_BUNDLE);
+		mkdirSync(bundle, { recursive: true });
+		utimesSync(bundle, new Date(0), new Date(0));
+		const xcrun: string[][] = [];
+		const exec: Exec = async (cmd, opts) => {
+			if (cmd[2] === "xb") return { exitCode: 65, stdout: "error: plain\n", stderr: "" };
+			if (cmd[0] === "xcrun") xcrun.push([...cmd]);
+			return s.exec(cmd, opts);
+		};
+		const result = await runLocalBuild({
+			...common,
+			exec,
+			project: s.project,
+			platform: "ios",
+			hash: "h1",
+			env: { HOME: dir },
+			wardenHome: join(dir, "wh"),
+		});
+		expect(result.success).toBe(false);
+		expect(xcrun).toEqual([]);
+		if (!result.success) expect(result.error).toContain("1 error: plain");
 	});
 
 	test("iOS build gets ccache env", async () => {

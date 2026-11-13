@@ -5,6 +5,7 @@ import { collectRunnerSources, loadEmbeddedRunnerSources } from "@delacour/warde
 import type { RunnerSourceFiles } from "@delacour/warden-core/ios-runner/runner-build.types";
 import { ensureSimRunnerBuild } from "@delacour/warden-core/ios-runner/sim-build";
 import { wardenHome } from "@delacour/warden-core/store";
+import { describeTestFailures, prepareResultBundle, resultsDirFor } from "@delacour/warden-core/xcresult";
 import { type AsyncResult, err, type Result } from "@delacour/warden-types/result";
 import { xcuitestAudit } from "../../a11y/native/xcuitest";
 import type { Logger } from "../driver.types";
@@ -56,12 +57,21 @@ export async function checkoutRunnerSources(
 	return collectRunnerSources(nativeDir);
 }
 
+/** `serve-<udid>-<ms>.xcresult` under the runner cache's `results/`; undefined when it cannot be written. */
+function auditBundle(derivedData: string, udid: string): string | undefined {
+	try {
+		return prepareResultBundle(resultsDirFor(derivedData), `serve-${udid}`);
+	} catch {
+		return undefined;
+	}
+}
+
 export function createIosNativeAudit(o: IosNativeAuditOptions): IosNativeAudit {
 	const env = o.env ?? process.env;
 	const loadSources = o.runnerSources ?? (() => checkoutRunnerSources());
 	const ensureBuild: SimRunnerDeps["ensureBuild"] =
 		o.ensureBuild ??
-		(async (): Promise<Result<{ xctestrun: string }, string>> =>
+		(async (): Promise<Result<{ xctestrun: string; derivedData?: string }, string>> =>
 			ensureSimRunnerBuild({
 				env,
 				exec: o.exec,
@@ -75,6 +85,8 @@ export function createIosNativeAudit(o: IosNativeAuditOptions): IosNativeAudit {
 		runner ??= createSimRunner({
 			udid: o.udid,
 			ensureBuild,
+			resultBundle: (derivedData) => auditBundle(derivedData, o.udid),
+			readFailures: (bundle) => describeTestFailures(bundle, o.exec),
 			...(o.spawn ? { spawn: o.spawn } : {}),
 			...(o.connect ? { connect: o.connect } : {}),
 			...(o.log ? { log: o.log } : {}),

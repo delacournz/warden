@@ -5,6 +5,7 @@ import { type BuildLockDeps, buildLockKey, withBuildLock } from "../builds/lock"
 import { type Exec, execError } from "../exec";
 import { wardenHome } from "../store";
 import { readXcode } from "../xcode";
+import { formatBuildIssues, prepareResultBundle, readBuildIssues } from "../xcresult";
 import { RUNNER_SCHEME } from "./build";
 import { derivedDataDir, findXctestrun } from "./cache";
 import { outputTail } from "./classify";
@@ -46,7 +47,7 @@ export function simRunnerCacheDir(home: string, xcodeBuild: string, srcHash: str
 	return join(runnerRoot(home), "simulator", `${xcodeBuild}-${srcHash}`);
 }
 
-export function buildSimRunnerArgv(o: { project: string; derivedData: string }): string[] {
+export function buildSimRunnerArgv(o: { project: string; derivedData: string; resultBundle?: string }): string[] {
 	return [
 		"xcodebuild",
 		"build-for-testing",
@@ -60,6 +61,7 @@ export function buildSimRunnerArgv(o: { project: string; derivedData: string }):
 		o.derivedData,
 		"CODE_SIGNING_ALLOWED=NO",
 		"DEVELOPMENT_TEAM=",
+		...(o.resultBundle === undefined ? [] : ["-resultBundlePath", o.resultBundle]),
 	];
 }
 
@@ -83,10 +85,17 @@ export async function ensureSimRunnerBuild(input: EnsureSimRunnerInput): AsyncRe
 		const again = cached();
 		if (again !== undefined) return ok(again);
 		input.log?.("building the iOS Simulator runner (first use of this Xcode / runner version)");
-		const argv = buildSimRunnerArgv({ project: staged.data.project, derivedData });
+		const resultBundle = prepareResultBundle(join(cacheDir, "results"), "build");
+		const argv = buildSimRunnerArgv({ project: staged.data.project, derivedData, resultBundle });
 		const result = await input.exec(argv, { env: input.env, timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS });
 		if (result.exitCode !== 0) {
-			return err(`${execError(argv.slice(0, 2), result)}: ${outputTail(`${result.stdout}\n${result.stderr}`)}`);
+			const issues = await readBuildIssues(resultBundle, input.exec);
+			const summary = issues === null ? undefined : formatBuildIssues(issues);
+			const why =
+				summary === undefined
+					? `${execError(argv.slice(0, 2), result)}: ${outputTail(`${result.stdout}\n${result.stderr}`)}`
+					: `\`${argv.slice(0, 2).join(" ")}\` exited ${result.exitCode}: ${summary}`;
+			return err(`${why} (result bundle: ${resultBundle})`);
 		}
 		const xctestrun = findXctestrun(derivedData);
 		if (xctestrun === undefined)
