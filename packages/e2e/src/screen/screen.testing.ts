@@ -76,6 +76,12 @@ export function fieldFixture(
 		pasteText?: boolean | "refused";
 		/** a paste lands mangled: only this many leading characters survive (a maxLength field) */
 		pasteKeeps?: number;
+		/** offer `typeTextQuick` (iOS quick pacing): types like `typeText` */
+		typeTextQuick?: boolean;
+		/** quick typing loses keys: only this many leading characters of each quick call survive */
+		quickKeeps?: number;
+		/** the device platform (default ios) */
+		platform?: Platform;
 	} = {}
 ) {
 	const state = {
@@ -92,6 +98,7 @@ export function fieldFixture(
 		focusIn: -1,
 	};
 	const lagReads = options.lagReads ?? 0;
+	const platform = options.platform ?? "ios";
 
 	/** A `typeText` call: replaces a selection, then drops, tail-drops or appends per the fixture's flakiness. */
 	const typeText = (text: string): void => {
@@ -152,18 +159,21 @@ export function fieldFixture(
 			const empty = state.shown === "";
 			const masks = options.secure === true || options.maskedTextfield === true;
 			const masked = masks ? "•".repeat(state.shown.length) : state.shown;
-			return snapshotOf([
-				el(options.secure ? "securefield" : "textfield", {
-					id: "field",
-					label: "Email",
-					value: empty && options.placeholder !== undefined ? options.placeholder : masked,
-					frame: FIELD_FRAME,
-					...(options.placeholder !== undefined && options.placeholderMeta !== false
-						? { placeholder: options.placeholder }
-						: {}),
-					...(state.focused === undefined ? {} : { focused: state.focused }),
-				}),
-			]);
+			return snapshotOf(
+				[
+					el(options.secure ? "securefield" : "textfield", {
+						id: "field",
+						label: "Email",
+						value: empty && options.placeholder !== undefined ? options.placeholder : masked,
+						frame: FIELD_FRAME,
+						...(options.placeholder !== undefined && options.placeholderMeta !== false
+							? { placeholder: options.placeholder }
+							: {}),
+						...(state.focused === undefined ? {} : { focused: state.focused }),
+					}),
+				],
+				{ platform }
+			);
 		},
 		onCall(call) {
 			switch (call.method) {
@@ -184,6 +194,9 @@ export function fieldFixture(
 				case "typeText":
 					typeText(call.text);
 					return undefined;
+				case "typeTextQuick":
+					typeText(options.quickKeeps === undefined ? call.text : call.text.slice(0, options.quickKeeps));
+					return undefined;
 				case "key":
 					if (call.key === "Backspace") backspace();
 					return undefined;
@@ -194,6 +207,8 @@ export function fieldFixture(
 		selectAll: options.selectAll === true || options.selectAllRefused === true,
 		setText: options.setText !== undefined && options.setText !== false,
 		pasteText: options.pasteText !== undefined && options.pasteText !== false,
+		typeTextQuick: options.typeTextQuick === true,
+		platform,
 	});
 	return { driver, state };
 }

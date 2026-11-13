@@ -10,7 +10,7 @@ import { fakeProxy } from "../network-proxy.testing";
 import { withReadDeadline } from "../read-deadline";
 import { HASH_FALLBACK_MIN_QUIET_MS, settleDetailOf } from "../settle";
 import { collectSpanDetail, type SpanDetail } from "../span-detail";
-import { canPasteText, canSelectAll } from "../typing";
+import { canPasteText, canSelectAll, canTypeQuickly } from "../typing";
 import { type ExecCall, fakeExec, joined } from "./exec.testing";
 import type { InjectFs } from "./inject";
 import {
@@ -26,6 +26,7 @@ import { TYPING_AID_KEYS } from "./simctl";
 import { type FakeSimdReply, type FakeSimdRequest, fakeSimd } from "./simd.testing";
 import { spawnSimd } from "./simd-client";
 import { bunSpawn } from "./simd-transport";
+import { QUICK_KEY_PACING } from "./type-budget";
 
 const UDID = "UDID-1";
 const BUNDLE = "nz.co.delacour.warden.example";
@@ -1107,6 +1108,7 @@ describe("typeText", () => {
 		const { driver, helper, calls } = await open(() => ({ data: null }));
 		await unwrapped(driver.typeText("Hello, World 123!"));
 		expect(helper.of("typeText")[0]?.text).toBe("Hello, World 123!");
+		expect(Object.keys(helper.of("typeText")[0] ?? {})).not.toContain("holdMs");
 		expect(helper.of("paste")).toHaveLength(0);
 		expect(joined(calls).some((line) => line.includes("pbcopy"))).toBe(false);
 	});
@@ -1162,6 +1164,44 @@ describe("typeText", () => {
 		const result = await driver.typeText("a");
 		expect(!result.success && result.error.code).toBe("E_HID");
 		expect(helper.of("paste")).toHaveLength(0);
+	});
+});
+
+describe("typeTextQuick", () => {
+	test("is the typeText op with the quick pacing in the request", async () => {
+		const { driver, helper } = await open(() => ({ data: null }), { keyPacingEnv: {} });
+		if (!canTypeQuickly(driver)) throw new Error("expected typeTextQuick");
+		await unwrapped(driver.typeTextQuick("ada@example.com"));
+		expect(helper.of("typeText")[0]).toMatchObject({ text: "ada@example.com", ...QUICK_KEY_PACING });
+	});
+
+	test("is not offered when WARDEN_SIMD_* key pacing is set: the user's pacing wins", async () => {
+		for (const name of [
+			"WARDEN_SIMD_PACE_MS",
+			"WARDEN_SIMD_HOLD_MS",
+			"WARDEN_SIMD_REPEAT_GAP_MS",
+			"WARDEN_SIMD_LEAD_MS",
+		]) {
+			const { driver } = await open(() => ({ data: null }), { keyPacingEnv: { [name]: "40" } });
+			expect(canTypeQuickly(driver)).toBe(false);
+		}
+	});
+
+	test("pastes what the HID keyboard map cannot type, like typeText", async () => {
+		const { driver, helper } = await open(
+			(request) =>
+				request.op === "typeText"
+					? { error: { code: "E_UNSUPPORTED_TEXT", message: "no HID usage for é", detail: { rest: "é" } } }
+					: { data: null },
+			{ keyPacingEnv: {} },
+			[
+				["sh -c", {}],
+				["xcrun simctl pbpaste", { stdout: "é" }],
+			]
+		);
+		if (!canTypeQuickly(driver)) throw new Error("expected typeTextQuick");
+		await unwrapped(driver.typeTextQuick("café"));
+		expect(helper.requests.map((request) => request.op)).toEqual(["typeText", "paste"]);
 	});
 });
 

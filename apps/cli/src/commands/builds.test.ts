@@ -401,3 +401,143 @@ describe("warden builds import --kind simulator-base", () => {
 		}
 	});
 });
+
+describe("warden builds import --kind dev / builds path", () => {
+	const FP = "fcc32ec409b7019aa65d30d170f9b654495722b2";
+
+	function setupDev(argv: string[], plist: Record<string, string> = {}, archs = "x86_64 arm64"): TestContext {
+		const c = testContext(argv);
+		ctx = c;
+		writeFileSync(
+			join(c.cwd, "warden.config.json"),
+			JSON.stringify({
+				projects: [
+					{ name: "demo", root: ".", bundleId: { ios: "com.demo" }, fingerprint: { command: "fp {platform}" } },
+				],
+			})
+		);
+		const values: Record<string, string> = {
+			CFBundleIdentifier: "com.demo",
+			CFBundleExecutable: "App",
+			DTPlatformName: "iphonesimulator",
+			...plist,
+		};
+		c.exec = fakeExec([
+			...Object.entries(values).map(([key, value]): [string, { stdout: string }] => [
+				`plutil -extract ${key} raw`,
+				{ stdout: `${value}\n` },
+			]),
+			["plutil", { exitCode: 1 }],
+			["lipo -archs", { stdout: `${archs}\n` }],
+			["sh -c fp ios", { stdout: JSON.stringify({ hash: FP }) }],
+			["git", { exitCode: 128 }],
+		]);
+		return c;
+	}
+
+	function devApp(parent: string): string {
+		const app = fakeApp(parent);
+		chmodSync(join(app, "App"), 0o755);
+		return app;
+	}
+
+	test("import --kind dev files the app under <fp>:dev; builds path finds it", async () => {
+		const c = setupDev(["import", "src/App.app", "--kind", "dev", "--json"]);
+		devApp(join(c.cwd, "src"));
+		expect(await buildsCommand.run(c)).toBe(0);
+		const out = JSON.parse(c.stdout.join("\n"));
+		expect(out).toMatchObject({ kind: "dev", platform: "ios", source: "import", hash: `${FP}:dev` });
+		expect(out.path).toContain("/dev/App.app");
+
+		c.stdout.length = 0;
+		c.argv = ["path", "ios", "--kind", "dev", "--json"];
+		expect(await buildsCommand.run(c)).toBe(0);
+		expect(JSON.parse(c.stdout.join("\n"))).toEqual({
+			found: true,
+			hash: `${FP}:dev`,
+			path: out.path,
+			platform: "ios",
+			kind: "dev",
+			defaultBuild: true,
+		});
+	});
+
+	test("import --kind dev --hash <fp> or <fp>:dev files under <fp>:dev", async () => {
+		for (const hash of ["deadbeef", "deadbeef:dev"]) {
+			const c = setupDev(["import", "src/App.app", "--kind", "dev", "--hash", hash, "--json"]);
+			devApp(join(c.cwd, "src"));
+			expect(await buildsCommand.run(c)).toBe(0);
+			expect(JSON.parse(c.stdout.join("\n")).hash).toBe("deadbeef:dev");
+			c.cleanup();
+			ctx = undefined;
+		}
+	});
+
+	test("import --kind dev refuses an Android path, another app, a release build; nothing cached", async () => {
+		const cases: Array<[string[], Record<string, string>, string]> = [
+			[["import", "src/a.apk", "--kind", "dev", "--hash", "f"], {}, "iOS"],
+			[["import", "src/App.app", "--kind", "dev"], { CFBundleIdentifier: "com.other" }, "com.other"],
+			[["import", "src/App.app", "--kind", "dev"], { DTPlatformName: "iphoneos" }, "iphoneos"],
+		];
+		for (const [argv, plist, message] of cases) {
+			const c = setupDev(argv, plist);
+			devApp(join(c.cwd, "src"));
+			writeFileSync(join(c.cwd, "src", "a.apk"), "apk");
+			expect(await buildsCommand.run(c)).toBe(1);
+			expect(c.stderr.join("\n")).toContain(message);
+			expect(listBuilds(c.db)).toEqual([]);
+			c.cleanup();
+			ctx = undefined;
+		}
+		const c = setupDev(["import", "src/App.app", "--kind", "dev"]);
+		const app = devApp(join(c.cwd, "src"));
+		writeFileSync(join(app, "main.jsbundle"), "js");
+		expect(await buildsCommand.run(c)).toBe(1);
+		expect(c.stderr.join("\n")).toContain("main.jsbundle");
+		expect(listBuilds(c.db)).toEqual([]);
+	});
+
+	test("path on a miss exits 2 with { found: false, hash }", async () => {
+		const c = setupDev(["path", "ios", "--kind", "dev", "--json"]);
+		expect(await buildsCommand.run(c)).toBe(2);
+		expect(JSON.parse(c.stdout.join("\n"))).toEqual({ found: false, hash: `${FP}:dev`, defaultBuild: true });
+	});
+
+	test("path --hash looks that hash up; it never builds or writes a row", async () => {
+		const c = setupDev(["import", "src/App.app", "--kind", "dev", "--hash", "H1", "--json"]);
+		devApp(join(c.cwd, "src"));
+		expect(await buildsCommand.run(c)).toBe(0);
+		c.argv = ["path", "ios", "--hash", "H1:dev", "--json"];
+		c.stdout.length = 0;
+		expect(await buildsCommand.run(c)).toBe(0);
+		expect(JSON.parse(c.stdout.join("\n"))).toMatchObject({ found: true, hash: "H1:dev" });
+		c.argv = ["path", "ios", "--hash", "H2", "--json"];
+		c.stdout.length = 0;
+		expect(await buildsCommand.run(c)).toBe(2);
+		expect(listBuilds(c.db)).toHaveLength(1);
+	});
+
+	test("path finds a dev build cached under a plain <fp> (legacy) row", async () => {
+		const c = setupDev(["import", "src/App.app", "--hash", FP, "--json"]);
+		devApp(join(c.cwd, "src"));
+		expect(await buildsCommand.run(c)).toBe(0);
+		const plain = JSON.parse(c.stdout.join("\n"));
+		expect(plain.kind).toBeUndefined();
+		c.stdout.length = 0;
+		c.argv = ["path", "ios", "--kind", "dev", "--json"];
+		expect(await buildsCommand.run(c)).toBe(0);
+		expect(JSON.parse(c.stdout.join("\n"))).toMatchObject({ found: true, hash: `${FP}:dev`, path: plain.path });
+	});
+
+	test("path: an unknown --kind or platform is a usage error", async () => {
+		for (const argv of [
+			["path", "ios", "--kind", "release"],
+			["path", "windows"],
+		]) {
+			const c = setupDev(argv);
+			expect(await buildsCommand.run(c)).toBe(1);
+			c.cleanup();
+			ctx = undefined;
+		}
+	});
+});

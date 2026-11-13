@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { writeFileSync } from "node:fs";
 import type { KindApp } from "@delacour/warden-core/builds/ensure-kind";
-import { el, failWith, snapshotOf } from "@delacour/warden-e2e/driver/driver.testing";
+import { type DriverCall, el, failWith, snapshotOf } from "@delacour/warden-e2e/driver/driver.testing";
 import type { Snapshot } from "@delacour/warden-e2e/driver/driver.types";
 import type { UiDeps } from "../agent-ui/driver";
 import { readState, updateState } from "../agent-ui/state";
@@ -432,6 +432,68 @@ describe("fill on a driver with pasteText (iOS)", () => {
 		expect(h.driver.callsOf("pasteText").map((call) => call.text)).toEqual(["hunter2hunter2"]);
 		expect(h.steps[0]?.args).toEqual({ secure: true, via: "paste" });
 		expect(h.c.stdout[0]).not.toContain("hunter2");
+	});
+});
+
+describe("fill on a driver that types quickly (iOS)", () => {
+	/** a filled email field; quick typing keeps only `keeps` characters of each call, paced typing all of them */
+	function quickHarness(keeps?: number) {
+		let typed = "";
+		const edit = (call: DriverCall): string | undefined => {
+			switch (call.method) {
+				case "selectAll":
+					return "";
+				case "key":
+					return typed.slice(0, -1);
+				case "typeTextQuick":
+					return typed + call.text.slice(0, keeps ?? call.text.length);
+				case "typeText":
+					return typed + call.text;
+				default:
+					return undefined;
+			}
+		};
+		return harness([typingScreen("a@b.co")], {
+			selectAll: true,
+			typeTextQuick: true,
+			onCall: (call, driver) => {
+				const next = edit(call);
+				if (next === undefined) return undefined;
+				typed = next;
+				driver.set(typingScreen(typed));
+				return undefined;
+			},
+		});
+	}
+	const inputs = (h: ReturnType<typeof quickHarness>): string[] =>
+		h.driver.calls.map((call) => call.method).filter((m) => m !== "snapshot" && m !== "elementAtPoint");
+
+	test("the first attempt types quickly and the read-back confirms it", async () => {
+		const h = quickHarness();
+		expect(await h.run("fill", "id=email", "new@x.co", "--json")).toBe(0);
+		expect(inputs(h)).toEqual(["tap", "selectAll", "typeTextQuick", "close"]);
+		expect(doc(h.c).result).toMatchObject({ action: "fill", verified: true, characters: 8 });
+	});
+
+	test("a quick attempt that lost keys is retyped paced and still verified", async () => {
+		const h = quickHarness(3);
+		expect(await h.run("fill", "id=email", "new@x.co", "--json")).toBe(0);
+		expect(h.driver.callsOf("typeTextQuick").map((call) => call.text)).toEqual(["new@x.co"]);
+		expect(h.driver.callsOf("typeText").map((call) => call.text)).toEqual(["new@x.co"]);
+		expect(doc(h.c).result).toMatchObject({ verified: true });
+	});
+
+	test("--secure, --no-verify and an x y target type paced: nothing reads them back", async () => {
+		for (const argv of [
+			["id=email", "hunter2", "--secure"],
+			["id=email", "abc", "--no-verify"],
+			["50", "60", "abc"],
+		]) {
+			const h = quickHarness();
+			expect(await h.run("fill", ...argv, "--json")).toBe(0);
+			expect(h.driver.callsOf("typeTextQuick")).toEqual([]);
+			expect(h.driver.callsOf("typeText")).toHaveLength(1);
+		}
 	});
 });
 

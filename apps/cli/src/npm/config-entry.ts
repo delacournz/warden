@@ -8,10 +8,10 @@ import { CONFIG_ENTRY_DTS, CONFIG_ENTRY_JS } from "./manifests";
 /** `defineConfig` + the documented config types; self-contained, so it compiles to one `.d.ts` + one `.mjs`. */
 const SOURCE = fileURLToPath(import.meta.resolve("@delacour/warden-core/builds/define-config"));
 
-/** The declarations of `SOURCE`, TSDoc kept. */
-function emitDeclarations(): AsyncResult<string> {
+/** The declarations of the self-contained module `source` (it imports nothing, not even node types), TSDoc kept. */
+export function emitDeclarations(source: string): AsyncResult<string> {
 	let dts: string | undefined;
-	const program = ts.createProgram([SOURCE], {
+	const program = ts.createProgram([source], {
 		declaration: true,
 		emitDeclarationOnly: true,
 		strict: true,
@@ -27,7 +27,7 @@ function emitDeclarations(): AsyncResult<string> {
 	if (problems.length > 0) {
 		return Promise.resolve(err(problems.map((d) => ts.flattenDiagnosticMessageText(d.messageText, "\n")).join("\n")));
 	}
-	return Promise.resolve(dts === undefined ? err(`no declarations emitted for ${SOURCE}`) : ok(dts));
+	return Promise.resolve(dts === undefined ? err(`no declarations emitted for ${source}`) : ok(dts));
 }
 
 /**
@@ -38,7 +38,7 @@ export async function buildConfigEntry(pkgDir: string): AsyncResult<void> {
 	const built = await Bun.build({ entrypoints: [SOURCE], target: "node", format: "esm" });
 	const [bundle] = built.outputs;
 	if (!built.success || !bundle) return err(`config entry bundle failed:\n${built.logs.join("\n")}`);
-	const dts = await emitDeclarations();
+	const dts = await emitDeclarations(SOURCE);
 	if (!dts.success) return dts;
 	for (const [path, text] of [
 		[CONFIG_ENTRY_JS, await bundle.text()],
