@@ -105,6 +105,58 @@ describe("warden ui snapshot", () => {
 		);
 	});
 
+	test("-i folds the on-screen keyboard into one line; --keys lists the keys; press on it presses return", async () => {
+		const key = (label: string, x: number, extra: Partial<ElementSpec> = {}): ElementSpec =>
+			el("button", { label, frame: { x, y: 597, width: 39, height: 54 }, hittable: true, ...extra });
+		const TYPING: ElementSpec[] = [
+			el("window", {
+				children: [
+					el("textfield", { label: "Email", id: "email", hittable: true, focused: true }),
+					el("keyboard", {
+						id: "inputView",
+						hittable: true,
+						frame: { x: 0, y: 573, width: 390, height: 271 },
+						children: [
+							key("Padding-Left", 0, { frame: { x: 0, y: 590, width: 0, height: 0 }, hittable: false }),
+							key("q", 5),
+							key("w", 44),
+							key("go", 301, { id: "Go", frame: { x: 301, y: 759, width: 89, height: 54 } }),
+						],
+					}),
+				],
+			}),
+		];
+		const h = harness([snapshotOf(TYPING)]);
+		expect(await h.run("snapshot", "-i")).toBe(0);
+		expect(h.c.stdout.join("\n")).toBe(
+			[
+				"generation 1 · axbridge · 390×844@3x · 2 of 7 elements",
+				'@e2 [textbox] "Email" id=email enabled hittable focused (0,50 390×44)',
+				'@e7 [keyboard] return="go" visible (0,573 390×271) 3 keys (--keys)',
+			].join("\n")
+		);
+
+		expect(await h.run("snapshot", "-i", "--json")).toBe(0);
+		expect(doc(h.c).result.elements.at(-1)).toEqual({
+			ref: "@e7",
+			role: "keyboard",
+			name: "go",
+			enabled: true,
+			frame: { x: 0, y: 573, width: 390, height: 271 },
+			keys: 3,
+		});
+
+		expect(await h.run("snapshot", "-i", "--keys")).toBe(0);
+		const lines = h.c.stdout.join("\n").split("\n");
+		expect(lines).toContain('@e5 [button] "q" enabled hittable (5,597 39×54)');
+		expect(lines).toContain('@e7 [button] "go" id=Go enabled hittable (301,759 89×54)');
+		expect(lines.some((line) => line.includes("[keyboard]"))).toBe(false);
+
+		expect(await h.run("snapshot", "-i")).toBe(0);
+		expect(await h.run("press", "@e7")).toBe(0);
+		expect(h.driver.callsOf("tap").at(-1)).toMatchObject({ point: { x: 345.5, y: 786 } });
+	});
+
 	test("--depth limits levels without renumbering refs", async () => {
 		const h = harness([snapshotOf(LOGIN)]);
 		expect(await h.run("snapshot", "--depth", "1")).toBe(0);
