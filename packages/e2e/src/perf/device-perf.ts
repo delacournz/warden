@@ -145,11 +145,20 @@ export function perfStartFor(names: readonly string[]): PerfStartOptions {
 	return out;
 }
 
-/** Runs the `warden` that started the spec process (`WARDEN_BIN`). */
-export function spawnWarden(bin: readonly string[] | undefined): PerfExec {
+/**
+ * Runs the `warden` that started the spec process (`WARDEN_BIN`). The env is passed explicitly: `Bun.spawn` with no
+ * `env` hands the child the environment this process started with, so the preload's `delete process.env.BUN_BE_BUN`
+ * never reached it and a compiled warden started as bun (`error: Script not found "perf"`). `BUN_BE_BUN` is dropped
+ * here too: the child must run as warden.
+ */
+export function spawnWarden(
+	bin: readonly string[] | undefined,
+	env: () => Readonly<Record<string, string | undefined>> = () => process.env
+): PerfExec {
 	return async (argv) => {
 		if (bin === undefined) return { code: 1, stdout: "", stderr: "WARDEN_BIN is not set" };
-		const proc = Bun.spawn([...bin, ...argv], { stdout: "pipe", stderr: "pipe", stdin: "ignore" });
+		const { BUN_BE_BUN: _bunMode, ...childEnv } = env();
+		const proc = Bun.spawn([...bin, ...argv], { stdout: "pipe", stderr: "pipe", stdin: "ignore", env: childEnv });
 		const [stdout, stderr, code] = await Promise.all([
 			new Response(proc.stdout).text(),
 			new Response(proc.stderr).text(),
