@@ -161,6 +161,15 @@ What each part does:
 
 `macos-large` (10 cores) is the worker size warden's own runs use; `macos-medium` works for one simulator. Add `--count 2` to run two simulators on `macos-large`, and `--retry 1` to rerun a failed spec once.
 
+## Why warden repacks, not `eas/repack`
+
+EAS has its own [repack](https://docs.expo.dev/build-reference/repack/) (the `repack` job and `@expo/repack-app`). This workflow does not use it: `warden e2e` repacks the downloaded build itself (about a minute on `macos-large`).
+
+- **The same repack everywhere.** It is what `warden e2e` does on a laptop and on GitHub Actions, for Expo apps (`expo export:embed`) and bare React Native apps (`react-native bundle`) alike.
+- **Cached by content.** A repack is keyed on the native base and a hash of the JavaScript inputs, and every simulator in the run installs the same one. Save `~/.warden/builds/*/ios/*/simulator/repacks` with `eas/save_cache` to reuse it on a later run with the same JavaScript.
+- **Made for testing.** It turns `expo-updates` off in the repacked app, so the app runs the bundle under test rather than an update it fetched, and keeps the base's entitlements when it re-signs.
+- **One step.** The `repack` job's output is a new EAS build, which the e2e job would still download and import before warden repacks it again.
+
 ## Run the workflow
 
 ```sh
