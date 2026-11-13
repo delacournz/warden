@@ -2248,6 +2248,8 @@ Options:
   --depth <n>            only the first n levels of the tree
   --a11y                 add hint, actions, a11y-focused and live-region facts
                          (iOS: needs \`open --a11y\`)
+  --keys                 with -i: list the on-screen keyboard's keys (default:
+                         one [keyboard] line)
   --udid <udid>          device udid (iOS) / serial (Android)
   --serial <serial>      Android serial
   --lease <id>           use the device behind this lease id
