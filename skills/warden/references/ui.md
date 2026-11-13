@@ -62,6 +62,7 @@ Line: `@eN [role] "name" id=<testID> value="..." <states> (x,y w×h)`. States: `
 - While a recording is active, `snapshot -i` appends `[no-id]` to interactive elements with no testID (`noId: true` in `--json`) and a hint. Add `testID` + `accessible` in the component, reload, `record undo`, redo by `id=`.
 - `-i` = interactive elements plus anything with a testID. Cap 200 lines (`--all` removes it). `--depth n` = first n levels.
 - The generation bumps on `snapshot`, `find`, any `--settle`, a matching `wait`, and `scroll --until`. Older refs then fail: exit 4 `stale_ref`, snapshot again.
+- Ref lifetime: a ref is used as stored only until the next input to the device (any `press`, `fill`, `type`, `key`, `scroll`, `gesture`, `open`, `rotate`…, also from another call that failed half-way). After one, the ref is re-checked before it is acted on: iOS hit-tests its old centre (~10 ms; same role, id, label, frame = tap it there), else a fresh snapshot finds it by id, else role + name (+ its index among equal ones) and the CURRENT frame is tapped. Gone, now matching more or fewer elements than before, or under the keyboard: exit 4 `stale_ref`, nothing is tapped. `snapshot` / `find` / `--settle` after the input make refs fresh again.
 - A ref older than 30 s, or any ref with `--verify`, is re-checked against a fresh snapshot (same id, else role + name, else position). Prefer `id=` selectors for anything you touch twice.
 
 ## Subcommands

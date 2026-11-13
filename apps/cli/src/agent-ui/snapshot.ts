@@ -17,7 +17,7 @@ import type { CommandContext } from "../context";
 import { diffSnapshots, renderDiff, type SnapshotDiff } from "./diff";
 import { driverUiError, type UiDeps } from "./driver";
 import { type UiError, uiError } from "./output";
-import { commitGeneration, preorder, readLastSnapshot, writeLastSnapshot } from "./state";
+import { commitGeneration, preorder, readInputs, readLastSnapshot, writeLastSnapshot } from "./state";
 
 /** Lines printed by a plain `snapshot` before `… N more (use --all)`. */
 export const DEFAULT_MAX_LINES = 200;
@@ -311,7 +311,8 @@ export function storeSnapshot(
 ): { generation: number; refs: RefTable } {
 	return commitGeneration(ctx, udid, (generation) => {
 		const refs = assignRefs(snapshot, generation);
-		writeLastSnapshot(ctx, udid, { generation, takenAt: ctx.now(), hash: snapshotHash(snapshot), snapshot });
+		const inputs = readInputs(ctx, udid);
+		writeLastSnapshot(ctx, udid, { generation, takenAt: ctx.now(), inputs, hash: snapshotHash(snapshot), snapshot });
 		return { generation, refs };
 	});
 }

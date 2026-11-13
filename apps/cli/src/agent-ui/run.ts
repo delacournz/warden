@@ -4,6 +4,7 @@ import type { CommandContext } from "../context";
 import { errorMessage } from "../hooks/json";
 import { resolveUiDevice, type UiDevice, type UiDeviceFlags } from "./device";
 import type { UiDeps } from "./driver";
+import { watchInputs } from "./inputs";
 import {
 	reportError,
 	reportOk,
@@ -13,6 +14,7 @@ import {
 	type UiSuccess,
 	uiError,
 } from "./output";
+import { noteInput } from "./state";
 import { DEFAULT_UI_TIMEOUT_MS } from "./ui-options";
 
 /** Subcommands that only read: a device a live warden process holds is reported on, not refused. */
@@ -56,6 +58,15 @@ function parseTimeout(raw: string | undefined): Result<number, UiError> {
 	return { success: true, data: Number(raw) };
 }
 
+/** Count an input for the ref check (`target.ts`); best effort: a busy store must not fail the tap itself. */
+function countInput(ctx: CommandContext, udid: string): void {
+	try {
+		noteInput(ctx, udid);
+	} catch {
+		// best effort
+	}
+}
+
 /**
  * The shared frame of a `warden ui` subcommand: validate globals, resolve + lease-check the device, run
  * `work`, print the result as text or the `--json` envelope, return the exit code. Any throw becomes a
@@ -81,8 +92,13 @@ export async function runUi<C extends string>(
 		if (!device.success) return reportError(ctx, report, device.error);
 		const info = { udid: device.data.udid, platform: device.data.platform, name: device.data.name };
 		let opened: Promise<Result<Driver, UiError>> | undefined;
+		const udid = device.data.udid;
 		const driver = () => {
-			opened ??= deps.driver(ctx, device.data);
+			opened ??= deps
+				.driver(ctx, device.data)
+				.then((made) =>
+					made.success ? { success: true, data: watchInputs(made.data, () => countInput(ctx, udid)) } : made
+				);
 			return opened;
 		};
 		try {

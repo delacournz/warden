@@ -92,6 +92,16 @@ const WAITS: ReadonlySet<string> = new Set(["settle"]);
 /** Look when called with no argument, change something when given one (`orientation()` vs `orientation("landscapeLeft")`). */
 const READS_WITHOUT_ARGUMENT: ReadonlySet<string> = new Set(["orientation", "appearance", "clipboard"]);
 
+/**
+ * Whether calling the driver member `name` with `args` is input (it may change the screen), by the same rules the cache
+ * uses: reads and `settle` are not, `orientation()` / `appearance()` / `clipboard()` only with an argument, and
+ * anything else (an unknown capability included) is.
+ */
+export function isDriverInput(name: string, args: readonly unknown[]): boolean {
+	if (READS.has(name) || WAITS.has(name)) return false;
+	return !(READS_WITHOUT_ARGUMENT.has(name) && args[0] === undefined);
+}
+
 type Kept = {
 	snapshot: Snapshot;
 	generation: number;
