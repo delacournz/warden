@@ -126,7 +126,7 @@ runs:
         CACHE: ${{ inputs.cache }}
         ARTIFACTS: ${{ inputs.artifacts }}
         UPLOAD: ${{ inputs.upload-artifacts }}
-      run: |
+      run: |  # zizmor: ignore[github-env] constants, an xcode-path that must be an existing directory, and an integer headroom-gb reach GITHUB_ENV
         set -euo pipefail
         echo "started=$(date +%s)" >> "$GITHUB_OUTPUT"
         case "$CACHE" in github|none) ;; *) echo "cache must be github or none, not \"$CACHE\"" >&2; exit 1 ;; esac
@@ -156,6 +156,7 @@ runs:
         # warden keeps max(8 GB, 25%) of RAM free of simulators: on a 7 GB hosted runner that budget is
         # zero and every claim queues. A runner this small has nothing else to protect but the build.
         if [ -n "$HEADROOM_GB" ]; then
+          case "$HEADROOM_GB" in *[!0-9]*) echo "headroom-gb must be a whole number of GB, not \"$HEADROOM_GB\"" >&2; exit 1 ;; esac
           echo "WARDEN_CAPACITY_HEADROOM_GB=$HEADROOM_GB" >> "$GITHUB_ENV"
         elif [ "$gb" -le 16 ]; then
           echo "WARDEN_CAPACITY_HEADROOM_GB=1" >> "$GITHUB_ENV"
@@ -197,7 +198,7 @@ runs:
         GH_TOKEN: ${{ github.token }}
         WARDEN_VERSION: ${{ inputs.warden-version }}
         WARDEN_REPO: ${{ inputs.warden-repo }}
-      run: |
+      run: |  # zizmor: ignore[github-env] only the constant $HOME/.local/bin reaches GITHUB_PATH
         set -euo pipefail
         case "$(uname -s)-$(uname -m)" in
           Darwin-arm64) target=darwin-arm64 ;;
@@ -290,7 +291,7 @@ runs:
       shell: bash
       env:
         CCACHE_DIR: ${{ steps.keys.outputs.ccache-dir }}
-      run: |
+      run: |  # zizmor: ignore[github-env] only the constant $HOME/.local/bin and CCACHE_MAXSIZE from the job env reach the env files
         set -euo pipefail
         # The release's universal binary needs only system libraries: ~1 s, against ~15 s for Homebrew and its 4 deps.
         # Homebrew stays the fallback for when GitHub's release download fails.
@@ -646,8 +647,9 @@ runs:
       env:
         PASSED: ${{ steps.run.outputs.passed }}
         CODE: ${{ steps.run.outputs.exit-code }}
+        ARTIFACT_NAME: ${{ inputs.artifact-name }}
       run: |
         if [ "$PASSED" != true ]; then
-          echo "::error title=warden e2e failed::exit code ${CODE:-unknown}; see the evidence above and the ${{ inputs.artifact-name }}-batches artifact"
+          echo "::error title=warden e2e failed::exit code ${CODE:-unknown}; see the evidence above and the ${ARTIFACT_NAME}-batches artifact"
           exit "${CODE:-1}"
         fi
