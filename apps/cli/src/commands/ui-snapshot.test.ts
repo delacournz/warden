@@ -7,6 +7,7 @@ import {
 	snapshotOf,
 } from "@delacour/warden-e2e/driver/driver.testing";
 import type { Snapshot } from "@delacour/warden-e2e/driver/driver.types";
+import { readDeadlineRemaining } from "@delacour/warden-e2e/driver/read-deadline";
 import { ok } from "@delacour/warden-types/result";
 import { defaultUiDeps, type UiDeps } from "../agent-ui/driver";
 import { readLastSnapshot, readState } from "../agent-ui/state";
@@ -317,6 +318,34 @@ describe("warden ui snapshot", () => {
 		expect(await command.run(h.c)).toBe(3);
 		expect(doc(h.c).error.code).toBe("engine_unavailable");
 	});
+
+	test("--timeout is the read deadline, so the cold iOS bridge wait stops there instead of after 60 s", async () => {
+		const seen: (number | undefined)[] = [];
+		const h = harness(() => {
+			seen.push(readDeadlineRemaining());
+			return snapshotOf(LOGIN);
+		});
+		expect(await h.run("snapshot", "-i")).toBe(0);
+		expect(await h.run("snapshot", "--timeout", "2000")).toBe(0);
+		expect(seen).toEqual([5000, 2000]);
+	});
+
+	test("a driver timeout is `failed` (exit 1) with a hint to raise --timeout", async () => {
+		const h = harness([snapshotOf(LOGIN)]);
+		const failing = fakeDriver({
+			screens: [snapshotOf(LOGIN)],
+			onCall: (call) =>
+				call.method === "snapshot"
+					? { error: { code: "E_TIMEOUT", message: "no answer", retryable: true } }
+					: undefined,
+		});
+		const command = createUiCommand({ driver: async () => ok(failing), sleep: async () => undefined });
+		h.c.argv = ["snapshot", "--udid", UDID, "--json"];
+		expect(await command.run(h.c)).toBe(1);
+		const { error } = doc(h.c);
+		expect(error.code).toBe("failed");
+		expect(error.hint).toContain("--timeout 60000");
+	});
 });
 
 describe("warden ui find", () => {
@@ -348,6 +377,16 @@ describe("warden ui find", () => {
 		expect(doc(h.c).result).toEqual({ count: 0, elements: [] });
 		expect(await h.run("find", "bogus", "--json")).toBe(1);
 		expect(doc(h.c).error.code).toBe("usage");
+	});
+
+	test("--timeout is the read deadline of find too", async () => {
+		const seen: (number | undefined)[] = [];
+		const h = harness(() => {
+			seen.push(readDeadlineRemaining());
+			return SCREEN;
+		});
+		expect(await h.run("find", "id=save", "--timeout", "3000")).toBe(0);
+		expect(seen).toEqual([3000]);
 	});
 
 	test("find stores the snapshot its refs belong to", async () => {
