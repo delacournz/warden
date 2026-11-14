@@ -5,7 +5,7 @@ import { ok, type Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import type { UiDeps } from "./driver";
 import { type UiError, uiError } from "./output";
-import { runUi, type UiOptionValues, type UiRunEnv } from "./run";
+import { runUi, type UiOptionValues } from "./run";
 import { findElements, type SnapshotRequest, snapshotText, takeSnapshot } from "./snapshot";
 import { readState } from "./state";
 
@@ -56,17 +56,17 @@ function parseRequest(opts: SnapshotOptionValues, recording: boolean): Result<Sn
  */
 async function withinTimeout<T>(
 	ctx: CommandContext,
-	env: Pick<UiRunEnv, "timeoutMs">,
+	timeoutMs: number,
 	work: () => Promise<Result<T, UiError>>
 ): Promise<Result<T, UiError>> {
-	const deadline = ctx.now() + env.timeoutMs;
+	const deadline = ctx.now() + timeoutMs;
 	const result = await withReadDeadline(() => deadline - ctx.now(), work);
 	if (result.success || result.error.details?.driver !== "E_TIMEOUT") return result;
 	return {
 		success: false,
 		error: {
 			...result.error,
-			hint: `the device did not answer within --timeout ${env.timeoutMs} ms; a cold simulator can need longer: run it again with \`--timeout 60000\``,
+			hint: `the device did not answer within --timeout ${timeoutMs} ms; a cold simulator can need longer: run it again with \`--timeout 60000\``,
 		},
 	};
 }
@@ -78,7 +78,9 @@ export function uiSnapshot(ctx: CommandContext, deps: UiDeps, opts: SnapshotOpti
 		if (!request.success) return request;
 		const driver = await env.driver();
 		if (!driver.success) return driver;
-		const taken = await withinTimeout(ctx, env, () => takeSnapshot(ctx, deps, driver.data, device.udid, request.data));
+		const taken = await withinTimeout(ctx, env.timeoutMs, () =>
+			takeSnapshot(ctx, deps, driver.data, device.udid, request.data)
+		);
 		if (!taken.success) return taken;
 		const {
 			snapshot,
@@ -122,7 +124,9 @@ export function uiFind(ctx: CommandContext, deps: UiDeps, words: string[], opts:
 		}
 		const driver = await env.driver();
 		if (!driver.success) return driver;
-		const found = await withinTimeout(ctx, env, () => findElements(ctx, driver.data, device.udid, selector.data));
+		const found = await withinTimeout(ctx, env.timeoutMs, () =>
+			findElements(ctx, driver.data, device.udid, selector.data)
+		);
 		if (!found.success) return found;
 		return ok({
 			device: { udid: device.udid, platform: device.platform, name: device.name },
