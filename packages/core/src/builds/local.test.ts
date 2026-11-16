@@ -1179,17 +1179,20 @@ describe("runLocalBuild pods cache", () => {
 			platform?: "ios" | "android";
 			podsEnv?: string[];
 			podsCache?: false;
+			compilerCache?: false;
 		} = {}
 	) {
 		const root = join(dir, "app");
 		const platform = opts.platform ?? "ios";
 		mkdirSync(join(root, platform), { recursive: true });
 		const calls: PodsInstallOptions[] = [];
+		const envs: Record<string, string | undefined>[] = [];
 		const logs: string[] = [];
 		const install: LocalPodsDeps["install"] =
 			opts.install ??
-			(async (_d, o) => {
+			(async (d, o) => {
 				calls.push(o);
+				envs.push(d.env);
 				return ok({ kind: "hit" as const, key: "k1", mode: "cng" as const, ms: 800 });
 			});
 		const exec: Exec = async (cmd) => {
@@ -1225,8 +1228,9 @@ describe("runLocalBuild pods cache", () => {
 				env: { HOME: "/nope", ...(opts.env ?? {}) },
 				log: (l) => logs.push(l),
 				...(opts.withPods === false ? {} : { pods: { ...podsDeps, install } }),
+				...(opts.compilerCache === false ? { compilerCache: false } : {}),
 			});
-		return { run, calls, logs };
+		return { run, calls, envs, logs };
 	}
 	const POD = "do-build # pod install";
 
@@ -1246,6 +1250,24 @@ describe("runLocalBuild pods cache", () => {
 		const s = podsSetup(POD, { podsEnv: ["CI", "SENTRY_*"] });
 		await s.run();
 		expect(s.calls[0]?.env).toEqual(["CI", "SENTRY_*"]);
+	});
+
+	test("pod install sees the compiler-cache env, so React Native wires ccache into the Pods project", async () => {
+		const s = podsSetup(POD, { env: { CCACHE_BINARY: "/opt/bin/ccache" } });
+		await s.run();
+		expect(s.envs[0]).toMatchObject({
+			HOME: "/nope",
+			USE_CCACHE: "1",
+			CCACHE_DIR: "/nope/.warden/ccache",
+			CCACHE_BINARY: "/opt/bin/ccache",
+		});
+	});
+
+	test("compilerCache: false → pod install gets the caller env only", async () => {
+		const s = podsSetup(POD, { compilerCache: false });
+		await s.run();
+		expect(s.envs[0]?.USE_CCACHE).toBeUndefined();
+		expect(s.envs[0]?.HOME).toBe("/nope");
 	});
 
 	test("ios.pods.cache: false → not called, the build's own pod install runs; says why", async () => {
