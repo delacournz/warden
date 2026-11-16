@@ -73,6 +73,16 @@ describe("computePodsKey", () => {
 		expect(await keyOf(input(cng, "cng"), { HOME: "/x", FOO: "1" })).toBe(await keyOf(input(cng, "cng")));
 	});
 
+	test("ios.pods.env: listed names and NAME_* prefixes are inputs, others are not", async () => {
+		const names = { envNames: ["CI", "SENTRY_*"] };
+		const base = await keyOf(input(cng, "cng", names));
+		expect(base).toBe(await keyOf(input(cng, "cng")));
+		expect(await keyOf(input(cng, "cng", names), { CI: "1" })).not.toBe(base);
+		expect(await keyOf(input(cng, "cng", names), { SENTRY_ORG: "x" })).not.toBe(base);
+		expect(await keyOf(input(cng, "cng", names), { OTHER: "x" })).toBe(base);
+		expect(await keyOf(input(cng, "cng"), { CI: "1" })).toBe(base);
+	});
+
 	test("project location is an input", async () => {
 		const a = await keyOf({ ...input(bare, "committed"), root: { real: bare, raw: bare } });
 		const b = await keyOf({ ...input(bare, "committed"), root: { real: join(bare, ".."), raw: join(bare, "..") } });

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { commitIos, makeRepo, type PodsHarness, podsHarness, sha1 } from "./pods.testing";
-import type { PodsOutcome } from "./pods.types";
+import type { PodsCacheOff, PodsOutcome } from "./pods.types";
 import { podsInstall } from "./pods-install";
 import { getPodsEntry, listPodsEntries } from "./pods-store";
 
@@ -17,7 +17,7 @@ afterEach(() => {
 
 async function install(
 	root: string,
-	over: { noCache?: boolean; framework?: "expo" | "react-native" } = {}
+	over: { noCache?: PodsCacheOff; framework?: "expo" | "react-native" } = {}
 ): Promise<PodsOutcome> {
 	const res = await podsInstall(h.deps, { projectRoot: root, ...over });
 	if (!res.success) throw new Error(res.error);
@@ -87,6 +87,32 @@ describe("podsInstall (CNG)", () => {
 		expect(existsSync(join(a, "ios", "STALE.marker"))).toBe(false);
 	});
 
+	test("a node_modules file the install deleted is deleted again on a hit", async () => {
+		const a = await makeRepo(h.dir, "a", { ignoreIos: true });
+		const b = await makeRepo(h.dir, "bb-other", { ignoreIos: true });
+		for (const root of [a, b]) await Bun.write(join(root, "node_modules/local/old.h"), "// old\n");
+		h.tc.deleteOnInstall = ["node_modules/local/old.h"];
+		await install(a);
+		expect(await install(b)).toMatchObject({ kind: "hit" });
+		expect(existsSync(join(b, "node_modules/local/old.h"))).toBe(false);
+	});
+
+	test("ios.pods.env names are key inputs: a different value misses", async () => {
+		const a = await makeRepo(h.dir, "a", { ignoreIos: true });
+		const b = await makeRepo(h.dir, "bb-other", { ignoreIos: true });
+		const run = async (root: string, env: Record<string, string>, names?: string[]) => {
+			const res = await podsInstall(
+				{ ...h.deps, env: { ...h.deps.env, ...env } },
+				{ projectRoot: root, ...(names ? { env: names } : {}) }
+			);
+			if (!res.success) throw new Error(res.error);
+			return res.data;
+		};
+		await run(a, { SENTRY_ORG: "one" }, ["SENTRY_*"]);
+		expect(await run(b, { SENTRY_ORG: "two" }, ["SENTRY_*"])).toMatchObject({ kind: "miss" });
+		expect(h.tc.podInstalls).toBe(2);
+	});
+
 	test("an installed checkout is up-to-date and untouched", async () => {
 		const a = await makeRepo(h.dir, "a", { ignoreIos: true });
 		await install(a);
@@ -145,7 +171,12 @@ describe("podsInstall (CNG)", () => {
 
 	test("--no-cache and a key that cannot be computed run plain and are uncached", async () => {
 		const a = await makeRepo(h.dir, "a", { ignoreIos: true });
-		expect(await install(a, { noCache: true })).toMatchObject({ kind: "uncached", reason: "--no-cache" });
+		expect(await install(a, { noCache: "--no-cache" })).toMatchObject({ kind: "uncached", reason: "--no-cache" });
+		expect(await install(a, { noCache: "ios.pods.cache: false" })).toMatchObject({
+			kind: "uncached",
+			reason: "ios.pods.cache: false",
+		});
+		expect(h.tc.podInstalls).toBe(2);
 		expect(listPodsEntries(h.store)).toHaveLength(0);
 		const deps = {
 			...h.deps,
@@ -193,6 +224,23 @@ describe("podsInstall (committed ios/)", () => {
 		expect(read(b, "ios/build/generated/ios/a.h")).toBe("// generated\n");
 		expect(read(b, "node_modules/local/Products/stub.txt")).toBe("stub\n");
 		expect(await install(b)).toMatchObject({ kind: "up-to-date" });
+	});
+
+	test("files the install deleted (a post_install hook) are deleted again on a hit", async () => {
+		const a = await makeRepo(h.dir, "a", { ignoreIos: false });
+		const b = await makeRepo(h.dir, "bbb", { ignoreIos: false });
+		for (const root of [a, b]) {
+			await Bun.write(join(root, "ios/App/Stale.xcconfig"), "OLD = 1\n");
+			await commitIos(root);
+			await Bun.write(join(root, "node_modules/local/old.h"), "// old\n");
+		}
+		h.tc.deleteOnInstall = ["ios/App/Stale.xcconfig", "node_modules/local/old.h"];
+		expect(await install(a)).toMatchObject({ kind: "miss", stored: true });
+		expect(await install(b)).toMatchObject({ kind: "hit" });
+		expect(h.tc.podInstalls).toBe(1);
+		expect(existsSync(join(b, "ios/App/Stale.xcconfig"))).toBe(false);
+		expect(existsSync(join(b, "node_modules/local/old.h"))).toBe(false);
+		expect(read(b, "ios/App/Info.plist")).toBe("<plist/>\n");
 	});
 
 	test("a different Podfile is a different key", async () => {

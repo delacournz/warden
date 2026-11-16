@@ -15,6 +15,8 @@ export type SnapshotInput = {
 	marker: string;
 	podVersion: string;
 	xcodeVersion: string;
+	/** `installCandidates` just before pod install ran: what is gone from it now, pod install deleted */
+	before?: readonly string[];
 };
 
 async function findLines(deps: PodsDeps, argv: readonly string[], cwd: string): AsyncResult<string[]> {
@@ -26,9 +28,7 @@ async function findLines(deps: PodsDeps, argv: readonly string[], cwd: string): 
 /** Files under the `node_modules` dirs pod install may touch (the project's and the repo's) written since `marker`. */
 async function outsideWrites(deps: PodsDeps, input: SnapshotInput): AsyncResult<string[]> {
 	const { target } = input;
-	const dirs = [...new Set([join(target.projectRoot, "node_modules"), join(target.root.real, "node_modules")])].filter(
-		(d) => existsSync(d)
-	);
+	const dirs = nodeModulesDirs(target);
 	if (dirs.length === 0) return ok([]);
 	const excludes = PODS_SNAPSHOT_EXCLUDE_DIRS.flatMap((d) => ["-not", "-path", `*/${d}/*`]);
 	const found = await findLines(
@@ -38,6 +38,48 @@ async function outsideWrites(deps: PodsDeps, input: SnapshotInput): AsyncResult<
 	);
 	if (!found.success) return found;
 	return ok(found.data.map((abs) => relative(target.root.real, abs)).filter((rel) => !rel.startsWith("..")));
+}
+
+/** The `node_modules` dirs pod install may touch: the project's and the repo's. */
+function nodeModulesDirs(target: PodsTarget): string[] {
+	return [...new Set([join(target.projectRoot, "node_modules"), join(target.root.real, "node_modules")])].filter((d) =>
+		existsSync(d)
+	);
+}
+
+/**
+ * Every file (and symlink) pod install or its `post_install` hooks could delete without the snapshot replacing it, relative to
+ * the root: the `node_modules` dirs, plus committed `ios/` outside `Pods/` and `build/` (a CNG `ios/` is restored whole).
+ */
+export async function installCandidates(deps: PodsDeps, target: PodsTarget): AsyncResult<string[]> {
+	const excludes = PODS_SNAPSHOT_EXCLUDE_DIRS.flatMap((d) => ["-not", "-path", `*/${d}/*`]);
+	const dirs = nodeModulesDirs(target);
+	const files: string[] = [];
+	if (dirs.length > 0) {
+		const found = await findLines(deps, ["find", "-P", ...dirs, "-not", "-type", "d", ...excludes], target.root.real);
+		if (!found.success) return found;
+		files.push(...found.data.map((abs) => relative(target.root.real, abs)));
+	}
+	if (target.mode === "committed" && existsSync(target.iosAbs)) {
+		const found = await findLines(
+			deps,
+			["find", "-P", ".", "-not", "-type", "d", "-not", "-path", "./Pods/*", "-not", "-path", "./build/*"],
+			target.iosAbs
+		);
+		if (!found.success) return found;
+		const iosRel = relative(target.root.real, target.iosAbs);
+		files.push(...found.data.map((p) => join(iosRel, p.replace(/^\.\//, ""))));
+	}
+	return ok([...new Set(files.filter((rel) => !rel.startsWith("..")))].sort());
+}
+
+/** What was in `before` and is gone now. */
+async function deletedSince(deps: PodsDeps, input: SnapshotInput): AsyncResult<string[]> {
+	if (input.before === undefined) return ok([]);
+	const now = await installCandidates(deps, input.target);
+	if (!now.success) return now;
+	const present = new Set(now.data);
+	return ok(input.before.filter((rel) => !present.has(rel)));
 }
 
 /** Files of `ios/` outside `Pods/` and `build/` written since `marker`, plus the lockfile (always: its checksums get fixed on restore). */
@@ -136,6 +178,8 @@ export async function snapshotPods(deps: PodsDeps, input: SnapshotInput): AsyncR
 		const { iosDirs, iosFiles, outside } = copied.data;
 		const rewrite = await rootHolders(deps, staging, target);
 		if (!rewrite.success) return rewrite;
+		const deleted = await deletedSince(deps, input);
+		if (!deleted.success) return err(`cannot find the files pod install deleted: ${deleted.error}`);
 		const now = deps.now();
 		const entry: PodsEntry = {
 			key: input.key,
@@ -163,6 +207,7 @@ export async function snapshotPods(deps: PodsDeps, input: SnapshotInput): AsyncR
 			iosFiles,
 			outside,
 			rewrite: rewrite.data,
+			deleted: deleted.data,
 		};
 		writeFileSync(join(staging, "meta.json"), `${JSON.stringify(meta, null, 2)}\n`);
 		const dest = podsEntryDir(deps.env, input.key);

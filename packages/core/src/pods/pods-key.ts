@@ -44,13 +44,16 @@ export async function detectMode(
 	return res.exitCode === 0 ? "cng" : "committed";
 }
 
-/** The env a Podfile may read, as `NAME=value` lines (sorted). */
-export function podsEnvLines(env: Env): string[] {
+/** True when `name` is a built-in Podfile env name, or matches one of `extra` (`NAME` exactly, `NAME_*` as a prefix). */
+function podfileReads(name: string, extra: readonly string[]): boolean {
+	if (PODS_ENV_NAMES.includes(name) || PODS_ENV_PREFIXES.some((p) => name.startsWith(p))) return true;
+	return extra.some((e) => (e.endsWith("*") ? name.startsWith(e.slice(0, -1)) : name === e));
+}
+
+/** The env a Podfile may read (the built-in names plus `extra`, `ios.pods.env`), as `NAME=value` lines (sorted). */
+export function podsEnvLines(env: Env, extra: readonly string[] = []): string[] {
 	return Object.keys(env)
-		.filter(
-			(name) =>
-				env[name] !== undefined && (PODS_ENV_NAMES.includes(name) || PODS_ENV_PREFIXES.some((p) => name.startsWith(p)))
-		)
+		.filter((name) => env[name] !== undefined && podfileReads(name, extra))
 		.sort()
 		.map((name) => `env.${name}=${env[name]}`);
 }
@@ -67,6 +70,8 @@ export type PodsKeyInput = {
 	planEnv: Env;
 	/** `planPrebuiltRn`'s salt, when the build is effectively prebuilt */
 	planSalt?: string;
+	/** `ios.pods.env`: more env names the Podfile reads (`NAME_*` = a prefix) */
+	envNames?: readonly string[];
 };
 
 export type PodsKey = { key: string; xcodeVersion: string; projectRel: string };
@@ -137,7 +142,7 @@ export async function computePodsKey(deps: { exec: Exec; env: Env }, input: Pods
 		`ios=${input.iosDir}`,
 		`native=${native.data}`,
 		`salt=${input.planSalt ?? "none"}`,
-		...podsEnvLines({ ...deps.env, ...input.planEnv }),
+		...podsEnvLines({ ...deps.env, ...input.planEnv }, input.envNames),
 	];
 	if (input.mode === "committed") {
 		const iosAbs = join(input.projectRoot, input.iosDir);

@@ -83,6 +83,30 @@ describe("warden pods install", () => {
 		expect(seen[0]?.opts.noCache).toBeUndefined();
 	});
 
+	test("projects[].ios.pods.env reaches the cache as env names", async () => {
+		const seen: Seen[] = [];
+		const { c, cmd } = setup(["install"], { kind: "hit", key: KEY, mode: "cng", ms: 800 }, seen);
+		writeFileSync(
+			join(c.cwd, "warden.config.json"),
+			JSON.stringify({
+				projects: [{ name: "demo", bundleId: { ios: "com.demo" }, ios: { pods: { env: ["CI", "SENTRY_*"] } } }],
+			})
+		);
+		expect(await cmd.run(c)).toBe(0);
+		expect(seen[0]?.opts.env).toEqual(["CI", "SENTRY_*"]);
+	});
+
+	test("projects[].ios.pods.cache: false runs a plain install, naming the config as the reason", async () => {
+		const seen: Seen[] = [];
+		const { c, cmd } = setup(["install"], { kind: "uncached", reason: "ios.pods.cache: false", ms: 1 }, seen);
+		writeFileSync(
+			join(c.cwd, "warden.config.json"),
+			JSON.stringify({ projects: [{ name: "demo", bundleId: { ios: "com.demo" }, ios: { pods: { cache: false } } }] })
+		);
+		expect(await cmd.run(c)).toBe(0);
+		expect(seen[0]?.opts.noCache).toBe("ios.pods.cache: false");
+	});
+
 	test("miss stored", async () => {
 		const { c, cmd } = setup(["install"], { kind: "miss", key: KEY, mode: "cng", ms: 31_000, stored: true });
 		expect(await cmd.run(c)).toBe(0);
@@ -114,7 +138,7 @@ describe("warden pods install", () => {
 		const seen: Seen[] = [];
 		const { c, cmd } = setup(["install", "--no-cache"], { kind: "uncached", reason: "--no-cache", ms: 5 }, seen);
 		await cmd.run(c);
-		expect(seen[0]?.opts.noCache).toBe(true);
+		expect(seen[0]?.opts.noCache).toBe("--no-cache");
 	});
 
 	test("--json: one document per outcome, valid under the contract", async () => {

@@ -23,6 +23,8 @@ export type FakeToolchain = {
 	noPod: boolean;
 	/** extra wait inside a fake pod install */
 	installMs: number;
+	/** files (relative to the project) a fake pod install deletes, like a `post_install` hook that removes them */
+	deleteOnInstall: string[];
 };
 
 export function sha1(text: string): string {
@@ -53,6 +55,14 @@ function writePodInstall(cwd: string, args: readonly string[]): void {
 	write(join(cwd, "node_modules", ".cache", "ignored.txt"), "cache\n");
 }
 
+/** One fake `pod install`: counted, optionally slow, writes what the real one does, deletes what a hook would. */
+async function fakePodInstall(tc: FakeToolchain, cwd: string, args: readonly string[]): Promise<void> {
+	tc.podInstalls++;
+	if (tc.installMs > 0) await Bun.sleep(tc.installMs);
+	writePodInstall(cwd, args);
+	for (const rel of tc.deleteOnInstall) rmSync(join(cwd, rel), { force: true });
+}
+
 /**
  * Fake `pod` / `expo prebuild` / `xcodebuild` / fingerprint over real git, cp, find and grep. A fake `pod install` writes what the
  * real one does: Pods with the checkout root inside, both lockfiles (with the local podspec's sha1), and a stub under node_modules.
@@ -67,6 +77,7 @@ export function fakeToolchain(): FakeToolchain {
 		failCopy: false,
 		noPod: false,
 		installMs: 0,
+		deleteOnInstall: [],
 		exec: async () => done(),
 	};
 	tc.exec = async (cmd, opts) => {
@@ -84,9 +95,7 @@ export function fakeToolchain(): FakeToolchain {
 			return done();
 		}
 		if (bin === "pod" && rest[0] === "install") {
-			tc.podInstalls++;
-			if (tc.installMs > 0) await Bun.sleep(tc.installMs);
-			writePodInstall(cwd, rest);
+			await fakePodInstall(tc, cwd, rest);
 			opts?.onLine?.("Pod installation complete!");
 			return done("Pod installation complete!\n");
 		}

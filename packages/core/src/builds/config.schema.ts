@@ -101,6 +101,18 @@ export const projectConfigSchema = z
 					})
 					.strict()
 					.optional(),
+				/** the machine-wide CocoaPods cache (`warden pods install`, local iOS builds) */
+				pods: z
+					.object({
+						/** false = never restore or store pods for this project: every install is a real `pod install` (hooks with side effects) */
+						cache: z.boolean().optional(),
+						/** env names the Podfile or its `post_install` hooks read (`NAME_*` = a prefix): their values join the cache key */
+						env: z
+							.array(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*\*?$/, "an env name, or a prefix ending in *"))
+							.optional(),
+					})
+					.strict()
+					.optional(),
 			})
 			.strict()
 			.optional(),

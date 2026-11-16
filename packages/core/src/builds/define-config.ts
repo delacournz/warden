@@ -874,6 +874,26 @@ export interface WardenPhysicalSettings {
 export interface WardenProjectIos {
 	/** Builds for a physical iPhone (`--physical`, `--udid <iPhone>`). */
 	device?: { bundleIdentifier?: string | undefined } | undefined;
+	/** The machine-wide CocoaPods cache (`warden pods install`, local iOS builds). */
+	pods?: WardenProjectPods | undefined;
+}
+
+/** CocoaPods cache settings of one project (`projects[].ios.pods`). */
+export interface WardenProjectPods {
+	/**
+	 * `false`: never restore or store pods for this project. Every `warden pods install` and every warden iOS build runs a
+	 * real `pod install`, so `post_install` hooks run each time. For hooks with effects a restore cannot bring back (network
+	 * calls, files outside `ios/` and `node_modules`). Costs a full install per worktree. Default `true`.
+	 */
+	cache?: boolean | undefined;
+	/**
+	 * Env names your Podfile or its `post_install` hooks read. Their values join the pods cache key, so a different value
+	 * runs a real `pod install` instead of restoring pods made with the old one. `NAME_*` matches a prefix. Always in the
+	 * key, no need to list: `USE_FRAMEWORKS`, `USE_CCACHE`, `NO_FLIPPER`, `RCT_*`, `EX_DEV_CLIENT_*`, `EXPO_USE_*`.
+	 *
+	 * @example ["CI", "SENTRY_*"]
+	 */
+	env?: string[] | undefined;
 }
 
 /** Physical iPhone settings (`ios`). */
