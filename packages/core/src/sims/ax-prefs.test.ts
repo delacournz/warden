@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Exec, ExecResult } from "../exec";
@@ -27,6 +27,14 @@ function fake(answer: (joined: string) => Partial<ExecResult>, calls: string[]):
 const prefsDir = (udid: string): string =>
 	join(home, "Library/Developer/CoreSimulator/Devices", udid, "data/Library/Preferences");
 
+/** A device that has booted before: its Preferences dir and Accessibility plist exist on disk. */
+function bootedBefore(udid: string): string {
+	mkdirSync(prefsDir(udid), { recursive: true });
+	const plist = accessibilityPlistPath({ HOME: home }, udid);
+	writeFileSync(plist, "");
+	return plist;
+}
+
 describe("axPrefsEnabled", () => {
 	test("on unless WARDEN_AX_PREFS=0", () => {
 		expect(axPrefsEnabled({})).toBe(true);
@@ -37,9 +45,8 @@ describe("axPrefsEnabled", () => {
 
 describe("writePrebootAxPrefs", () => {
 	test("writes both keys as booleans into the device's Accessibility plist", async () => {
-		mkdirSync(prefsDir("U1"), { recursive: true });
+		const plist = bootedBefore("U1");
 		const calls: string[] = [];
-		const plist = accessibilityPlistPath({ HOME: home }, "U1");
 		const out = await writePrebootAxPrefs({ exec: fake(() => ({}), calls), timer: realTimer }, { HOME: home }, "U1");
 		expect(out).toEqual({ success: true, data: "written" });
 		expect(PREBOOT_AX_KEYS).toEqual(["AutomationEnabled", "IgnoreAXServerEntitlements"]);
@@ -49,26 +56,27 @@ describe("writePrebootAxPrefs", () => {
 		]);
 	});
 
-	test("creates a missing plist, then writes", async () => {
+	test("creates the plist only when it is missing on disk, then writes", async () => {
 		mkdirSync(prefsDir("U1"), { recursive: true });
 		const calls: string[] = [];
-		let created = false;
-		const exec = fake((joined) => {
-			if (joined.startsWith("plutil -create")) {
-				created = true;
-				return {};
-			}
-			return created ? {} : { exitCode: 1, stderr: "file does not exist" };
-		}, calls);
 		const plist = accessibilityPlistPath({ HOME: home }, "U1");
-		const out = await writePrebootAxPrefs({ exec, timer: realTimer }, { HOME: home }, "U1");
+		const out = await writePrebootAxPrefs({ exec: fake(() => ({}), calls), timer: realTimer }, { HOME: home }, "U1");
 		expect(out).toEqual({ success: true, data: "written" });
 		expect(calls).toEqual([
-			`plutil -replace AutomationEnabled -bool true ${plist}`,
 			`plutil -create binary1 ${plist}`,
 			`plutil -replace AutomationEnabled -bool true ${plist}`,
 			`plutil -replace IgnoreAXServerEntitlements -bool true ${plist}`,
 		]);
+	});
+
+	test("an existing plist whose write fails is an error, never re-created empty", async () => {
+		const plist = bootedBefore("U1");
+		const calls: string[] = [];
+		const exec = fake(() => ({ exitCode: 1, stderr: "could not read" }), calls);
+		const out = await writePrebootAxPrefs({ exec, timer: realTimer }, { HOME: home }, "U1");
+		expect(out.success).toBe(false);
+		if (!out.success) expect(out.error).toContain("plutil -replace AutomationEnabled");
+		expect(calls).toEqual([`plutil -replace AutomationEnabled -bool true ${plist}`]);
 	});
 
 	test("a device never booted (no Preferences dir yet) is left for its first boot", async () => {

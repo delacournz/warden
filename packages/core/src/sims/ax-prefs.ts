@@ -39,7 +39,8 @@ async function plutil(deps: TimedExec, cmd: string[]): AsyncResult<void> {
 
 /**
  * Write every `PREBOOT_AX_KEYS` key as `true` on the host, with the sim shut down (no cfprefsd running, so a file
- * write persists). Existing keys are kept; a missing plist is created first. A device that has never booted has no
+ * write persists). Existing keys are kept; only a plist missing on disk is created, so a failed write on an existing
+ * one is returned, never answered by replacing it with an empty plist. A device that has never booted has no
  * `Preferences` dir yet: it is left alone (`not-booted-yet`), since creating the data dir early can upset its first
  * boot's setup, and the helper still turns automation on live.
  */
@@ -50,14 +51,12 @@ export async function writePrebootAxPrefs(
 ): AsyncResult<"written" | "not-booted-yet"> {
 	const plist = accessibilityPlistPath(env, udid);
 	if (!existsSync(dirname(plist))) return ok("not-booted-yet");
-	for (const [i, key] of PREBOOT_AX_KEYS.entries()) {
-		const replace = ["plutil", "-replace", key, "-bool", "true", plist];
-		let written = await plutil(deps, replace);
-		if (!written.success && i === 0) {
-			const created = await plutil(deps, ["plutil", "-create", "binary1", plist]);
-			if (!created.success) return created;
-			written = await plutil(deps, replace);
-		}
+	if (!existsSync(plist)) {
+		const created = await plutil(deps, ["plutil", "-create", "binary1", plist]);
+		if (!created.success) return created;
+	}
+	for (const key of PREBOOT_AX_KEYS) {
+		const written = await plutil(deps, ["plutil", "-replace", key, "-bool", "true", plist]);
 		if (!written.success) return written;
 	}
 	return ok("written");
