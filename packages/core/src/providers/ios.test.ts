@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { Exec, ExecResult } from "../exec";
@@ -1010,6 +1010,7 @@ describe("createIosProvider pre-boot accessibility prefs", () => {
 
 	test("a warden sim gets AutomationEnabled and IgnoreAXServerEntitlements before it boots", async () => {
 		record("W1");
+		writeFileSync(plist("W1"), "");
 		const calls: Call[] = [];
 		await axProvider(fake([["plutil", {}]], calls), {}, false).prepareBoot?.("W1");
 		expect(plutilCalls(calls)).toEqual([
