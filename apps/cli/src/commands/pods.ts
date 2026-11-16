@@ -111,10 +111,15 @@ async function installCmd(
 		{
 			projectRoot: p.root,
 			...(opts.projectDirectory !== undefined ? { iosDir: opts.projectDirectory } : {}),
-			...(opts.cache === false ? { noCache: true } : {}),
+			...(opts.cache === false
+				? { noCache: "--no-cache" as const }
+				: p.podsCache === false
+					? { noCache: "ios.pods.cache: false" as const }
+					: {}),
 			...(podArgs.length > 0 ? { podArgs } : {}),
 			framework: p.framework,
 			...(p.prebuiltReactNative === false ? { prebuiltReactNative: false as const } : {}),
+			...(p.podsEnv !== undefined ? { env: p.podsEnv } : {}),
 		}
 	);
 	if (!outcome.success) return fail(ctx, "install", outcome.error);

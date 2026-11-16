@@ -130,7 +130,32 @@ On a miss it runs `expo prebuild --platform ios --clean --no-install` and `pod i
 
 Bare React Native: replace `cd ios && pod install` with `warden pods install` (`--project-directory ios` is the default).
 
-The key covers the `pod` and Xcode versions, host architecture, the project path, `Podfile` and `Podfile.properties.json`, the native dependencies (Expo fingerprint, or the autolinked pods and local podspecs) and the environment variables the Podfile reads (`RCT_*`, `USE_FRAMEWORKS`, `USE_CCACHE`, `EX_DEV_CLIENT_*`, `EXPO_USE_*`). Anything that could change the result is in it, so a hit is the same install you would get from running it.
+The key covers the `pod` and Xcode versions, host architecture, the project path, `Podfile` and `Podfile.properties.json`, the native dependencies (Expo fingerprint, or the autolinked pods and local podspecs) and the environment variables the Podfile reads (`RCT_*`, `USE_FRAMEWORKS`, `USE_CCACHE`, `NO_FLIPPER`, `EX_DEV_CLIENT_*`, `EXPO_USE_*`). Anything that could change the result is in it, so a hit is the same install you would get from running it.
+
+### `post_install` hooks
+
+A hit does not run `pod install`, so your Podfile's `post_install` hooks do not run again. They don't need to: the stored entry was taken after they ran on the miss, so the restore brings back what they changed:
+
+- everything under `Pods/` (build settings, xcconfigs, the Pods project),
+- the `ios/` files the install wrote, such as the app's `project.pbxproj` and `Info.plist` (with a git-ignored `ios/`, all of it),
+- files written under the project's and the repo root's `node_modules` (patched headers, generated sources),
+- files the install deleted in those places, deleted again.
+
+Edit a hook and the Podfile changes, so the key changes and the next install runs it for real. Two cases need a hand:
+
+- **A hook that reads an environment variable** outside the list above. List it so a different value is a miss, not someone else's result:
+
+  ```ts title="warden.config.ts"
+  projects: [{ name: "app", bundleId: { ios: "com.example.app" }, ios: { pods: { env: ["CI", "SENTRY_*"] } } }]
+  ```
+
+- **A hook that writes elsewhere** (a sibling workspace's `node_modules`, `src/`, your home directory) or does something other than write files. Turn the cache off for that project, so every install is a real `pod install` and the hooks run each time:
+
+  ```ts title="warden.config.ts"
+  projects: [{ name: "app", bundleId: { ios: "com.example.app" }, ios: { pods: { cache: false } } }]
+  ```
+
+  Restoring and then running `pod install` on top would cost the same as a plain install: CocoaPods has no way to run only the hooks. For one run, `warden pods install --no-cache`.
 
 What it saves, measured on a React Native + Expo app (CocoaPods 1.16.2):
 

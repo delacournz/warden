@@ -436,6 +436,10 @@ async function preparePods(deps: LocalBuildDeps): Promise<void> {
 	const { pods, project, platform } = deps;
 	if (!pods || platform !== "ios" || deps.env[WARDEN_PODS_CACHE_ENV] === "0") return;
 	if (!RUNS_POD_INSTALL.test(project.build[platform])) return;
+	if (project.podsCache === false) {
+		deps.log("pods: cache off (ios.pods.cache: false); the build installs pods itself");
+		return;
+	}
 	const { install = podsInstall, ...rest } = pods;
 	try {
 		const res = await install(
@@ -444,6 +448,7 @@ async function preparePods(deps: LocalBuildDeps): Promise<void> {
 				projectRoot: project.root,
 				framework: project.framework === "expo" ? "expo" : "react-native",
 				...(project.prebuiltReactNative === false ? { prebuiltReactNative: false as const } : {}),
+				...(project.podsEnv !== undefined ? { env: project.podsEnv } : {}),
 			}
 		);
 		deps.log(res.success ? podsLine(res.data) : `pods: cache skipped (${res.error}); the build installs pods itself`);

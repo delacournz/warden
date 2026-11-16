@@ -29,16 +29,22 @@ export type PodsOutcome =
 	/** `--no-cache`, or the key could not be computed: a plain `pod install` ran */
 	| { kind: "uncached"; reason: string; ms: number };
 
+/** Why the cache is off for a run: the `--no-cache` flag, or the project's `ios.pods.cache: false`. */
+export type PodsCacheOff = "--no-cache" | "ios.pods.cache: false";
+
 export type PodsInstallOptions = {
 	projectRoot: string;
 	/** default "ios" */
 	iosDir?: string;
-	noCache?: boolean;
+	/** run a plain `pod install`, neither restoring nor storing; the value is why, reported as the `uncached` reason */
+	noCache?: PodsCacheOff;
 	podArgs?: readonly string[];
 	/** default "expo" */
 	framework?: "expo" | "react-native";
 	/** `build.prebuiltReactNative: false` */
 	prebuiltReactNative?: false;
+	/** `ios.pods.env`: more env names (`NAME_*` = a prefix) whose values are key inputs, for a Podfile that reads them */
+	env?: readonly string[];
 };
 
 export type PodsDeps = {
@@ -83,6 +89,8 @@ export type PodsMeta = {
 	outside: string[];
 	/** text files holding the root, relative to the entry dir */
 	rewrite: string[];
+	/** files pod install deleted (its `post_install` hooks included), relative to `root`; absent in entries made before it was recorded */
+	deleted?: string[];
 };
 
 /** The checkout a pods install / restore acts on. All paths are realpaths. */

@@ -16,7 +16,7 @@ import {
 import type { Env, PodsDeps, PodsInstallOptions, PodsMode, PodsOutcome, PodsTarget } from "./pods.types";
 import { computePodsKey, detectMode, resolveRoot } from "./pods-key";
 import { restorePods } from "./pods-restore";
-import { snapshotPods } from "./pods-snapshot";
+import { installCandidates, snapshotPods } from "./pods-snapshot";
 import { getPodsEntry, podsEntryDir, podsLockKey, podsRoot, removePodsEntry, touchPodsEntry } from "./pods-store";
 
 function lockDeps(deps: PodsDeps): BuildLockDeps {
@@ -148,7 +148,7 @@ export async function podsInstall(deps: PodsDeps, opts: PodsInstallOptions): Asy
 	});
 	const installEnv: Env = plan.env;
 
-	if (opts.noCache) return plainInstall(deps, target, opts, installEnv, "--no-cache", t0);
+	if (opts.noCache !== undefined) return plainInstall(deps, target, opts, installEnv, opts.noCache, t0);
 
 	const keyStart = deps.now();
 	const keyed = await computePodsKey(deps, {
@@ -159,6 +159,7 @@ export async function podsInstall(deps: PodsDeps, opts: PodsInstallOptions): Asy
 		podVersion,
 		planEnv: plan.env,
 		...(plan.salt !== undefined ? { planSalt: plan.salt } : {}),
+		...(opts.env !== undefined ? { envNames: opts.env } : {}),
 	});
 	if (!keyed.success) {
 		deps.log(`pods cache skipped: ${keyed.error}`);
@@ -188,22 +189,51 @@ export async function podsInstall(deps: PodsDeps, opts: PodsInstallOptions): Asy
 			removePodsEntry(deps.store, deps.env, key);
 		}
 
-		const prebuilt = await prebuildIfNeeded(deps, target, installEnv, true);
-		if (!prebuilt.success) return prebuilt;
-		mkdirSync(podsRoot(deps.env), { recursive: true });
-		const marker = join(podsRoot(deps.env), `.marker-${randomUUID()}`);
-		writeFileSync(marker, "");
-		try {
-			const installed = await runPodInstall(deps, target, opts, installEnv);
-			if (!installed.success) return installed;
-			const stored = await snapshotPods(deps, { key, target, marker, podVersion, xcodeVersion });
-			writeStamp(target, key);
-			const ms = deps.now() - t0;
-			if (stored.success) return ok<PodsOutcome>({ kind: "miss", key, mode, ms, stored: true });
-			deps.log(`pods cache not stored: ${stored.error}`);
-			return ok<PodsOutcome>({ kind: "miss", key, mode, ms, stored: false, storeError: stored.error });
-		} finally {
-			rmSync(marker, { force: true });
-		}
+		return installAndStore(deps, { target, opts, installEnv, key, podVersion, xcodeVersion, t0 });
 	});
+}
+
+type MissInput = {
+	target: PodsTarget;
+	opts: PodsInstallOptions;
+	installEnv: Env;
+	key: string;
+	podVersion: string;
+	xcodeVersion: string;
+	t0: number;
+};
+
+/**
+ * A miss: prebuild (CNG), the real `pod install` (its `post_install` hooks run here), then store what it wrote and deleted.
+ * The file list taken before it is what makes deletions replayable; without it the entry still stores, deletions unrecorded.
+ */
+async function installAndStore(deps: PodsDeps, input: MissInput): AsyncResult<PodsOutcome> {
+	const { target, opts, installEnv, key, t0 } = input;
+	const mode = target.mode;
+	const prebuilt = await prebuildIfNeeded(deps, target, installEnv, true);
+	if (!prebuilt.success) return prebuilt;
+	const before = await installCandidates(deps, target);
+	if (!before.success) deps.log(`pods: cannot list files before pod install (${before.error}); deletions not recorded`);
+	mkdirSync(podsRoot(deps.env), { recursive: true });
+	const marker = join(podsRoot(deps.env), `.marker-${randomUUID()}`);
+	writeFileSync(marker, "");
+	try {
+		const installed = await runPodInstall(deps, target, opts, installEnv);
+		if (!installed.success) return installed;
+		const stored = await snapshotPods(deps, {
+			key,
+			target,
+			marker,
+			podVersion: input.podVersion,
+			xcodeVersion: input.xcodeVersion,
+			...(before.success ? { before: before.data } : {}),
+		});
+		writeStamp(target, key);
+		const ms = deps.now() - t0;
+		if (stored.success) return ok<PodsOutcome>({ kind: "miss", key, mode, ms, stored: true });
+		deps.log(`pods cache not stored: ${stored.error}`);
+		return ok<PodsOutcome>({ kind: "miss", key, mode, ms, stored: false, storeError: stored.error });
+	} finally {
+		rmSync(marker, { force: true });
+	}
 }

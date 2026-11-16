@@ -70,6 +70,10 @@ export type Project = {
 	target?: BuildTarget;
 	/** `projects[].ios.device.bundleIdentifier`: replaces the bundle id of builds for a physical iPhone (and the app's id there) */
 	iosDeviceBundleId?: string;
+	/** `projects[].ios.pods.env`: env names (`NAME_*` = a prefix) whose values join the pods cache key */
+	podsEnv?: string[];
+	/** false = `projects[].ios.pods.cache: false`: every pods install is a real `pod install` */
+	podsCache?: false;
 	/** set by `projectForKind`: env of the local build (`kinds.<kind>.env`) */
 	buildEnv?: Record<string, string>;
 	cacheDirs: string[];
@@ -131,6 +135,8 @@ function applyOptional(project: Project, entry: ParsedProjectConfig): void {
 	if (entry.build?.prebuiltReactNative === false) project.prebuiltReactNative = false;
 	if (entry.kinds !== undefined) project.kinds = entry.kinds;
 	if (entry.ios?.device?.bundleIdentifier !== undefined) project.iosDeviceBundleId = entry.ios.device.bundleIdentifier;
+	if (entry.ios?.pods?.env !== undefined) project.podsEnv = entry.ios.pods.env;
+	if (entry.ios?.pods?.cache === false) project.podsCache = false;
 	if (entry.fingerprint?.command !== undefined) project.fingerprintCommand = entry.fingerprint.command;
 	if (entry.fingerprint?.include === "native+js" && entry.fingerprint.jsInputs) {
 		project.jsInputs = entry.fingerprint.jsInputs;

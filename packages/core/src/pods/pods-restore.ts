@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync } from "node:fs";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import type { PodsDeps, PodsEntry, PodsMeta, PodsTarget } from "./pods.types";
 import { cloneTree } from "./pods-clone";
@@ -30,7 +30,8 @@ function isMeta(v: unknown): v is PodsMeta {
 		isStrings(m.iosDirs) &&
 		isStrings(m.iosFiles) &&
 		isStrings(m.outside) &&
-		isStrings(m.rewrite)
+		isStrings(m.rewrite) &&
+		(m.deleted === undefined || isStrings(m.deleted))
 	);
 }
 
@@ -54,6 +55,20 @@ function swap(src: string, dest: string, trash: string[]): void {
 	renameSync(src, dest);
 }
 
+/** Set aside what pod install deleted, so the checkout ends as a real install would leave it. Never leaves the root. */
+function applyDeleted(meta: PodsMeta, target: PodsTarget, trash: string[]): void {
+	for (const rel of meta.deleted ?? []) {
+		const abs = resolve(target.root.real, rel);
+		const inside = relative(target.root.real, abs);
+		if (inside === "" || inside.startsWith("..") || isAbsolute(inside)) continue;
+		const stat = lstatSync(abs, { throwIfNoEntry: false });
+		if (!stat || stat.isDirectory()) continue;
+		const aside = `${abs}.warden-old-${randomUUID()}`;
+		renameSync(abs, aside);
+		trash.push(aside);
+	}
+}
+
 /** Swap the verified staged files into the checkout. */
 function applyStaged(meta: PodsMeta, staging: string, target: PodsTarget, trash: string[]): void {
 	if (meta.iosDirs.includes(".")) {
@@ -63,6 +78,7 @@ function applyStaged(meta: PodsMeta, staging: string, target: PodsTarget, trash:
 		for (const f of meta.iosFiles) swap(join(staging, "ios", f), join(target.iosAbs, f), trash);
 	}
 	for (const rel of meta.outside) swap(join(staging, "outside", rel), join(target.root.real, rel), trash);
+	applyDeleted(meta, target, trash);
 }
 
 /**

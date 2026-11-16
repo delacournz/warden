@@ -240,6 +240,25 @@ describe("loadProject", () => {
 		expect(bad.success).toBe(false);
 	});
 
+	test("projects[].ios.pods.env becomes the project's pods env names; an empty name is refused", () => {
+		write(JSON_CONFIG_FILE, {
+			projects: [{ name: "a", bundleId: { ios: "com.x.app" }, ios: { pods: { env: ["CI", "SENTRY_*"] } } }],
+		});
+		const res = loadProject({ start: dir, env, stopAt: dir });
+		if (!res.success) throw new Error(res.error);
+		expect(res.data.podsEnv).toEqual(["CI", "SENTRY_*"]);
+		expect(res.data.podsCache).toBeUndefined();
+		const bad = parseWardenConfig({ projects: [{ name: "a", bundleId: {}, ios: { pods: { env: [""] } } }] });
+		expect(bad.success).toBe(false);
+	});
+
+	test("projects[].ios.pods.cache: false turns the pods cache off for the project", () => {
+		write(JSON_CONFIG_FILE, { projects: [{ name: "a", bundleId: {}, ios: { pods: { cache: false } } }] });
+		const res = loadProject({ start: dir, env, stopAt: dir });
+		if (!res.success) throw new Error(res.error);
+		expect(res.data.podsCache).toBe(false);
+	});
+
 	test("config at repo root, project picked by containing dir", () => {
 		write(JSON_CONFIG_FILE, {
 			projects: [

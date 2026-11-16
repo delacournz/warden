@@ -1177,6 +1177,8 @@ describe("runLocalBuild pods cache", () => {
 			env?: Record<string, string>;
 			withPods?: boolean;
 			platform?: "ios" | "android";
+			podsEnv?: string[];
+			podsCache?: false;
 		} = {}
 	) {
 		const root = join(dir, "app");
@@ -1207,7 +1209,13 @@ describe("runLocalBuild pods cache", () => {
 				return { exitCode: cmd[0] === "git" ? 0 : 1, stdout: "", stderr: "" };
 			return { exitCode: 0, stdout: '{"hash":"h1"}', stderr: "" };
 		};
-		const project = testProject({ root, fingerprintCommand: "fp", build: { ios: build, android: build } });
+		const project = testProject({
+			root,
+			fingerprintCommand: "fp",
+			build: { ios: build, android: build },
+			...(opts.podsEnv ? { podsEnv: opts.podsEnv } : {}),
+			...(opts.podsCache === false ? { podsCache: false as const } : {}),
+		});
 		const run = () =>
 			runLocalBuild({
 				exec,
@@ -1230,7 +1238,22 @@ describe("runLocalBuild pods cache", () => {
 		}
 		expect(s.calls).toHaveLength(1);
 		expect(s.calls[0]?.framework).toBe("expo");
+		expect(s.calls[0]?.env).toBeUndefined();
 		expect(s.logs).toContain("pods: restored k1 in 0.8s");
+	});
+
+	test("ios.pods.env reaches podsInstall", async () => {
+		const s = podsSetup(POD, { podsEnv: ["CI", "SENTRY_*"] });
+		await s.run();
+		expect(s.calls[0]?.env).toEqual(["CI", "SENTRY_*"]);
+	});
+
+	test("ios.pods.cache: false → not called, the build's own pod install runs; says why", async () => {
+		const s = podsSetup(POD, { podsCache: false });
+		const r = await s.run();
+		expect(r.success ? "ok" : r.error).toBe("ok");
+		expect(s.calls).toHaveLength(0);
+		expect(s.logs).toContain("pods: cache off (ios.pods.cache: false); the build installs pods itself");
 	});
 
 	test("not called for android, a command without pod install, WARDEN_PODS_CACHE=0, or no pods dep", async () => {
