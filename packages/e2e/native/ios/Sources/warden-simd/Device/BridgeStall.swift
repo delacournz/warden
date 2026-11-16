@@ -521,7 +521,9 @@ extension Session {
       guard let host else {
         throw WireError(.axUnavailable, "the host accessibility (ax) reader could not be created")
       }
-      return AXOutcome(value: try await host(), backend: .ax, fallback: nil)
+      let value = try await host()
+      wedge?.readersAnswered()
+      return AXOutcome(value: value, backend: .ax, fallback: nil)
     }
 
     let cold = warmth.isCold
@@ -583,6 +585,7 @@ extension Session {
           warmth.noteSuccess(generation: generation)
           health.recordSuccess()
           gate.recordSuccess()
+          wedge?.readersAnswered()
           return AXOutcome(value: value, backend: .axbridge, fallback: nil)
         } catch {
           let readMs = Session.elapsedMs(since: started)
@@ -618,6 +621,7 @@ extension Session {
     log("axbridge -> ax fallback: \(reason)")
     do {
       let value = try await host!()
+      wedge?.readersAnswered()
       return AXOutcome(value: value, backend: .ax, fallback: Fallback(reason: reason, stall: stall))
     } catch {
       // both readers silent: the accessibility server itself may have wedged

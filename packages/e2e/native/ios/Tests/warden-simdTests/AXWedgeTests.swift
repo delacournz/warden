@@ -182,6 +182,100 @@ final class AXWedgeTests: XCTestCase {
     XCTAssertNotNil(wedge.suspect())
   }
 
+  // MARK: silence without the marker (a host whose `log show` cannot compose the runtime's messages)
+
+  func testNoMarkerButReadersSilentForAMinuteIsAWedge() async throws {
+    let clock = Clock()
+    let script = Script(marker: .success(false))
+    let wedge = recovery(script, clock: clock)
+    let verdict1 = await wedge.suspect()?.value
+    XCTAssertEqual(verdict1, .notWedged)
+    clock.advance(30)
+    XCTAssertNil(wedge.suspect(), "inside the not-wedged window: no check, but the silence counts")
+    clock.advance(31)
+    let outcome = await try XCTUnwrap(wedge.suspect()).value
+    guard case .restarted = outcome else { return XCTFail("expected a restart, got \(outcome)") }
+    XCTAssertEqual(script.log, ["log", "log", "liveness", "kickstart", "after"])
+    XCTAssertEqual(wedge.restarts, 1)
+  }
+
+  func testALogThatCannotBeReadIsNoVerdictOnceTheReadersWereSilentForAMinute() async throws {
+    let clock = Clock()
+    let script = Script(marker: .failure(AXWedgeStepFailed("log show: exit 1")))
+    let wedge = recovery(script, clock: clock)
+    let verdict2 = await wedge.suspect()?.value
+    XCTAssertEqual(verdict2, .failed("log show: exit 1"))
+    clock.advance(30)
+    let verdict3 = await wedge.suspect()?.value
+    XCTAssertEqual(verdict3, .failed("log show: exit 1"))
+    clock.advance(31)
+    let outcome = await try XCTUnwrap(wedge.suspect()).value
+    guard case .restarted = outcome else { return XCTFail("expected a restart, got \(outcome)") }
+    XCTAssertEqual(wedge.restarts, 1)
+  }
+
+  func testSilenceShorterThanAMinuteOrFewerThanThreeReadsIsNoWedge() async throws {
+    let clock = Clock()
+    let script = Script(marker: .success(false))
+    let wedge = recovery(script, clock: clock)
+    _ = await wedge.suspect()?.value
+    clock.advance(61)
+    let verdict4 = await wedge.suspect()?.value
+    XCTAssertEqual(verdict4, .notWedged, "two silent reads, however far apart, are no proof")
+    XCTAssertFalse(script.log.contains("kickstart"))
+  }
+
+  func testAReadThatAnswersStartsTheSilenceOver() async throws {
+    let clock = Clock()
+    let script = Script(marker: .success(false))
+    let wedge = recovery(script, clock: clock)
+    _ = await wedge.suspect()?.value
+    clock.advance(30)
+    _ = wedge.suspect()
+    XCTAssertEqual(wedge.silentReads, 2)
+    wedge.readersAnswered()
+    XCTAssertEqual(wedge.silentReads, 0)
+    clock.advance(31)
+    let verdict5 = await wedge.suspect()?.value
+    XCTAssertEqual(verdict5, .notWedged)
+    XCTAssertFalse(script.log.contains("kickstart"))
+  }
+
+  func testSilenceStillNeedsTheAxReaderToTimeOut() async throws {
+    let clock = Clock()
+    let script = Script(marker: .success(false))
+    script.silent = false
+    let wedge = recovery(script, clock: clock)
+    _ = await wedge.suspect()?.value
+    clock.advance(30)
+    _ = wedge.suspect()
+    clock.advance(31)
+    let verdict6 = await wedge.suspect()?.value
+    XCTAssertEqual(verdict6, .notWedged)
+    XCTAssertEqual(script.log, ["log", "log", "liveness"])
+  }
+
+  func testAnExplicitAskUsesTheSilenceTheReadsRecorded() async throws {
+    let clock = Clock()
+    let script = Script(marker: .success(false))
+    let wedge = recovery(script, clock: clock)
+    _ = await wedge.suspect()?.value
+    clock.advance(30)
+    _ = wedge.suspect()
+    clock.advance(31)
+    _ = wedge.suspect()
+    _ = await wedge.current?.value
+    XCTAssertEqual(wedge.restarts, 1, "the third silent read past the window restarts")
+    let forced = recovery(Script(marker: .success(false)), clock: clock)
+    _ = await forced.suspect()?.value
+    clock.advance(30)
+    _ = forced.suspect()
+    _ = forced.suspect()
+    clock.advance(31)
+    let reply = await Session.axWedge(forced, recover: true)
+    XCTAssertEqual(reply.objectValue?["checked"], "restarted", "the warm-up's ask sees the reads' silence")
+  }
+
   func testTheStateSaysWhatHappenedAndHowLongAgo() async throws {
     let clock = Clock()
     let wedge = recovery(Script(), max: 2, clock: clock)
@@ -255,6 +349,19 @@ final class AXWedgeTests: XCTestCase {
     _ = try? await readAX(
       bridge: { throw AXBridgeError.bridgeUnavailable }, host: { throw silent }, wedge: wedge)
     XCTAssertNil(wedge.current)
+  }
+
+  func testAReadThatAnswersClearsTheSilence() async throws {
+    let wedge = recovery(Script(marker: .success(false)))
+    _ = await wedge.suspect()?.value
+    XCTAssertEqual(wedge.silentReads, 1)
+    let outcome = try await readAX(
+      bridge: {
+        try await Task.sleep(for: .seconds(5))
+        return "late"
+      }, host: { "ax" }, wedge: wedge)
+    XCTAssertEqual(outcome.value, "ax")
+    XCTAssertEqual(wedge.silentReads, 0)
   }
 
   func testAFallbackAfterARestartCarriesTheCount() async throws {
