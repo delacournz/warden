@@ -100,6 +100,19 @@ final class AXWedgeRecovery: @unchecked Sendable {
     return false
   }
 
+  /// The host reader's service answered, with an error (e.g. `noTranslationObject`): not silence, and not a failure to
+  /// ask (SpringBoard down or restarting, accessibility or the dispatcher unavailable, the sim not booted).
+  static func isServiceAnswer(_ error: any Error) -> Bool {
+    guard let error = error as? AccessibilityError else { return false }
+    switch error {
+    case .serviceNotAnswering, .springBoardRestarting, .springBoardNotRunning, .accessibilityUnavailable,
+      .dispatcherUnavailable, .simulatorNotBooted:
+      return false
+    default:
+      return true
+    }
+  }
+
   let maxRestarts: Int
   private let steps: Steps
   private let now: @Sendable () -> Double
@@ -377,9 +390,14 @@ extension Session {
             of: udid, in: GuestReaper.system.list(), matching: "/SpringBoard.app/SpringBoard"
           ).first
         else { return false }
-        return (try? await withTimeout(
-          milliseconds: AXWedgeRecovery.livenessReadMs, error: { WireError(.timeout, "SpringBoard control read") }
-        ) { try await reader.describe(.application(pid: pid), options: AccessibilityRequestOptions()) }) != nil
+        do {
+          _ = try await withTimeout(
+            milliseconds: AXWedgeRecovery.livenessReadMs, error: { WireError(.timeout, "SpringBoard control read") }
+          ) { try await reader.describe(.application(pid: pid), options: AccessibilityRequestOptions()) }
+          return true
+        } catch {
+          return AXWedgeRecovery.isServiceAnswer(error)
+        }
       },
       springBoards: { Set(GuestReaper.children(of: udid, in: GuestReaper.system.list(), matching: "/SpringBoard.app/SpringBoard")) },
       restartBackboardd: {

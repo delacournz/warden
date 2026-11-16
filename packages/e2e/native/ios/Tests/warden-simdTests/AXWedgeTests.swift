@@ -91,6 +91,20 @@ final class AXWedgeTests: XCTestCase {
     XCTAssertFalse(AXWedgeRecovery.isServiceSilent(WireError(.timeout, "client")))
   }
 
+  func testOnlyAnErrorTheServerGaveCountsAsAnAnswer() {
+    XCTAssertTrue(AXWedgeRecovery.isServiceAnswer(AccessibilityError.noTranslationObject(.application(pid: 3))))
+    XCTAssertTrue(AXWedgeRecovery.isServiceAnswer(AccessibilityError.elementNotFound(key: "id", value: "x", depth: 1)))
+    XCTAssertFalse(AXWedgeRecovery.isServiceAnswer(silentHost))
+    XCTAssertFalse(AXWedgeRecovery.isServiceAnswer(AccessibilityError.springBoardNotRunning))
+    XCTAssertFalse(
+      AXWedgeRecovery.isServiceAnswer(AccessibilityError.springBoardRestarting(exitedProcessIdentifier: 3, restartedAgo: 1)))
+    XCTAssertFalse(AXWedgeRecovery.isServiceAnswer(AccessibilityError.accessibilityUnavailable))
+    XCTAssertFalse(AXWedgeRecovery.isServiceAnswer(AccessibilityError.dispatcherUnavailable))
+    XCTAssertFalse(AXWedgeRecovery.isServiceAnswer(AccessibilityError.simulatorNotBooted(description: "Shutdown")))
+    XCTAssertFalse(AXWedgeRecovery.isServiceAnswer(WireError(.timeout, "SpringBoard control read")))
+    XCTAssertFalse(AXWedgeRecovery.isServiceAnswer(CancellationError()))
+  }
+
   func testLogShowsOwnInvocationLineIsNoWedge() {
     let marker = AXWedgeRecovery.marker
     let selfLine =
