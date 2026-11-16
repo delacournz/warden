@@ -8,6 +8,7 @@ import { getLayoutTabs } from "fumadocs-ui/layouts/shared";
 import { Suspense, use } from "react";
 import { DocsToolbar } from "@/components/docs-toolbar";
 import { useMDXComponents } from "@/components/mdx";
+import { SimulatorOnlyBanner } from "@/components/simulator-only-banner";
 import { baseOptions, docsTabs } from "@/lib/layout.shared";
 import { redirectSlugs } from "@/lib/redirects";
 import { type Crumb, docsHead, docsJsonLd } from "@/lib/seo";
@@ -77,6 +78,7 @@ function Content({ path, markdownUrl }: { path: string; markdownUrl: string }) {
 		<DocsPage className="max-md:pb-28" toc={toc}>
 			<DocsTitle>{page.title}</DocsTitle>
 			<DocsDescription>{page.description}</DocsDescription>
+			{page.simulatorOnly ? <SimulatorOnlyBanner subject={page.title} /> : null}
 			<DocsToolbar markdownUrl={markdownUrl} path={path} />
 			<DocsBody>
 				<MDX components={useMDXComponents()} />

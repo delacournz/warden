@@ -145,6 +145,7 @@ Warm paper and warm ink with a single saturated foundry orange. Dark mode keeps 
 ### Primary
 - **Foundry Orange** (accent `#ff4f1a`, dark `#ff6a3d`): the hero's "agent" and "simulator.", every section heading's accent tail, the lamps on the lease board, the accelerated-run bar and time, the caret, text selection tint, the lamp in the warden mark, the closing period of the wordmark, and the primary button hover. About 3.2:1 on paper, so it is for large marks only.
 - **Orange Text** (accent-text `#b8360a`, dark `#ff8a63`): the only orange allowed at small sizes (+hook tags, FAQ hover). Passes body contrast.
+- **Accent Ink** (accent-ink `#0d0d0c`, both themes): text on a Foundry Orange fill. Its one use is the simulators-only banner on device-condition pages (`simulatorOnly: true` frontmatter): a full-width bar is a large mark, so it may carry the accent; the ink sentence on it reads at ≥ 6:1.
 
 ### Neutral
 - **Paper** (ground `#f5f4ef`, dark `#0f0f0e`): page and docs background.

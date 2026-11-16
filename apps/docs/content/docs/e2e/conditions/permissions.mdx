@@ -2,6 +2,7 @@
 title: Permissions
 description: Grant, deny or unset the app's privacy permissions from a spec or a suite before it launches, so the test reaches the screen behind the prompt, or the denied path.
 icon: ShieldCheck
+simulatorOnly: true
 ---
 
 `device.permissions` sets the app's privacy permissions directly, so a spec does not tap through a system prompt (iOS does not always raise one) and can test the denied path on purpose.

@@ -3,9 +3,14 @@ import { pageSchema } from "fumadocs-core/source/schema";
 
 /**
  * Page frontmatter: fumadocs' own, plus `sidebarTitle`, a short label for the sidebar when the `title` (the H1 and
- * the search result title) is long, e.g. `title: Write React Native E2E tests`, `sidebarTitle: Write specs`.
+ * the search result title) is long, e.g. `title: Write React Native E2E tests`, `sidebarTitle: Write specs`; and
+ * `simulatorOnly: true` for a feature physical devices refuse (see `simulator-only.ts`).
  */
-export const docsSchema = pageSchema.extend({ sidebarTitle: pageSchema.shape.title.optional() });
+export const docsSchema = pageSchema.extend({
+	sidebarTitle: pageSchema.shape.title.optional(),
+	/** fumadocs' `full` is an optional boolean: reused so the docs app needs no direct zod dependency */
+	simulatorOnly: pageSchema.shape.full,
+});
 
 /** The sidebar label a page's frontmatter asks for, or `undefined` to keep its title. */
 export function sidebarName(data: { title?: string; sidebarTitle?: string }): string | undefined {

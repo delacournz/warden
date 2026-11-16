@@ -5,6 +5,7 @@ import { DEVICE_CONTROL } from "./landing.data";
 import { demosAsMarkdown } from "./llms";
 import { docsRoute } from "./shared";
 import { docsSchema, sidebarTitlePlugin } from "./sidebar-title";
+import { simulatorOnlyMarkdown } from "./simulator-only";
 
 export const docs = defineDocs({
 	dir: "content/docs",
@@ -28,5 +29,5 @@ export async function getLLMText(page: (typeof source)["$inferPage"]) {
 
 	return `# ${page.data.title} (${page.url})
 
-${processed}`;
+${simulatorOnlyMarkdown(page.data)}${processed}`;
 }
