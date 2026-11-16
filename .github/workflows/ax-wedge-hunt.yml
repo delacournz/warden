@@ -1,0 +1,87 @@
+name: ax-wedge-hunt
+
+# Hunts for a REAL accessibility-service wedge (a fresh iOS sim whose AX service never answers; ~15% of fresh iOS 27.2
+# boots on some hosted runners) and records whether an XCUITest runner on the same sim still answers while
+# `warden-simd`'s readers are silent. Per iteration: a fresh simulator (raw `simctl create` is fine on a throwaway
+# runner), the runner + simd on it, `--observe` for `seconds`, then the sim is deleted. Output: one artifact with every
+# iteration's run.jsonl / summary.json plus hunt.json; iterations with a silent streak are marked FLAGGED in the step
+# summary. Manual only: it burns macOS minutes and gates nothing. See scripts/ax-witness/README.md.
+#
+# The helper needs Xcode 27 to build (`xcode-27` image, or an Xcode_27*.app on the label you pick); the default label
+# `macos-26` stops at Xcode 26.6, where the helper build fails.
+on:
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: runs-on label
+        type: string
+        default: macos-26
+      xcode:
+        description: Developer dir or Xcode.app to build and run with (empty = the newest /Applications/Xcode*.app)
+        type: string
+        default: ""
+      iterations:
+        description: Fresh simulators to hunt through
+        type: string
+        default: "5"
+      seconds:
+        description: Observe time per iteration
+        type: string
+        default: "120"
+
+permissions:
+  contents: read
+  # bun install pulls @delacournz/* from GitHub Packages with the job token.
+  packages: read
+
+jobs:
+  hunt:
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: package.json
+
+      - name: Select Xcode
+        env:
+          XCODE: ${{ inputs.xcode }}
+        run: |
+          set -euo pipefail
+          if [ -z "$XCODE" ]; then
+            XCODE=$( (ls -d /Applications/Xcode_*.app /Applications/Xcode-*.app 2>/dev/null || true) | sort -V | tail -1)
+          fi
+          case "$XCODE" in
+            *.app) XCODE="$XCODE/Contents/Developer" ;;
+          esac
+          if [ -n "$XCODE" ]; then echo "DEVELOPER_DIR=$XCODE" >> "$GITHUB_ENV"; export DEVELOPER_DIR="$XCODE"; fi
+          xcodebuild -version
+          xcrun simctl list runtimes
+
+      - name: Build warden-simd
+        env:
+          NPM_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run --cwd packages/e2e native:deps
+          bun run --cwd packages/e2e native:build
+          ls -l packages/e2e/native/dist/warden-simd
+
+      - name: Hunt
+        env:
+          ITERATIONS: ${{ inputs.iterations }}
+          SECONDS_PER: ${{ inputs.seconds }}
+        run: bun scripts/ax-witness/hunt.ts --iterations "$ITERATIONS" --seconds "$SECONDS_PER" --out "$RUNNER_TEMP/ax-witness-out"
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ax-wedge-hunt
+          path: ${{ runner.temp }}/ax-witness-out
+          if-no-files-found: warn

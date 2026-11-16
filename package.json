@@ -39,6 +39,7 @@
 	"workspaces": [
 		"apps/*",
 		"packages/*",
+		"scripts/ax-witness",
 		"scripts/demo",
 		"scripts/release",
 		"scripts/signoff",
