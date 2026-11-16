@@ -170,7 +170,7 @@ jobs:
 
 Pin the action to a commit SHA or release tag. In order, it:
 
-1. Sets `WARDEN_TELEMETRY_DISABLED=1` and `DO_NOT_TRACK=1`, selects `xcode-path` through `DEVELOPER_DIR` when given, and lets `simctl` answer once so the first CoreSimulator call does not land inside a claim's 30 s timeout.
+1. Sets `WARDEN_TELEMETRY_DISABLED=1` and `DO_NOT_TRACK=1`, selects `xcode-path` through `DEVELOPER_DIR` when given, and lets `simctl` answer once so the first CoreSimulator call does not land inside a claim's 30 s timeout. Then builds every installed runtime's dyld shared cache (`xcrun simctl runtime dyld_shared_cache update --all`, at most 10 min, logged as `runtime dyld shared caches ready after N s`; a failure only warns), so the first sim does not boot against a half-built cache (`dyld-cache: false` skips).
 2. Installs bun from npm (`npm i -g bun@<version>`) when none is on `PATH`, so it needs no third-party action; `bun-version` defaults to the root `packageManager`. Runs `install-command` (default `bun install --frozen-lockfile`) with `npm-token` as `NPM_TOKEN`.
 3. Installs the release binary of `warden-version` (checksum verified) and runs `warden doctor --fetch-helper`.
 4. Restores the caches below and imports `app-path` when given. On a native build cache miss it says so first (a `native build cache miss` notice: the app is built from source before the first spec), installs `ccache` (a pinned release binary when none is on `PATH`, Homebrew if that download fails) and restores the compiler cache. Then it builds the app in its own step (`warden e2e --build-only` with the same suite, profile and `args`, so the run finds it cached), runs `warden e2e` with `--report` and the inputs as flags, and prints one line splitting the job's time up to the suite's end:
@@ -199,6 +199,7 @@ Pin the action to a commit SHA or release tag. In order, it:
 | `github-token` | `github.token` | reads the job's start for the `job timing` line (needs `actions: read`); never passed to warden |
 | `xcode-path` | runner default | e.g. `/Applications/Xcode_27.2.app` |
 | `headroom-gb` | 1 on hosts of 16 GB or less | `WARDEN_CAPACITY_HEADROOM_GB` |
+| `dyld-cache` | `true` | build the runtimes' dyld shared caches before the first boot; `false` skips |
 | `suite-timeout-minutes` | `35` | stops the suite (SIGINT, SIGKILL 60 s later) so a hung run still prints and uploads its evidence. The app build runs before it and is not counted: set the job timeout above a cold native build plus this |
 | `report-path` | `warden-e2e-report.json` | where the report goes |
 | `cache` | `github` | `github` saves and restores with `actions/cache`; `none` leaves storing to you (see below) |
