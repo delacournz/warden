@@ -68,6 +68,8 @@ warden check --udid <udid>     # exit 0 if free or yours, 2 if another owner hol
 
 ## Slim simulators
 
+Before every boot of an iOS simulator warden created, warden writes `AutomationEnabled` and `IgnoreAXServerEntitlements` as `true` into its Accessibility preferences on the host. The accessibility server reads them when it first starts, so the driver does not switch automation on live, and a reader without Apple's entitlement is not refused. A simulator that has never booted has no preferences folder yet and gets them from its next boot. Set `WARDEN_AX_PREFS=0` to skip it.
+
 Every iOS simulator warden creates boots slim: the daemons specs never need (Siri, Health, News, Mail…) are disabled before the first boot, so clones start light. A claim never undoes it. Opt out with `warden claim ios --no-slim`, `slim: false` in config, or `WARDEN_SLIM=0`; keep some daemons with `slim: { except: [...] }`. See [`warden sim slim`](/docs/reference/cli#warden-sim-slim-udid) and [what a slim simulator loses](/docs/reference/cli#what-a-slim-simulator-loses).
 
 ## Release

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { Exec, ExecResult } from "../exec";
 import { instanceId } from "../ownership";
 import { DEFAULT_SLIM_PROFILE, desiredLabels } from "../sims/slim.profile";
@@ -981,6 +981,73 @@ describe("createIosProvider physical iPhones (PHY-6.5)", () => {
 		await p.prepareBoot?.(FAKE_IPHONE_UDID);
 		await p.afterReady?.(FAKE_IPHONE_UDID);
 		expect(calls).toEqual([]);
+	});
+});
+
+describe("createIosProvider pre-boot accessibility prefs", () => {
+	const owner = { kind: "agent", sessionId: "s1", cwd: "/" } as const;
+	const plist = (udid: string): string =>
+		join(
+			dir,
+			"Library/Developer/CoreSimulator/Devices",
+			udid,
+			"data/Library/Preferences/com.apple.Accessibility.plist"
+		);
+	function axProvider(exec: Exec, env: Record<string, string> = {}, slim?: false): DeviceProvider {
+		return createIosProvider(
+			{ exec, store, env: { HOME: dir, WARDEN_SIM_LAUNCHD_STORE_ROOT: dir, ...env }, now: () => 42, owner },
+			{ sleep: async () => {}, ...(slim === false ? { slim } : {}) }
+		);
+	}
+	const record = (id: string): void =>
+		store.recordDevice({ platform: "ios", id, name: `warden-iphone-17-${id}`, profile: "iphone-17" }, 1);
+	const plutilCalls = (calls: Call[]): string[] =>
+		calls.map((c) => c.cmd.join(" ")).filter((c) => c.startsWith("plutil"));
+	beforeEach(() => {
+		mkdirSync(dirname(plist("W1")), { recursive: true });
+		mkdirSync(dirname(plist("F1")), { recursive: true });
+	});
+
+	test("a warden sim gets AutomationEnabled and IgnoreAXServerEntitlements before it boots", async () => {
+		record("W1");
+		writeFileSync(plist("W1"), "");
+		const calls: Call[] = [];
+		await axProvider(fake([["plutil", {}]], calls), {}, false).prepareBoot?.("W1");
+		expect(plutilCalls(calls)).toEqual([
+			`plutil -replace AutomationEnabled -bool true ${plist("W1")}`,
+			`plutil -replace IgnoreAXServerEntitlements -bool true ${plist("W1")}`,
+		]);
+	});
+
+	test("WARDEN_AX_PREFS=0 writes nothing", async () => {
+		record("W1");
+		const calls: Call[] = [];
+		await axProvider(fake([["plutil", {}]], calls), { WARDEN_AX_PREFS: "0" }, false).prepareBoot?.("W1");
+		expect(plutilCalls(calls)).toEqual([]);
+	});
+
+	test("a sim warden did not create is never written", async () => {
+		const calls: Call[] = [];
+		await axProvider(fake([["plutil", {}]], calls), {}, false).prepareBoot?.("F1");
+		expect(plutilCalls(calls)).toEqual([]);
+	});
+
+	test("a failed write is a note, and the boot goes on", async () => {
+		record("W1");
+		const logs: string[] = [];
+		const p = createIosProvider(
+			{
+				exec: fake([["plutil", { exitCode: 1, stderr: "denied" }]]),
+				store,
+				env: { HOME: dir },
+				now: () => 42,
+				owner,
+				log: (line) => logs.push(line),
+			},
+			{ sleep: async () => {}, slim: false }
+		);
+		await p.prepareBoot?.("W1");
+		expect(logs).toEqual([expect.stringContaining("warden-iphone-17-W1 accessibility prefs not written")]);
 	});
 });
 
