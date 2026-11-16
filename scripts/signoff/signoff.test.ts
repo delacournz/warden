@@ -474,7 +474,7 @@ describe("commandLabel", () => {
 
 type Workflow = {
 	on: Record<string, { inputs?: Record<string, unknown> } | null>;
-	jobs: Record<string, { steps?: { run?: string }[] }>;
+	jobs: Record<string, { if?: string; needs?: string | string[]; steps?: { run?: string }[] }>;
 };
 
 async function ciWorkflow(): Promise<Workflow> {
@@ -492,6 +492,15 @@ describe("drift guard", () => {
 		const workflow = await ciWorkflow();
 		expect(Object.keys(workflow.on)).toEqual(["workflow_dispatch"]);
 		expect(workflow.on.workflow_dispatch?.inputs).toHaveProperty("signoff-sha");
+	});
+
+	test("ci.yml skips a dispatch on develop or main — the version PR run already gates the release", async () => {
+		const { jobs } = await ciWorkflow();
+		expect(jobs.validate?.if).toContain("github.ref != 'refs/heads/develop'");
+		expect(jobs.validate?.if).toContain("github.ref != 'refs/heads/main'");
+		// signoff runs on always(); without this it would post a failure status on the develop tip.
+		expect(jobs.signoff?.needs).toContain("validate");
+		expect(jobs.signoff?.if).toContain("needs.validate.result == 'success'");
 	});
 
 	test("the dispatched run writes every check's context and the umbrella", async () => {

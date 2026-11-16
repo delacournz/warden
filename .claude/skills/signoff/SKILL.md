@@ -65,6 +65,8 @@ gh run list --workflow ci --branch "$(git branch --show-current)" --limit 1
 
 Then wait for it; do not also run `bun run signoff` with `--skip` expecting the umbrella.
 
+Never dispatch on `develop` or `main`: `ci.yml` skips every job there. A merge is already checked by the version PR's own run, which `version.yml` dispatches.
+
 ## 6. Verify, then report
 
 ```bash
