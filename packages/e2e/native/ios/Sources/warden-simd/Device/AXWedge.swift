@@ -35,6 +35,13 @@ final class AXWedgeRecovery: @unchecked Sendable {
   static let waitWhileRecoveringMs = 5000
   /// The host read that confirms the silence before a restart: a healthy one answers in milliseconds.
   static let livenessReadMs = 4000
+  /// Reads in a row on which both readers were silent, over at least `silentSeconds`, stand in for the marker when the
+  /// sim log names no wedge or cannot be read: on some hosts `log show` cannot compose the runtime's messages (every
+  /// system line reads `<compose failure>`), so the marker is never found on a sim that is wedged. A sim that is only
+  /// slow answers a cold read within ~20 s; any read that answers starts the count over. The liveness read still
+  /// has to time out before a restart.
+  static let silentReads = 3
+  static let silentSeconds: Double = 60
 
   enum Outcome: Sendable, Equatable {
     case restarted(ms: Int)
@@ -99,6 +106,8 @@ final class AXWedgeRecovery: @unchecked Sendable {
   private var inFlight: Task<Outcome, Never>?
   private var latest: Task<Outcome, Never>?
   private var last: (outcome: Outcome, at: Double)?
+  /// reads in a row on which both readers were silent, and when the first of them came (`suspect`; reset by an answer)
+  private var silence: (reads: Int, since: Double)?
 
   init(
     maxRestarts: Int, steps: Steps, now: @escaping @Sendable () -> Double = { ProcessInfo.processInfo.systemUptime },
@@ -122,10 +131,31 @@ final class AXWedgeRecovery: @unchecked Sendable {
   /// The check in flight, else the last one (tests wait on it).
   var current: Task<Outcome, Never>? { lock.withLock { inFlight ?? latest } }
 
-  /// Both readers were silent on one read: check (or join the check in flight). Nil when the budget is spent, or the
-  /// sim was found not wedged within `recheckSeconds`.
+  /// Both readers were silent on one read: counted towards the silence, then check (or join the check in flight). Nil
+  /// when the budget is spent, or the sim was found not wedged within `recheckSeconds`.
   @discardableResult
-  func suspect() -> Task<Outcome, Never>? { check(force: false) }
+  func suspect() -> Task<Outcome, Never>? {
+    let at = now()
+    lock.withLock {
+      if let current = silence { silence = (current.reads + 1, current.since) } else { silence = (1, at) }
+    }
+    return check(force: false)
+  }
+
+  /// A read answered (on either reader): the readers are not silent, the count starts over.
+  func readersAnswered() { lock.withLock { silence = nil } }
+
+  /// Reads in a row on which both readers were silent (0 after an answer).
+  var silentReads: Int { lock.withLock { silence?.reads ?? 0 } }
+
+  /// The silence that stands in for the marker, described; nil while it is too short or too few reads.
+  private func silenceProof() -> String? {
+    let at = now()
+    return lock.withLock { () -> String? in
+      guard let silence, silence.reads >= Self.silentReads, at - silence.since >= Self.silentSeconds else { return nil }
+      return "both readers silent on \(silence.reads) reads in a row over \(Int((at - silence.since).rounded())) s"
+    }
+  }
 
   /// `force` (an explicit ask) skips the `recheckSeconds` window, never the budget.
   @discardableResult
@@ -156,16 +186,28 @@ final class AXWedgeRecovery: @unchecked Sendable {
   private func run() async -> Outcome {
     let started = ContinuousClock.now
     do {
-      guard try await steps.markerLogged() else {
-        log("both AX readers silent, but the sim log has no accessibility-server wedge: a slow sim, not restarted")
-        return .notWedged
+      var logged = false
+      var logError: String?
+      do {
+        logged = try await steps.markerLogged()
+      } catch {
+        logError = (error as? AXWedgeStepFailed)?.message ?? error.localizedDescription
+      }
+      if !logged {
+        guard let proof = silenceProof() else {
+          if let logError { throw AXWedgeStepFailed(logError) }
+          log("both AX readers silent, but the sim log has no accessibility-server wedge: a slow sim, not restarted")
+          return .notWedged
+        }
+        let why = logError.map { "the sim log could not be read (\($0))" } ?? "the sim log names no wedge"
+        log("\(why), but \(proof): checking the ax reader")
       }
       guard await steps.readersSilent() else {
         log("the sim log names an accessibility-server wedge, but the ax reader answers: not restarted")
         return .notWedged
       }
       let before = steps.springBoards()
-      log("both AX readers silent and the sim log says the accessibility server wedged: restarting backboardd")
+      log("both AX readers silent and the accessibility server wedged: restarting backboardd")
       try await steps.restartBackboardd()
       lock.withLock { spent += 1 }
       await waitForSpringBoard(replacing: before)
