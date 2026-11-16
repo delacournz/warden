@@ -15,14 +15,6 @@ enum IdbErrors {
     }
   }
 
-  static func mappingSync<T>(_ body: () throws -> T) throws -> T {
-    do {
-      return try body()
-    } catch {
-      throw map(error)
-    }
-  }
-
   /// `error` as a `GuestError` when it is one of idb's, else `error` unchanged.
   static func map(_ error: any Error) -> any Error {
     if let error = error as? GuestError { return error }
