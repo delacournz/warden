@@ -76,6 +76,16 @@
 			]
 		},
 
+		// native/scripts/guest-pin.test.ts runs (or skips) its guard on the extracted idb libraries, which are
+		// gitignored, so `$TURBO_DEFAULT$` never hashes them. The stamp `native:deps` writes on every extraction
+		// names the release and its sha256: without it a guard skipped before `native:deps` is replayed as green.
+		"@delacour/warden-e2e#test": {
+			"dependsOn": ["transit"],
+			"cache": true,
+			"outputs": [],
+			"inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/packages/e2e/native/idb-libraries/.warden-idb.json"]
+		},
+
 		// landing.test checks each claim's proof file (apps/cli/src, packages/core/src, skills/warden)
 		// and privacy.test reads the CLI's update hosts + package.json; bench-data.test reads docs/bench;
 		// analytics/config.test reads turbo.jsonc.

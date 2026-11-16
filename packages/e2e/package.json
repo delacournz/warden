@@ -20,6 +20,7 @@
 		"native:build": "bun native/scripts/build.ts && bun native/scripts/inject.ts",
 		"native:inject": "bun native/scripts/inject.ts",
 		"native:smoke": "bun native/scripts/smoke.ts",
+		"native:guest-contract": "bun native/scripts/guest-contract.ts",
 		"android:build": "bun native/android/scripts/build.ts",
 		"android:emit": "bun native/android/scripts/build.ts --emit-ts",
 		"android:atf": "bun native/android/scripts/build-atf.ts",

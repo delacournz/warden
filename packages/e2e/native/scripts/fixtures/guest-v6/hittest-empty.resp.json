@@ -1,0 +1,8 @@
+{
+	"id": "ID-4b",
+	"result": {
+		"answers": [{ "accessibility": { "answer": { "hitTest": { "response": { "empty": {} } } } } }],
+		"exitCode": 0
+	},
+	"version": 6
+}
