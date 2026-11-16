@@ -8,7 +8,7 @@ Non-shipping: nothing here is published or bundled.
 
 ## Run locally
 
-Needs Xcode 27, `bun install`, `bun run native:deps` and `bun run --cwd packages/e2e native:build` (builds
+Needs Xcode 27, `bun install`, `bun run --cwd packages/e2e native:deps` and `bun run --cwd packages/e2e native:build` (builds
 `packages/e2e/native/dist/warden-simd`). Use a simulator you own:
 
 ```bash
