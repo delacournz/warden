@@ -521,9 +521,15 @@ extension Session {
       guard let host else {
         throw WireError(.axUnavailable, "the host accessibility (ax) reader could not be created")
       }
-      let value = try await host()
-      wedge?.readersAnswered()
-      return AXOutcome(value: value, backend: .ax, fallback: nil)
+      do {
+        let value = try await host()
+        wedge?.readersAnswered()
+        return AXOutcome(value: value, backend: .ax, fallback: nil)
+      } catch {
+        // an explicit ax read has no bridge to ask: its silence alone counts towards the wedge check
+        if AXWedgeRecovery.isServiceSilent(error) { wedge?.suspect() }
+        throw error
+      }
     }
 
     let cold = warmth.isCold
@@ -541,6 +547,8 @@ extension Session {
     var stall: BridgeStallReport
     /// The bridge was silent (stalled, skipped after a stall, or joined a stalled warm-up), not just failing.
     var bridgeSilent = true
+    /// This read already counted towards the wedge check (the guest said the service itself did not answer).
+    var suspected = false
     let probe = { () -> Task<BridgeProbe.Outcome, Never>? in
       guard let recovery else { return nil }
       return startProbe(
@@ -599,7 +607,14 @@ extension Session {
             gate.recordFailure()
           }
           stall = report(.read, readMs: readMs, deadlineMs: deadlineMs)
-          guard requested == nil, isBridgeFailure(error), host != nil else {
+          // the guest's own AX query timed out: the in-sim accessibility service did not answer it. Counted now, so a
+          // caller's deadline that ends the ax fallback below still leaves the read counted (an ax answer clears it).
+          let serviceSilent = AXWedgeRecovery.isServiceSilent(error)
+          if serviceSilent, let wedge, wedge.suspect() != nil {
+            stall.axWedge = "checking"
+          }
+          suspected = serviceSilent
+          guard requested == nil, isBridgeFailure(error) || serviceSilent, host != nil else {
             if var stalled = error as? BridgeStalled {
               stalled.report = stall
               throw stalled
@@ -607,7 +622,7 @@ extension Session {
             throw error
           }
           reason = WireError.from(error).message
-          bridgeSilent = error is BridgeStalled || isGuestSilent(error)
+          bridgeSilent = error is BridgeStalled || isGuestSilent(error) || serviceSilent
         }
       }
     } else {
@@ -625,7 +640,7 @@ extension Session {
       return AXOutcome(value: value, backend: .ax, fallback: Fallback(reason: reason, stall: stall))
     } catch {
       // both readers silent: the accessibility server itself may have wedged
-      if bridgeSilent, AXWedgeRecovery.isServiceSilent(error), let wedge, wedge.suspect() != nil {
+      if !suspected, bridgeSilent, AXWedgeRecovery.isServiceSilent(error), let wedge, wedge.suspect() != nil {
         stall.axWedge = "checking"
       }
       throw AXReadersFailed(bridgeReason: reason, host: error, stall: stall)

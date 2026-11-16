@@ -64,6 +64,9 @@ final class AXWedgeRecovery: @unchecked Sendable {
     /// Whether the host `ax` reader is still silent right now (a short read times out). The marker alone is no proof:
     /// a sim that logged it can still answer, and is then left alone.
     var readersSilent: @Sendable () async -> Bool = { true }
+    /// Whether SpringBoard answers a short read by its pid. Asked only when silence stands in for the marker: a server
+    /// that still answers SpringBoard is not wedged, the frontmost app is hung (a restart would only quit it).
+    var springBoardAnswers: @Sendable () async -> Bool = { false }
     /// The pids of this simulator's SpringBoard right now.
     var springBoards: @Sendable () -> Set<pid_t>
     /// `launchctl kickstart -k` backboardd; throws `AXWedgeStepFailed`.
@@ -203,7 +206,12 @@ final class AXWedgeRecovery: @unchecked Sendable {
         log("\(why), but \(proof): checking the ax reader")
       }
       guard await steps.readersSilent() else {
-        log("the sim log names an accessibility-server wedge, but the ax reader answers: not restarted")
+        let why = logged ? "the sim log names an accessibility-server wedge" : "the readers were silent"
+        log("\(why), but the ax reader answers: not restarted")
+        return .notWedged
+      }
+      if !logged, await steps.springBoardAnswers() {
+        log("the frontmost app does not answer, but SpringBoard does: an app hang, not an accessibility-server wedge; not restarted")
         return .notWedged
       }
       let before = steps.springBoards()
@@ -362,6 +370,16 @@ extension Session {
         } catch {
           return AXWedgeRecovery.isServiceSilent(error)
         }
+      },
+      springBoardAnswers: { [weak self] in
+        guard let reader = self?.axHostReader,
+          let pid = GuestReaper.children(
+            of: udid, in: GuestReaper.system.list(), matching: "/SpringBoard.app/SpringBoard"
+          ).first
+        else { return false }
+        return (try? await withTimeout(
+          milliseconds: AXWedgeRecovery.livenessReadMs, error: { WireError(.timeout, "SpringBoard control read") }
+        ) { try await reader.describe(.application(pid: pid), options: AccessibilityRequestOptions()) }) != nil
       },
       springBoards: { Set(GuestReaper.children(of: udid, in: GuestReaper.system.list(), matching: "/SpringBoard.app/SpringBoard")) },
       restartBackboardd: {
