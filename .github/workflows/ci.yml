@@ -38,8 +38,11 @@ permissions:
 # The cancelled run's `signoff` job still settles its pending status as failure, so the old SHA
 # never shows "in progress". Keyed on the ref, not the SHA: two dispatches on one branch with
 # different heads must share a group for the newer to cancel the older.
+# Except develop: a dispatch with `--ref develop` and another PR's SHA is valid (develop's workflow
+# file, the PR's code), so several unrelated PRs can be in flight there at once. Keying develop on
+# the SHA too stops one PR's dispatch from cancelling another's.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.ref }}${{ github.ref == 'refs/heads/develop' && format('-{0}', inputs.signoff-sha) || '' }}
   cancel-in-progress: true
 
 jobs:
