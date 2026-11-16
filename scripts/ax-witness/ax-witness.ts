@@ -148,9 +148,19 @@ function startRunner(udid: string, derivedData: string, logFile: string): Promis
 		{ env }
 	);
 	return new Promise<Runner>((resolveRunner, reject) => {
-		const timer = setTimeout(() => reject(new Error("runner not ready after 240 s")), 240_000);
+		let settled = false;
+		// Every reject path stops xcodebuild: the caller never gets a Runner to tear down, and testServe idles for an hour.
+		const fail = (error: Error): void => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(timer);
+			if (xcodebuild.exitCode === null) xcodebuild.kill("SIGTERM");
+			reject(error);
+		};
+		const timer = setTimeout(() => fail(new Error("runner not ready after 240 s")), 240_000);
 		const onLine = (line: string): void => {
 			appendFileSync(logFile, `${line}\n`);
+			if (settled) return;
 			const port = readyPort(line);
 			if (port === undefined) return;
 			clearTimeout(timer);
@@ -164,13 +174,21 @@ function startRunner(udid: string, derivedData: string, logFile: string): Promis
 					buffer = buffer.slice(at + 1);
 				}
 			});
-			socket.on("error", (error) => reject(error));
-			socket.on("connect", () => resolveRunner({ xcodebuild, socket, client }));
+			socket.on("error", (error) => {
+				if (settled) return;
+				socket.destroy();
+				fail(error);
+			});
+			socket.on("connect", () => {
+				if (settled) return;
+				settled = true;
+				resolveRunner({ xcodebuild, socket, client });
+			});
 		};
 		for (const stream of [xcodebuild.stdout, xcodebuild.stderr]) {
 			if (stream) createInterface({ input: stream }).on("line", onLine);
 		}
-		xcodebuild.on("exit", (code) => reject(new Error(`xcodebuild exited ${code} before the runner was ready`)));
+		xcodebuild.on("exit", (code) => fail(new Error(`xcodebuild exited ${code} before the runner was ready`)));
 	});
 }
 
