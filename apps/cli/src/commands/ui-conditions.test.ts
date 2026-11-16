@@ -57,6 +57,7 @@ function setup(platform: "ios" | "android" = "ios", physical = false): Setup {
 					keyboard: (mode) => s.h.driver.keyboard(mode),
 					keyboardState: () => s.h.driver.keyboardState(),
 					camera: (op, opts) => s.h.driver.camera(op, opts),
+					passkeys: (op, opts) => s.h.driver.passkeys(op, opts),
 					memoryWarning: (opts) => s.h.driver.memoryWarning(opts),
 					push: (payload, opts) => s.h.driver.push(payload, opts),
 					close: () => s.h.driver.close(),

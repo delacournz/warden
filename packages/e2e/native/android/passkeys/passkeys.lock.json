@@ -1,0 +1,24 @@
+{
+	"version": "1.5.0",
+	"license": "Apache-2.0",
+	"artifacts": [
+		{
+			"name": "androidx-credentials",
+			"kind": "aar",
+			"url": "https://dl.google.com/android/maven2/androidx/credentials/credentials/1.5.0/credentials-1.5.0.aar",
+			"sha256": "00162f3d0244a42a8b9527f3cc6fb3bf36d655960c65b979bef250e5116f1453"
+		},
+		{
+			"name": "androidx-biometric",
+			"kind": "aar",
+			"url": "https://dl.google.com/android/maven2/androidx/biometric/biometric/1.1.0/biometric-1.1.0.aar",
+			"sha256": "270c7b7d99942d5ec1dd88594e4648feb33d8e31d8c3c2ab2321d49d9abdfc1f"
+		},
+		{
+			"name": "kotlin-stdlib",
+			"kind": "jar",
+			"url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-stdlib/1.8.22/kotlin-stdlib-1.8.22.jar",
+			"sha256": "03a5c3965cc37051128e64e46748e394b6bd4c97fa81c6de6fc72bfd44e3421b"
+		}
+	]
+}

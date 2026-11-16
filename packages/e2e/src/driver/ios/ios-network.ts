@@ -14,10 +14,13 @@ import type {
 	LaunchOptions,
 	NetworkOptions,
 	NetworkState,
+	PasskeyOp,
+	PasskeyState,
 } from "../driver.types";
 import { driverErr, driverError } from "../errors";
 import { faultNotes, type NetworkProxyPort, proxyConditionsFor } from "../network-proxy";
 import { type InjectChannel, injectLaunchEnv, shouldInject } from "./inject";
+import { createIosPasskeys } from "./ios-passkeys";
 
 /**
  * iOS simulator network conditions: a simulator shares the host network, so nothing can shape one device. Instead
@@ -35,6 +38,8 @@ export const INJECT_LOAD_MS = 8_000;
 export type IosNetworkDeps = {
 	proxy: NetworkProxyPort;
 	channel: InjectChannel;
+	/** the lease's passkey credentials (`passkeyStorePath`): the dylib reads and appends to it, `passkeys` ops edit it */
+	passkeyStore?: string;
 	/** the dylib path, resolved on first use so a run without conditions never looks for it */
 	dylib: () => Result<string, DriverError>;
 	/** is `bundleId` running now */
@@ -64,6 +69,12 @@ export type IosNetwork = {
 	 * (`WARDEN_CAMERA=1`), else from the next launch, which loads the dylib for it (`appliesOnLaunch`).
 	 */
 	camera(op: CameraCondition | null): DriverResult<CameraState>;
+	/**
+	 * The virtual authenticator (`Driver.passkeys`): mode and uv go to the state file (live on an app launched with
+	 * `WARDEN_PASSKEYS=1`, else from the next launch, which loads the dylib for it: `appliesOnLaunch`); credentials are
+	 * edited in the store file, which the dylib reads on every request.
+	 */
+	passkeys(op: PasskeyOp): DriverResult<PasskeyState>;
 };
 
 const okVoid = { success: true as const, data: undefined };
@@ -80,9 +91,16 @@ export function createIosNetwork(deps: IosNetworkDeps): IosNetwork {
 	/** a camera was ever in the state: keep sending it (empty when cleared) so a running app drops its feeds */
 	let cameraSent = channel.current().camera !== undefined;
 
+	const pk = createIosPasskeys({ channel, store: deps.passkeyStore, ackMs: INJECT_ACK_MS });
+
 	const routing = () => condition.kind !== "online" || faults.length > 0;
 	const clockActive = () => clockOffsetMs !== 0 || clockFrozenMs !== undefined;
 	const cameraActive = () => camera.back !== undefined || camera.front !== undefined;
+	const launchFlags = () => ({
+		...(cameraActive() ? { camera: true } : {}),
+		...(pk.on() ? { passkeys: true } : {}),
+		...(deps.debug ? { debug: true } : {}),
+	});
 	const launchClock = (): { clockOffsetMs?: number; clockFrozenMs?: number } => ({
 		...(clockOffsetMs ? { clockOffsetMs } : {}),
 		...(clockFrozenMs === undefined ? {} : { clockFrozenMs }),
@@ -93,6 +111,7 @@ export function createIosNetwork(deps: IosNetworkDeps): IosNetwork {
 			clockOffsetMs,
 			...(clockFrozenMs === undefined ? {} : { clockFrozenMs }),
 			...(cameraSent || cameraActive() ? { camera } : {}),
+			...(pk.state() ? { passkeys: pk.state() } : {}),
 		});
 
 	/** Push the current condition + faults to the proxy and the state file. */
@@ -212,6 +231,7 @@ export function createIosNetwork(deps: IosNetworkDeps): IosNetwork {
 					networkActive: live !== undefined,
 					clockActive: clockActive(),
 					cameraActive: cameraActive(),
+					passkeysActive: pk.on(),
 					requested: opts.inject === true,
 				})
 			) {
@@ -237,8 +257,7 @@ export function createIosNetwork(deps: IosNetworkDeps): IosNetwork {
 					statePath: channel.statePath,
 					proxy: address,
 					...launchClock(),
-					...(cameraActive() ? { camera: true } : {}),
-					...(deps.debug ? { debug: true } : {}),
+					...launchFlags(),
 				}),
 			};
 		},
@@ -307,6 +326,7 @@ export function createIosNetwork(deps: IosNetworkDeps): IosNetwork {
 			}
 			return { success: true, data: { feeds: camera } };
 		},
+		passkeys: (op) => pk.run(op, writeState),
 	};
 }
 

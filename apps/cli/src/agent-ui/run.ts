@@ -36,6 +36,8 @@ const READ_ONLY: ReadonlySet<string> = new Set([
 	"battery status",
 	"keyboard status",
 	"camera status",
+	"passkey status",
+	"passkey list",
 ]);
 
 /** Values `withUiOptions` parses to. */

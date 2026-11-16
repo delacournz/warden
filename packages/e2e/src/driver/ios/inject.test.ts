@@ -378,3 +378,49 @@ describe("keyboard", () => {
 		rmSync(dir, { recursive: true, force: true });
 	});
 });
+
+describe("passkeys", () => {
+	const passkeys = { mode: "cancel" as const, uv: "skip" as const, storePath: "/w/passkeys/U1/store.json" };
+
+	test("the state carries mode, uv and the store path and round-trips them; no key when off", () => {
+		const text = encodeInjectState({ seq: 3, passkeys });
+		expect(JSON.parse(text).passkeys).toEqual(passkeys);
+		expect(parseInjectState(text)?.passkeys).toEqual(passkeys);
+		expect(JSON.parse(encodeInjectState({ seq: 4 }))).not.toHaveProperty("passkeys");
+		expect(parseInjectState(encodeInjectState({ seq: 4 }))?.passkeys).toBeUndefined();
+	});
+
+	test("a malformed passkeys object is dropped, not passed to the dylib", () => {
+		for (const bad of [{ mode: "bogus", uv: "match", storePath: "/s" }, { mode: "auto", uv: "match" }, "on", null]) {
+			expect(parseInjectState(JSON.stringify({ seq: 1, passkeys: bad }))?.passkeys).toBeUndefined();
+		}
+	});
+
+	test("the ack says whether the app was launched with the authenticator", () => {
+		expect(parseInjectAck(JSON.stringify({ seq: 1, pid: 2, passkeys: true }))?.passkeys).toBe(true);
+		expect(parseInjectAck(JSON.stringify({ seq: 1, pid: 2, passkeys: false }))?.passkeys).toBeUndefined();
+		expect(parseInjectAck(JSON.stringify({ seq: 1, pid: 2 }))?.passkeys).toBeUndefined();
+	});
+
+	test("the launch env turns the authenticator on only when asked", () => {
+		expect(injectLaunchEnv({ dylib: "/d", statePath: "/s", passkeys: true }).WARDEN_PASSKEYS).toBe("1");
+		expect(injectLaunchEnv({ dylib: "/d", statePath: "/s" })).not.toHaveProperty("WARDEN_PASSKEYS");
+	});
+
+	test("an enabled authenticator alone is a reason to inject", () => {
+		expect(shouldInject({ networkActive: false, clockActive: false, passkeysActive: true, requested: false })).toBe(
+			true
+		);
+	});
+
+	test("core's neutral state keeps the authenticator, except when the reset area is passkeys", () => {
+		const dir = mkdtempSync(join(tmpdir(), "warden-inject-pk-"));
+		const path = join(dir, "state.json");
+		writeFileSync(path, encodeInjectState({ seq: 5, passkeys }));
+		expect(neutralizeInjectState(path, "network")).toBeUndefined();
+		expect(parseInjectState(readFileSync(path, "utf8"))?.passkeys).toEqual(passkeys);
+		expect(neutralizeInjectState(path, "passkeys")).toBeUndefined();
+		expect(parseInjectState(readFileSync(path, "utf8"))?.passkeys).toBeUndefined();
+		rmSync(dir, { recursive: true, force: true });
+	});
+});

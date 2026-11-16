@@ -59,6 +59,7 @@ describe("bundleE2e (the real packages/e2e)", () => {
 			.join("\n");
 		expect(bundled).not.toContain("UEsDB");
 		expect(bundled).toContain("warden-atf-");
+		expect(bundled).toContain("warden-passkeys-");
 	}, 60_000);
 
 	test("the entries share one chunk (a single session module) and WARDEN_E2E_VERSION is the published version", async () => {

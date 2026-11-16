@@ -2179,6 +2179,9 @@ Commands:
   camera                          simulated camera: set <path> | status | clear
                                   (png, jpg, heic, mp4, mov into the app's
                                   camera)
+  passkey                         simulated passkeys: set <mode> | off | add |
+                                  list | remove | clear | status (answers the
+                                  app's real passkey calls)
   help [command]                  display help for command
 
 $ warden ui status --help
@@ -4298,6 +4301,224 @@ take the feed off one camera, or both (default)
 
 Options:
   --facing <facing>      back | front | both (default both)
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui passkey --help
+Usage: warden ui passkey [options] [command]
+
+simulated passkeys: set <mode> | off | add | list | remove | clear | status
+(answers the app's real passkey calls)
+
+Options:
+  -h, --help             display help for command
+
+Commands:
+  set <mode>             turn the authenticator on and pick how it answers. iOS:
+                         live in an app launched with it, else from its next
+                         launch. Android: warden's credential provider (API 34+
+                         emulator)
+  off                    turn the authenticator off (credentials stay in the
+                         store)
+  add                    add a credential; prints its id. Without --key a fresh
+                         P-256 key is generated
+  list                   the credentials in the store, newest first
+  remove <credentialId>  remove one credential
+  clear                  remove every credential
+  status                 mode, uv and credentials the authenticator has now
+  help [command]         display help for command
+
+$ warden ui passkey set --help
+Usage: warden ui passkey set [options] <mode>
+
+turn the authenticator on and pick how it answers. iOS: live in an app launched
+with it, else from its next launch. Android: warden's credential provider (API
+34+ emulator)
+
+Arguments:
+  mode                   auto | cancel | fail | unavailable
+
+Options:
+  --uv <uv>              user verification: match (default) | nomatch | skip
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui passkey off --help
+Usage: warden ui passkey off [options]
+
+turn the authenticator off (credentials stay in the store)
+
+Options:
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui passkey add --help
+Usage: warden ui passkey add [options]
+
+add a credential; prints its id. Without --key a fresh P-256 key is generated
+
+Options:
+  --rp <id>               relying party id, a bare host like example.com
+  --user-name <name>      user name shown in the account picker
+  --display-name <name>   display name (default the user name)
+  --user-handle <b64url>  user handle, base64url (default 16 random bytes)
+  --id <b64url>           credential id, base64url (default 16 random bytes)
+  --key <path>            P-256 PKCS#8 private key, PEM or DER file, relative to
+                          the working directory
+  --sign-count <n>        starting signature counter (default 0)
+  --udid <udid>           device udid (iOS) / serial (Android)
+  --serial <serial>       Android serial
+  --lease <id>            use the device behind this lease id
+  --claim                 take over a stale/missing lease, or claim a device
+                          when none is held
+  --platform <platform>   platform for --claim with no device named: ios
+                          (default) | android
+  --physical              with --claim and no device named: claim a connected
+                          phone, not an emulator
+  --profile <slug>        device profile for --claim with no device named
+  --runtime <runtime>     runtime for --claim with no device named
+  --force                 drive the device even while a live warden process
+                          (e2e, batch, run) holds your lease on it; your own
+                          warden dev device is shared without it
+  --timeout <ms>          deadline in milliseconds (default 5000)
+  --no-record             don't append this step to a running recording
+  --json                  machine-readable output: one JSON document on stdout
+  -h, --help              display help for command
+
+$ warden ui passkey list --help
+Usage: warden ui passkey list [options]
+
+the credentials in the store, newest first
+
+Options:
+  --rp <id>              only this relying party
+  --with-keys            include each private key (test keys)
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui passkey remove --help
+Usage: warden ui passkey remove [options] <credentialId>
+
+remove one credential
+
+Arguments:
+  credentialId           credential id (base64url)
+
+Options:
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui passkey clear --help
+Usage: warden ui passkey clear [options]
+
+remove every credential
+
+Options:
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui passkey status --help
+Usage: warden ui passkey status [options]
+
+mode, uv and credentials the authenticator has now
+
+Options:
   --udid <udid>          device udid (iOS) / serial (Android)
   --serial <serial>      Android serial
   --lease <id>           use the device behind this lease id

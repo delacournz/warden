@@ -6,6 +6,7 @@ import {
 	readLaunchSettings,
 	writeLaunchSettings,
 } from "@delacour/warden-core/conditions/launch-settings";
+import { passkeyStorePath } from "@delacour/warden-core/conditions/passkey-paths";
 import type { Exec } from "@delacour/warden-core/exec";
 import { wardenHome as resolveWardenHome } from "@delacour/warden-core/store";
 import { ok, type Result } from "@delacour/warden-types/result";
@@ -1055,6 +1056,13 @@ export function createIosDriver(
 						"E_UNSUPPORTED",
 						"the simulated camera on iOS needs a device lease for the injected dylib: run the spec with `warden e2e`, or `warden ui`; a bare `bun test` has no lease"
 					),
+		passkeys: async (op) =>
+			net
+				? net.passkeys(op)
+				: driverErr(
+						"E_UNSUPPORTED",
+						"the simulated passkeys on iOS need a device lease for the injected dylib: run the spec with `warden e2e`, or `warden ui`; a bare `bun test` has no lease"
+					),
 		memoryWarning: (o) => (settings ? settings.memoryWarning(o) : noSettings()),
 		push: (payload, o) => (settings ? settings.push(payload, o) : noSettings()),
 		async clock(op, o) {
@@ -1282,6 +1290,7 @@ function iosNetworkFactory(
 				bundleId: ctx.lastBundle,
 				...(o.injectFs ? { fs: o.injectFs } : {}),
 			}),
+			passkeyStore: passkeyStorePath(wardenHome, o.udid),
 			dylib: () => injectDylibFor(o),
 			isRunning: (bundleId) => simctl.isRunning(bundleId),
 			lastBundle: ctx.lastBundle,

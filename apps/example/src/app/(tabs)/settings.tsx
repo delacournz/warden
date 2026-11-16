@@ -16,6 +16,7 @@ import {
 	IconHand5Finger,
 	IconLocation,
 	IconMoon,
+	IconPasskeys,
 	IconSignalTower,
 	IconWifiFull,
 } from "@/lib/icons/central";
@@ -162,6 +163,20 @@ export default function Settings() {
 						</ListGroup.ItemPrefix>
 						<ListGroup.ItemContent>
 							<ListGroup.ItemTitle>Biometrics</ListGroup.ItemTitle>
+						</ListGroup.ItemContent>
+						<ListGroup.ItemSuffix />
+					</ListGroup.Item>
+					<ListGroup.Item
+						accessibilityLabel="Passkeys"
+						accessible
+						onPress={() => router.push("/passkeys")}
+						testID="settings-passkeys"
+					>
+						<ListGroup.ItemPrefix>
+							<Icon icon={IconPasskeys} />
+						</ListGroup.ItemPrefix>
+						<ListGroup.ItemContent>
+							<ListGroup.ItemTitle>Passkeys</ListGroup.ItemTitle>
 						</ListGroup.ItemContent>
 						<ListGroup.ItemSuffix />
 					</ListGroup.Item>

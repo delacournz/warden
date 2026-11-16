@@ -140,6 +140,62 @@ export type CameraFeed = { kind: "image"; path: string } | { kind: "video"; path
 /** The simulated camera per facing; a facing left out has no camera (iOS) or the emulator's default (Android). */
 export type CameraCondition = Partial<Record<CameraFacing, CameraFeed>>;
 
+/**
+ * What the virtual authenticator answers an app's passkey call with. `auto` succeeds without UI; `cancel` is the
+ * user dismissing the sheet; `fail` is the platform refusing (iOS 1004, Android `NotAllowedError`); `unavailable` is
+ * an assertion with no credential to offer (iOS 1001 + "No credentials available", Android Play images: the
+ * cancellation exception, indistinguishable from `cancel`).
+ */
+export const PASSKEY_MODES = ["auto", "cancel", "fail", "unavailable"] as const;
+export type PasskeyMode = (typeof PASSKEY_MODES)[number];
+export const DEFAULT_PASSKEY_MODE: PasskeyMode = "auto";
+
+/**
+ * User verification: `match` sets the UV flag; `nomatch` behaves like a failed Face ID / fingerprint the user gave up
+ * on (iOS 1001, Android cancellation); `skip` answers without UV (flag 0), for servers that require it.
+ */
+export const PASSKEY_UV = ["match", "nomatch", "skip"] as const;
+export type PasskeyUv = (typeof PASSKEY_UV)[number];
+export const DEFAULT_PASSKEY_UV: PasskeyUv = "match";
+
+export const isPasskeyMode = (v: string): v is PasskeyMode => (PASSKEY_MODES as readonly string[]).includes(v);
+export const isPasskeyUv = (v: string): v is PasskeyUv => (PASSKEY_UV as readonly string[]).includes(v);
+
+/**
+ * One credential of the virtual authenticator, the W3C / CDP virtual-authenticator record shape. Binary fields are
+ * base64url. `privateKey` is a PKCS#8 DER P-256 key: test keys only, never a production relying party's.
+ */
+export type PasskeyCredential = {
+	credentialId: string;
+	rpId: string;
+	userHandle: string;
+	userName: string;
+	displayName: string;
+	privateKey: string;
+	signCount: number;
+	/** ms since the epoch; an assertion without `allowCredentials` picks the newest for the rp */
+	createdAt: number;
+	backupEligible: boolean;
+	backupState: boolean;
+};
+
+/** Android: warden's credential-provider app (the virtual authenticator), installed while the lease uses passkeys. */
+export const PASSKEY_PROVIDER_PACKAGE = "nz.co.delacour.warden.passkeys";
+
+/** Android only: the credential-provider settings before warden's provider was enabled, restored on release. */
+export type PasskeyProviderSettings = {
+	/** `settings secure credential_service` (`:`-separated components), `null` when it was unset */
+	service: string | null;
+	/** `settings secure credential_service_primary`, `null` when it was unset */
+	primary: string | null;
+};
+
+/**
+ * The virtual authenticator on a lease's device. Credentials are not part of the record: they live in the device's
+ * store file (`passkey-store.ts`), written by the authenticator itself, and go with the lease.
+ */
+export type PasskeyCondition = { mode: PasskeyMode; uv: PasskeyUv; previousProvider?: PasskeyProviderSettings };
+
 /** Everything a lease can have set on its device, one slot per area. */
 export type ConditionValues = {
 	network: NetworkCondition;
@@ -151,6 +207,7 @@ export type ConditionValues = {
 	battery: BatteryCondition;
 	camera: CameraCondition;
 	keyboard: KeyboardCondition;
+	passkeys: PasskeyCondition;
 };
 
 export type ConditionArea = keyof ConditionValues;
@@ -166,6 +223,7 @@ export const CONDITION_AREAS: readonly ConditionArea[] = [
 	"battery",
 	"camera",
 	"keyboard",
+	"passkeys",
 ];
 
 /** A process warden spawned to hold a condition (shaping proxy, route ticker); undo kills it. */

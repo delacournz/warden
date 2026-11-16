@@ -107,6 +107,9 @@ const AFFECTED = {
 		},
 		a11y: { entries: ["src/app/welcome.tsx", "src/app/a11y.tsx", "src/modules/a11y"] },
 		camera: { entries: ["src/app/welcome.tsx", "src/app/camera.tsx", "src/modules/camera"] },
+		passkeys: {
+			entries: ["src/app/welcome.tsx", "src/app/passkeys.tsx", "src/modules/passkeys", "src/modules/showcase"],
+		},
 	},
 } satisfies Partial<WardenE2eSuite>;
 
@@ -168,6 +171,7 @@ const EXAMPLE_SUITE = {
  * warden e2e a11y                  # the accessibility spec (iOS launched with the a11y library)
  * warden e2e biometrics --all        # the biometrics spec alone, on +bio devices (the example suite excludes it)
  * warden e2e camera --all            # the camera spec alone: suite feed qr-hello, Android claimed with --camera
+ * warden e2e passkeys --all          # the passkeys spec alone: warden's virtual authenticator on (Android API 34+)
  * warden affected example            # which specs this branch needs
  * warden repack ios                  # just the repacked simulator build (cached per JS)
  * warden dev ios                     # cached Debug dev client + Metro
@@ -190,7 +194,7 @@ export default {
 	e2e: {
 		example: {
 			...EXAMPLE_SUITE,
-			exclude: [CONDITION_SPECS, "biometrics", "a11y", "camera"],
+			exclude: [CONDITION_SPECS, "biometrics", "a11y", "camera", "passkeys"],
 		},
 		conditions: {
 			...EXAMPLE_SUITE,
@@ -214,6 +218,12 @@ export default {
 			count: 1,
 			camera: { back: "e2e/fixtures/camera/qr-hello.png" },
 			include: ["camera"],
+		},
+		passkeys: {
+			...EXAMPLE_SUITE,
+			count: 1,
+			conditions: { passkeys: "auto" },
+			include: ["passkeys"],
 		},
 	},
 } satisfies WardenConfig;

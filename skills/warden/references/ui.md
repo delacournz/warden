@@ -141,6 +141,7 @@ Line: `@eN [role] "name" id=<testID> value="..." placeholder="..." <states> (x,y
 | `network set\|flap\|fault\|status\|reset` `location` `clock` | see Network and location | change the device's network / GPS; recorded on your lease, undone on release |
 | `permission` `timezone` `locale` `a11y` `battery` `keyboard` `memory-warning` `push` | see Device settings | permissions, timezone, locale, text size, battery, on-screen keyboard, memory warning, push; recorded on your lease, undone on release |
 | `camera set\|status\|clear` | see Camera | feed an image or video into the app's camera; recorded on your lease, undone on release |
+| `passkey set\|off\|add\|list\|remove\|clear\|status` | see Passkeys | simulated passkey authenticator for the app's real WebAuthn calls; recorded on your lease, undone on release |
 
 ## Biometrics
 
@@ -242,6 +243,25 @@ Feeds a file into the app's real camera (preview, photo capture, QR scan), no ap
 - Android emulator: needs a `--camera` device (`claim android --camera`, profile `<p>+cam`), else `E_CAMERA_DEVICE`. An image swap shows on the app's next camera open (`appliesOnCameraOpen`); a video feed (or image to video) reboots the emulator (`rebooted`).
 - Text output ends with the lines saying when the change applies. `--json`: `result.action` is `camera-set`, `camera-clear`, `camera-status`; `result.camera` the feeds, plus `appliesOnLaunch` / `appliesOnCameraOpen` / `rebooted` when the driver reported them.
 - Physical devices: `E_UNSUPPORTED`.
+
+## Passkeys (`passkey`)
+
+A virtual authenticator answers the app's real passkey calls (create + sign in; `fmt: none`, test keys only). Credentials live in warden's per-device store, `mode` / `uv` are the lease's `passkeys` condition (shared with `device.passkeys` in specs); **release / gc undo it**.
+
+| Command | Args / flags | Notes |
+|---|---|---|
+| `passkey set` | `<auto\|cancel\|fail\|unavailable> [--uv match\|nomatch\|skip]` | turns the authenticator on. `--uv` default `match`; a later `set` without `--uv` keeps it. Default `--timeout` 120000 (Android installs the provider) |
+| `passkey off` | | authenticator off, credentials kept; not on = `changed: false` |
+| `passkey add` | `--rp <id> --user-name <n> [--display-name <n>] [--user-handle <b64url>] [--id <b64url>] [--key <path>] [--sign-count <n>]` | prints the new credential id (`result.credentialId`). `--rp` a bare lowercase host; `--key` a P-256 PKCS#8 PEM or DER file (default: generated); ids default to 16 random bytes; display name defaults to the user name; bad input = exit 1 `usage` before the driver |
+| `passkey list` | `[--rp <id>] [--with-keys]` | newest first; private keys only with `--with-keys`; reads only |
+| `passkey remove` | `<credentialId>` | |
+| `passkey clear` | | removes every credential |
+| `passkey status` | | mode, uv, credentials now; reads only |
+
+- Modes: `auto` succeeds without UI; `cancel` = the user cancelled; `fail` = an authenticator error; `unavailable` = no usable credential. `uv nomatch` = user verification fails, `skip` = the response says it did not verify.
+- iOS: live in an app launched with warden's dylib; an app started without it gets it from its next launch (`appliesOnLaunch`: `warden ui open <bundle> --relaunch`). Android: API 34+ emulator, warden's credential provider is enabled while passkeys are on and the prior provider settings restored on `off` / release.
+- Errors: `E_PASSKEY_API` (the platform passkey API refused or is missing), `E_PASSKEY_STORE` (the credential store is unreadable or unwritable), `E_UNSUPPORTED` (physical devices, or a platform without support).
+- `--json`: `result.action` is `passkey-set`, `-off`, `-add`, `-list`, `-remove`, `-clear`, `-status`; `result` carries `enabled`, `mode`, `uv`, `credentials`, plus `appliesOnLaunch` when the driver reported it, `credentialId` on `add`, `changed` on `off`.
 
 ## Selector grammar
 

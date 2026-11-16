@@ -8,6 +8,7 @@
 		"biometrics",
 		"permissions",
 		"camera",
+		"passkeys",
 		"locale",
 		"accessibility",
 		"battery",

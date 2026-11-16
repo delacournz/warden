@@ -6,10 +6,15 @@ import type {
 	KeyboardMode,
 	LocationCondition,
 	NetworkCondition,
+	PasskeyCredential,
+	PasskeyMode,
+	PasskeyProviderSettings,
+	PasskeyUv,
 	PermissionName,
 	PermissionState,
 	TextSize,
 } from "@delacour/warden-core/conditions/conditions.types";
+import type { PasskeyView } from "@delacour/warden-core/conditions/passkey-store";
 import type { AsyncResult } from "@delacour/warden-types/result";
 import type { ScreenReaderState } from "../a11y/a11y.types";
 import type { BridgeStall } from "./bridge-stall";
@@ -50,7 +55,11 @@ export type DriverErrorCode =
 	// a network / clock condition needs the app launched with the warden dylib and the app is running without it
 	| "E_NETWORK_RELAUNCH"
 	// the camera op needs an Android emulator launched with a camera source (`--camera`) and this one was not
-	| "E_CAMERA_DEVICE";
+	| "E_CAMERA_DEVICE"
+	// passkeys need Android 14 (API 34) or later: the Credential Manager provider API
+	| "E_PASSKEY_API"
+	// the virtual authenticator's credential store does not read or write
+	| "E_PASSKEY_STORE";
 
 export type DriverError = { code: DriverErrorCode; message: string; retryable: boolean; detail?: unknown };
 
@@ -391,6 +400,14 @@ export interface Driver {
 	 * emulator: the emulator's `imagefile:` / `videofile:` camera. Physical devices: `E_UNSUPPORTED`.
 	 */
 	camera(op: CameraCondition | null, opts?: SettingOptions): DriverResult<CameraState>;
+	/**
+	 * The virtual authenticator: an app's passkey create / sign-in calls are answered by warden with test keys, no
+	 * iCloud / Google account. iOS: the injected dylib answers `ASAuthorizationController` (live; an app launched
+	 * without it gets it from the next launch, `appliesOnLaunch`). Android (API 34+, else `E_PASSKEY_API`): warden's
+	 * credential provider app, enabled as the device's provider. Credentials last for the lease. Physical devices:
+	 * `E_UNSUPPORTED`.
+	 */
+	passkeys(op: PasskeyOp, opts?: SettingOptions): DriverResult<PasskeyState>;
 	readonly app: AppCommands;
 	close(): Promise<void>;
 }
@@ -495,6 +512,35 @@ export type CameraState = {
 	appliesOnLaunch?: boolean;
 	appliesOnCameraOpen?: boolean;
 	rebooted?: boolean;
+};
+
+/**
+ * One change to the virtual authenticator. `set` turns it on (and changes mode / uv; a field left out keeps its value,
+ * `auto` / `match` the first time); `add` stores a credential as if the app had created it (a backend fixture's key);
+ * `off` turns the authenticator off and keeps the credentials; `list` / `status` change nothing.
+ */
+export type PasskeyOp =
+	| { kind: "set"; mode?: PasskeyMode; uv?: PasskeyUv }
+	| { kind: "add"; credential: PasskeyCredential }
+	| { kind: "remove"; credentialId: string }
+	| { kind: "clear" }
+	| { kind: "list"; rpId?: string; withKeys?: boolean }
+	| { kind: "status" }
+	| { kind: "off" };
+
+/**
+ * The authenticator after the op. `credentials` (newest first, filtered by a `list` op's rp) carry their private key
+ * only for `list` with `withKeys`. `appliesOnLaunch`: no running app has the authenticator yet, the next launch picks
+ * it up (iOS). `previousProvider` (Android, only on the op that first enabled warden's provider): the device's
+ * credential-provider settings before, for the lease record, so release restores them.
+ */
+export type PasskeyState = {
+	enabled: boolean;
+	mode: PasskeyMode;
+	uv: PasskeyUv;
+	credentials: PasskeyView[];
+	appliesOnLaunch?: boolean;
+	previousProvider?: PasskeyProviderSettings;
 };
 
 /** An APNs payload: an object with an `aps` key (4096 bytes at most). */

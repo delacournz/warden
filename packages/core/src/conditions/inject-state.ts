@@ -14,25 +14,30 @@ export function injectStatePath(wardenHome: string, udid: string): string {
 
 /**
  * Write `{ seq: previous + 1, offline: false, clockOffsetMs: 0, camera: {} }` (no freeze, no camera feeds) when a state file exists; the dylib
- * applies any higher `seq`. `keyboard` stays what the file had, except when `area` is `keyboard`: then it goes back to the default. No file = no injected app was ever launched on the device: nothing to do.
+ * applies any higher `seq`. `keyboard` and `passkeys` (the virtual authenticator) stay what the file had, except when
+ * `area` is that area: `keyboard` goes back to the default, `passkeys` is dropped (authenticator off). No file = no
+ * injected app was ever launched on the device: nothing to do.
  * Returns an error message, or undefined.
  */
 export function neutralizeInjectState(path: string, area?: ConditionArea): string | undefined {
 	if (!existsSync(path)) return undefined;
 	let seq = 0;
 	let keyboard: string | undefined;
+	let passkeys: unknown;
 	try {
 		const data: unknown = JSON.parse(readFileSync(path, "utf8"));
 		if (typeof data === "object" && data !== null && "seq" in data && typeof data.seq === "number") seq = data.seq;
 		if (typeof data === "object" && data !== null && "keyboard" in data && typeof data.keyboard === "string") {
 			keyboard = data.keyboard;
 		}
+		if (typeof data === "object" && data !== null && "passkeys" in data) passkeys = data.passkeys;
 	} catch {
 		// unreadable: start over from 0, the dylib applies the next seq it has not seen
 	}
 	try {
 		const tmp = `${path}.${process.pid}.tmp`;
 		const mode = area === "keyboard" ? DEFAULT_KEYBOARD_MODE : keyboard;
+		const authenticator = area === "passkeys" ? undefined : passkeys;
 		writeFileSync(
 			tmp,
 			JSON.stringify({
@@ -41,6 +46,7 @@ export function neutralizeInjectState(path: string, area?: ConditionArea): strin
 				clockOffsetMs: 0,
 				camera: {},
 				...(mode ? { keyboard: mode } : {}),
+				...(authenticator !== undefined ? { passkeys: authenticator } : {}),
 			})
 		);
 		renameSync(tmp, path);
