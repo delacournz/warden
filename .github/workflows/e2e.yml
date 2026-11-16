@@ -79,9 +79,9 @@ concurrency:
 jobs:
   example:
     runs-on: ${{ inputs.runner || vars.WARDEN_E2E_RUNNER || 'xcode-27' }}
-    # A cold native build (~35 min on a cold compiler cache) + the suite's 35 min + prep. The suite's own timeout
-    # (`suite-timeout-minutes`) times the specs only: the action builds the app in a step before it.
-    timeout-minutes: 85
+    # A cold native build (~70 min with no ccache hits, warden stops it at 90) + the suite's 35 min + prep. The suite's
+    # own timeout (`suite-timeout-minutes`) times the specs only: the action builds the app in a step before it.
+    timeout-minutes: 140
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
