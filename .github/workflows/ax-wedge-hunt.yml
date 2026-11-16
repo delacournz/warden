@@ -7,15 +7,15 @@ name: ax-wedge-hunt
 # iteration's run.jsonl / summary.json plus hunt.json; iterations with a silent streak are marked FLAGGED in the step
 # summary. Manual only: it burns macOS minutes and gates nothing. See scripts/ax-witness/README.md.
 #
-# The helper needs Xcode 27 to build (`xcode-27` image, or an Xcode_27*.app on the label you pick); the default label
-# `macos-26` stops at Xcode 26.6, where the helper build fails.
+# The helper needs Xcode 27 to build: the default label `xcode-27` (GitHub's macOS 27 image) has it; `macos-26` stops at
+# Xcode 26.6, where the helper build fails, so pick another label only if it has an Xcode_27*.app.
 on:
   workflow_dispatch:
     inputs:
       runner:
         description: runs-on label
         type: string
-        default: macos-26
+        default: xcode-27
       xcode:
         description: Developer dir or Xcode.app to build and run with (empty = the newest /Applications/Xcode*.app)
         type: string
