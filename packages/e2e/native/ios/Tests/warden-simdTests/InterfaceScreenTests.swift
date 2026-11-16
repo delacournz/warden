@@ -9,7 +9,7 @@ import XCTest
 final class InterfaceScreenTests: XCTestCase {
   private let portrait: (width: Double, height: Double, scale: Double) = (402, 874, 3)
 
-  private func app(width: Double, height: Double, children: [[String: Any]]) -> AccessibilityDocumentElement {
+  private func app(width: Double, height: Double, children: [[String: Any]]) -> RawNode {
     DocumentFixture.element([
       "type": "Application", "label": "warden-example", "enabled": true,
       "frame": ["x": 0, "y": 0, "width": width, "height": height], "children": children,
@@ -54,7 +54,7 @@ final class InterfaceScreenTests: XCTestCase {
   }
 
   func testALandscapeSnapshotKeepsItsRightHalfHittable() throws {
-    let document = AccessibilityDocument(elements: [app(width: 874, height: 402, children: [topRight])])
+    let document = RawDocument(elements: [app(width: 874, height: 402, children: [topRight])])
     let data = Session.renderSnapshot(
       document: document, backend: .axbridge, screen: portrait, interactiveOnly: false)
     XCTAssertEqual(data["screen"]?["width"], .double(874))

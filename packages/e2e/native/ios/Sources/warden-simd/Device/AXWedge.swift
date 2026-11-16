@@ -1,4 +1,3 @@
-import FBSimulatorAX
 import Foundation
 
 /// A step of the wedge check that could not run (the log could not be read, the restart failed).
@@ -96,21 +95,13 @@ final class AXWedgeRecovery: @unchecked Sendable {
 
   /// The host reader's service did not answer in time (as opposed to an error it gave).
   static func isServiceSilent(_ error: any Error) -> Bool {
-    if let error = error as? AccessibilityError, case .serviceNotAnswering = error { return true }
-    return false
+    (error as? GuestError)?.isHostSilent ?? false
   }
 
   /// The host reader's service answered, with an error (e.g. `noTranslationObject`): not silence, and not a failure to
   /// ask (SpringBoard down or restarting, accessibility or the dispatcher unavailable, the sim not booted).
   static func isServiceAnswer(_ error: any Error) -> Bool {
-    guard let error = error as? AccessibilityError else { return false }
-    switch error {
-    case .serviceNotAnswering, .springBoardRestarting, .springBoardNotRunning, .accessibilityUnavailable,
-      .dispatcherUnavailable, .simulatorNotBooted:
-      return false
-    default:
-      return true
-    }
+    (error as? GuestError)?.isHostServiceAnswer ?? false
   }
 
   let maxRestarts: Int
@@ -376,7 +367,7 @@ extension Session {
         do {
           _ = try await withTimeout(
             milliseconds: AXWedgeRecovery.livenessReadMs, error: { WireError(.timeout, "ax liveness read") }
-          ) { try await reader.hitTest(at: point, options: AccessibilityRequestOptions()) }
+          ) { try await reader.hitTest(at: point, options: .readerDefaults) }
           return false
         } catch let error as WireError where error.code == .timeout {
           return true
@@ -393,7 +384,7 @@ extension Session {
         do {
           _ = try await withTimeout(
             milliseconds: AXWedgeRecovery.livenessReadMs, error: { WireError(.timeout, "SpringBoard control read") }
-          ) { try await reader.describe(.application(pid: pid), options: AccessibilityRequestOptions()) }
+          ) { try await reader.describe(.application(pid: pid), options: .readerDefaults) }
           return true
         } catch {
           return AXWedgeRecovery.isServiceAnswer(error)

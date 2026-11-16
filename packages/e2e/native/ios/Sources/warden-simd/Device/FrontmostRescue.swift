@@ -1,6 +1,3 @@
-import FBSimulatorAX
-import FBSimulatorBridgeProtocol
-import FBSimulatorControl
 import Foundation
 
 /// How the bridge guest finds the frontmost app, and how long reads skip the frontmost lookup after it failed.
@@ -15,13 +12,13 @@ struct FrontmostPolicy: Sendable, Equatable {
   var cooldownSeconds: Double = 20
   /// The bridge guest's frontmost strategy (`WARDEN_SIMD_FRONTMOST_METHOD`: `window-server` | `running-board` |
   /// `center-point`, camelCase accepted).
-  var method: AXBridgeFrontmostMethod = .windowServer
+  var method: FrontmostMethod = .windowServer
 
   /// `runningBoard`, `running-board` and `runningboard` all name the same strategy.
-  static func method(named name: String) -> AXBridgeFrontmostMethod? {
+  static func method(named name: String) -> FrontmostMethod? {
     let key = name.lowercased().replacingOccurrences(of: "-", with: "").replacingOccurrences(
       of: "_", with: "")
-    return AXBridgeFrontmostMethod.allCases.first {
+    return FrontmostMethod.allCases.first {
       $0.rawValue.lowercased().replacingOccurrences(of: "-", with: "") == key
     }
   }
@@ -112,21 +109,13 @@ extension Session {
   /// The read failed because the frontmost app could not be resolved, not because the app or the guest is gone.
   static func isFrontmostUnresolved(_ error: any Error) -> Bool {
     if let both = error as? AXReadersFailed { return isFrontmostUnresolved(both.host) }
-    if let error = error as? AXBridgeError, case .frontmostUnresolved = error { return true }
-    if let error = error as? AccessibilityError {
-      switch error {
-      case .serviceNotAnswering(.request(let kind, _), _, _): return kind == "frontmost"
-      case .noTranslationObject(let query): return query == nil || query == .frontmost
-      default: return false
-      }
-    }
-    return false
+    return (error as? GuestError)?.isFrontmostUnresolved ?? false
   }
 
   /// One frontmost read through `read`; when its frontmost app could not be resolved, the same read by pid for each of
   /// `candidates` in order. Pure over its closures so a scripted sequence can test it.
   static func readTargeted<Value: Sendable>(
-    read: @escaping @Sendable (AccessibilityElementQuery) async throws -> AXOutcome<Value>,
+    read: @escaping @Sendable (AXTarget) async throws -> AXOutcome<Value>,
     candidates: @Sendable () async -> [PidTarget],
     gate: FrontmostLookupGate,
     policy: FrontmostPolicy,
@@ -196,8 +185,8 @@ extension Session {
     var targets = Session.pidCandidates(
       launched: launched, stream: stream, springboard: nil, isAlive: Session.processExists)
     if targets.isEmpty {
-      let springboard: pid_t? = try? await simulator.application.processID(
-        forBundleID: "com.apple.springboard")
+      let springboard: pid_t? = try? await apps.processID(
+        bundleID: "com.apple.springboard")
       targets = Session.pidCandidates(
         launched: nil, stream: nil, springboard: springboard, isAlive: Session.processExists)
     }
@@ -207,7 +196,7 @@ extension Session {
   /// `withAX` for a frontmost read, made by pid when the frontmost app cannot be resolved (`readTargeted`).
   func withFrontmostAX<Value: Sendable>(
     backend requested: AXBackend?, op: String,
-    _ body: @escaping @Sendable (any UIAutomation, AccessibilityElementQuery) async throws -> Value
+    _ body: @escaping @Sendable (any AXReader, AXTarget) async throws -> Value
   ) async throws -> TargetedOutcome<Value> {
     try await Session.readTargeted(
       read: { query in

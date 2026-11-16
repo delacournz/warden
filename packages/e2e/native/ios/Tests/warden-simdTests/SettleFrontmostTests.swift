@@ -1,14 +1,13 @@
 import CoreGraphics
-import FBSimulatorAX
 import Foundation
 import XCTest
 
 @testable import warden_simd
 
 /// A quiescence source the test drives by hand: `emit` pushes events into the stream the monitor last opened.
-final class FakeReader: UIAutomation, @unchecked Sendable {
+final class FakeReader: AXReader, @unchecked Sendable {
   private let lock = NSLock()
-  private var continuation: AsyncThrowingStream<QuiescenceEvent, Error>.Continuation?
+  private var continuation: AsyncThrowingStream<AXQuiescenceEvent, Error>.Continuation?
   private(set) var opened = 0
   /// Every `quiescence` call, including ones cancelled while still opening.
   private(set) var requests = 0
@@ -18,9 +17,7 @@ final class FakeReader: UIAutomation, @unchecked Sendable {
   var holdOpens = false
   private var heldOpens: [CheckedContinuation<Void, Never>] = []
 
-  func quiescence(
-    _ query: AccessibilityElementQuery, parameters: QuiescenceParameters
-  ) async throws -> AsyncThrowingStream<QuiescenceEvent, Error> {
+  func quiescence(quietWindow: Double) async throws -> AsyncThrowingStream<AXQuiescenceEvent, any Error> {
     lock.withLock { requests += 1 }
     if openDelay > .zero { try await Task.sleep(for: openDelay) }
     if lock.withLock({ holdOpens }) {
@@ -34,7 +31,7 @@ final class FakeReader: UIAutomation, @unchecked Sendable {
       }
       try Task.checkCancellation()
     }
-    let (stream, continuation) = AsyncThrowingStream<QuiescenceEvent, Error>.makeStream()
+    let (stream, continuation) = AsyncThrowingStream<AXQuiescenceEvent, Error>.makeStream()
     lock.withLock {
       self.continuation?.finish()
       self.continuation = continuation
@@ -53,7 +50,7 @@ final class FakeReader: UIAutomation, @unchecked Sendable {
     for c in held { c.resume() }
   }
 
-  func emit(_ event: QuiescenceEvent) {
+  func emit(_ event: AXQuiescenceEvent) {
     lock.withLock { continuation }?.yield(event)
   }
 
@@ -70,28 +67,13 @@ final class FakeReader: UIAutomation, @unchecked Sendable {
     }
   }
 
-  private func unsupported() -> UIAutomationError {
-    .operationUnsupported(backend: .accessibility, operation: "fake")
+  private func unsupported() -> GuestError {
+    .unsupported(message: "fake")
   }
 
-  func describe(_ query: AccessibilityElementQuery, options: AccessibilityRequestOptions) async throws
-    -> AccessibilityElementsResponse
-  { throw unsupported() }
-  func hitTest(at point: CGPoint, options: AccessibilityRequestOptions) async throws -> AccessibilityElementsResponse? {
-    throw unsupported()
-  }
-  func tap(_ query: AccessibilityElementQuery, options: TapOptions) async throws { throw unsupported() }
-  func setValue(_ value: String, for query: AccessibilityElementQuery) async throws { throw unsupported() }
-  func wait(_ query: AccessibilityElementQuery, timeout: TimeInterval, pollInterval: TimeInterval) async throws {
-    throw unsupported()
-  }
-  func scroll(_ query: AccessibilityElementQuery, direction: AccessibilityScrollDirection) async throws {
-    throw unsupported()
-  }
-  func frame(_ query: AccessibilityElementQuery) async throws -> CGRect { throw unsupported() }
-  func drag(from source: AccessibilityElementQuery, to destination: AccessibilityElementQuery, options: DragOptions)
-    async throws
-  { throw unsupported() }
+  func describe(_ target: AXTarget, options: AXReadOptions) async throws -> RawDocument { throw unsupported() }
+  func hitTest(at point: CGPoint, options: AXReadOptions) async throws -> RawHit? { throw unsupported() }
+  func readFrame() async throws -> Data { throw unsupported() }
 }
 
 /// Hands out pids from a script, one per call; the last entry repeats.

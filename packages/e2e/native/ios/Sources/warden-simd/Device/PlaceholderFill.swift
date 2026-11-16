@@ -1,4 +1,3 @@
-import FBSimulatorAX
 import Foundation
 
 /// One text field as the bridge reports it: enough to find it again in the next read and in a host hit-test answer.
@@ -21,11 +20,11 @@ struct PlaceholderKey: Hashable, Sendable {
     self.height = height
   }
 
-  init(_ node: AccessibilityDocumentElement) {
-    let frame = ElementBuilder.rect(ElementBuilder.flat(node.frame))
+  init(_ node: RawNode) {
+    let frame = ElementBuilder.rect(node.frame)
     self.init(
-      pid: ElementBuilder.flat(node.pid), identifier: ElementBuilder.nonEmpty(ElementBuilder.flat(node.identifier)),
-      label: ElementBuilder.nonEmpty(ElementBuilder.flat(node.label)), x: Int(frame.x.rounded()),
+      pid: node.pid, identifier: ElementBuilder.nonEmpty(node.identifier),
+      label: ElementBuilder.nonEmpty(node.label), x: Int(frame.x.rounded()),
       y: Int(frame.y.rounded()), width: Int(frame.width.rounded()), height: Int(frame.height.rounded()))
   }
 
@@ -73,7 +72,7 @@ final class PlaceholderMemory: @unchecked Sendable {
 /// field reads as filled. The host `ax` reader names the placeholder, so each such field is hit-tested on the host
 /// once (~10 ms) and the answer is kept by field (pid, testID, label, frame); later reads cost nothing.
 enum PlaceholderFill {
-  typealias HitTest = @Sendable (CGPoint) async throws -> AccessibilityDocumentElement?
+  typealias HitTest = @Sendable (CGPoint) async throws -> RawNode?
 
   /// Hit-tests one read may spend on fields it has not seen; the rest wait for the next read.
   static let maxHitsPerRead = 6
@@ -83,11 +82,11 @@ enum PlaceholderFill {
   static let backoffSeconds: TimeInterval = 30
 
   /// Text fields (any reader-visible text entry) that show a value and name no placeholder, with their centre.
-  static func candidates(_ roots: [AccessibilityDocumentElement]) -> [(key: PlaceholderKey, point: CGPoint)] {
+  static func candidates(_ roots: [RawNode]) -> [(key: PlaceholderKey, point: CGPoint)] {
     var found: [(key: PlaceholderKey, point: CGPoint)] = []
-    func walk(_ node: AccessibilityDocumentElement) {
+    func walk(_ node: RawNode) {
       if isCandidate(node) {
-        let frame = ElementBuilder.rect(ElementBuilder.flat(node.frame))
+        let frame = ElementBuilder.rect(node.frame)
         found.append((PlaceholderKey(node), CGPoint(x: frame.center.x, y: frame.center.y)))
       }
       for child in node.children ?? [] { walk(child) }
@@ -96,13 +95,13 @@ enum PlaceholderFill {
     return found
   }
 
-  static func isCandidate(_ node: AccessibilityDocumentElement) -> Bool {
-    guard ElementBuilder.nonEmpty(ElementBuilder.flat(node.placeholder)) == nil,
-      ElementBuilder.valueString(ElementBuilder.flat(node.value)) != nil,
-      ElementBuilder.rect(ElementBuilder.flat(node.frame)).hasArea
+  static func isCandidate(_ node: RawNode) -> Bool {
+    guard ElementBuilder.nonEmpty(node.placeholder) == nil,
+      ElementBuilder.valueString(node.value) != nil,
+      ElementBuilder.rect(node.frame).hasArea
     else { return false }
-    let traits = TraitNames.normalize(ElementBuilder.flat(node.traits) ?? [])
-    let type = ElementBuilder.nonEmpty(ElementBuilder.flat(node.type)) ?? "Other"
+    let traits = TraitNames.normalize(node.traits ?? [])
+    let type = ElementBuilder.nonEmpty(node.type) ?? "Other"
     switch RoleMap.role(forType: type, traits: traits) {
     case .textfield, .securefield, .searchfield: return true
     default: return false
@@ -133,7 +132,7 @@ enum PlaceholderFill {
         guard let node = try await hit(candidate.point), candidate.key.sameField(as: PlaceholderKey(node)) else {
           continue
         }
-        let placeholder = ElementBuilder.nonEmpty(ElementBuilder.flat(node.placeholder))
+        let placeholder = ElementBuilder.nonEmpty(node.placeholder)
         memory.remember(candidate.key, placeholder: placeholder)
         if let placeholder { found[candidate.key] = placeholder }
       } catch {
@@ -146,19 +145,17 @@ enum PlaceholderFill {
 
 extension Session {
   /// Placeholders the bridge left out of `document` (see `PlaceholderFill`); empty for any other reader.
-  func missingPlaceholders(in document: AccessibilityDocument, backend: AXBackend) async -> [PlaceholderKey: String] {
+  func missingPlaceholders(in document: RawDocument, backend: AXBackend) async -> [PlaceholderKey: String] {
     guard backend == .axbridge, let host = axHostReader else { return [:] }
     let candidates = PlaceholderFill.candidates(document.elements)
     guard !candidates.isEmpty else { return [:] }
-    var options = AccessibilityRequestOptions(format: .complete, keys: wireKeys)
-    options.filter = .all
-    let readOptions = options
+    let readOptions = AXReadOptions.complete(keys: wireKeys)
     let deadlineMs = PlaceholderFill.hitDeadlineMs
     return await PlaceholderFill.resolve(
       candidates, memory: placeholderMemory, now: ProcessInfo.processInfo.systemUptime
     ) { point in
       try await withTimeout(milliseconds: deadlineMs, error: { BridgeStalled(afterMs: deadlineMs) }) {
-        try await host.hitTest(at: point, options: readOptions)?.elements.elements.first
+        try await host.hitTest(at: point, options: readOptions)?.node
       }
     }
   }

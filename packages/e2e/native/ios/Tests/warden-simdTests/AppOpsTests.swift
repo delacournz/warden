@@ -1,8 +1,10 @@
-import FBControlCore
 import FBSimulatorControl
 import XCTest
 
 @testable import warden_simd
+
+/// idb's error -> the wire error the op would answer: the adapter maps it once, then `WireError.from`.
+func wire(_ error: any Error) -> WireError { WireError.from(IdbErrors.map(error)) }
 
 final class AppOpsTests: XCTestCase {
   private func badRequest(_ make: @autoclosure () throws -> some Any, _ note: String, line: UInt = #line) {
@@ -19,7 +21,8 @@ final class AppOpsTests: XCTestCase {
     XCTAssertEqual(request.arguments, [])
     XCTAssertEqual(request.environment, [:])
     XCTAssertTrue(request.terminateRunning)
-    XCTAssertEqual(request.launchMode, .relaunchIfRunning)
+    XCTAssertEqual(request.spec.terminateRunning, true)
+    XCTAssertEqual(IdbApps.launchMode(terminateRunning: request.spec.terminateRunning), .relaunchIfRunning)
     XCTAssertEqual(try LaunchRequest(["bundleId": "a.b", "args": .null, "env": .null, "terminateRunning": .null]), request)
   }
 
@@ -30,14 +33,11 @@ final class AppOpsTests: XCTestCase {
     XCTAssertEqual(request.arguments, ["--x", "1"])
     XCTAssertEqual(request.environment, ["A": "1", "B": "two"])
     XCTAssertFalse(request.terminateRunning)
-    XCTAssertEqual(request.launchMode, .foregroundIfRunning)
-    let configuration = request.configuration
-    XCTAssertEqual(configuration.bundleID, "a.b")
-    XCTAssertNil(configuration.bundleName)
-    XCTAssertEqual(configuration.arguments, ["--x", "1"])
-    XCTAssertEqual(configuration.environment, ["A": "1", "B": "two"])
-    XCTAssertFalse(configuration.waitForDebugger)
-    XCTAssertEqual(configuration.launchMode, .foregroundIfRunning)
+    XCTAssertEqual(
+      request.spec,
+      AppLaunchSpec(
+        bundleID: "a.b", arguments: ["--x", "1"], environment: ["A": "1", "B": "two"], terminateRunning: false))
+    XCTAssertEqual(IdbApps.launchMode(terminateRunning: false), .foregroundIfRunning)
   }
 
   func testLaunchRejectsMalformedParams() {
@@ -88,29 +88,29 @@ final class AppOpsTests: XCTestCase {
 
   func testLaunchErrorsKeepTheirMeaning() {
     struct Underlying: Error {}
-    let missing = WireError.from(
+    let missing = wire(
       SimulatorApplicationLaunchError.launchingUninstalledApplication(bundleID: "a.b", underlying: Underlying()))
     XCTAssertEqual(missing.code, .appUnavailable)
     XCTAssertEqual(missing.detail?["bundleId"], "a.b")
-    XCTAssertEqual(WireError.from(SimulatorApplicationLaunchError.noDataDirectory(bundleID: "a.b")).code, .appUnavailable)
-    let running = WireError.from(
+    XCTAssertEqual(wire(SimulatorApplicationLaunchError.noDataDirectory(bundleID: "a.b")).code, .appUnavailable)
+    let running = wire(
       SimulatorApplicationLaunchError.applicationAlreadyRunning(bundleID: "a.b", processIdentifier: 42))
     XCTAssertEqual(running.code, .internal)
     XCTAssertEqual(running.detail?["pid"], 42)
     XCTAssertEqual(
-      WireError.from(SimulatorApplicationLaunchError.foregroundIfRunningIncompatibleWithWaitForDebugger).code, .badRequest)
+      wire(SimulatorApplicationLaunchError.foregroundIfRunningIncompatibleWithWaitForDebugger).code, .badRequest)
   }
 
   func testLaunchdAndOpenUrlErrors() {
     let gone = SimulatorLaunchCtlError.noMatchingProcesses(pattern: "UIKitApplication:a.b")
-    XCTAssertTrue(Session.isNotRunning(gone))
-    XCTAssertEqual(WireError.from(gone).code, .appUnavailable)
+    XCTAssertTrue(Session.isNotRunning(IdbErrors.map(gone)))
+    XCTAssertEqual(wire(gone).code, .appUnavailable)
     let failed = SimulatorLaunchCtlError.commandFailed(arguments: ["list"], exitCode: 1, stderr: "x")
-    XCTAssertFalse(Session.isNotRunning(failed))
-    XCTAssertEqual(WireError.from(failed).code, .io)
+    XCTAssertFalse(Session.isNotRunning(IdbErrors.map(failed)))
+    XCTAssertEqual(wire(failed).code, .io)
     let unopened = SimulatorLifecycleError.openURLFailed(
       url: URL(string: "nope://x")!, simulatorDescription: "sim", underlying: nil)
-    XCTAssertEqual(WireError.from(unopened).code, .io)
-    XCTAssertEqual(WireError.from(SimulatorLifecycleError.focusFailed(applicationDescription: "x")).code, .internal)
+    XCTAssertEqual(wire(unopened).code, .io)
+    XCTAssertEqual(wire(SimulatorLifecycleError.focusFailed(applicationDescription: "x")).code, .internal)
   }
 }

@@ -68,7 +68,7 @@ private final class Clock: @unchecked Sendable {
 /// AX use: both readers then time out for the life of the boot. The helper recognises it (both readers silent, the
 /// marker in the sim log), restarts backboardd once, ends its stale guests and reads on.
 final class AXWedgeTests: XCTestCase {
-  private let silentHost = AccessibilityError.serviceNotAnswering(.query(timeout: 10), elapsed: 10, behindAbandoned: 0)
+  private let silentHost = IdbErrors.map(AccessibilityError.serviceNotAnswering(.query(timeout: 10), elapsed: 10, behindAbandoned: 0))
 
   private func recovery(_ script: Script, max: Int = 1, clock: Clock = Clock()) -> AXWedgeRecovery {
     AXWedgeRecovery(maxRestarts: max, steps: script.steps, now: { clock.now }, log: { _ in })
@@ -87,20 +87,20 @@ final class AXWedgeTests: XCTestCase {
 
   func testOnlyASilentHostServiceCountsAsDead() {
     XCTAssertTrue(AXWedgeRecovery.isServiceSilent(silentHost))
-    XCTAssertFalse(AXWedgeRecovery.isServiceSilent(AccessibilityError.elementNotFound(key: "id", value: "x", depth: 1)))
+    XCTAssertFalse(AXWedgeRecovery.isServiceSilent(IdbErrors.map(AccessibilityError.elementNotFound(key: "id", value: "x", depth: 1))))
     XCTAssertFalse(AXWedgeRecovery.isServiceSilent(WireError(.timeout, "client")))
   }
 
   func testOnlyAnErrorTheServerGaveCountsAsAnAnswer() {
-    XCTAssertTrue(AXWedgeRecovery.isServiceAnswer(AccessibilityError.noTranslationObject(.application(pid: 3))))
-    XCTAssertTrue(AXWedgeRecovery.isServiceAnswer(AccessibilityError.elementNotFound(key: "id", value: "x", depth: 1)))
+    XCTAssertTrue(AXWedgeRecovery.isServiceAnswer(IdbErrors.map(AccessibilityError.noTranslationObject(.application(pid: 3)))))
+    XCTAssertTrue(AXWedgeRecovery.isServiceAnswer(IdbErrors.map(AccessibilityError.elementNotFound(key: "id", value: "x", depth: 1))))
     XCTAssertFalse(AXWedgeRecovery.isServiceAnswer(silentHost))
-    XCTAssertFalse(AXWedgeRecovery.isServiceAnswer(AccessibilityError.springBoardNotRunning))
+    XCTAssertFalse(AXWedgeRecovery.isServiceAnswer(IdbErrors.map(AccessibilityError.springBoardNotRunning)))
     XCTAssertFalse(
-      AXWedgeRecovery.isServiceAnswer(AccessibilityError.springBoardRestarting(exitedProcessIdentifier: 3, restartedAgo: 1)))
-    XCTAssertFalse(AXWedgeRecovery.isServiceAnswer(AccessibilityError.accessibilityUnavailable))
-    XCTAssertFalse(AXWedgeRecovery.isServiceAnswer(AccessibilityError.dispatcherUnavailable))
-    XCTAssertFalse(AXWedgeRecovery.isServiceAnswer(AccessibilityError.simulatorNotBooted(description: "Shutdown")))
+      AXWedgeRecovery.isServiceAnswer(IdbErrors.map(AccessibilityError.springBoardRestarting(exitedProcessIdentifier: 3, restartedAgo: 1))))
+    XCTAssertFalse(AXWedgeRecovery.isServiceAnswer(IdbErrors.map(AccessibilityError.accessibilityUnavailable)))
+    XCTAssertFalse(AXWedgeRecovery.isServiceAnswer(IdbErrors.map(AccessibilityError.dispatcherUnavailable)))
+    XCTAssertFalse(AXWedgeRecovery.isServiceAnswer(IdbErrors.map(AccessibilityError.simulatorNotBooted(description: "Shutdown"))))
     XCTAssertFalse(AXWedgeRecovery.isServiceAnswer(WireError(.timeout, "SpringBoard control read")))
     XCTAssertFalse(AXWedgeRecovery.isServiceAnswer(CancellationError()))
   }
@@ -390,7 +390,7 @@ final class AXWedgeTests: XCTestCase {
     let wedge = recovery(Script())
     let silent = silentHost
     _ = try? await readAX(
-      bridge: { throw AXBridgeError.bridgeUnavailable }, host: { throw silent }, wedge: wedge)
+      bridge: { throw IdbErrors.map(AXBridgeError.bridgeUnavailable) }, host: { throw silent }, wedge: wedge)
     XCTAssertNil(wedge.current)
   }
 

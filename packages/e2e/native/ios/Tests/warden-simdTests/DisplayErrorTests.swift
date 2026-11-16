@@ -8,7 +8,7 @@ import XCTest
 final class DisplayErrorTests: XCTestCase {
   func testADisplayStillChangingIsRetryable() {
     for error in [SimulatorDisplayError.changed, .transitioning] {
-      let wire = WireError.from(error)
+      let wire = wire(error)
       XCTAssertEqual(wire.code, .internal, "\(error)")
       XCTAssertTrue(wire.retryable, "\(error)")
       XCTAssertEqual(wire.detail?["reason"], "display_changing", "\(error)")
@@ -16,14 +16,14 @@ final class DisplayErrorTests: XCTestCase {
   }
 
   func testAMissingDisplayIsNotRetryable() {
-    let wire = WireError.from(SimulatorDisplayError.noActiveIntegratedDisplay)
+    let wire = wire(SimulatorDisplayError.noActiveIntegratedDisplay)
     XCTAssertEqual(wire.code, .internal)
     XCTAssertFalse(wire.retryable)
   }
 
   func testBothReadersFailingOnARotationStaysRetryable() {
-    let wire = WireError.from(
-      AXReadersFailed(bridgeReason: "display changed", host: SimulatorDisplayError.changed))
+    let wire = wire(
+      AXReadersFailed(bridgeReason: "display changed", host: IdbErrors.map(SimulatorDisplayError.changed)))
     XCTAssertTrue(wire.retryable)
   }
 }
