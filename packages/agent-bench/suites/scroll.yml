@@ -1,0 +1,11 @@
+# Scroll-to-find: the Clock row sits below the fold of the Settings list.
+name: scroll
+description: Sign in, then scroll Settings to find and open the Clock screen
+prompt: ../prompts/scroll.md
+platform: ios
+app: example
+model: claude-sonnet-5-5
+maxTurns: 50
+timeoutMs: 600000
+success:
+  - wait: id=clk-screen

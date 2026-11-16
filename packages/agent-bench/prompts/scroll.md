@@ -1,0 +1,1 @@
+Task: open the app fresh, get past the onboarding screens, sign in with email `ada@example.com` and password `password1`, then open the Settings tab. Find the "Clock" row (it may be below the visible area) and open it. Stop when the Clock screen is showing.
