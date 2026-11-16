@@ -113,6 +113,28 @@ describe("podsInstall (CNG)", () => {
 		expect(h.tc.podInstalls).toBe(2);
 	});
 
+	test("the caller's env reaches expo prebuild and pod install, not only the key (USE_CCACHE wires ccache)", async () => {
+		const root = await makeRepo(h.dir, "app", { ignoreIos: true });
+		const seen: Record<string, Record<string, string | undefined> | undefined> = {};
+		const exec = h.deps.exec;
+		const res = await podsInstall(
+			{
+				...h.deps,
+				env: { ...h.deps.env, USE_CCACHE: "1", CCACHE_BINARY: "/opt/bin/ccache" },
+				exec: (cmd, opts) => {
+					if (cmd[0] === "pod" && cmd[1] === "install") seen.pod = opts?.env;
+					if (cmd[0] === "bunx" && cmd[1] === "expo") seen.prebuild = opts?.env;
+					return exec(cmd, opts);
+				},
+			},
+			{ projectRoot: root }
+		);
+		expect(res.success).toBe(true);
+		for (const env of [seen.pod, seen.prebuild]) {
+			expect(env).toMatchObject({ USE_CCACHE: "1", CCACHE_BINARY: "/opt/bin/ccache" });
+		}
+	});
+
 	test("an installed checkout is up-to-date and untouched", async () => {
 		const a = await makeRepo(h.dir, "a", { ignoreIos: true });
 		await install(a);
