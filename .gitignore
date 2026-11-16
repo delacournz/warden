@@ -20,3 +20,4 @@ packages/e2e/native/ios-runner/**/xcuserdata
 
 packages/e2e/native/android/.cache
 packages/e2e/native/android/dist-atf
+ax-witness-out/
