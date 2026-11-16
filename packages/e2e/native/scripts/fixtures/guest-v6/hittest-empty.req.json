@@ -1,0 +1,5 @@
+{
+	"command": { "accessibility": { "action": { "hitTest": { "clientType": 0, "x": -5, "y": -5 } } } },
+	"id": "ID-4b",
+	"version": 6
+}

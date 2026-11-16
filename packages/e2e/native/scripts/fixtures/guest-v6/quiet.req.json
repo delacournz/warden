@@ -1,0 +1,7 @@
+{
+	"command": {
+		"accessibility": { "action": { "quiescence": { "method": "window-server", "quietWindowMs": 50, "x": 0, "y": 0 } } }
+	},
+	"id": "ID-5",
+	"version": 6
+}
