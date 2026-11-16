@@ -20,16 +20,19 @@ import {
 	computePins,
 	GUEST_LOCK_PATH,
 	GUEST_RELATIVE,
+	type GuestPins,
 	LIBRARIES_DIR,
 	librariesPresent,
 	NATIVE_DIR,
+	type PinMove,
 	parseGuestLock,
 } from "./guest-pin";
 import { compareShapes, GuestClient } from "./guest-wire";
 
 const FIXTURES_ROOT = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
 
-export type Row = { name: string; pass: boolean; ms: number; detail: string };
+/** One line of the table. An `informational` row is printed (as `info` when it did not pass) but never fails the run. */
+export type Row = { name: string; pass: boolean; ms: number; detail: string; informational?: true };
 
 type Json = Record<string, unknown>;
 
@@ -196,12 +199,46 @@ async function replayQuiescence(client: GuestClient, dir: string, protocolVersio
 	};
 }
 
+const PIN_MOVES: Record<PinMove, string> = {
+	protocol: "protocol version",
+	interface: "wire interface",
+	guest: "guest binary",
+	idb: "idb release",
+};
+
+/**
+ * The `pins` row. Mid-bump the committed lock is always behind the libraries (it is rewritten only after a green
+ * replay), so a moved pin is shown but is not drift on its own: the wire checks decide. A new protocol version with
+ * no goldens fails on its own `fixtures` row.
+ */
+export function pinsRow(committed: GuestPins, actual: GuestPins): Row {
+	const verdict = comparePins(committed, actual);
+	if (verdict.ok)
+		return {
+			name: "pins",
+			pass: true,
+			ms: 0,
+			detail: `protocol v${actual.protocolVersion}, guest ${actual.guestSha256.slice(0, 12)}`,
+		};
+	return {
+		name: "pins",
+		pass: false,
+		informational: true,
+		ms: 0,
+		detail: `${PIN_MOVES[verdict.moved]} moved (idb ${committed.idbVersion}→${actual.idbVersion}, protocol v${committed.protocolVersion}→v${actual.protocolVersion}); not drift on its own, the checks below decide. Green: \`bun native/scripts/guest-pin.ts --write\``,
+	};
+}
+
+/** 0 when every row that counts passed, 1 otherwise. Informational rows never count. */
+export function exitCode(rows: readonly Row[]): 0 | 1 {
+	return rows.every((row) => row.pass || row.informational) ? 0 : 1;
+}
+
 export function formatTable(rows: readonly Row[]): string {
 	const width = Math.max(4, ...rows.map((r) => r.name.length));
-	const lines = rows.map(
-		(r) => `${r.pass ? "pass" : "FAIL"}  ${r.name.padEnd(width)}  ${String(r.ms).padStart(6)} ms  ${r.detail}`
-	);
-	const failed = rows.filter((r) => !r.pass).length;
+	const label = (r: Row): string => (r.pass ? "pass" : r.informational ? "info" : "FAIL");
+	const lines = rows.map((r) => `${label(r)}  ${r.name.padEnd(width)}  ${String(r.ms).padStart(6)} ms  ${r.detail}`);
+	const failed = rows.filter((r) => !r.pass && !r.informational).length;
 	return [
 		...lines,
 		"",
@@ -250,15 +287,7 @@ async function main(): Promise<number> {
 		console.error(pins.error);
 		return 2;
 	}
-	const verdict = comparePins(committed, pins.data);
-	rows.push({
-		name: "pins",
-		pass: verdict.ok,
-		ms: 0,
-		detail: verdict.ok
-			? `protocol v${pins.data.protocolVersion}, guest ${pins.data.guestSha256.slice(0, 12)}`
-			: verdict.message,
-	});
+	rows.push(pinsRow(committed, pins.data));
 
 	const dir = fixturesDir(pins.data.protocolVersion);
 	if (!existsSync(dir)) {
@@ -313,7 +342,7 @@ async function main(): Promise<number> {
 		rmSync(sockDir, { recursive: true, force: true });
 	}
 	console.log(formatTable(rows));
-	return rows.every((row) => row.pass) ? 0 : 1;
+	return exitCode(rows);
 }
 
 if (import.meta.main) process.exit(await main());

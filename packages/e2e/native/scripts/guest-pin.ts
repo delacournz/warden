@@ -104,7 +104,10 @@ export async function computePins(
 	});
 }
 
-export type PinVerdict = { ok: true } | { ok: false; message: string };
+/** Which pin moved first: protocol version, wire interface, guest binary, or only the idb release named in the lock. */
+export type PinMove = "protocol" | "interface" | "guest" | "idb";
+
+export type PinVerdict = { ok: true } | { ok: false; moved: PinMove; message: string };
 
 const REPLAY = "bun native/scripts/guest-contract.ts --udid <udid>";
 
@@ -113,21 +116,25 @@ export function comparePins(committed: GuestPins, actual: GuestPins): PinVerdict
 	if (committed.protocolVersion !== actual.protocolVersion)
 		return {
 			ok: false,
+			moved: "protocol",
 			message: `idb guest protocol changed v${committed.protocolVersion}→v${actual.protocolVersion} (idb ${committed.idbVersion}→${actual.idbVersion}): re-run the guest contract replay (\`${REPLAY}\`), update the golden frames in native/scripts/fixtures/guest-v${actual.protocolVersion}, then \`bun native/scripts/guest-pin.ts --write\``,
 		};
 	if (committed.interfaceSha256 !== actual.interfaceSha256)
 		return {
 			ok: false,
+			moved: "interface",
 			message: `idb guest wire interface changed without a protocol bump (v${actual.protocolVersion}, idb ${actual.idbVersion}): re-run the guest contract replay (\`${REPLAY}\`), update the golden frames, then \`bun native/scripts/guest-pin.ts --write\``,
 		};
 	if (committed.guestSha256 !== actual.guestSha256)
 		return {
 			ok: false,
+			moved: "guest",
 			message: `idb guest binary changed (sha256 ${committed.guestSha256.slice(0, 12)}→${actual.guestSha256.slice(0, 12)}, idb ${committed.idbVersion}→${actual.idbVersion}) with protocol v${actual.protocolVersion} unchanged: re-run the guest contract replay (\`${REPLAY}\`), then \`bun native/scripts/guest-pin.ts --write\``,
 		};
 	if (committed.idbVersion !== actual.idbVersion)
 		return {
 			ok: false,
+			moved: "idb",
 			message: `idb-guest.lock.json is for idb ${committed.idbVersion}, libraries are ${actual.idbVersion}: \`bun native/scripts/guest-pin.ts --write\``,
 		};
 	return { ok: true };

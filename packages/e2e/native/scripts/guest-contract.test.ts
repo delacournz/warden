@@ -3,7 +3,8 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fixturesDir, formatTable, parseArgs, runReplay } from "./guest-contract";
+import { exitCode, fixturesDir, formatTable, parseArgs, pinsRow, runReplay } from "./guest-contract";
+import type { GuestPins } from "./guest-pin";
 import { encodeFrame, FrameReader, GuestClient } from "./guest-wire";
 
 const DIR = fixturesDir(6);
@@ -134,5 +135,48 @@ describe("cli helpers", () => {
 		expect(formatTable([{ name: "ping", pass: true, ms: 1, detail: "ok" }])).toContain(
 			"guest contract holds (1 checks)"
 		);
+	});
+
+	test("formatTable prints an informational row as info and leaves it out of the drift count", () => {
+		const table = formatTable([
+			{ name: "pins", pass: false, informational: true, ms: 0, detail: "moved" },
+			{ name: "ping", pass: true, ms: 1, detail: "ok" },
+		]);
+		expect(table).toContain("info  pins");
+		expect(table).toContain("guest contract holds (2 checks)");
+	});
+});
+
+describe("pins on a bump", () => {
+	const committed: GuestPins = {
+		idbVersion: "v1.7.0",
+		protocolVersion: 6,
+		guestSha256: "a".repeat(64),
+		interfaceSha256: "b".repeat(64),
+	};
+	const wire = [
+		{ name: "ping", pass: true, ms: 1, detail: "shape matches golden" },
+		{ name: "quiescence-stream", pass: true, ms: 9, detail: "1 frame(s)" },
+	];
+
+	test("unchanged pins pass", () => {
+		const row = pinsRow(committed, { ...committed });
+		expect(row).toMatchObject({ name: "pins", pass: true });
+		expect(row.informational).toBeUndefined();
+		expect(row.detail).toContain("protocol v6");
+	});
+
+	test("pins that moved are shown but are not drift: a matching wire exits 0", () => {
+		const row = pinsRow(committed, { ...committed, idbVersion: "v1.8.0", guestSha256: "d".repeat(64) });
+		expect(row).toMatchObject({ name: "pins", pass: false, informational: true });
+		expect(row.detail).toContain("guest binary");
+		expect(row.detail).toContain("guest-pin.ts --write");
+		expect(row.detail).not.toContain("guest-contract.ts");
+		expect(exitCode([row, ...wire])).toBe(0);
+	});
+
+	test("a wire check that fails still exits 1", () => {
+		const row = pinsRow(committed, { ...committed, idbVersion: "v1.8.0" });
+		expect(exitCode([row, { ...wire[0], pass: false }])).toBe(1);
 	});
 });
