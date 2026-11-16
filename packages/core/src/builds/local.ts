@@ -287,6 +287,7 @@ async function cacheEnv(deps: LocalBuildDeps): Promise<Record<string, string>> {
 			gitTop: gitTop || undefined,
 			xcodeMajor: xcode?.success ? xcode.data.major : undefined,
 			ccacheBinary: ccacheBinary || undefined,
+			...(xcode?.success ? { xcode: { version: xcode.data.version, build: xcode.data.build } } : {}),
 			enabled: true,
 			baseEnv: deps.env,
 		}),
