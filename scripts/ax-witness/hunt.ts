@@ -58,6 +58,33 @@ export function markdownTable(iterations: readonly Iteration[]): string {
 	);
 }
 
+export type HarnessArgsInput = {
+	script: string;
+	udid: string;
+	seconds: number;
+	minStreak: number;
+	dir: string;
+	/** An earlier iteration came back ok, so the runner build in the shared derived data is usable. */
+	built: boolean;
+};
+
+/** `ax-witness.ts --observe` args for one iteration; `--skip-build` only once a build is known to have succeeded. */
+export function harnessArgs(input: HarnessArgsInput): string[] {
+	return [
+		input.script,
+		"--udid",
+		input.udid,
+		"--observe",
+		"--seconds",
+		String(input.seconds),
+		"--min-streak",
+		String(input.minStreak),
+		"--out",
+		input.dir,
+		...(input.built ? ["--skip-build"] : []),
+	];
+}
+
 function simctlJson<T>(args: string[], key: string): T[] {
 	const run = spawnSync("xcrun", ["simctl", ...args, "-j"], { encoding: "utf8", maxBuffer: 32 * 1024 * 1024 });
 	return (JSON.parse(run.stdout) as Record<string, T[]>)[key] ?? [];
@@ -88,7 +115,7 @@ function createBootedSim(index: number): { udid: string } | { reason: string } {
 	return { udid };
 }
 
-function runIteration(index: number, out: string, seconds: number, minStreak: number): Iteration {
+function runIteration(index: number, out: string, seconds: number, minStreak: number, built: boolean): Iteration {
 	const sim = createBootedSim(index);
 	if ("reason" in sim) return { index, status: "infra-failure", reason: sim.reason };
 	const dir = join(out, `iteration-${index}`);
@@ -96,19 +123,7 @@ function runIteration(index: number, out: string, seconds: number, minStreak: nu
 	try {
 		const harness = spawnSync(
 			"bun",
-			[
-				join(import.meta.dir, "ax-witness.ts"),
-				"--udid",
-				sim.udid,
-				"--observe",
-				"--seconds",
-				String(seconds),
-				"--min-streak",
-				String(minStreak),
-				"--out",
-				dir,
-				...(index > 1 ? ["--skip-build"] : []),
-			],
+			harnessArgs({ script: join(import.meta.dir, "ax-witness.ts"), udid: sim.udid, seconds, minStreak, dir, built }),
 			{ encoding: "utf8", stdio: ["ignore", "inherit", "inherit"] }
 		);
 		const summaryPath = join(dir, "summary.json");
@@ -139,7 +154,8 @@ function main(): number {
 	const results: Iteration[] = [];
 	for (let index = 1; index <= iterations; index++) {
 		console.log(`::group::iteration ${index}/${iterations}`);
-		results.push(runIteration(index, out, seconds, minStreak));
+		const built = results.some((r) => r.status === "ok");
+		results.push(runIteration(index, out, seconds, minStreak, built));
 		console.log("::endgroup::");
 	}
 	const table = markdownTable(results);

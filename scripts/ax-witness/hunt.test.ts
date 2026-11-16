@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { type Iteration, markdownTable, pickDeviceType, pickRuntime } from "./hunt";
+import { harnessArgs, type Iteration, markdownTable, pickDeviceType, pickRuntime } from "./hunt";
 import { summarize } from "./witness";
 
 describe("pickRuntime", () => {
@@ -72,5 +72,32 @@ describe("markdownTable", () => {
 		expect(table).toContain("witness-answers (FLAGGED)");
 		expect(table).toContain("runner answered");
 		expect(table).toContain("infra failure");
+	});
+});
+
+describe("harnessArgs", () => {
+	const base = { script: "ax-witness.ts", udid: "u", seconds: 120, minStreak: 3, dir: "out/iteration-2" };
+
+	test("builds the runner until an earlier iteration got past the build", () => {
+		expect(harnessArgs({ ...base, built: false })).not.toContain("--skip-build");
+	});
+
+	test("skips the build once an earlier iteration came back ok", () => {
+		expect(harnessArgs({ ...base, built: true })).toContain("--skip-build");
+	});
+
+	test("observes the given sim for the given time", () => {
+		expect(harnessArgs({ ...base, built: false })).toEqual([
+			"ax-witness.ts",
+			"--udid",
+			"u",
+			"--observe",
+			"--seconds",
+			"120",
+			"--min-streak",
+			"3",
+			"--out",
+			"out/iteration-2",
+		]);
 	});
 });
