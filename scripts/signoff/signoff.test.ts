@@ -129,7 +129,7 @@ describe("cpu-guard check", () => {
 	function candidate(cpu: number): string {
 		const dir = mkdtempSync(join(tmpdir(), "cpu-guard-"));
 		const file = join(dir, "candidate.json");
-		const frameworks = [{ framework: "warden", cpuSecondsPerRep: cpu, rssPeakBytes: 170_000_000 }];
+		const frameworks = [{ framework: "warden", cpuSecondsPerRep: cpu, rssPeakBytes: 120_000_000 }];
 		writeFileSync(
 			file,
 			JSON.stringify({ baselineVersion: 1, id: "cand", startedAt: "2026-10-26T00:00:00Z", platform: "ios", frameworks })
@@ -151,12 +151,12 @@ describe("cpu-guard check", () => {
 	});
 
 	test("compares the run dir with the baseline when it exists", async () => {
-		const ok = await runGuard({ WARDEN_BENCH_RUN_DIR: candidate(3.0) });
+		const ok = await runGuard({ WARDEN_BENCH_RUN_DIR: candidate(2.7) });
 		expect(ok.code).toBe(0);
-		expect(ok.out).toContain("ok: warden cpu-s/rep 2.97 → 3.00");
+		expect(ok.out).toContain("ok: warden cpu-s/rep 2.66 → 2.70");
 		const slow = await runGuard({ WARDEN_BENCH_RUN_DIR: candidate(12) });
 		expect(slow.code).toBe(1);
-		expect(slow.out).toContain("regression: warden cpu-s/rep 2.97 → 12.00 (+304.0 %) exceeds 10 %");
+		expect(slow.out).toContain("regression: warden cpu-s/rep 2.66 → 12.00 (+351.1 %) exceeds 10 %");
 	});
 });
 
