@@ -6,11 +6,11 @@ import XCTest
 /// The stuck-stream policy behind `settle`, driven with an injected clock (no simulator): a guest that reports
 /// `busy(runLoopIdle, animationsInactive)` once and then goes silent must not burn the whole budget.
 final class SettleTests: XCTestCase {
-  private let both: QuiescenceState = .busy([.runLoopIdle, .animationsInactive])
+  private let both: AXQuiescenceState = .busy([.runLoopIdle, .animationsInactive])
   private let judge = SettleJudge()
 
   /// Replays a silent stream: state fixed, time advancing in 100 ms ticks. Returns the decisions with their time.
-  private func replay(state: QuiescenceState?, since: Double = 0, begun: Double = 0, quietMs: Int = 250, until: Double)
+  private func replay(state: AXQuiescenceState?, since: Double = 0, begun: Double = 0, quietMs: Int = 250, until: Double)
     -> [(ms: Int, decision: SettleDecision)]
   {
     var tracker = StuckTracker()

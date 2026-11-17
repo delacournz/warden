@@ -1,4 +1,3 @@
-import FBSimulatorAX
 import Foundation
 
 enum HealthOps {
@@ -97,7 +96,7 @@ extension Session {
       do {
         _ = try await withTimeout(
           milliseconds: 15_000, error: { WireError(.timeout, "bridge probe timed out") }
-        ) { try await reader.describe(.frontmost, options: AccessibilityRequestOptions()) }
+        ) { try await reader.describe(.frontmost, options: .readerDefaults) }
         bridgeHealth.recordSuccess()
       } catch {
         status = .failed(WireError.from(error).message)
@@ -116,7 +115,7 @@ extension Session {
     if let recycles = bridgeReaper.healthJSON { fields["bridgeRecycles"] = recycles }
     fields["axWedge"] = axWedgeRecovery.state()
     fields["coreSimulatorVersion"] = coreSimulatorVersion.map(JSON.string) ?? .null
-    fields["state"] = .string(Session.describe(simulator.state))
+    fields["state"] = .string(device.stateName)
     fields["uptimeMs"] = .int(uptimeMs)
     if let socket = socket.json { fields["socket"] = socket }
     return .object(fields)

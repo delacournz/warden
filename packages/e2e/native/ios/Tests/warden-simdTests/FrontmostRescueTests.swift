@@ -9,11 +9,11 @@ import XCTest
 private final class Log: @unchecked Sendable {
   private let lock = NSLock()
   private var lines: [String] = []
-  private var queries: [AccessibilityElementQuery] = []
+  private var queries: [AXTarget] = []
   func add(_ line: String) { lock.withLock { lines.append(line) } }
-  func asked(_ query: AccessibilityElementQuery) { lock.withLock { queries.append(query) } }
+  func asked(_ query: AXTarget) { lock.withLock { queries.append(query) } }
   var logged: [String] { lock.withLock { lines } }
-  var asked: [AccessibilityElementQuery] { lock.withLock { queries } }
+  var asked: [AXTarget] { lock.withLock { queries } }
 }
 
 private func ok(_ value: String, _ backend: AXBackend = .axbridge) -> AXOutcome<String> {
@@ -34,13 +34,13 @@ private final class Clock: @unchecked Sendable {
 /// stream's pid, SpringBoard), and later reads go straight to the pid for a cooldown.
 final class FrontmostRescueTests: XCTestCase {
   private let policy = FrontmostPolicy(cooldownSeconds: 20)
-  private let silent = AccessibilityError.serviceNotAnswering(
-    .request(kind: "frontmost", timeout: 5), elapsed: 5.1, behindAbandoned: 0)
+  private let silent = IdbErrors.map(AccessibilityError.serviceNotAnswering(
+    .request(kind: "frontmost", timeout: 5), elapsed: 5.1, behindAbandoned: 0))
 
   private func rescue(
     gate: FrontmostLookupGate, clock: Clock = Clock(), log: Log,
     candidates: [PidTarget] = [PidTarget(pid: 42, source: .launched)],
-    read: @escaping @Sendable (AccessibilityElementQuery) async throws -> AXOutcome<String>
+    read: @escaping @Sendable (AXTarget) async throws -> AXOutcome<String>
   ) async throws -> TargetedOutcome<String> {
     try await Session.readTargeted(
       read: { query in
@@ -77,22 +77,22 @@ final class FrontmostRescueTests: XCTestCase {
 
   func testEveryFrontmostResolutionFailureCounts() {
     XCTAssertTrue(Session.isFrontmostUnresolved(silent))
-    XCTAssertTrue(Session.isFrontmostUnresolved(AccessibilityError.noTranslationObject(.frontmost)))
-    XCTAssertTrue(Session.isFrontmostUnresolved(AccessibilityError.noTranslationObject(nil)))
+    XCTAssertTrue(Session.isFrontmostUnresolved(IdbErrors.map(AccessibilityError.noTranslationObject(.frontmost))))
+    XCTAssertTrue(Session.isFrontmostUnresolved(IdbErrors.map(AccessibilityError.noTranslationObject(nil))))
     XCTAssertTrue(
       Session.isFrontmostUnresolved(
-        AXBridgeError.frontmostUnresolved(method: .windowServer, reason: "no application")))
+        IdbErrors.map(AXBridgeError.frontmostUnresolved(method: .windowServer, reason: "no application"))))
     XCTAssertTrue(
       Session.isFrontmostUnresolved(
-        AXReadersFailed(bridgeReason: "x", host: AccessibilityError.noTranslationObject(.frontmost))
+        AXReadersFailed(bridgeReason: "x", host: IdbErrors.map(AccessibilityError.noTranslationObject(.frontmost)))
       ))
     XCTAssertFalse(
       Session.isFrontmostUnresolved(
-        AccessibilityError.serviceNotAnswering(
-          .query(timeout: 10), elapsed: 10.8, behindAbandoned: 0)))
+        IdbErrors.map(AccessibilityError.serviceNotAnswering(
+          .query(timeout: 10), elapsed: 10.8, behindAbandoned: 0))))
     XCTAssertFalse(
-      Session.isFrontmostUnresolved(AccessibilityError.noTranslationObject(.application(pid: 3))))
-    XCTAssertFalse(Session.isFrontmostUnresolved(AXBridgeError.applicationNotResponding(pid: 3)))
+      Session.isFrontmostUnresolved(IdbErrors.map(AccessibilityError.noTranslationObject(.application(pid: 3)))))
+    XCTAssertFalse(Session.isFrontmostUnresolved(IdbErrors.map(AXBridgeError.applicationNotResponding(pid: 3))))
     XCTAssertFalse(Session.isFrontmostUnresolved(CancellationError()))
   }
 
@@ -100,7 +100,7 @@ final class FrontmostRescueTests: XCTestCase {
     let log = Log()
     do {
       _ = try await rescue(gate: FrontmostLookupGate(), log: log) { _ in
-        throw AXBridgeError.applicationNotResponding(pid: 7)
+        throw IdbErrors.map(AXBridgeError.applicationNotResponding(pid: 7))
       }
       XCTFail("expected a throw")
     } catch {
@@ -113,7 +113,7 @@ final class FrontmostRescueTests: XCTestCase {
     let gate = FrontmostLookupGate()
     let clock = Clock()
     let silent = self.silent
-    let read: @Sendable (AccessibilityElementQuery) async throws -> AXOutcome<String> = { query in
+    let read: @Sendable (AXTarget) async throws -> AXOutcome<String> = { query in
       if query == .frontmost { throw silent }
       return ok("app")
     }
@@ -161,7 +161,7 @@ final class FrontmostRescueTests: XCTestCase {
     ) { query in
       switch query {
       case .frontmost: throw silent
-      case .application(pid: 42): throw AXBridgeError.applicationUnavailable(pid: 42)
+      case .application(pid: 42): throw IdbErrors.map(AXBridgeError.applicationUnavailable(pid: 42))
       default: return ok("springboard", .ax)
       }
     }
@@ -179,7 +179,7 @@ final class FrontmostRescueTests: XCTestCase {
       }
       XCTFail("expected a throw")
     } catch {
-      let wire = WireError.from(error)
+      let wire = wire(error)
       XCTAssertEqual(wire.code, .timeout)
       XCTAssertTrue(wire.retryable)
       XCTAssertEqual(wire.detail?["reason"]?.stringValue, "frontmost_unresolved")
@@ -198,7 +198,7 @@ final class FrontmostRescueTests: XCTestCase {
       _ = try await Session.readAX(
         requested: nil,
         bridge: {
-          throw AXBridgeError.frontmostUnresolved(method: .windowServer, reason: "no application")
+          throw IdbErrors.map(AXBridgeError.frontmostUnresolved(method: .windowServer, reason: "no application"))
         },
         host: { () async throws -> String in throw silent }, recover: { _ in },
         policy: BridgeDeadline(readMs: 100, cooldownSeconds: 20), gate: BridgeStallGate(), warmth: .warmed(),
@@ -246,9 +246,9 @@ final class PidCandidateTests: XCTestCase {
 
 final class AccessibilityErrorMappingTests: XCTestCase {
   func testASilentServiceIsARetryableTimeout() {
-    let wire = WireError.from(
-      AccessibilityError.serviceNotAnswering(
-        .request(kind: "frontmost", timeout: 5), elapsed: 5.1, behindAbandoned: 2))
+    let wire = wire(
+      IdbErrors.map(AccessibilityError.serviceNotAnswering(
+        .request(kind: "frontmost", timeout: 5), elapsed: 5.1, behindAbandoned: 2)))
     XCTAssertEqual(wire.code, .timeout)
     XCTAssertTrue(wire.retryable)
     XCTAssertEqual(wire.detail?["stage"]?.stringValue, "ax")
@@ -257,15 +257,15 @@ final class AccessibilityErrorMappingTests: XCTestCase {
   }
 
   func testNoFrontmostApplicationIsAxUnavailable() {
-    let wire = WireError.from(AccessibilityError.noTranslationObject(.frontmost))
+    let wire = wire(IdbErrors.map(AccessibilityError.noTranslationObject(.frontmost)))
     XCTAssertEqual(wire.code, .axUnavailable)
     XCTAssertEqual(wire.detail?["reason"]?.stringValue, "frontmost_unresolved")
   }
 
   func testBothReadersFailingKeepsTheHostCodeAndTheBridgeReason() {
-    let wire = WireError.from(
+    let wire = wire(
       AXReadersFailed(
-        bridgeReason: "bridge said no", host: AXBridgeError.applicationNotResponding(pid: 4)))
+        bridgeReason: "bridge said no", host: IdbErrors.map(AXBridgeError.applicationNotResponding(pid: 4))))
     XCTAssertEqual(wire.code, .appNotResponding)
     XCTAssertEqual(wire.detail?["bridgeError"]?.stringValue, "bridge said no")
     XCTAssertEqual(wire.detail?["pid"]?.intValue, 4)

@@ -1,4 +1,3 @@
-import FBSimulatorControl
 import Foundation
 
 /// USB HID keyboard-page (0x07) usages for the keys the helper types, plus the ASCII → keystroke map `typeText` uses.
@@ -72,7 +71,7 @@ enum KeyboardMap {
   /// sleeps `.pause` milliseconds itself, so the whole sequence is still one HID operation (one drain at the end)
   /// while the delays are timed here instead of by idb's `.delay`.
   enum KeyStep: Equatable, Sendable {
-    case event(SimulatorHIDEvent)
+    case event(HIDEvent)
     case pause(Int)
   }
 
@@ -170,8 +169,8 @@ enum KeyboardMap {
   }
 
   /// An unpaced chord as one composite (paste: nothing follows that needs a pause).
-  static func chord(usage: UInt32, modifiers: [UInt32]) -> SimulatorHIDEvent {
-    var events: [SimulatorHIDEvent] = modifiers.map { .keyboard(direction: .down, keyCode: $0) }
+  static func chord(usage: UInt32, modifiers: [UInt32]) -> HIDEvent {
+    var events: [HIDEvent] = modifiers.map { .keyboard(direction: .down, keyCode: $0) }
     events.append(.keyboard(direction: .down, keyCode: usage))
     events.append(.keyboard(direction: .up, keyCode: usage))
     events.append(contentsOf: modifiers.reversed().map { .keyboard(direction: .up, keyCode: $0) })
@@ -179,7 +178,7 @@ enum KeyboardMap {
   }
 
   /// Cmd+V.
-  static var paste: SimulatorHIDEvent {
+  static var paste: HIDEvent {
     chord(usage: letterV, modifiers: [leftCommand])
   }
 

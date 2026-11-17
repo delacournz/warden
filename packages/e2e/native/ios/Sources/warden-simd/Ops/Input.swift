@@ -1,11 +1,9 @@
 import CoreGraphics
-import FBControlCore
-import FBSimulatorControl
 import Foundation
 
 // HID input ops: tap, longPress, swipe, drag, pinch, gesture, pressButton, key, typeText, paste, selectAll.
 //
-// Layout: `HIDPlan` builds idb `SimulatorHIDEvent`s from validated numbers (pure, unit-tested); `InputEngine` parses
+// Layout: `HIDPlan` builds `HIDEvent`s from validated numbers (pure, unit-tested); `InputEngine` parses
 // request params, resolves units, and sends the events through a `HIDGate` so only one event stream is in flight at a
 // time (other ops stay concurrent); `InputOps.ops` wires an engine to a `Session`.
 
@@ -52,7 +50,7 @@ struct ScreenGeometry: Equatable, Sendable {
 /// the interface is, so its aspect decides; the device orientation is the fallback when no capture could be taken.
 enum InterfaceOrientation {
   static func isLandscape(
-    framebuffer: () async -> CGSize?, device: () async -> SimulatorDeviceOrientation?
+    framebuffer: () async -> CGSize?, device: () async -> DeviceOrientation?
   ) async -> Bool {
     if let size = await framebuffer(), size.width > 0, size.height > 0, size.width != size.height {
       return size.width > size.height
@@ -74,8 +72,8 @@ enum HIDPlan {
   /// Roughly a display frame: a swipe sample every ~16 ms.
   static let sampleInterval: Double = 0.016
 
-  static func tap(at point: CGPoint, count: Int, hold: Double) -> SimulatorHIDEvent {
-    var events: [SimulatorHIDEvent] = []
+  static func tap(at point: CGPoint, count: Int, hold: Double) -> HIDEvent {
+    var events: [HIDEvent] = []
     for index in 0..<max(1, count) {
       if index > 0 { events.append(.delay(tapGap)) }
       events.append(.touch(direction: .down, x: point.x, y: point.y))
@@ -85,8 +83,8 @@ enum HIDPlan {
     return .composite(events)
   }
 
-  static func longPress(at point: CGPoint, duration: Double) -> SimulatorHIDEvent {
-    .tapAt(x: point.x, y: point.y, duration: duration)
+  static func longPress(at point: CGPoint, duration: Double) -> HIDEvent {
+    .longPress(x: point.x, y: point.y, duration: duration)
   }
 
   static func sampleCount(duration: Double) -> Int {
@@ -95,15 +93,16 @@ enum HIDPlan {
 
   /// `momentum: true`: idb's swipe (constant velocity, duplicate final contact). `momentum: false`: ease-out
   /// samples, the final contact repeated, a 150 ms hold, then lift, so the OS reads ~0 release velocity.
-  static func swipe(from: CGPoint, to: CGPoint, duration: Double, momentum: Bool) -> SimulatorHIDEvent {
+  static func swipe(from: CGPoint, to: CGPoint, duration: Double, momentum: Bool) -> HIDEvent {
     let steps = sampleCount(duration: duration)
     if momentum {
       let distance = hypot(to.x - from.x, to.y - from.y)
       return .swipe(
-        from.x, yStart: from.y, xEnd: to.x, yEnd: to.y, delta: max(distance / Double(steps), 1), duration: duration)
+        xStart: from.x, yStart: from.y, xEnd: to.x, yEnd: to.y, delta: max(distance / Double(steps), 1),
+        duration: duration)
     }
     let stepDelay = duration / Double(steps + 1)
-    var events: [SimulatorHIDEvent] = []
+    var events: [HIDEvent] = []
     for index in 0...steps {
       let t = Double(index) / Double(steps)
       let eased = 1 - pow(1 - t, 3)
@@ -117,18 +116,18 @@ enum HIDPlan {
     return .composite(events)
   }
 
-  static func drag(from: CGPoint, to: CGPoint, press: Double, duration: Double, release: Double) -> SimulatorHIDEvent {
+  static func drag(from: CGPoint, to: CGPoint, press: Double, duration: Double, release: Double) -> HIDEvent {
     let steps = sampleCount(duration: duration)
     let distance = hypot(to.x - from.x, to.y - from.y)
     return .drag(
-      from.x, yStart: from.y, xEnd: to.x, yEnd: to.y, delta: max(distance / Double(steps), 1),
+      xStart: from.x, yStart: from.y, xEnd: to.x, yEnd: to.y, delta: max(distance / Double(steps), 1),
       pressDuration: press, duration: duration, releaseDuration: release)
   }
 
   /// Two fingers `radius` either side of `center` along `angle` (radians, 0 = horizontal), moving to
   /// `radius * scale`. `scale < 1` pinches in.
   static func pinch(center: CGPoint, scale: Double, radius: Double, angle: Double, duration: Double)
-    -> SimulatorHIDEvent
+    -> HIDEvent
   {
     let endRadius = radius * scale
     let steps = min(60, max(2, Int((abs(endRadius - radius) / 8).rounded())))
@@ -140,7 +139,7 @@ enum HIDPlan {
         CGPoint(x: center.x + r * axis.x, y: center.y + r * axis.y)
       )
     }
-    var events: [SimulatorHIDEvent] = []
+    var events: [HIDEvent] = []
     let start = fingers(radius)
     events.append(.twoFingerTouch(direction: .down, finger1: start.0, finger2: start.1))
     events.append(.delay(stepDelay))
@@ -160,15 +159,15 @@ enum HIDPlan {
   /// One or two equal-length paths replayed frame by frame: down at frame 0, `hold` after it, `frame` between frames,
   /// `release` after the last, then up at the last positions. One path uses single touches, two use
   /// `twoFingerTouch` (the fingers lift together). One frame is a tap.
-  static func gesture(paths: [[CGPoint]], frame: Double, hold: Double, release: Double) -> SimulatorHIDEvent {
-    func touch(_ index: Int, _ direction: SimulatorHIDDirection) -> SimulatorHIDEvent {
+  static func gesture(paths: [[CGPoint]], frame: Double, hold: Double, release: Double) -> HIDEvent {
+    func touch(_ index: Int, _ direction: HIDDirection) -> HIDEvent {
       if paths.count == 2 {
         return .twoFingerTouch(direction: direction, finger1: paths[0][index], finger2: paths[1][index])
       }
       return .touch(direction: direction, x: paths[0][index].x, y: paths[0][index].y)
     }
     let count = paths[0].count
-    var events: [SimulatorHIDEvent] = [touch(0, .down)]
+    var events: [HIDEvent] = [touch(0, .down)]
     if hold > 0 { events.append(.delay(hold)) }
     for index in 1..<max(count, 1) {
       events.append(.delay(frame))
@@ -326,7 +325,7 @@ struct InputParams {
 
 /// Everything the HID ops need from the outside world, so they run against a recording sink in tests.
 struct InputEnvironment: Sendable {
-  var send: @Sendable (SimulatorHIDEvent) async throws -> Void
+  var send: @Sendable (HIDEvent) async throws -> Void
   var screen: @Sendable () -> (width: Double, height: Double)
   /// The frontmost app's interface is drawn landscape (`InterfaceOrientation`), not the device orientation.
   var isLandscape: @Sendable () async -> Bool
@@ -351,7 +350,7 @@ struct InputEnvironment: Sendable {
 /// sleep by throwing. The tail pause (pace after the last key) runs before the sequence ends, i.e. before idb's
 /// closing drain, like the old trailing `.delay`.
 struct PacedKeyEvents: AsyncSequence, Sendable {
-  typealias Element = SimulatorHIDEvent
+  typealias Element = HIDEvent
 
   let steps: [KeyboardMap.KeyStep]
   let pause: @Sendable (Int) async throws -> Void
@@ -361,7 +360,7 @@ struct PacedKeyEvents: AsyncSequence, Sendable {
     let pause: @Sendable (Int) async throws -> Void
     var index = 0
 
-    mutating func next() async throws -> SimulatorHIDEvent? {
+    mutating func next() async throws -> HIDEvent? {
       while index < steps.count {
         let step = steps[index]
         index += 1
@@ -395,7 +394,7 @@ struct InputEngine: Sendable {
     try await geometry(unit).points(x: point.x, y: point.y, unit: unit)
   }
 
-  private func send(_ event: SimulatorHIDEvent) async throws -> JSON {
+  private func send(_ event: HIDEvent) async throws -> JSON {
     let environment = environment
     try await environment.gate.run { try await environment.send(event) }
     return .object([:])
@@ -467,7 +466,7 @@ struct InputEngine: Sendable {
     }
   }
 
-  private func pinch(_ params: InputParams) async throws -> SimulatorHIDEvent {
+  private func pinch(_ params: InputParams) async throws -> HIDEvent {
     let unit = try params.unit()
     let center = try await resolve(try params.point("center"), unit: unit)
     var radius = try params.optional("radius") ?? 100
@@ -486,7 +485,7 @@ struct InputEngine: Sendable {
   }
 
   /// `gesture`: validates everything before sending; the whole replay must fit in 60 s.
-  private func gesture(_ params: InputParams) async throws -> SimulatorHIDEvent {
+  private func gesture(_ params: InputParams) async throws -> HIDEvent {
     let unit = try params.unit()
     let raw = try params.paths()
     let frameCount = raw[0].count
@@ -503,8 +502,8 @@ struct InputEngine: Sendable {
     return HIDPlan.gesture(paths: paths, frame: frameMs / 1000, hold: holdMs / 1000, release: releaseMs / 1000)
   }
 
-  static let buttons: [String: SimulatorHIDButton] = [
-    "home": .homeButton, "lock": .lock, "side": .sideButton, "siri": .siri, "volumeUp": .volumeUp,
+  static let buttons: [String: HIDButton] = [
+    "home": .home, "lock": .lock, "side": .side, "siri": .siri, "volumeUp": .volumeUp,
     "volumeDown": .volumeDown, "applePay": .applePay,
   ]
 
@@ -517,7 +516,7 @@ struct InputEngine: Sendable {
     guard let button = Self.buttons[name] else {
       throw WireError(.badRequest, "unknown button \"\(name)\"", detail: ["button": .string(name)])
     }
-    return try await send(.shortButtonPress(button))
+    return try await send(.buttonPress(button))
   }
 
   /// `usage` (numeric) or `name` (a `KeyName`), plus `modifiers` (`shift|cmd|alt|ctrl`).
@@ -558,18 +557,6 @@ struct InputEngine: Sendable {
   }
 }
 
-/// Discards idb's HID log lines (they would pollute stderr; ops report failures through the protocol).
-final class NullLogger: ControlCoreLogger, @unchecked Sendable {
-  let name: String? = nil
-  let level: ControlCoreLogLevel = .error
-  @discardableResult func log(_ message: String) -> any ControlCoreLogger { self }
-  func info() -> any ControlCoreLogger { self }
-  func debug() -> any ControlCoreLogger { self }
-  func error() -> any ControlCoreLogger { self }
-  func withName(_ name: String) -> any ControlCoreLogger { self }
-  func withDateFormatEnabled(_ enabled: Bool) -> any ControlCoreLogger { self }
-}
-
 enum InputOps {
   static let names = [
     "tap", "longPress", "swipe", "drag", "pinch", "gesture", "pressButton", "key", "typeText", "paste", "selectAll",
@@ -579,30 +566,23 @@ enum InputOps {
   private static let gates = GateRegistry()
 
   static func environment(for session: Session) -> InputEnvironment {
-    let logger = NullLogger()
-    let hid = session.hid.hid
-    let simulator = session.simulator
+    let hid = session.hid
+    let screenshots = session.screenshots
+    let orientation = session.orientationControl
     return InputEnvironment(
-      send: { event in
-        try await hid.send(event: event, logger: logger, drain: .perEvent)
-      },
+      send: { event in try await hid.send(event) },
       screen: { (session.screen.width, session.screen.height) },
       isLandscape: {
         await InterfaceOrientation.isLandscape(
-          framebuffer: {
-            try? await simulator.screenshot.take(
-              configuration: ScreenshotConfiguration(
-                encoding: .png, scale: .factor(InterfaceOrientation.probeScale))
-            ).size
-          },
+          framebuffer: { try? await screenshots.capture(scale: InterfaceOrientation.probeScale).size },
           device: {
-            if let read = try? await simulator.orientation.current() { return read }
+            if let read = try? await orientation.current() { return read }
             return session.orientationMemory.last
           })
       },
-      shake: { try await simulator.hardware.shake() },
+      shake: { try await hid.shake() },
       gate: gates.gate(for: session.udid),
-      sendStream: { events in try await hid.send(events: events, logger: logger) })
+      sendStream: { events in try await hid.send(stream: events) })
   }
 
   static let ops: [String: Dispatcher<Session>.OpHandler] = Dictionary(

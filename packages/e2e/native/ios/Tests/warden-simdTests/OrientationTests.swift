@@ -15,7 +15,7 @@ private final class Steps: @unchecked Sendable {
 final class OrientationTests: XCTestCase {
   func testRotateWritesReadsBackThenSettles() async throws {
     let steps = Steps()
-    var reads = [SimulatorDeviceOrientation.portrait, .landscapeLeft]
+    var reads = [DeviceOrientation.portrait, .landscapeLeft]
     let settled = try await Session.rotate(
       to: .landscapeLeft,
       write: { steps.add("write") },

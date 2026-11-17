@@ -1,4 +1,3 @@
-import FBSimulatorAX
 import Foundation
 import XCTest
 
@@ -8,17 +7,17 @@ final class ElementTests: XCTestCase {
   private let options = ElementBuilder.Options(screenWidth: 400, screenHeight: 800)
 
   private func node(
-    type: String, label: String? = nil, identifier: String? = nil, value: AccessibilityAttributeValue? = nil,
-    traits: [String] = [], frame: AccessibilityFrame? = AccessibilityFrame(x: 10, y: 20, width: 100, height: 40),
-    children: [AccessibilityDocumentElement] = []
-  ) -> AccessibilityDocumentElement {
-    var node = AccessibilityDocumentElement(children: children)
-    node.type = .some(type)
-    node.label = .some(label)
-    node.identifier = .some(identifier)
-    node.value = .some(value)
-    node.traits = .some(traits)
-    node.frame = .some(frame)
+    type: String, label: String? = nil, identifier: String? = nil, value: RawValue? = nil,
+    traits: [String] = [], frame: RawFrame? = RawFrame(x: 10, y: 20, width: 100, height: 40),
+    children: [RawNode] = []
+  ) -> RawNode {
+    var node = RawNode(children: children)
+    node.type = type
+    node.label = label
+    node.identifier = identifier
+    node.value = value
+    node.traits = traits
+    node.frame = frame
     return node
   }
 
@@ -123,7 +122,7 @@ final class ElementTests: XCTestCase {
   }
 
   func testSwitchCheckedFromValue() {
-    func checked(_ value: AccessibilityAttributeValue?) -> Bool? {
+    func checked(_ value: RawValue?) -> Bool? {
       ElementBuilder.convert(node(type: "Switch", value: value), path: "0", depth: 0, options: options).checked
     }
     XCTAssertEqual(checked(.string("1")), true)
@@ -148,52 +147,52 @@ final class ElementTests: XCTestCase {
   }
 
   func testHittableIsDerivedWithoutReachabilityKeys() {
-    func hittable(_ frame: AccessibilityFrame?, hidden: Bool? = nil, traits: [String] = []) -> Bool? {
+    func hittable(_ frame: RawFrame?, hidden: Bool? = nil, traits: [String] = []) -> Bool? {
       var raw = node(type: "Button", traits: traits, frame: frame)
-      if let hidden { raw.hidden = .some(hidden) }
+      if let hidden { raw.hidden = hidden }
       return ElementBuilder.convert(raw, path: "0", depth: 0, options: options).hittable
     }
-    XCTAssertEqual(hittable(AccessibilityFrame(x: 0, y: 0, width: 50, height: 50)), true)
-    XCTAssertEqual(hittable(AccessibilityFrame(x: 0, y: 900, width: 50, height: 50)), false)
-    XCTAssertEqual(hittable(AccessibilityFrame(x: 0, y: 0, width: 0, height: 50)), false)
-    XCTAssertEqual(hittable(AccessibilityFrame(x: 0, y: 0, width: 50, height: 50), hidden: true), false)
-    XCTAssertEqual(hittable(AccessibilityFrame(x: 0, y: 0, width: 50, height: 50), traits: ["NotEnabled"]), false)
+    XCTAssertEqual(hittable(RawFrame(x: 0, y: 0, width: 50, height: 50)), true)
+    XCTAssertEqual(hittable(RawFrame(x: 0, y: 900, width: 50, height: 50)), false)
+    XCTAssertEqual(hittable(RawFrame(x: 0, y: 0, width: 0, height: 50)), false)
+    XCTAssertEqual(hittable(RawFrame(x: 0, y: 0, width: 50, height: 50), hidden: true), false)
+    XCTAssertEqual(hittable(RawFrame(x: 0, y: 0, width: 50, height: 50), traits: ["NotEnabled"]), false)
     XCTAssertEqual(hittable(nil), false)
   }
 
   func testReachabilityVerdictWinsAndSuppliesTapPoint() {
     var actionable = node(type: "Button")
-    actionable.interactable = .some(.actionable(at: AccessibilityPoint(x: 33, y: 44)))
+    actionable.interactable = .actionable(x: 33, y: 44)
     let yes = ElementBuilder.convert(actionable, path: "0", depth: 0, options: options)
     XCTAssertEqual(yes.hittable, true)
     XCTAssertEqual(yes.tapPoint, Point(x: 33, y: 44))
 
     var blocked = node(type: "Button")
-    blocked.interactable = .some(.blocked(reasons: [.notHittable]))
+    blocked.interactable = .blocked
     let no = ElementBuilder.convert(blocked, path: "0", depth: 0, options: options)
     XCTAssertEqual(no.hittable, false)
     XCTAssertEqual(no.tapPoint, Point(x: 60, y: 40))
 
     var unanswered = node(type: "Button")
-    unanswered.interactable = .some(nil)
+    unanswered.interactable = nil
     XCTAssertEqual(ElementBuilder.convert(unanswered, path: "0", depth: 0, options: options).hittable, true)
   }
 
   func testMissingTypeFallsBackToRole() {
-    var raw = AccessibilityDocumentElement()
-    raw.role = .some("AXButton")
-    raw.frame = .some(AccessibilityFrame(x: 0, y: 0, width: 1, height: 1))
+    var raw = RawNode()
+    raw.role = "AXButton"
+    raw.frame = RawFrame(x: 0, y: 0, width: 1, height: 1)
     let element = ElementBuilder.convert(raw, path: "0", depth: 0, options: options)
     XCTAssertEqual(element.rawType, "Button")
     XCTAssertEqual(element.role, .button)
-    let bare = ElementBuilder.convert(AccessibilityDocumentElement(), path: "0", depth: 0, options: options)
+    let bare = ElementBuilder.convert(RawNode(), path: "0", depth: 0, options: options)
     XCTAssertEqual(bare.rawType, "Other")
     XCTAssertEqual(bare.frame, .zero)
   }
 
   func testNonFiniteFrameEdgesBecomeZero() {
     let element = ElementBuilder.convert(
-      node(type: "Button", frame: AccessibilityFrame(x: .infinity, y: 5, width: 10, height: .nan)), path: "0", depth: 0,
+      node(type: "Button", frame: RawFrame(x: .infinity, y: 5, width: 10, height: .nan)), path: "0", depth: 0,
       options: options)
     XCTAssertEqual(element.frame, Rect(x: 0, y: 5, width: 10, height: 0))
   }
@@ -248,11 +247,11 @@ final class ElementTests: XCTestCase {
       type: "Switch", label: "Dark mode", identifier: "dark", value: .string("1"), traits: ["Button", "Selected"],
       children: [node(type: "StaticText", label: "child")])
     var raw = tree
-    raw.placeholder = .some("hint")
-    raw.hidden = .some(false)
-    raw.focused = .some(true)
-    raw.pid = .some(42)
-    raw.interactable = .some(.actionable(at: AccessibilityPoint(x: 1, y: 2)))
+    raw.placeholder = "hint"
+    raw.hidden = false
+    raw.focused = true
+    raw.pid = 42
+    raw.interactable = .actionable(x: 1, y: 2)
     let element = ElementBuilder.convert(raw, path: "0", depth: 0, options: options)
 
     let viaCodable = try JSONSerialization.jsonObject(with: JSONEncoder().encode(element)) as AnyObject
@@ -267,7 +266,7 @@ final class ElementTests: XCTestCase {
   /// UIKit never sets AX `focused` on the first responder text field; the editing field carries `IsEditing` instead.
   func testEditingTextFieldIsFocused() {
     var editing = node(type: "TextField", identifier: "email", traits: ["IsEditing"])
-    editing.focused = .some(false)
+    editing.focused = false
     XCTAssertEqual(ElementBuilder.convert(editing, path: "0", depth: 0, options: options).focused, true)
     let unset = node(type: "SecureTextField", traits: ["IsEditing", "SecureTextField"])
     XCTAssertEqual(ElementBuilder.convert(unset, path: "0", depth: 0, options: options).focused, true)
@@ -275,13 +274,13 @@ final class ElementTests: XCTestCase {
 
   func testIdleTextFieldKeepsWhatAXSaid() {
     var idle = node(type: "TextField", identifier: "email")
-    idle.focused = .some(false)
+    idle.focused = false
     XCTAssertEqual(ElementBuilder.convert(idle, path: "0", depth: 0, options: options).focused, false)
     XCTAssertNil(ElementBuilder.convert(node(type: "TextField"), path: "0", depth: 0, options: options).focused)
   }
 
   func testUnsetOptionalsAreOmittedNotNull() throws {
-    let element = ElementBuilder.convert(AccessibilityDocumentElement(), path: "0", depth: 0, options: options)
+    let element = ElementBuilder.convert(RawNode(), path: "0", depth: 0, options: options)
     let fields = try XCTUnwrap(element.json.objectValue)
     for key in ["label", "identifier", "value", "text", "placeholder", "focused", "selected", "checked", "pid"] {
       XCTAssertNil(fields[key], key)

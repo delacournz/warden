@@ -140,7 +140,7 @@ final class BridgeStallTests: XCTestCase {
       _ = try await read(requested: .axbridge, bridge: hang(calls), host: answer("ax", calls), gate: BridgeStallGate(), calls: calls)
       XCTFail("expected a timeout")
     } catch {
-      let wire = WireError.from(error)
+      let wire = wire(error)
       XCTAssertEqual(wire.code, .timeout)
       XCTAssertTrue(wire.message.contains("axbridge"), wire.message)
       XCTAssertTrue(wire.message.contains("100 ms"), wire.message)
@@ -150,10 +150,10 @@ final class BridgeStallTests: XCTestCase {
 
   func testAGuestThatIdbReportsAsNotAnsweringFallsBackToo() async throws {
     let calls = Calls()
-    XCTAssertTrue(Session.isBridgeFailure(AXBridgeError.guestNotAnswering(after: 5)))
+    XCTAssertTrue(Session.isBridgeFailure(IdbErrors.map(AXBridgeError.guestNotAnswering(after: 5))))
     XCTAssertTrue(Session.isBridgeFailure(BridgeStalled(afterMs: 100)))
     let outcome = try await read(
-      bridge: { throw AXBridgeError.guestNotAnswering(after: 5) }, host: answer("ax", calls), gate: BridgeStallGate(),
+      bridge: { throw IdbErrors.map(AXBridgeError.guestNotAnswering(after: 5)) }, host: answer("ax", calls), gate: BridgeStallGate(),
       calls: calls)
     XCTAssertEqual(outcome.backend, .ax)
   }
@@ -169,7 +169,7 @@ final class BridgeStallTests: XCTestCase {
     let calls = Calls()
     let flaky: @Sendable () async throws -> String = {
       calls.bump("bridge")
-      if calls.count("bridge") == 1 { throw AXBridgeError.applicationNotResponding(pid: 7) }
+      if calls.count("bridge") == 1 { throw IdbErrors.map(AXBridgeError.applicationNotResponding(pid: 7)) }
       return "bridge"
     }
     let outcome = try await read(bridge: flaky, host: answer("ax", calls), gate: BridgeStallGate(), calls: calls)
@@ -516,7 +516,7 @@ final class BridgeStallTests: XCTestCase {
         policy: BridgeDeadline(readMs: 4000, cooldownSeconds: 20), clock: clock, recovery: recovery, calls: calls)
       XCTFail("expected a timeout")
     } catch {
-      let wire = WireError.from(error)
+      let wire = wire(error)
       XCTAssertEqual(wire.code, .timeout)
       XCTAssertTrue(wire.message.contains("axbridge"), wire.message)
     }
@@ -530,7 +530,7 @@ final class BridgeStallTests: XCTestCase {
         recovery: recovery, calls: calls)
       XCTFail("expected a timeout")
     } catch {
-      XCTAssertEqual(WireError.from(error).code, .timeout)
+      XCTAssertEqual(wire(error).code, .timeout)
     }
     XCTAssertEqual(calls.count("probe"), 1, "inside the back-off an explicit read fails without probing")
   }
@@ -885,7 +885,7 @@ final class BridgeStallTests: XCTestCase {
         recovery: recovery, calls: calls)
       XCTFail("expected a timeout")
     } catch {
-      XCTAssertEqual(WireError.from(error).code, .timeout)
+      XCTAssertEqual(wire(error).code, .timeout)
     }
     XCTAssertLessThan(ContinuousClock.now - started, .seconds(1), "not the 12 s the cold probe may take")
     XCTAssertEqual(calls.count("bridge"), 0)

@@ -9,12 +9,12 @@ import XCTest
 final class PlaceholderFillTests: XCTestCase {
   private let screen = DocumentFixture.screen
 
-  private func bridgeDocument() throws -> AccessibilityDocument {
+  private func bridgeDocument() throws -> RawDocument {
     try DocumentFixture.document("sign-in.document.json")
   }
 
   /// The host hit-test answer for a bridge text field: the same node with the placeholder the host names.
-  private static func hostNode(for key: PlaceholderKey, placeholder: String?) -> AccessibilityDocumentElement {
+  private static func hostNode(for key: PlaceholderKey, placeholder: String?) -> RawNode {
     var fields: [String: Any] = [
       "type": "TextField",
       "identifier": key.identifier ?? NSNull(),

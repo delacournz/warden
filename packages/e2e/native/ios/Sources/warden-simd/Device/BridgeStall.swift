@@ -1,4 +1,3 @@
-import FBSimulatorControl
 import Foundation
 
 /// How long one `axbridge` read may take before it counts as a stalled guest, and how long the bridge is then skipped.
@@ -647,10 +646,9 @@ extension Session {
     }
   }
 
-  /// idb's own word for a guest that did not answer.
+  /// The backend's word for a guest that did not answer.
   static func isGuestSilent(_ error: any Error) -> Bool {
-    if let error = error as? AXBridgeError, case .guestNotAnswering = error { return true }
-    return false
+    (error as? GuestError)?.isGuestSilent ?? false
   }
 
   /// What a stalled bridge read leaves behind. A cold guest's first stall is exempt (asked again next read); any

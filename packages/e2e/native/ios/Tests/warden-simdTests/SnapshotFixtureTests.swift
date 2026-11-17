@@ -214,7 +214,7 @@ final class SnapshotFixtureTests: XCTestCase {
   }
 
   func testAPopoverAloneIsStillReported() throws {
-    let stripped = AccessibilityDocument(
+    let stripped = RawDocument(
       elements: try DocumentFixture.document("safari-open-in.document.json").elements.map(Self.withoutDialogs),
       modal: nil, truncated: false, screen: nil)
     let alert = try XCTUnwrap(Session.renderAlert(document: stripped, backend: .axbridge, screen: screen))
@@ -222,7 +222,7 @@ final class SnapshotFixtureTests: XCTestCase {
   }
 
   /// Drops every `SFDialogView` subtree so only the popover is left.
-  private static func withoutDialogs(_ node: AccessibilityDocumentElement) -> AccessibilityDocumentElement {
+  private static func withoutDialogs(_ node: RawNode) -> RawNode {
     var copy = node
     copy.children = (node.children ?? []).filter { $0.type != "SFDialogView" }.map(withoutDialogs)
     return copy
@@ -261,13 +261,13 @@ final class SnapshotFixtureTests: XCTestCase {
   }
 
   func testBridgeFailuresTriggerFallbackButOthersDoNot() {
-    XCTAssertTrue(Session.isBridgeFailure(AXBridgeError.bridgeUnavailable))
-    XCTAssertTrue(Session.isBridgeFailure(AXBridgeError.readerUnavailable("no reader")))
-    XCTAssertTrue(Session.isBridgeFailure(AXBridgeError.applicationUnavailable(pid: 1)))
-    XCTAssertTrue(Session.isBridgeFailure(AXBridgeError.applicationNotResponding(pid: 1)))
-    XCTAssertTrue(Session.isBridgeFailure(UIAutomationError.applicationUnavailable(backend: .accessibility, pid: 1)))
-    XCTAssertTrue(Session.isBridgeFailure(UIAutomationError.applicationNotResponding(backend: .accessibility, pid: 1)))
-    XCTAssertFalse(Session.isBridgeFailure(UIAutomationError.noElementAtPoint(backend: .accessibility, x: 0, y: 0)))
+    XCTAssertTrue(Session.isBridgeFailure(IdbErrors.map(AXBridgeError.bridgeUnavailable)))
+    XCTAssertTrue(Session.isBridgeFailure(IdbErrors.map(AXBridgeError.readerUnavailable("no reader"))))
+    XCTAssertTrue(Session.isBridgeFailure(IdbErrors.map(AXBridgeError.applicationUnavailable(pid: 1))))
+    XCTAssertTrue(Session.isBridgeFailure(IdbErrors.map(AXBridgeError.applicationNotResponding(pid: 1))))
+    XCTAssertTrue(Session.isBridgeFailure(IdbErrors.map(UIAutomationError.applicationUnavailable(backend: .accessibility, pid: 1))))
+    XCTAssertTrue(Session.isBridgeFailure(IdbErrors.map(UIAutomationError.applicationNotResponding(backend: .accessibility, pid: 1))))
+    XCTAssertFalse(Session.isBridgeFailure(IdbErrors.map(UIAutomationError.noElementAtPoint(backend: .accessibility, x: 0, y: 0))))
     XCTAssertFalse(Session.isBridgeFailure(WireError(.timeout, "slow")))
   }
 }

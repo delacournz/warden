@@ -1,5 +1,3 @@
-import FBControlCore
-import FBSimulatorControl
 import Foundation
 
 enum OrientationOps {
@@ -15,10 +13,10 @@ enum OrientationOps {
 /// `Session` stays a plain class.
 final class OrientationMemory: @unchecked Sendable {
   private let lock = NSLock()
-  private var value: SimulatorDeviceOrientation?
+  private var value: DeviceOrientation?
 
-  var last: SimulatorDeviceOrientation? { lock.withLock { value } }
-  func remember(_ orientation: SimulatorDeviceOrientation) { lock.withLock { value = orientation } }
+  var last: DeviceOrientation? { lock.withLock { value } }
+  func remember(_ orientation: DeviceOrientation) { lock.withLock { value = orientation } }
 }
 
 /// Whether the last snapshot drew the interface landscape (`Session.interfaceScreen`): a hit-test answers one element
@@ -41,31 +39,26 @@ extension Session {
   /// After a write the op also waits for the screen to stop moving (`Session.rotate`) and replies `settled`.
   /// Flat/unknown states are readable (`faceUp`, `faceDown`, `unknown`) but not settable.
   func orientation(set requested: JSON?) async throws -> JSON {
-    let commands = simulator.orientation
+    let commands = orientationControl
     var settled: Bool?
     if let requested, requested != .null {
       guard let name = requested.stringValue, let target = Session.settableOrientation(name) else {
         throw WireError(
           .badRequest, "\"set\" must be one of portrait, portraitUpsideDown, landscapeLeft, landscapeRight")
       }
-      let hid = try Session.hidOrientation(target)
       settled = try await Session.rotate(
         to: target,
         write: {
-          try await commands.set(hid, convention: .device)
+          try await commands.set(target)
           self.orientationMemory.remember(target)
           self.interfaceMemory.forget()
         },
         read: { try? await commands.current() },
         settle: { await self.settleAfterRotation() })
       // the settled interface, so a hit-test before the next snapshot measures against the right screen
-      let simulator = self.simulator
+      let screenshots = self.screenshots
       let landscape = await InterfaceOrientation.isLandscape(
-        framebuffer: {
-          try? await simulator.screenshot.take(
-            configuration: ScreenshotConfiguration(encoding: .png, scale: .factor(InterfaceOrientation.probeScale))
-          ).size
-        },
+        framebuffer: { try? await screenshots.capture(scale: InterfaceOrientation.probeScale).size },
         device: { nil })
       interfaceMemory.remember(landscape: landscape)
     }
@@ -76,7 +69,7 @@ extension Session {
     } else if let last = orientationMemory.last {
       reply = ["orientation": .string(last.rawValue), "source": .string("written")]
     } else {
-      reply = ["orientation": .string(SimulatorDeviceOrientation.portrait.rawValue), "source": .string("assumed")]
+      reply = ["orientation": .string(DeviceOrientation.portrait.rawValue), "source": .string("assumed")]
     }
     if let settled { reply["settled"] = .bool(settled) }
     return .object(reply)
@@ -95,9 +88,9 @@ extension Session {
   /// `minimumBeforeSettle` since the write, then for the screen to stop moving. Answers whether it went quiet (`nil`: no quiescence stream to ask). A write that fails throws before any
   /// wait; a runtime that cannot read orientation back goes straight to the settle.
   static func rotate(
-    to target: SimulatorDeviceOrientation,
+    to target: DeviceOrientation,
     write: () async throws -> Void,
-    read: () async -> SimulatorDeviceOrientation?,
+    read: () async -> DeviceOrientation?,
     settle: () async -> Bool?,
     minimumBeforeSettle: Duration = Session.rotationMinimumBeforeSettle,
     readDeadline: Duration = .seconds(3),
@@ -127,27 +120,12 @@ extension Session {
     return reply["quiet"]?.boolValue
   }
 
-  static func settableOrientation(_ name: String) -> SimulatorDeviceOrientation? {
+  static func settableOrientation(_ name: String) -> DeviceOrientation? {
     switch name {
     case "portrait", "portraitUpsideDown", "landscapeLeft", "landscapeRight":
-      return SimulatorDeviceOrientation(rawValue: name)
+      return DeviceOrientation(rawValue: name)
     default:
       return nil
-    }
-  }
-
-  /// `SimulatorDeviceOrientation.hidOrientation` is internal to FBSimulatorControl, so the four writable cases are
-  /// mapped here.
-  static func hidOrientation(_ orientation: SimulatorDeviceOrientation) throws -> SimulatorHIDDeviceOrientation {
-    switch orientation {
-    case .portrait: return .portrait
-    case .portraitUpsideDown: return .portraitUpsideDown
-    case .landscapeLeft: return .landscapeLeft
-    case .landscapeRight: return .landscapeRight
-    case .unknown, .faceUp, .faceDown:
-      throw WireError(.badRequest, "orientation \(orientation.rawValue) cannot be set")
-    @unknown default:
-      throw WireError(.badRequest, "orientation \(orientation.rawValue) cannot be set")
     }
   }
 }

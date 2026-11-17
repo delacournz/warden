@@ -6,13 +6,13 @@ import XCTest
 
 private final class Recorder: @unchecked Sendable {
   private let lock = NSLock()
-  private var storage: [SimulatorHIDEvent] = []
+  private var storage: [HIDEvent] = []
   private var ordered: [KeyboardMap.KeyStep] = []
   private var concurrent = 0
   private(set) var maxConcurrent = 0
   private(set) var shakes = 0
 
-  func record(_ event: SimulatorHIDEvent, holdNs: UInt64 = 0) async {
+  func record(_ event: HIDEvent, holdNs: UInt64 = 0) async {
     lock.withLock {
       storage.append(event)
       ordered.append(.event(event))
@@ -28,7 +28,7 @@ private final class Recorder: @unchecked Sendable {
   func shake() { lock.withLock { shakes += 1 } }
   /// Key events and pauses in the order they happened.
   var steps: [KeyboardMap.KeyStep] { lock.withLock { ordered } }
-  var events: [SimulatorHIDEvent] { lock.withLock { storage } }
+  var events: [HIDEvent] { lock.withLock { storage } }
 }
 
 final class InputTests: XCTestCase {
@@ -89,7 +89,7 @@ final class InputTests: XCTestCase {
   // MARK: interface orientation
 
   func testInterfaceFollowsTheFramebufferOverTheDevice() async {
-    let cases: [(CGSize, SimulatorDeviceOrientation?, Bool)] = [
+    let cases: [(CGSize, DeviceOrientation?, Bool)] = [
       // a portrait-locked app on a turned device: the bug this guards
       (CGSize(width: 1206, height: 2622), .landscapeLeft, false),
       (CGSize(width: 1206, height: 2622), .landscapeRight, false),
@@ -114,7 +114,7 @@ final class InputTests: XCTestCase {
   }
 
   func testInterfaceFallsBackToTheDeviceWithoutAFramebuffer() async {
-    let cases: [(CGSize?, SimulatorDeviceOrientation?, Bool)] = [
+    let cases: [(CGSize?, DeviceOrientation?, Bool)] = [
       (nil, .landscapeLeft, true),
       (nil, .landscapeRight, true),
       (nil, .portrait, false),
@@ -202,7 +202,7 @@ final class InputTests: XCTestCase {
   func testLongPressDefaultsToEightHundredMilliseconds() async throws {
     let recorder = Recorder()
     _ = try await call(engine(recorder), "longPress", ["x": 10, "y": 20])
-    XCTAssertEqual(recorder.events, [.tapAt(x: 10, y: 20, duration: 0.8)])
+    XCTAssertEqual(recorder.events, [.longPress(x: 10, y: 20, duration: 0.8)])
   }
 
   func testTapRejectsMissingCoordinatesAndBadCount() async {
@@ -225,7 +225,7 @@ final class InputTests: XCTestCase {
   func testMomentumFreeSwipeDeceleratesIntoTheEndPoint() {
     let event = HIDPlan.swipe(from: CGPoint(x: 0, y: 1000), to: CGPoint(x: 0, y: 0), duration: 0.3, momentum: false)
     let ys: [Double] = (event.subEvents ?? []).compactMap {
-      if case let .touch(_, _, y, _) = $0 { return y }
+      if case let .touch(_, _, y) = $0 { return y }
       return nil
     }
     XCTAssertEqual(ys.first, 1000)
@@ -235,11 +235,16 @@ final class InputTests: XCTestCase {
     XCTAssertGreaterThan(steps[0], steps[steps.count - 3], "first step larger than the last real step")
   }
 
-  func testMomentumSwipeUsesIdbSwipe() {
+  func testMomentumSwipeIsOneBackendSwipe() {
     let event = HIDPlan.swipe(from: CGPoint(x: 0, y: 500), to: CGPoint(x: 0, y: 100), duration: 0.3, momentum: true)
-    let holds = (event.subEvents ?? []).filter { $0 == .delay(0.15) }
-    XCTAssertTrue(holds.isEmpty)
-    XCTAssertEqual(event.subEvents?.last, .touch(direction: .up, x: 0, y: 100))
+    XCTAssertEqual(
+      event,
+      .swipe(
+        xStart: 0, yStart: 500, xEnd: 0, yEnd: 100, delta: 400 / Double(HIDPlan.sampleCount(duration: 0.3)),
+        duration: 0.3))
+    let lowered = IdbHID.event(event)
+    XCTAssertFalse((lowered.subEvents ?? []).contains(.delay(0.15)))
+    XCTAssertEqual(lowered.subEvents?.last, .touch(direction: .up, x: 0, y: 100))
   }
 
   func testSwipeMomentumFlagComesFromTheRequest() async throws {
@@ -256,7 +261,9 @@ final class InputTests: XCTestCase {
   func testDragStartsWithAFiveHundredMillisecondPress() async throws {
     let recorder = Recorder()
     _ = try await call(engine(recorder), "drag", ["from": ["x": 10, "y": 10], "to": ["x": 10, "y": 200]])
-    let events = recorder.events.first?.subEvents ?? []
+    guard case let .drag(_, _, _, _, _, pressDuration, _, _)? = recorder.events.first else { return XCTFail("no drag") }
+    XCTAssertEqual(pressDuration, 0.5)
+    let events = recorder.events.first.map(IdbHID.event)?.subEvents ?? []
     XCTAssertEqual(events[0], .touch(direction: .down, x: 10, y: 10))
     XCTAssertEqual(events[1], .delay(0.5))
     XCTAssertEqual(events.last, .touch(direction: .up, x: 10, y: 200))
@@ -439,7 +446,7 @@ final class InputTests: XCTestCase {
     _ = try await call(engine, "pressButton", ["button": "volumeUp"])
     _ = try await call(engine, "pressButton", ["button": "side"])
     XCTAssertEqual(
-      recorder.events, [.shortButtonPress(.homeButton), .shortButtonPress(.volumeUp), .shortButtonPress(.sideButton)])
+      recorder.events, [.buttonPress(.home), .buttonPress(.volumeUp), .buttonPress(.side)])
   }
 
   func testShakeUsesTheHardwareCommandNotHID() async throws {
