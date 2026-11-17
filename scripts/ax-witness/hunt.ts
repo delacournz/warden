@@ -45,12 +45,19 @@ export type Iteration =
 	| { index: number; status: "ok"; udid: string; verdict: Verdict; flagged: boolean; summary: Summary }
 	| { index: number; status: "infra-failure"; reason: string };
 
+/** Worth a look: simd went silent for a streak, or the runner never came up (on a wedged sim XCUITest may not start). */
+export function iterationFlagged(summary: Summary): boolean {
+	return summary.streaks.length > 0 || summary.runnerStartup.status === "failed";
+}
+
 export function markdownTable(iterations: readonly Iteration[]): string {
 	const rows = iterations.map((it) => {
 		if (it.status === "infra-failure") return `| ${it.index} | infra failure | - | - | ${it.reason} |`;
-		const streaks = it.summary.streaks
-			.map((s) => `${s.reads} reads / ${(s.durationMs / 1000).toFixed(0)} s: runner ${s.verdict}`)
-			.join("; ");
+		const startup = it.summary.runnerStartup;
+		const streaks = [
+			...(startup.status === "failed" ? [`runner never ready: ${startup.reason}`] : []),
+			...it.summary.streaks.map((s) => `${s.reads} reads / ${(s.durationMs / 1000).toFixed(0)} s: runner ${s.verdict}`),
+		].join("; ");
 		return `| ${it.index} | ${it.verdict}${it.flagged ? " (FLAGGED)" : ""} | ${it.summary.simd.silent}/${it.summary.simd.total} | ${it.summary.runner.answered}/${it.summary.runner.total} | ${streaks || "-"} |`;
 	});
 	return ["| # | verdict | simd silent | runner answered | silent streaks |", "|---|---|---|---|---|", ...rows].join(
@@ -136,7 +143,7 @@ function runIteration(index: number, out: string, seconds: number, minStreak: nu
 			status: "ok",
 			udid: sim.udid,
 			verdict: summary.verdict,
-			flagged: summary.streaks.length > 0,
+			flagged: iterationFlagged(summary),
 			summary,
 		};
 	} finally {

@@ -7,8 +7,9 @@ name: ax-wedge-hunt
 # iteration's run.jsonl / summary.json plus hunt.json; iterations with a silent streak are marked FLAGGED in the step
 # summary. Manual only: it burns macOS minutes and gates nothing. See scripts/ax-witness/README.md.
 #
-# The helper needs Xcode 27 to build: the default label `xcode-27` (GitHub's macOS 27 image) has it; `macos-26` stops at
-# Xcode 26.6, where the helper build fails, so pick another label only if it has an Xcode_27*.app.
+# The helper needs Xcode 27 to build: the default label `xcode-27` (GitHub's macOS 27 image) has it, and so does
+# `namespace-profile-mac-medium` (Namespace); `macos-26` stops at Xcode 26.6, where the helper build fails. Every wedge
+# seen so far came from the Namespace runner, none from `xcode-27`, so hunt there.
 on:
   workflow_dispatch:
     inputs:

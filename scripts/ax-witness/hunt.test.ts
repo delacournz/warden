@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { harnessArgs, type Iteration, markdownTable, pickDeviceType, pickRuntime } from "./hunt";
+import { harnessArgs, type Iteration, iterationFlagged, markdownTable, pickDeviceType, pickRuntime } from "./hunt";
 import { summarize } from "./witness";
 
 describe("pickRuntime", () => {
@@ -72,6 +72,36 @@ describe("markdownTable", () => {
 		expect(table).toContain("witness-answers (FLAGGED)");
 		expect(table).toContain("runner answered");
 		expect(table).toContain("infra failure");
+	});
+
+	test("an iteration whose runner never started is flagged with the reason and simd's silence", () => {
+		const summary = summarize([
+			...[1, 2, 3].map((n) => ({
+				kind: "read" as const,
+				round: n,
+				source: "simd" as const,
+				tMs: n * 1000,
+				latencyMs: 15_000,
+				outcome: "silent" as const,
+			})),
+			{ kind: "note", tMs: 450_000, text: "runner failure: runner not ready after 420 s" },
+		]);
+		const table = markdownTable([
+			{ index: 1, status: "ok", udid: "u", verdict: summary.verdict, flagged: iterationFlagged(summary), summary },
+		]);
+		expect(table).toContain("witness-unread (FLAGGED)");
+		expect(table).toContain("3/3");
+		expect(table).toContain("runner never ready: runner not ready after 420 s");
+	});
+});
+
+describe("iterationFlagged", () => {
+	test("a silent streak or a runner that never started flags the iteration", () => {
+		const quiet = summarize([]);
+		expect(iterationFlagged(quiet)).toBe(false);
+		expect(iterationFlagged(summarize([{ kind: "note", tMs: 1, text: "runner failure: xcodebuild exited 65" }]))).toBe(
+			true
+		);
 	});
 });
 

@@ -92,7 +92,20 @@ export type Streak = {
 	verdict: "answered" | "silent" | "mixed" | "unread";
 };
 
-export type Verdict = "no-simd-silence" | "witness-answers" | "witness-silent" | "witness-mixed";
+/**
+ * `witness-unread`: every streak fell while the runner was not up (still starting, or never started), so it says
+ * nothing about the runner; with a runner that never started it is the closest a run gets to "both silent".
+ */
+export type Verdict = "no-simd-silence" | "witness-answers" | "witness-silent" | "witness-mixed" | "witness-unread";
+
+/** When the runner came up, from the run's notes; `failed` is a runner that never got ready (xcodebuild exit, ceiling). */
+export type RunnerStartup =
+	| { status: "ready"; readyMs: number }
+	| { status: "failed"; reason: string }
+	| { status: "unknown" };
+
+export const RUNNER_READY_NOTE = "runner ready";
+export const RUNNER_FAILURE_PREFIX = "runner failure: ";
 
 export type Summary = {
 	rounds: number;
@@ -101,6 +114,7 @@ export type Summary = {
 	minStreak: number;
 	streaks: Streak[];
 	longestSimdSilenceMs: number;
+	runnerStartup: RunnerStartup;
 	verdict: Verdict;
 };
 
@@ -121,6 +135,17 @@ function streakVerdict(runner: Tally): Streak["verdict"] {
 	if (runner.answered === runner.total) return "answered";
 	if (runner.answered === 0) return "silent";
 	return "mixed";
+}
+
+function runnerStartup(records: readonly RunRecord[]): RunnerStartup {
+	for (const record of records) {
+		if (record.kind !== "note") continue;
+		if (record.text === RUNNER_READY_NOTE) return { status: "ready", readyMs: record.tMs };
+		if (record.text.startsWith(RUNNER_FAILURE_PREFIX)) {
+			return { status: "failed", reason: record.text.slice(RUNNER_FAILURE_PREFIX.length) };
+		}
+	}
+	return { status: "unknown" };
 }
 
 /** Rounds in which simd was silent `minStreak` or more times in a row, each with what the runner answered meanwhile. */
@@ -165,6 +190,7 @@ export function summarize(records: readonly RunRecord[], minStreak = 3): Summary
 		const verdicts = new Set(streaks.map((s) => s.verdict));
 		if (verdicts.size === 1 && verdicts.has("answered")) verdict = "witness-answers";
 		else if (verdicts.size === 1 && verdicts.has("silent")) verdict = "witness-silent";
+		else if (verdicts.size === 1 && verdicts.has("unread")) verdict = "witness-unread";
 		else verdict = "witness-mixed";
 	}
 	return {
@@ -174,6 +200,7 @@ export function summarize(records: readonly RunRecord[], minStreak = 3): Summary
 		minStreak,
 		streaks,
 		longestSimdSilenceMs: streaks.reduce((max, s) => Math.max(max, s.durationMs), 0),
+		runnerStartup: runnerStartup(records),
 		verdict,
 	};
 }
@@ -185,6 +212,7 @@ export function formatSummary(summary: Summary): string {
 		line("simd", summary.simd) + (summary.simd.fallbacks > 0 ? ` (${summary.simd.fallbacks} via fallback)` : ""),
 		line("runner", summary.runner),
 	];
+	if (summary.runnerStartup.status === "failed") out.push(`runner never ready: ${summary.runnerStartup.reason}`);
 	if (summary.streaks.length === 0) out.push(`no simd silence of >= ${summary.minStreak} reads in a row`);
 	for (const s of summary.streaks) {
 		out.push(
