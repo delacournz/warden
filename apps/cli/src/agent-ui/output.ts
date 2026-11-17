@@ -185,8 +185,9 @@ export function reportOk(ctx: CommandContext, report: UiReport, success: UiSucce
 
 /** A success that exits non-zero (`is` false, an audit with errors) answered "no": it did not fail. */
 function okExit(ctx: CommandContext, success: UiSuccess): UiExitCode {
-	if (success.exit !== undefined && success.exit !== UI_EXIT.ok) ctx.failure?.classify?.("negative_answer");
-	return success.exit ?? UI_EXIT.ok;
+	const exit = success.exit ?? UI_EXIT.ok;
+	if (exit !== UI_EXIT.ok) ctx.failure?.classify?.("negative_answer");
+	return exit;
 }
 
 /** Print a failure (JSON envelope on stdout, or a red line on stderr) and return its exit code. */

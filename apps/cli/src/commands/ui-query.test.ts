@@ -418,7 +418,7 @@ describe("telemetry: how a failed run is classified", () => {
 		const seen: { code: string; error?: unknown }[] = [];
 		h.c.failure = {
 			record: () => {},
-			classify: (code, error) => void seen.push(error === undefined ? { code } : { code, error }),
+			classify: (code, error) => void seen.push({ code, error }),
 		};
 		return seen;
 	}

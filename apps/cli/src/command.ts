@@ -95,7 +95,7 @@ export type JsonFailure = {
 	error: { code: "usage" | "failed"; message: string } | ({ message: string } & FailureExtra);
 };
 
-type Classified = { errorCode: FailureCode; error?: unknown };
+type Classified = Pick<Finished, "error"> & { errorCode: FailureCode };
 
 /** How a run ended, from its exit code: 130 is an interrupt, anything else non-zero is an error, with why if known. */
 function outcomeOf(code: number, classified: Classified | undefined): Finished {
@@ -149,7 +149,7 @@ export async function runProgram(
 				ctx.failure?.record(message, extra);
 			},
 			classify: (errorCode, error) => {
-				classified ??= error === undefined ? { errorCode } : { errorCode, error };
+				classified ??= { errorCode, error };
 				ctx.failure?.classify?.(errorCode, error);
 			},
 		},

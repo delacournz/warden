@@ -106,8 +106,8 @@ export function suitesOf(command: CommandLike): number | undefined {
 const IDENTIFIER = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
 
 /** A failure's machine code (`target_not_found`, `NO_DEVICE`) and nothing that is not shaped like one. */
-export function errorCodeOf(code: unknown): string | undefined {
-	return typeof code === "string" && IDENTIFIER.test(code) ? code : undefined;
+export function errorCodeOf(code: string | undefined): string | undefined {
+	return code !== undefined && IDENTIFIER.test(code) ? code : undefined;
 }
 
 /** The error's class name and never its message, which names paths, udids and bundle ids. */
