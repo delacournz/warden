@@ -12,7 +12,15 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } fr
 import { join, resolve } from "node:path";
 import type { Summary, Verdict } from "./witness";
 
-type Runtime = { identifier: string; version: string; isAvailable: boolean; platform?: string; name: string };
+type Runtime = {
+	identifier: string;
+	version: string;
+	isAvailable: boolean;
+	platform?: string;
+	name: string;
+	/** Absent on older simctl; some images ship device-specific runtimes (`iOS-27-2-iPhone19-4`) next to the general one. */
+	supportedDeviceTypes?: { identifier: string }[];
+};
 type DeviceType = { identifier: string; name: string; productFamily?: string };
 
 function versionParts(version: string): number[] {
@@ -28,10 +36,14 @@ function compareVersions(a: string, b: string): number {
 	return 0;
 }
 
-/** The newest available iOS runtime, or undefined when none is installed. */
-export function pickRuntime(runtimes: readonly Runtime[]): Runtime | undefined {
+/** The newest available iOS runtime (that supports `deviceType`, when given), or undefined when none is installed. */
+export function pickRuntime(runtimes: readonly Runtime[], deviceType?: string): Runtime | undefined {
+	const supports = (r: Runtime): boolean =>
+		deviceType === undefined ||
+		r.supportedDeviceTypes === undefined ||
+		r.supportedDeviceTypes.some((t) => t.identifier === deviceType);
 	return runtimes
-		.filter((r) => r.isAvailable && (r.platform === "iOS" || r.identifier.includes(".iOS-")))
+		.filter((r) => r.isAvailable && (r.platform === "iOS" || r.identifier.includes(".iOS-")) && supports(r))
 		.sort((a, b) => compareVersions(b.version, a.version))[0];
 }
 
@@ -45,12 +57,19 @@ export type Iteration =
 	| { index: number; status: "ok"; udid: string; verdict: Verdict; flagged: boolean; summary: Summary }
 	| { index: number; status: "infra-failure"; reason: string };
 
+/** Worth a look: simd went silent for a streak, or the runner never came up (on a wedged sim XCUITest may not start). */
+export function iterationFlagged(summary: Summary): boolean {
+	return summary.streaks.length > 0 || summary.runnerStartup.status === "failed";
+}
+
 export function markdownTable(iterations: readonly Iteration[]): string {
 	const rows = iterations.map((it) => {
 		if (it.status === "infra-failure") return `| ${it.index} | infra failure | - | - | ${it.reason} |`;
-		const streaks = it.summary.streaks
-			.map((s) => `${s.reads} reads / ${(s.durationMs / 1000).toFixed(0)} s: runner ${s.verdict}`)
-			.join("; ");
+		const startup = it.summary.runnerStartup;
+		const streaks = [
+			...(startup.status === "failed" ? [`runner never ready: ${startup.reason}`] : []),
+			...it.summary.streaks.map((s) => `${s.reads} reads / ${(s.durationMs / 1000).toFixed(0)} s: runner ${s.verdict}`),
+		].join("; ");
 		return `| ${it.index} | ${it.verdict}${it.flagged ? " (FLAGGED)" : ""} | ${it.summary.simd.silent}/${it.summary.simd.total} | ${it.summary.runner.answered}/${it.summary.runner.total} | ${streaks || "-"} |`;
 	});
 	return ["| # | verdict | simd silent | runner answered | silent streaks |", "|---|---|---|---|---|", ...rows].join(
@@ -101,8 +120,8 @@ function arg(name: string, fallback: string): string {
 }
 
 function createBootedSim(index: number): { udid: string } | { reason: string } {
-	const runtime = pickRuntime(simctlJson<Runtime>(["list", "runtimes"], "runtimes"));
 	const type = pickDeviceType(simctlJson<DeviceType>(["list", "devicetypes"], "devicetypes"));
+	const runtime = pickRuntime(simctlJson<Runtime>(["list", "runtimes"], "runtimes"), type?.identifier);
 	if (!runtime || !type) return { reason: "no iOS runtime or iPhone device type on this runner" };
 	const created = sh(["create", `ax-hunt-${index}`, type.identifier, runtime.identifier]);
 	if (!created.ok) return { reason: `simctl create: ${created.out.slice(0, 200)}` };
@@ -136,7 +155,7 @@ function runIteration(index: number, out: string, seconds: number, minStreak: nu
 			status: "ok",
 			udid: sim.udid,
 			verdict: summary.verdict,
-			flagged: summary.streaks.length > 0,
+			flagged: iterationFlagged(summary),
 			summary,
 		};
 	} finally {

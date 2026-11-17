@@ -110,6 +110,39 @@ describe("summarize", () => {
 		expect(summarize(records).streaks[0]?.verdict).toBe("unread");
 	});
 
+	test("silence only while the runner was down is witness-unread", () => {
+		const records = [1, 2, 3].map((n) => read(n, "simd", "silent"));
+		expect(summarize(records).verdict).toBe("witness-unread");
+	});
+
+	test("an unread startup streak does not dilute a later answered streak", () => {
+		const records = [
+			...[1, 2, 3].map((n) => read(n, "simd", "silent")),
+			read(4, "simd", "answered"),
+			...[5, 6, 7].flatMap((n) => [read(n, "simd", "silent"), read(n, "runner", "answered")]),
+		];
+		const s = summarize(records);
+		expect(s.streaks.map((x) => x.verdict)).toEqual(["unread", "answered"]);
+		expect(s.verdict).toBe("witness-answers");
+	});
+
+	test("runner startup comes from the notes: ready time, or the failure", () => {
+		const ready = summarize([
+			{ kind: "note", tMs: 30_000, text: "simd ready (pid 1)" },
+			{ kind: "note", tMs: 210_000, text: "runner ready" },
+		]);
+		expect(ready.runnerStartup).toEqual({ status: "ready", readyMs: 210_000 });
+
+		const failed = summarize([
+			read(1, "simd", "silent"),
+			{ kind: "note", tMs: 450_000, text: "runner failure: runner not ready after 420 s" },
+		]);
+		expect(failed.runnerStartup).toEqual({ status: "failed", reason: "runner not ready after 420 s" });
+		expect(formatSummary(failed)).toContain("runner never ready: runner not ready after 420 s");
+
+		expect(summarize([read(1, "simd", "answered")]).runnerStartup).toEqual({ status: "unknown" });
+	});
+
 	test("busy runner refusals are counted in the streak and the summary text", () => {
 		const records = [1, 2, 3].flatMap((n) => [
 			read(n, "simd", "silent"),

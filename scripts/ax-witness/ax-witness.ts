@@ -6,8 +6,12 @@
  *   bun scripts/ax-witness/ax-witness.ts --udid <sim udid> (--freeze | --observe)
  *       [--seconds 120] [--freeze-seconds 60] [--app com.apple.Preferences] [--interval 1000]
  *       [--simd <path>] [--out <dir>] [--skip-build] [--derived-data <dir>] [--min-streak 3]
+ *       [--runner-ready-seconds 420]
  *
- * Each round sends one `snapshot` to simd, then one to the runner, and appends a JSONL record per read.
+ * Each round sends one `snapshot` to simd, then one to the runner, and appends a JSONL record per read. The runner
+ * (`xcodebuild test-without-building`) takes 2–4 min to come up on a fresh CI sim, so simd is read from the start
+ * (`startup` rounds, runner unread) and a runner that never gets ready still leaves a summary (`runnerStartup: failed`):
+ * on a wedged sim XCUITest may never start, and those simd reads are the evidence.
  * `--freeze`: baseline rounds, then SIGSTOP the launched app + SpringBoard (an emulation of a silent AX service, not
  * a real wedge), read for `--freeze-seconds`, SIGCONT, recovery rounds. `--observe`: no interference, for CI hunting.
  * Only ever pass a simulator you own (a claimed lease, or a throwaway CI VM): `--freeze` stops its processes.
@@ -24,6 +28,8 @@ import {
 	parseJsonl,
 	pidForLabel,
 	type ReadResult,
+	RUNNER_FAILURE_PREFIX,
+	RUNNER_READY_NOTE,
 	type RunRecord,
 	readyPort,
 	type Source,
@@ -138,7 +144,13 @@ function buildRunner(udid: string, derivedData: string, logFile: string): boolea
 	return build.status === 0;
 }
 
-function startRunner(udid: string, derivedData: string, logFile: string): Promise<Runner> {
+/** Starts the runner; `ready` settles once it listens (or fails); `xcodebuild` is exposed so teardown can stop it early. */
+function startRunner(
+	udid: string,
+	derivedData: string,
+	logFile: string,
+	readySeconds: number
+): { xcodebuild: ChildProcess; ready: Promise<Runner> } {
 	const env = { ...process.env, TEST_RUNNER_WARDEN_RUNNER_UDID: udid, TEST_RUNNER_WARDEN_RUNNER_IDLE_SECONDS: "3600" };
 	const xcodebuild = spawn(
 		"xcodebuild",
@@ -147,7 +159,7 @@ function startRunner(udid: string, derivedData: string, logFile: string): Promis
 		]),
 		{ env }
 	);
-	return new Promise<Runner>((resolveRunner, reject) => {
+	const ready = new Promise<Runner>((resolveRunner, reject) => {
 		let settled = false;
 		// Every reject path stops xcodebuild: the caller never gets a Runner to tear down, and testServe idles for an hour.
 		const fail = (error: Error): void => {
@@ -157,7 +169,7 @@ function startRunner(udid: string, derivedData: string, logFile: string): Promis
 			if (xcodebuild.exitCode === null) xcodebuild.kill("SIGTERM");
 			reject(error);
 		};
-		const timer = setTimeout(() => fail(new Error("runner not ready after 240 s")), 240_000);
+		const timer = setTimeout(() => fail(new Error(`runner not ready after ${readySeconds} s`)), readySeconds * 1000);
 		const onLine = (line: string): void => {
 			appendFileSync(logFile, `${line}\n`);
 			if (settled) return;
@@ -190,12 +202,40 @@ function startRunner(udid: string, derivedData: string, logFile: string): Promis
 		}
 		xcodebuild.on("exit", (code) => fail(new Error(`xcodebuild exited ${code} before the runner was ready`)));
 	});
+	return { xcodebuild, ready };
 }
 
-type Phase = "baseline" | "freeze" | "recovery" | "observe";
+type Phase = "startup" | "baseline" | "freeze" | "recovery" | "observe";
 
 function launchedPid(result: ReadResult): number | undefined {
 	return result.kind === "reply" ? (result.reply.data as { pid?: number } | undefined)?.pid : undefined;
+}
+
+type ReadContext = {
+	simd: LineClient;
+	/** The runner's client once it is ready; undefined while it starts (that read is skipped, not recorded). */
+	runner: () => LineClient | undefined;
+	app: string;
+	at: () => number;
+	emit: (record: RunRecord) => void;
+};
+
+/** One `snapshot` to one source, recorded as a JSONL read and echoed as a log line. */
+async function readOnce(ctx: ReadContext, round: number, source: Source, phase: Phase): Promise<void> {
+	const client = source === "simd" ? ctx.simd : ctx.runner();
+	if (!client) return;
+	const request =
+		source === "simd"
+			? { op: "snapshot", interactiveOnly: true, timeoutMs: 15_000 }
+			: { op: "snapshot", bundleId: ctx.app, interactiveOnly: true, timeoutMs: 15_000 };
+	const started = ctx.at();
+	const result = await client.call(request, 25_000);
+	const latencyMs = ctx.at() - started;
+	const verdict = classify(result);
+	ctx.emit({ kind: "read", round, source, tMs: started, latencyMs, ...verdict });
+	console.log(
+		`${(started / 1000).toFixed(1).padStart(7)}s r${String(round).padStart(3)} ${phase.padEnd(8)} ${source.padEnd(6)} ${verdict.outcome.padEnd(8)} ${String(latencyMs).padStart(6)} ms ${verdict.code ?? verdict.backend ?? ""}`
+	);
 }
 
 type Options = {
@@ -206,6 +246,7 @@ type Options = {
 	minStreak: number;
 	seconds: number;
 	freezeSeconds: number;
+	runnerReadySeconds: number;
 	simdPath: string;
 	derivedData: string;
 	out: string;
@@ -223,6 +264,7 @@ function parseOptions(): Options | undefined {
 		minStreak: numArg("min-streak", 3),
 		seconds: numArg("seconds", 120),
 		freezeSeconds: numArg("freeze-seconds", 60),
+		runnerReadySeconds: numArg("runner-ready-seconds", 420),
 		simdPath: resolve(arg("simd") ?? join(ROOT, "packages/e2e/native/dist/warden-simd")),
 		derivedData: resolve(arg("derived-data") ?? join(homedir(), "Library/Caches/warden-ax-witness/derived-data")),
 		out: resolve(arg("out") ?? join(ROOT, "ax-witness-out", new Date().toISOString().replace(/[:.]/g, "-"))),
@@ -238,9 +280,22 @@ async function main(): Promise<number> {
 		console.error(
 			"       [--app <bundle id>] [--interval 1000] [--simd <path>] [--out <dir>] [--skip-build] [--min-streak 3]"
 		);
+		console.error("       [--runner-ready-seconds 420]");
 		return 2;
 	}
-	const { udid, freeze, app, interval, minStreak, seconds, freezeSeconds, simdPath, derivedData, out } = options;
+	const {
+		udid,
+		freeze,
+		app,
+		interval,
+		minStreak,
+		seconds,
+		freezeSeconds,
+		runnerReadySeconds,
+		simdPath,
+		derivedData,
+		out,
+	} = options;
 	mkdirSync(out, { recursive: true });
 	mkdirSync(derivedData, { recursive: true });
 	const jsonl = join(out, "run.jsonl");
@@ -257,60 +312,44 @@ async function main(): Promise<number> {
 
 	const simd = startSimd(simdPath, udid, join(out, "simd.log"));
 	let runner: Runner | undefined;
-	let appPid: number | undefined;
-	let sbPid: number | undefined;
-	let frozen = false;
-	const thaw = (): void => {
-		if (!frozen) return;
-		for (const pid of [appPid, sbPid]) {
-			if (pid === undefined) continue;
-			try {
-				process.kill(pid, "SIGCONT");
-			} catch {
-				// already gone
-			}
-		}
-		frozen = false;
-	};
+	let runnerProcess: ChildProcess | undefined;
+	// An object, not a `let`: the startup callbacks set it, and TS would keep a `let` narrowed to "starting".
+	const runnerStart: { state: "starting" | "ready" | "failed" } = { state: "starting" };
+	const freezer = new Freezer();
 	process.on("SIGINT", () => {
-		thaw();
+		freezer.thaw();
 		process.exit(130);
 	});
 
 	try {
 		await Promise.race([simd.ready, Bun.sleep(30_000)]);
 		note(`simd ready (pid ${simd.child.pid})`);
-		runner = await startRunner(udid, derivedData, join(out, "runner.log"));
-		note("runner ready");
+		const started = startRunner(udid, derivedData, join(out, "runner.log"), runnerReadySeconds);
+		runnerProcess = started.xcodebuild;
+		started.ready.then(
+			(ready) => {
+				runner = ready;
+				runnerStart.state = "ready";
+				note(RUNNER_READY_NOTE);
+			},
+			(error: unknown) => {
+				runnerStart.state = "failed";
+				note(`${RUNNER_FAILURE_PREFIX}${error instanceof Error ? error.message : String(error)}`);
+			}
+		);
 		const launched = await simd.client.call({ op: "launch", bundleId: app }, 30_000);
-		appPid = launchedPid(launched);
+		const appPid = launchedPid(launched);
 		if (!appPid) throw new Error(`could not launch ${app} through simd`);
 		note(`launched ${app} pid ${appPid}`);
 		await Bun.sleep(2000);
 
-		const readOnce = async (round: number, source: Source, phase: Phase): Promise<void> => {
-			const client = source === "simd" ? simd.client : runner?.client;
-			if (!client) return;
-			const request =
-				source === "simd"
-					? { op: "snapshot", interactiveOnly: true, timeoutMs: 15_000 }
-					: { op: "snapshot", bundleId: app, interactiveOnly: true, timeoutMs: 15_000 };
-			const started = at();
-			const result = await client.call(request, 25_000);
-			const latencyMs = at() - started;
-			const verdict = classify(result);
-			emit({ kind: "read", round, source, tMs: started, latencyMs, ...verdict });
-			console.log(
-				`${(started / 1000).toFixed(1).padStart(7)}s r${String(round).padStart(3)} ${phase.padEnd(8)} ${source.padEnd(6)} ${verdict.outcome.padEnd(8)} ${String(latencyMs).padStart(6)} ms ${verdict.code ?? verdict.backend ?? ""}`
-			);
-		};
-
+		const reads: ReadContext = { simd: simd.client, runner: () => runner?.client, app, at, emit };
 		let round = 0;
 		const rounds = async (until: () => boolean, phase: Phase): Promise<void> => {
 			while (!until()) {
 				round++;
-				await readOnce(round, "simd", phase);
-				await readOnce(round, "runner", phase);
+				await readOnce(reads, round, "simd", phase);
+				await readOnce(reads, round, "runner", phase);
 				await Bun.sleep(interval);
 			}
 		};
@@ -319,18 +358,10 @@ async function main(): Promise<number> {
 			return () => Date.now() >= end;
 		};
 
+		await rounds(() => runnerStart.state !== "starting", "startup");
 		if (freeze) {
-			await rounds(forSeconds(6), "baseline");
-			const list = spawnSync("xcrun", ["simctl", "spawn", udid, "launchctl", "list"], { encoding: "utf8" }).stdout;
-			sbPid = pidForLabel(list, "com.apple.SpringBoard");
-			process.kill(appPid, "SIGSTOP");
-			if (sbPid !== undefined) process.kill(sbPid, "SIGSTOP");
-			frozen = true;
-			note(`SIGSTOP ${app} pid ${appPid} + SpringBoard pid ${sbPid ?? "?"} (emulation, not a real wedge)`);
-			await rounds(forSeconds(freezeSeconds), "freeze");
-			thaw();
-			note("SIGCONT");
-			await rounds(forSeconds(10), "recovery");
+			if (runnerStart.state === "failed") throw new Error("the runner never got ready; --freeze needs it");
+			await freezeCycle({ udid, app, appPid, freezeSeconds, freezer, rounds, forSeconds, note });
 		} else {
 			await rounds(forSeconds(seconds), "observe");
 		}
@@ -338,12 +369,12 @@ async function main(): Promise<number> {
 		if (wedge.kind === "reply") note(`simd axWedge ${JSON.stringify(wedge.reply.data ?? wedge.reply.error)}`);
 	} catch (error) {
 		note(`harness failure: ${error instanceof Error ? error.message : String(error)}`);
-		thaw();
-		await teardown(simd.child, runner);
+		freezer.thaw();
+		await teardown(simd.child, runner, runnerProcess);
 		return 1;
 	}
-	thaw();
-	await teardown(simd.child, runner);
+	freezer.thaw();
+	await teardown(simd.child, runner, runnerProcess);
 
 	const summary = summarize(parseJsonl(await Bun.file(jsonl).text()), minStreak);
 	writeFileSync(
@@ -355,7 +386,58 @@ async function main(): Promise<number> {
 	return 0;
 }
 
-async function teardown(simd: ChildProcess, runner: Runner | undefined): Promise<void> {
+/** Processes `--freeze` SIGSTOPped; `thaw` resumes them, and is safe to call on every exit path. */
+class Freezer {
+	private stopped: number[] = [];
+
+	stop(pids: readonly number[]): void {
+		for (const pid of pids) process.kill(pid, "SIGSTOP");
+		this.stopped = [...pids];
+	}
+
+	thaw(): void {
+		for (const pid of this.stopped) {
+			try {
+				process.kill(pid, "SIGCONT");
+			} catch {
+				// already gone
+			}
+		}
+		this.stopped = [];
+	}
+}
+
+type FreezeCycle = {
+	udid: string;
+	app: string;
+	appPid: number;
+	freezeSeconds: number;
+	freezer: Freezer;
+	rounds: (until: () => boolean, phase: Phase) => Promise<void>;
+	forSeconds: (s: number) => () => boolean;
+	note: (text: string) => void;
+};
+
+/** Baseline rounds, SIGSTOP the app + SpringBoard (an emulation of a silent AX service), freeze rounds, SIGCONT, recovery. */
+async function freezeCycle(c: FreezeCycle): Promise<void> {
+	await c.rounds(c.forSeconds(6), "baseline");
+	const list = spawnSync("xcrun", ["simctl", "spawn", c.udid, "launchctl", "list"], { encoding: "utf8" }).stdout;
+	const sbPid = pidForLabel(list, "com.apple.SpringBoard");
+	c.freezer.stop(sbPid === undefined ? [c.appPid] : [c.appPid, sbPid]);
+	c.note(`SIGSTOP ${c.app} pid ${c.appPid} + SpringBoard pid ${sbPid ?? "?"} (emulation, not a real wedge)`);
+	await c.rounds(c.forSeconds(c.freezeSeconds), "freeze");
+	c.freezer.thaw();
+	c.note("SIGCONT");
+	await c.rounds(c.forSeconds(10), "recovery");
+}
+
+async function teardown(
+	simd: ChildProcess,
+	runner: Runner | undefined,
+	runnerProcess: ChildProcess | undefined
+): Promise<void> {
+	// A runner still starting has no socket to shut down; stop its xcodebuild (a failed start already stopped it).
+	if (!runner && runnerProcess?.exitCode === null) runnerProcess.kill("SIGTERM");
 	if (runner) {
 		await runner.client.call({ op: "shutdown" }, 5000).catch(() => undefined);
 		runner.socket.destroy();
