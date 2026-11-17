@@ -359,9 +359,8 @@ async function main(): Promise<number> {
 		};
 
 		await rounds(() => runnerStart.state !== "starting", "startup");
-		if (runnerStart.state === "failed") {
-			if (freeze) throw new Error("the runner never got ready; --freeze needs it");
-		} else if (freeze) {
+		if (freeze) {
+			if (runnerStart.state === "failed") throw new Error("the runner never got ready; --freeze needs it");
 			await freezeCycle({ udid, app, appPid, freezeSeconds, freezer, rounds, forSeconds, note });
 		} else {
 			await rounds(forSeconds(seconds), "observe");

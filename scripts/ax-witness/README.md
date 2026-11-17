@@ -25,7 +25,8 @@ warden release <leaseId> --shutdown
   on `127.0.0.1`), 1 s apart.
 - `startup` rounds: the runner takes 2–4 min to come up on a fresh CI sim, so simd is read from the start and the
   runner is skipped until it is ready. It gets `--runner-ready-seconds` (420). If it never gets ready (that ceiling, or
-  `xcodebuild` exiting), `--observe` still writes a summary with `runner never ready: <why>`; `--freeze` fails.
+  `xcodebuild` exiting), `--observe` still reads simd for `--seconds` and writes a summary with
+  `runner never ready: <why>`; `--freeze` fails.
 - `--freeze`: 6 s baseline, SIGSTOP of the launched app and SpringBoard for `--freeze-seconds` (60), SIGCONT, 10 s
   recovery. This is an EMULATION of a silent AX service, not a real wedge: the processes AX would read are stopped.
 - `--observe`: no interference for `--seconds` (120). This is what CI hunts with.
