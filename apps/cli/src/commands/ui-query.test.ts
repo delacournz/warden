@@ -410,3 +410,44 @@ describe("get", () => {
 		expect(readState(h.c, UDID).generation).toBe(0);
 	});
 });
+
+describe("telemetry: how a failed run is classified", () => {
+	class BridgeLost extends Error {}
+
+	function classified(h: Harness): { code: string; error?: unknown }[] {
+		const seen: { code: string; error?: unknown }[] = [];
+		h.c.failure = {
+			record: () => {},
+			classify: (code, error) => void seen.push(error === undefined ? { code } : { code, error }),
+		};
+		return seen;
+	}
+
+	test("a false `is` is a negative answer, not a failure", async () => {
+		const h = harness([snapshotOf(FORM)]);
+		const seen = classified(h);
+		expect(await h.run("is", "id=cancel", "enabled")).toBe(1);
+		expect(seen).toEqual([{ code: "negative_answer" }]);
+	});
+
+	test("a missed wait carries its code", async () => {
+		const h = harness([snapshotOf(FORM)]);
+		const seen = classified(h);
+		expect(await h.run("wait", "id=nope", "--timeout", "200")).toBe(1);
+		expect(seen.map((s) => s.code)).toEqual(["wait_target_absent"]);
+	});
+
+	test("a throw from the driver is `failed`, with the error for its class name", async () => {
+		const h = harness([snapshotOf(FORM)], {
+			onCall: (call) => {
+				if (call.method === "snapshot") throw new BridgeLost("socket closed");
+				return undefined;
+			},
+		});
+		const seen = classified(h);
+		expect(await h.run("is", "id=email", "visible", "--json")).toBe(1);
+		expect(doc(h.c).error.code).toBe("failed");
+		expect(seen[0]?.code).toBe("failed");
+		expect(seen[0]?.error).toBeInstanceOf(BridgeLost);
+	});
+});

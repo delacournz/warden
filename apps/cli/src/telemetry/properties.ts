@@ -19,6 +19,7 @@ export type WardenCommandProperties = {
 	platform?: Platform;
 	suites?: number;
 	errorKind?: string;
+	errorCode?: string;
 	exitCode?: number;
 };
 
@@ -34,6 +35,7 @@ export const PROPERTY_DISCLOSURE: Record<keyof WardenCommandProperties, string> 
 	platform: "whether it was for iOS or Android",
 	suites: "how many e2e suites it was asked to run",
 	errorKind: "class name of any error",
+	errorCode: "fixed code for why it failed",
 	exitCode: "its exit code",
 };
 
@@ -101,9 +103,16 @@ export function suitesOf(command: CommandLike): number | undefined {
 	return path === "e2e" || path === "affected" ? command.args.length : undefined;
 }
 
+const IDENTIFIER = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
+
+/** A failure's machine code (`target_not_found`, `NO_DEVICE`) and nothing that is not shaped like one. */
+export function errorCodeOf(code: unknown): string | undefined {
+	return typeof code === "string" && IDENTIFIER.test(code) ? code : undefined;
+}
+
 /** The error's class name and never its message, which names paths, udids and bundle ids. */
 export function errorKindOf(error: unknown): string {
 	if (!(error instanceof Error)) return "unknown";
 	const name = error.constructor.name;
-	return /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(name) ? name : "Error";
+	return IDENTIFIER.test(name) ? name : "Error";
 }

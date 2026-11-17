@@ -3,6 +3,7 @@ import { bunExec, type Exec } from "@delacour/warden-core/exec";
 import { createGitFactsCache, type GitFactsCache } from "@delacour/warden-core/git-facts";
 import type { HostFacts } from "@delacour/warden-core/host";
 import { openStore, type Store } from "@delacour/warden-core/store";
+import type { UiErrorCode } from "./agent-ui/output";
 import { certainlyOff } from "./telemetry/opt-out";
 import { createTracker, type Tracker } from "./telemetry/tracker";
 import { terminalUi, type Ui } from "./ui";
@@ -35,8 +36,17 @@ export type CommandContext = {
 	tracker?: Tracker;
 };
 
-/** Collects the failures a command reports; `runProgram` keeps the first. */
-export type FailureSink = { record: (message: string, extra?: FailureExtra) => void };
+/**
+ * Collects the failures a command reports; `runProgram` keeps the first. `classify` names why a run failed for
+ * telemetry (a fixed code, never the message; `error` is a caught throw, counted by its class name).
+ */
+export type FailureSink = {
+	record: (message: string, extra?: FailureExtra) => void;
+	classify?: (code: FailureCode, error?: unknown) => void;
+};
+
+/** Why a run failed: a `warden ui` code, a claim code, `negative_answer` (`ui is` false) or `tests_failed` (`e2e`). */
+export type FailureCode = UiErrorCode | FailureExtra["code"] | "negative_answer" | "tests_failed";
 
 /** What a failure adds to the `--json` envelope beyond its message: a machine code, a fix and structured details. */
 export type FailureExtra =

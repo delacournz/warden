@@ -113,6 +113,7 @@ export async function runUi<C extends string>(
 			if (used?.success) await used.data.close().catch(() => undefined);
 		}
 	} catch (error) {
+		ctx.failure?.classify?.("failed", error);
 		return reportError(ctx, report, uiError("failed", errorMessage(error)));
 	}
 }

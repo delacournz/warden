@@ -2,6 +2,7 @@ import type { RecordedEvent, Telemetry } from "@delacournz/cli-telemetry";
 import {
 	type CommandLike,
 	commandPathOf,
+	errorCodeOf,
 	errorKindOf,
 	flagsSetOnCli,
 	platformOf,
@@ -31,7 +32,8 @@ export type Outcome = "success" | "error" | "cancelled";
 
 export const FLUSH_TIMEOUT_MS = 1500;
 
-export type Finished = { outcome: Outcome; error?: unknown; exitCode?: number };
+/** `errorCode` is the run's machine code (`target_not_found`, `failed`, `NO_DEVICE` …), never its message. */
+export type Finished = { outcome: Outcome; error?: unknown; exitCode?: number; errorCode?: string };
 
 export type Tracker = {
 	begin(command: CommandLike): Promise<void>;
@@ -95,9 +97,11 @@ export function createTracker(options: TrackerOptions): Tracker {
 	let snapshot: Snapshot | undefined;
 
 	function event(taken: Snapshot, result: Finished): RecordedEvent {
+		const errorCode = errorCodeOf(result.errorCode);
 		const properties: WardenCommandProperties = {
 			...taken.properties,
 			...(result.error !== undefined ? { errorKind: errorKindOf(result.error) } : {}),
+			...(errorCode !== undefined ? { errorCode } : {}),
 			...(result.exitCode !== undefined ? { exitCode: result.exitCode } : {}),
 		};
 		return { name: "command", outcome: result.outcome, durationMs: now() - taken.startedAt, properties };

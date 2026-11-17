@@ -8,6 +8,8 @@ import { commandPathOf } from "./telemetry/properties";
 import type { Finished, Tracker } from "./telemetry/tracker";
 import { scriptedUi, type TestContext, testContext } from "./testing";
 
+class DeviceFailure extends Error {}
+
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
 
@@ -317,6 +319,48 @@ describe("runProgram telemetry", () => {
 		});
 		await expect(runProgram([boom], ["boom"], ctx)).rejects.toThrow("kaboom");
 		expect(seen.finished[0]).toMatchObject({ outcome: "error" });
+	});
+
+	test("a failure finishes with the first code the command classified, and the class of a caught throw", async () => {
+		const classified = defineCommand({
+			name: "classified",
+			summary: "s",
+			register: (cmd, c, done) =>
+				void cmd.action(() => {
+					c.failure?.classify?.("failed", new DeviceFailure("/Users/me/x"));
+					c.failure?.classify?.("target_not_found");
+					done(1);
+				}),
+		});
+		const claimed = defineCommand({
+			name: "claimed",
+			summary: "s",
+			register: (cmd, c, done) =>
+				void cmd.action(() => {
+					reportError(c, "claimed", "no device", { code: "NO_DEVICE", hint: "wait" });
+					done(5);
+				}),
+		});
+		const { seen } = await withTracker(["classified"], [classified]);
+		expect(seen.finished).toHaveLength(1);
+		expect(seen.finished[0]).toMatchObject({ outcome: "error", exitCode: 1, errorCode: "failed" });
+		expect(seen.finished[0]?.error).toBeInstanceOf(DeviceFailure);
+		expect((await withTracker(["claimed"], [claimed])).seen.finished).toEqual([
+			{ outcome: "error", exitCode: 5, errorCode: "NO_DEVICE" },
+		]);
+	});
+
+	test("a zero exit drops a classified failure", async () => {
+		const recovered = defineCommand({
+			name: "recovered",
+			summary: "s",
+			register: (cmd, c, done) =>
+				void cmd.action(() => {
+					c.failure?.classify?.("failed");
+					done(0);
+				}),
+		});
+		expect((await withTracker(["recovered"], [recovered])).seen.finished).toEqual([{ outcome: "success" }]);
 	});
 
 	test("help and usage errors run no action, so nothing is tracked", async () => {

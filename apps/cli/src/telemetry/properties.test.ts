@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { Command, type CommandUnknownOpts } from "@commander-js/extra-typings";
 import {
 	commandPathOf,
+	errorCodeOf,
 	errorKindOf,
 	flagsSetOnCli,
 	PROPERTY_DISCLOSURE,
@@ -99,6 +100,15 @@ describe("errorKindOf", () => {
 	});
 });
 
+describe("errorCodeOf", () => {
+	test("keeps a machine code and drops anything that is not one", () => {
+		expect(errorCodeOf("target_not_found")).toBe("target_not_found");
+		expect(errorCodeOf("NO_DEVICE")).toBe("NO_DEVICE");
+		expect(errorCodeOf("no device at /Users/me")).toBeUndefined();
+		expect(errorCodeOf(undefined)).toBeUndefined();
+	});
+});
+
 describe("PROPERTY_DISCLOSURE", () => {
 	test("words every property a command event can carry", () => {
 		const keys: (keyof WardenCommandProperties)[] = [
@@ -108,6 +118,7 @@ describe("PROPERTY_DISCLOSURE", () => {
 			"platform",
 			"suites",
 			"errorKind",
+			"errorCode",
 			"exitCode",
 		];
 		for (const key of keys) expect(PROPERTY_DISCLOSURE[key].length).toBeGreaterThan(3);
