@@ -1,5 +1,44 @@
 # @delacour/warden
 
+## 0.18.0
+
+### Minor Changes
+
+- [#284](https://github.com/delacournz/warden/pull/284) [`dfcc42e`](https://github.com/delacournz/warden/commit/dfcc42e687e74c2c07af4a54aceded50867400bc) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - Local native builds (`warden builds`, `warden e2e`, `warden dev`) now time out after 90 min instead of 60 min, so a cold Expo iOS build on a small hosted Mac runner finishes instead of being stopped with exit 143.
+  - iOS local builds key ccache on the selected Xcode's version and build (`CCACHE_COMPILERCHECK=string:xcode-<version>-<build>`) instead of the compiler's modification time, so a CI image that reinstalls the same Xcode still hits the restored `~/.warden/ccache`. A `CCACHE_COMPILERCHECK` you set yourself is kept.
+
+- [#284](https://github.com/delacournz/warden/pull/284) [`dfcc42e`](https://github.com/delacournz/warden/commit/dfcc42e687e74c2c07af4a54aceded50867400bc) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - New simulated passkeys: warden's virtual authenticator answers an app's real passkey create and sign-in calls with test keys, on a leased iOS Simulator or an Android emulator (API 34+), with no iCloud or Google account. Modes `auto`, `cancel`, `fail`, `unavailable`; user verification `match`, `nomatch`, `skip`. Attestation `none`, ES256 keys.
+  - New `warden ui passkey set|off|add|list|remove|clear|status`. The authenticator and its credentials belong to the lease and are removed on release; on Android the previous credential provider is put back.
+  - New `device.passkeys` in specs (`set`, `off`, `add`, `list`, `remove`, `clear`, `status`): mode and user verification go back at the end of each test, credentials stay for the lease.
+  - New `conditions.passkeys` suite key: a mode, or `{ mode, uv, credentials }` seeded before the first `app.open()`.
+  - New error codes `E_PASSKEY_API` (Android below API 34) and `E_PASSKEY_STORE` (the credential store does not read). Physical devices answer `E_UNSUPPORTED`.
+
+- [#280](https://github.com/delacournz/warden/pull/280) [`e291f90`](https://github.com/delacournz/warden/commit/e291f90ac2b6f2e0d4078add2102cc6f2f200bd0) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - `warden pods install` (and warden's own iOS builds) now records the files `pod install` and its `post_install` hooks delete from a committed `ios/` or `node_modules`, and deletes them again when another checkout restores that entry, so a restore leaves what a real install would.
+  - New `projects[].ios.pods.env` in `warden.config.ts`: env var names (`NAME_*` = a prefix) a Podfile or its `post_install` hooks read. Their values join the pods cache key, so a different value runs a real `pod install` instead of restoring one made with the old value.
+  - New `projects[].ios.pods.cache: false`: `warden pods install` and warden's iOS builds never restore or store pods for that project, so its `post_install` hooks run on every install. `warden pods install` reports `! pods installed, not cached: ios.pods.cache: false`.
+
+- [#286](https://github.com/delacournz/warden/pull/286) [`d54da59`](https://github.com/delacournz/warden/commit/d54da594fe13ed926f3f5bccde066123c1e42673) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - iOS simulators warden creates get `AutomationEnabled` and `IgnoreAXServerEntitlements` written `true` into their Accessibility preferences on the host before every boot, so the accessibility server starts with automation on instead of the driver switching it on live. A simulator that has never booted is skipped until its next boot. `WARDEN_AX_PREFS=0` turns it off.
+  - The `warden e2e` GitHub Action builds every installed simulator runtime's dyld shared cache (`xcrun simctl runtime dyld_shared_cache update --all`, at most 10 min) before the first boot and logs `runtime dyld shared caches ready after N s`. A failure only warns. New input `dyld-cache` (default `true`; `false` skips).
+
+### Patch Changes
+
+- [#287](https://github.com/delacournz/warden/pull/287) [`42dea93`](https://github.com/delacournz/warden/commit/42dea93117700f0063d625795f8ff2f6803e518c) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - The iOS helper behind `warden e2e`, `warden ui` and `warden mcp` now restarts a wedged accessibility service even when its in-sim reader reports the timeout itself. A cold reader on a silent service waits out the service's own 10 s query timeout instead of stalling. Those reads failed `E_TIMEOUT` (`did not answer within the query's 10.0s timeout`) without counting towards the restart, so the sim stayed silent until the run ended. They count now, and so do silent reads on an explicit `ax` backend. A count also survives a caller's deadline that ends the read early.
+  - Before restarting on silence alone (no wedge line in the sim log), the helper reads SpringBoard. If SpringBoard answers, only the foreground app is hung, so nothing is restarted (helper log `an app hang, not an accessibility-server wedge; not restarted`).
+
+- [#284](https://github.com/delacournz/warden/pull/284) [`dfcc42e`](https://github.com/delacournz/warden/commit/dfcc42e687e74c2c07af4a54aceded50867400bc) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - iOS local builds (`warden builds`, `warden e2e`, `warden dev`) use ccache again when the pods cache installs pods. warden's own `pod install` now runs with `USE_CCACHE=1` and the rest of the compiler-cache env, so React Native wires its ccache compiler wrapper into the Pods project. Before, a cold native build compiled every file with plain clang and `~/.warden/ccache` got no new entries.
+  - Pods cached without ccache no longer restore: `USE_CCACHE` is part of the pods cache key, so the next build runs a real `pod install` once.
+
+- [#289](https://github.com/delacournz/warden/pull/289) [`ab95756`](https://github.com/delacournz/warden/commit/ab957566ce79ed8c13b6df01bd3b8a7ea323c44c) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - No behaviour change in `warden-simd` (taps, typing, snapshots, settle, screenshots, app launch and the `E_*` error codes read the same); prepares swapping its simulator backends.
+
+- [#278](https://github.com/delacournz/warden/pull/278) [`cf4427e`](https://github.com/delacournz/warden/commit/cf4427e1ee7f115f5a0944719b057986dc8ed95f) Thanks [@posthog](https://github.com/apps/posthog)! - - `warden ui snapshot` and `warden ui find` on iOS stop at `--timeout` (default 5000 ms) when the simulator's accessibility bridge does not answer. Before, each call waited up to 60 s for the bridge and then failed, whatever `--timeout` said.
+  - A timed-out `snapshot` or `find` now prints a hint: a cold simulator can need `--timeout 60000`.
+
+- [#285](https://github.com/delacournz/warden/pull/285) [`c65f685`](https://github.com/delacournz/warden/commit/c65f68598744e7454f9c99f9a4ea02f2aa2a132a) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - `warden e2e` on iOS now recovers a simulator whose accessibility service never answers even when its log does not show the wedge. On some CI hosts `log show` cannot read the simulator runtime's messages (every system line is `<compose failure>`), so the backboardd restart never ran and every spec on that sim failed with `E_TIMEOUT` (`did not answer within the query's 10.0s timeout`). Once 3 snapshots in a row time out over at least 60 s, the warm-up now restarts backboardd through the helper (below). When that cannot run or does not clear it, the warm-up reboots the sim once (warm log `rebooting <udid>: …`).
+  - The iOS helper behind `warden e2e`, `warden ui` and `warden mcp` restarts a wedged accessibility service mid-run on such hosts too: when the sim log names no wedge or cannot be read, both readers silent on 3 reads in a row over at least 60 s (no read answering in between) stands in for it, still confirmed by one more read that times out (helper log `the sim log names no wedge, but both readers silent on 3 reads in a row over N s`).
+  - A device whose warm-up hits its deadline keeps its last read error and recovery record (`warm[].error` `timed out after 120s; last: E_TIMEOUT: …`, `warm[].axRecovery`), so a sim that is still silent after its reboot is dropped and quarantined instead of running specs that can only time out.
+- Updated dependencies []:
+  - @delacour/warden-e2e@0.18.0
+
 ## 0.17.0
 
 ### Minor Changes
