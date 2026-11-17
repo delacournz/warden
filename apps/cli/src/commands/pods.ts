@@ -1,3 +1,4 @@
+import type { BuildEnvDeps } from "@delacour/warden-core/builds/local";
 import { formatSize, parseSize } from "@delacour/warden-core/builds/prune";
 import { formatDuration, parseDuration } from "@delacour/warden-core/duration";
 import { processAlive } from "@delacour/warden-core/liveness";
@@ -20,6 +21,8 @@ export type PodsCommandDeps = {
 	pidAlive: (pid: number) => boolean;
 	/** the pods cache install (imported on first use) */
 	install: (deps: PodsDeps, opts: PodsInstallOptions) => AsyncResult<PodsOutcome>;
+	/** the env a warden iOS build adds (`USE_CCACHE`, `RCT_*`, …): pods keyed here match the build's (imported on first use) */
+	buildEnv: (deps: BuildEnvDeps) => Promise<Record<string, string>>;
 };
 
 export const defaultPodsDeps: PodsCommandDeps = {
@@ -27,6 +30,7 @@ export const defaultPodsDeps: PodsCommandDeps = {
 	sleep: (ms) => Bun.sleep(ms),
 	pidAlive: processAlive,
 	install: async (deps, opts) => (await import("@delacour/warden-core/pods/pods-install")).podsInstall(deps, opts),
+	buildEnv: async (deps) => (await import("@delacour/warden-core/builds/local")).localBuildEnv(deps),
 };
 
 /** `warden pods rm` takes at least this many characters of a key. */
@@ -96,11 +100,19 @@ async function installCmd(
 	if (!project.success) return fail(ctx, "install", project.error);
 	const { project: p } = project.data;
 	if (!opts.json) heading(ctx, "pods install", p.name);
+	// the build's env, not the shell's: `USE_CCACHE` / `RCT_*` are key inputs, so pods installed here are the ones `warden dev` restores
+	const buildEnv = await deps.buildEnv({
+		exec: ctx.exec,
+		project: p,
+		platform: "ios",
+		env: ctx.env,
+		...(p.compilerCache === false ? { compilerCache: false } : {}),
+	});
 	const outcome = await deps.install(
 		{
 			store: ctx.store(),
 			exec: ctx.exec,
-			env: ctx.env,
+			env: { ...ctx.env, ...buildEnv },
 			now: ctx.now,
 			log: (line) => ctx.err(line),
 			pid: deps.pid,

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { localBuildEnv } from "@delacour/warden-core/builds/local";
 import { buildResource } from "@delacour/warden-core/builds/lock";
 import type { PodsDeps, PodsEntry, PodsInstallOptions, PodsOutcome } from "@delacour/warden-core/pods/pods.types";
 import { insertPodsEntry, listPodsEntries, podsEntryDir, podsLockKey } from "@delacour/warden-core/pods/pods-store";
@@ -32,6 +33,7 @@ function setup(argv: string[], outcome: PodsOutcome | string, seen: Seen[] = [],
 		pid: 1,
 		pidAlive,
 		sleep: async () => {},
+		buildEnv: localBuildEnv,
 		install: async (deps, opts) => {
 			seen.push({ deps, opts });
 			deps.log("Installing pods");
@@ -81,6 +83,25 @@ describe("warden pods install", () => {
 			framework: "expo",
 		});
 		expect(seen[0]?.opts.noCache).toBeUndefined();
+	});
+
+	test("pods install with the env a warden iOS build uses, so `warden dev` after it is up to date, not a second install", async () => {
+		const seen: Seen[] = [];
+		const { c, cmd, root } = setup(["install"], { kind: "hit", key: KEY, mode: "cng", ms: 800 }, seen);
+		expect(await cmd.run(c)).toBe(0);
+		expect(seen[0]?.deps.env).toMatchObject({ USE_CCACHE: "1", CCACHE_BASEDIR: root });
+		expect(seen[0]?.deps.env.CCACHE_DIR).toEndWith("/ccache");
+	});
+
+	test("build.cache: false → no compiler-cache env, as the build", async () => {
+		const seen: Seen[] = [];
+		const { c, cmd } = setup(["install"], { kind: "hit", key: KEY, mode: "cng", ms: 800 }, seen);
+		writeFileSync(
+			join(c.cwd, "warden.config.json"),
+			JSON.stringify({ projects: [{ name: "demo", bundleId: { ios: "com.demo" }, build: { cache: false } }] })
+		);
+		expect(await cmd.run(c)).toBe(0);
+		expect(seen[0]?.deps.env.USE_CCACHE).toBeUndefined();
 	});
 
 	test("projects[].ios.pods.env reaches the cache as env names", async () => {

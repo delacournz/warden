@@ -20,7 +20,14 @@ import { IOS_DEVICE_RESULT_BUNDLE } from "./builds.defaults";
 import { fakeApp, testProject } from "./builds.testing";
 import { releaseKey } from "./fingerprint";
 import { combineKey, jsInputsHash } from "./js-inputs";
-import { artifactCandidates, type LocalPodsDeps, locateArtifact, runLocalBuild, snapshotArtifacts } from "./local";
+import {
+	artifactCandidates,
+	type LocalPodsDeps,
+	localBuildEnv,
+	locateArtifact,
+	runLocalBuild,
+	snapshotArtifacts,
+} from "./local";
 
 let dir: string;
 beforeEach(() => {
@@ -635,6 +642,25 @@ describe("runLocalBuild compiler cache env", () => {
 			CCACHE_BINARY: "/opt/homebrew/bin/ccache",
 			EXPO_NO_TELEMETRY: "1",
 		});
+	});
+
+	test("localBuildEnv is the caching env the build adds, so `warden pods install` keys pods like the build does", async () => {
+		const s = iosSetup();
+		const env = await localBuildEnv({ exec: s.exec, project: s.project, platform: "ios", env: {}, wardenHome: "/w" });
+		expect(env).toMatchObject({
+			USE_CCACHE: "1",
+			CCACHE_DIR: "/w/ccache",
+			CCACHE_BASEDIR: s.root,
+			CCACHE_BINARY: "/opt/homebrew/bin/ccache",
+		});
+		const off = await localBuildEnv({
+			exec: s.exec,
+			project: s.project,
+			platform: "ios",
+			env: {},
+			compilerCache: false,
+		});
+		expect(off.USE_CCACHE).toBeUndefined();
 	});
 
 	test("no ccache on PATH → no CCACHE_BINARY, the build still runs", async () => {

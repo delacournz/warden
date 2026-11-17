@@ -241,7 +241,13 @@ export type BuildHeartbeat = {
 /** Where `runLocalBuild` records the native fingerprint a CNG `ios/` / `android/` was generated for. */
 export type PrebuildStamp = { read: () => string | undefined; write: (native: string) => void };
 
-async function probe(deps: LocalBuildDeps, argv: string[], cwd?: string): Promise<string | undefined> {
+/** What the build's caching env reads: a `runLocalBuild` dep set, or a caller that only wants the env (`warden pods install`). */
+export type BuildEnvDeps = Pick<
+	LocalBuildDeps,
+	"exec" | "project" | "platform" | "env" | "compilerCache" | "wardenHome" | "git"
+>;
+
+async function probe(deps: Pick<LocalBuildDeps, "exec">, argv: string[], cwd?: string): Promise<string | undefined> {
 	try {
 		const res = await deps.exec(argv, { cwd, timeoutMs: PROBE_TIMEOUT_MS });
 		return res.exitCode === 0 ? res.stdout.trim() : undefined;
@@ -251,7 +257,7 @@ async function probe(deps: LocalBuildDeps, argv: string[], cwd?: string): Promis
 }
 
 /** The project's git toplevel from the facts the command already read; a failed read is no toplevel, never a failed build. */
-async function gitToplevel(deps: LocalBuildDeps): Promise<string | undefined> {
+async function gitToplevel(deps: Pick<LocalBuildDeps, "exec" | "project" | "git">): Promise<string | undefined> {
 	try {
 		return (await readGitFacts(deps.exec, deps.project.root, deps.git))?.toplevel;
 	} catch {
@@ -260,7 +266,9 @@ async function gitToplevel(deps: LocalBuildDeps): Promise<string | undefined> {
 }
 
 /** Env that opts the iOS build into React Native's precompiled core (RN 0.81-0.83); independent of the compiler-cache switch. */
-async function prebuiltRnEnv(deps: LocalBuildDeps): Promise<Record<string, string>> {
+async function prebuiltRnEnv(
+	deps: Pick<LocalBuildDeps, "platform" | "project" | "env">
+): Promise<Record<string, string>> {
 	const plan = await planPrebuiltRn({
 		platform: deps.platform,
 		projectRoot: deps.project.root,
@@ -271,7 +279,12 @@ async function prebuiltRnEnv(deps: LocalBuildDeps): Promise<Record<string, strin
 	return plan.env;
 }
 
-async function cacheEnv(deps: LocalBuildDeps): Promise<Record<string, string>> {
+/**
+ * The env a local build adds to the caller's: prebuilt React Native vars, then (unless `compilerCache: false`) ccache /
+ * Xcode compilation cache / Gradle caching. Its `pod install` runs with it too, and `USE_CCACHE` / `RCT_*` are pods key
+ * inputs, so `warden pods install` takes it from here: the same project gets the same pods key from either path.
+ */
+export async function localBuildEnv(deps: BuildEnvDeps): Promise<Record<string, string>> {
 	const prebuilt = await prebuiltRnEnv(deps);
 	if (deps.compilerCache === false) return prebuilt;
 	const { platform } = deps;
@@ -592,7 +605,7 @@ export async function runLocalBuild(deps: LocalBuildDeps): AsyncResult<LocalBuil
 	await dropStaleNativeDir(deps, deps.native ?? deps.hash);
 	// before the pods restore: a CNG hit creates ios/, which `prebuildMovedKey` must still read as the build's own prebuild
 	const before = await beforeBuild(deps);
-	const caching = await cacheEnv(deps);
+	const caching = await localBuildEnv(deps);
 	await preparePods(deps, caching);
 	deps.log(`building ${platform} locally: ${command} (in ${project.root})`);
 	const argv = ["sh", "-c", command];

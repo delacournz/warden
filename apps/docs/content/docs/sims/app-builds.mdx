@@ -169,7 +169,7 @@ What it saves, measured on a React Native + Expo app (CocoaPods 1.16.2):
 
 Against a warm install that is about 30 s plus the prebuild per new worktree; against a cold one about 2.5 minutes. The larger win is disk and the number of worktrees: N worktrees cost about one 1.4 GB sandbox, not N. A restored checkout built with `xcodebuild` without ever running its own `pod install`.
 
-`warden dev`, `warden app ensure` and `warden e2e` use the same cache for their own iOS builds. `WARDEN_PODS_CACHE=0` turns that off; `warden pods install --no-cache` skips it for one run. Manage entries with `warden pods ls | rm | prune` (see the [CLI reference](/docs/reference/cli#warden-pods-install--ls--rm--prune)); `warden gc` removes entries unused for 30 days.
+`warden dev`, `warden app ensure` and `warden e2e` use the same cache for their own iOS builds, and `warden pods install` installs with the same env they do (`USE_CCACHE=1` and the prebuilt React Native vars), so a build after it finds its pods ready. A plain `pod install` was run without that env: the next warden build installs once more, with ccache wired in. `WARDEN_PODS_CACHE=0` turns that off; `warden pods install --no-cache` skips it for one run. Manage entries with `warden pods ls | rm | prune` (see the [CLI reference](/docs/reference/cli#warden-pods-install--ls--rm--prune)); `warden gc` removes entries unused for 30 days.
 
 ## Project detection
 
