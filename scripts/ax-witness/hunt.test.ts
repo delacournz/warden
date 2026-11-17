@@ -24,6 +24,32 @@ describe("pickRuntime", () => {
 	test("none installed", () => {
 		expect(pickRuntime([])).toBeUndefined();
 	});
+
+	test("skips a same-version runtime that does not support the device type (device-specific builds)", () => {
+		const iphone17 = "com.apple.CoreSimulator.SimDeviceType.iPhone-17";
+		const picked = pickRuntime(
+			[
+				{
+					identifier: "com.apple.CoreSimulator.SimRuntime.iOS-27-2-iPhone19-4",
+					name: "iOS 27.2",
+					version: "27.2",
+					isAvailable: true,
+					platform: "iOS",
+					supportedDeviceTypes: [{ identifier: "com.apple.CoreSimulator.SimDeviceType.iPhone-17e" }],
+				},
+				{
+					identifier: "com.apple.CoreSimulator.SimRuntime.iOS-27-2",
+					name: "iOS 27.2",
+					version: "27.2",
+					isAvailable: true,
+					platform: "iOS",
+					supportedDeviceTypes: [{ identifier: iphone17 }],
+				},
+			],
+			iphone17
+		);
+		expect(picked?.identifier).toBe("com.apple.CoreSimulator.SimRuntime.iOS-27-2");
+	});
 });
 
 describe("pickDeviceType", () => {
