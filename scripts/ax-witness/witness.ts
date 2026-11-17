@@ -187,10 +187,10 @@ export function summarize(records: readonly RunRecord[], minStreak = 3): Summary
 
 	let verdict: Verdict = "no-simd-silence";
 	if (streaks.length > 0) {
-		const verdicts = new Set(streaks.map((s) => s.verdict));
-		if (verdicts.size === 1 && verdicts.has("answered")) verdict = "witness-answers";
+		const verdicts = new Set(streaks.filter((s) => s.verdict !== "unread").map((s) => s.verdict));
+		if (verdicts.size === 0) verdict = "witness-unread";
+		else if (verdicts.size === 1 && verdicts.has("answered")) verdict = "witness-answers";
 		else if (verdicts.size === 1 && verdicts.has("silent")) verdict = "witness-silent";
-		else if (verdicts.size === 1 && verdicts.has("unread")) verdict = "witness-unread";
 		else verdict = "witness-mixed";
 	}
 	return {

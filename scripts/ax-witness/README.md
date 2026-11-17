@@ -55,6 +55,9 @@ silent / error, `code`, `latencyMs`, `busy`):
 - `witness-unread`: simd was silent only while the runner was not up. With `runner never ready`, it is the closest a run
   gets to "both silent": XCUITest may not start on a wedged sim. Read `runner.log` for where it stopped.
 
+The run verdict counts only streaks the runner was read during; an `unread` streak (the runner not up yet) beside a
+read one does not make the run `witness-mixed`.
+
 A streak lists simd's consecutive silent reads, its duration and the runner's answers during it. `busy` counts runner
 refusals (`runner busy: snapshot has held XCUITest ...`): the runner's main-thread op cannot be cancelled, so once one
 snapshot hangs, later reads only prove it is still hung, not that the AX service is silent. Only the first read of a
