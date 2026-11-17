@@ -178,6 +178,29 @@ await app.open();
 await device.camera.set("fixtures/qr-bye.png"); // live on iOS
 ```
 
+### `device.passkeys` (virtual authenticator)
+
+warden answers the app's real passkey calls (`ASAuthorizationController`, Credential Manager) with test keys: attestation `none`, ES256, sign count 0, no iCloud / Google account. Mode and uv go back to the suite's `conditions.passkeys` (else off) when the test ends; credentials stay for the lease. Each `set` / `off` is a `condition` line in `results.jsonl`.
+
+| Member | Does |
+|---|---|
+| `passkeys.set({ mode?, uv? })` | on. `mode`: `"auto"` (default) \| `"cancel"` \| `"fail"` \| `"unavailable"`; `uv`: `"match"` (default) \| `"nomatch"` \| `"skip"`; a field left out keeps its value. Returns `{ enabled, mode, uv, credentials, appliesOnLaunch? }` |
+| `passkeys.off()` | the platform answers again; credentials stay |
+| `passkeys.add({ rpId, userName, displayName?, userHandle?, credentialId?, privateKey?, signCount? })` | stores a credential as if the app made it (ids base64url, key P-256 PEM / base64url PKCS#8, generated when left out); returns it with `privateKey`. Bad rp id / key: `INVALID_ARGUMENT` before the device |
+| `passkeys.list({ rpId?, withKeys? })` | newest first; keys only with `withKeys` |
+| `passkeys.remove(id)` / `clear()` / `status()` | delete one / all; read state |
+
+- iOS 1001 cancel / no credentials / `uv: "nomatch"`, 1004 fail, 1006 excluded. Android: cancellation, `NotAllowedError`, `InvalidStateError`; `unavailable` is a cancellation on Play images.
+- iOS: live in an app launched with the injected library, else `appliesOnLaunch: true`: set before `app.open()` or declare `conditions.passkeys`. Android: API 34+ (`E_PASSKEY_API`). Physical: `E_UNSUPPORTED`.
+- Origin: iOS `https://<rpId>`; Android `android:apk-key-hash:<b64url sha256 of the signing cert>`.
+
+```ts
+await device.passkeys.set({ mode: "auto" });
+await app.open();
+// … create, then sign in through the app
+await device.passkeys.set({ mode: "cancel" });
+```
+
 ### `device.devtools` (dev client over Metro)
 
 With `WARDEN_METRO_URL` set, `app.open()` attaches devtools in the background and keeps React Native's LogBox off (no warning/error toasts, no error inspector, fatals included) in every JS context, after relaunches and reloads too. Logs still land in `console.jsonl` and Metro's terminal. Assert on the app's own UI, never on a LogBox toast.

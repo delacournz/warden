@@ -154,8 +154,8 @@ export const EAS_TIMEOUT_MS = 45 * 60_000;
 /** With `eas.trigger`, wait this long for a build to appear before triggering the workflow. */
 export const EAS_TRIGGER_GRACE_MS = 3 * 60_000;
 
-/** Local native build timeout. */
-export const LOCAL_BUILD_TIMEOUT_MS = 60 * 60_000;
+/** Local native build timeout: a cold Expo iOS build on a 3-vCPU hosted Mac (no ccache hits) runs ~70 min. */
+export const LOCAL_BUILD_TIMEOUT_MS = 90 * 60_000;
 /** How often a local build nobody watches says it is still running (`still building ios (6m 0s): …`). */
 export const BUILD_HEARTBEAT_MS = 60_000;
 /** Fingerprint command timeout. */

@@ -1733,6 +1733,37 @@ describe("network conditions", () => {
 		expect(env).not.toHaveProperty("WARDEN_NET_PROXY");
 	});
 
+	test("passkeys without a lease is E_UNSUPPORTED and says what is missing", async () => {
+		const { driver } = await open(lifecycle);
+		const result = await driver.passkeys({ kind: "status" });
+		expect(!result.success && result.error.code).toBe("E_UNSUPPORTED");
+		expect(!result.success && result.error.message).toContain("injected dylib");
+	});
+
+	test("passkeys set before launch loads the dylib with the authenticator on, store under the lease's home", async () => {
+		const dir = stateDir();
+		dir.app.running = false;
+		const { driver, helper } = await open(lifecycle, {
+			networkProxy: fakeProxy(19_125),
+			injectFs: dir.fs,
+			exists,
+			env: { helperDir: "/opt" } as OpenIosDriverOptions["env"],
+			wardenHome: "/w",
+		});
+		const set = await driver.passkeys({ kind: "set", mode: "cancel" });
+		expect(set.success && set.data).toMatchObject({ enabled: true, mode: "cancel", appliesOnLaunch: true });
+		dir.app.running = true;
+		await unwrapped(driver.app.launch(BUNDLE));
+		const env = helper.of("launch")[0]?.env;
+		expect(env).toMatchObject({ DYLD_INSERT_LIBRARIES: dylib, WARDEN_PASSKEYS: "1" });
+		expect(env).not.toHaveProperty("WARDEN_NET_PROXY");
+		expect(JSON.parse(dir.files.get("/w/inject/UDID-1/state.json") ?? "{}").passkeys).toEqual({
+			mode: "cancel",
+			uv: "match",
+			storePath: "/w/passkeys/UDID-1/store.json",
+		});
+	});
+
 	test("a plain run launches exactly as before: no injected env at all", async () => {
 		const { driver, helper } = await open(lifecycle, {
 			networkProxy: fakeProxy(),

@@ -1,10 +1,13 @@
 // Test harness for libwarden-inject (macOS build): a line on stdin -> one JSON line describing what the injected
 // process sees. Commands: `print`, `monitor` (start an NWPathMonitor and report each update), `quit`, and the `cam-*`
+// `pk-run` command that drives the virtual authenticator through the real AuthenticationServices API, and the `cam-*`
 // commands that drive the simulated camera (`#pragma mark - camera` in WardenInject.m) through the real AVFoundation API.
 #import <AVFoundation/AVFoundation.h>
+#import <AuthenticationServices/AuthenticationServices.h>
 #import <CoreImage/CoreImage.h>
 #import <ImageIO/ImageIO.h>
 #import <Foundation/Foundation.h>
+#import <objc/message.h>
 #import <Network/Network.h>
 #import <SystemConfiguration/SystemConfiguration.h>
 #import <sys/time.h>
@@ -364,14 +367,146 @@ static BOOL handle_camera(NSArray<NSString *> *a) {
   return NO;
 }
 
+
+#pragma mark - passkeys
+
+static NSString *b64u(NSData *d) {
+  NSString *s = [d base64EncodedStringWithOptions:0];
+  s = [[s stringByReplacingOccurrencesOfString:@"+" withString:@"-"] stringByReplacingOccurrencesOfString:@"/" withString:@"_"];
+  while ([s hasSuffix:@"="]) s = [s substringToIndex:s.length - 1];
+  return s;
+}
+
+static NSData *unb64u(NSString *s) {
+  NSMutableString *m = [[[s stringByReplacingOccurrencesOfString:@"-" withString:@"+"] stringByReplacingOccurrencesOfString:@"_" withString:@"/"] mutableCopy];
+  while (m.length % 4) [m appendString:@"="];
+  return [[NSData alloc] initWithBase64EncodedString:m options:0];
+}
+
+static NSObject *pk_obj(id o, NSString *key) {
+  SEL s = NSSelectorFromString(key);
+  if (![o respondsToSelector:s]) return nil;
+  return ((id (*)(id, SEL))objc_msgSend)(o, s);
+}
+
+static NSString *pk_b64(id o, NSString *key) {
+  id v = pk_obj(o, key);
+  return [v isKindOfClass:[NSData class]] ? b64u(v) : nil;
+}
+
+@interface PkDelegate : NSObject <ASAuthorizationControllerDelegate>
+@property (nonatomic, strong) NSDictionary *result;
+@property (nonatomic) int calls;
+@end
+
+@implementation PkDelegate
+- (void)authorizationController:(ASAuthorizationController *)c didCompleteWithAuthorization:(ASAuthorization *)auth {
+  self.calls++;
+  id cred = auth.credential;
+  NSMutableDictionary *d = [@{
+    @"kind": @"auth",
+    @"onMain": @(NSThread.isMainThread),
+    @"isRegistration": @([cred isKindOfClass:[ASAuthorizationPlatformPublicKeyCredentialRegistration class]]),
+    @"isAssertion": @([cred isKindOfClass:[ASAuthorizationPlatformPublicKeyCredentialAssertion class]]),
+    @"providerIsPlatform": @([auth.provider isKindOfClass:[ASAuthorizationPlatformPublicKeyCredentialProvider class]]),
+    @"attachment": @([[cred valueForKey:@"attachment"] integerValue]),
+    @"prfNil": @((BOOL)(pk_obj(cred, @"prf") == nil)),
+    @"largeBlobNil": @((BOOL)(pk_obj(cred, @"largeBlob") == nil)),
+  } mutableCopy];
+  for (NSString *k in @[@"credentialID", @"rawClientDataJSON", @"rawAttestationObject", @"rawAuthenticatorData", @"signature", @"userID"]) {
+    NSString *v = pk_b64(cred, k);
+    if (v) d[k] = v;
+  }
+  self.result = d;
+}
+- (void)authorizationController:(ASAuthorizationController *)c didCompleteWithError:(NSError *)error {
+  self.calls++;
+  NSString *reason = error.userInfo[NSLocalizedFailureReasonErrorKey];
+  self.result = @{
+    @"kind": @"error", @"onMain": @(NSThread.isMainThread), @"domain": error.domain, @"code": @(error.code),
+    @"userInfoCount": @(error.userInfo.count), @"reason": reason ?: [NSNull null], @"description": error.localizedDescription ?: @"",
+  };
+}
+@end
+
+static NSMutableArray *g_pk_keep;
+
+/**
+ * `pk-run {json}`: one ASAuthorizationController through the real API. Keys: kind reg|asr, rp, challenge (b64url), name,
+ * userId (b64url), allow / exclude ([b64url ids]), extra (["password","securityKey"] added to the request array), via
+ * perform|options|autofill, options (number), clientData (bool: the `...WithClientData:` request), cancel (bool: call
+ * -cancel right after), wait (seconds to wait for a callback, default 1). Emits {event:"pk", kind:auth|error|none, ...}.
+ */
+static void pk_run(NSString *json) {
+  NSDictionary *a = [NSJSONSerialization JSONObjectWithData:[json dataUsingEncoding:NSUTF8StringEncoding] options:0 error:nil];
+  NSString *rp = a[@"rp"];
+  NSData *challenge = unb64u(a[@"challenge"] ?: @"AAAA");
+  NSMutableArray *requests = [NSMutableArray array];
+  ASAuthorizationPlatformPublicKeyCredentialProvider *prov = [[ASAuthorizationPlatformPublicKeyCredentialProvider alloc] initWithRelyingPartyIdentifier:rp];
+  BOOL clientData = [a[@"clientData"] boolValue];
+  ASPublicKeyCredentialClientData *cd = clientData ? [[ASPublicKeyCredentialClientData alloc] initWithChallenge:challenge origin:[@"https://" stringByAppendingString:rp]] : nil;
+  if (a[@"kind"] && ![a[@"kind"] isEqual:@"none"]) {
+    if ([a[@"kind"] isEqual:@"reg"]) {
+      NSData *uid = unb64u(a[@"userId"] ?: @"AQID");
+      ASAuthorizationPlatformPublicKeyCredentialRegistrationRequest *r = clientData
+        ? [prov createCredentialRegistrationRequestWithClientData:cd name:a[@"name"] ?: @"user" userID:uid]
+        : [prov createCredentialRegistrationRequestWithChallenge:challenge name:a[@"name"] ?: @"user" userID:uid];
+      NSMutableArray *ex = [NSMutableArray array];
+      for (NSString *i in a[@"exclude"] ?: @[]) [ex addObject:[[ASAuthorizationPlatformPublicKeyCredentialDescriptor alloc] initWithCredentialID:unb64u(i)]];
+      if (ex.count) r.excludedCredentials = ex;
+      [requests addObject:r];
+    } else {
+      ASAuthorizationPlatformPublicKeyCredentialAssertionRequest *r = clientData
+        ? [prov createCredentialAssertionRequestWithClientData:cd]
+        : [prov createCredentialAssertionRequestWithChallenge:challenge];
+      NSMutableArray *al = [NSMutableArray array];
+      for (NSString *i in a[@"allow"] ?: @[]) [al addObject:[[ASAuthorizationPlatformPublicKeyCredentialDescriptor alloc] initWithCredentialID:unb64u(i)]];
+      if (al.count) r.allowedCredentials = al;
+      [requests addObject:r];
+    }
+  }
+  for (NSString *e in a[@"extra"] ?: @[]) {
+    if ([e isEqual:@"password"]) [requests addObject:[[[ASAuthorizationPasswordProvider alloc] init] createRequest]];
+    if ([e isEqual:@"securityKey"]) {
+      ASAuthorizationSecurityKeyPublicKeyCredentialProvider *sk = [[ASAuthorizationSecurityKeyPublicKeyCredentialProvider alloc] initWithRelyingPartyIdentifier:rp];
+      [requests addObject:[sk createCredentialAssertionRequestWithChallenge:challenge]];
+    }
+  }
+  ASAuthorizationController *ctl = [[ASAuthorizationController alloc] initWithAuthorizationRequests:requests];
+  PkDelegate *del = [PkDelegate new];
+  ctl.delegate = del;
+  if (!g_pk_keep) g_pk_keep = [NSMutableArray array];
+  [g_pk_keep addObject:ctl];
+  [g_pk_keep addObject:del];
+  NSString *via = a[@"via"] ?: @"perform";
+  if ([via isEqual:@"options"]) [ctl performRequestsWithOptions:(ASAuthorizationControllerRequestOptions)[a[@"options"] unsignedIntegerValue]];
+  else if ([via isEqual:@"autofill"]) {
+    // iOS only: the selector is unavailable to the macOS compiler, and the dylib only swizzles it where it exists
+    SEL autofill = NSSelectorFromString(@"performAutoFillAssistedRequests");
+    if (![ctl respondsToSelector:autofill]) { emit(@{ @"event": @"pk", @"kind": @"unsupported" }); return; }
+    ((void (*)(id, SEL))objc_msgSend)(ctl, autofill);
+  }
+  else [ctl performRequests];
+  BOOL syncCalled = del.calls > 0;
+  if ([a[@"cancel"] boolValue]) [ctl cancel];
+  NSDate *until = [NSDate dateWithTimeIntervalSinceNow:[a[@"wait"] doubleValue] ?: 1.0];
+  while (del.calls == 0 && [until timeIntervalSinceNow] > 0) CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.02, false);
+  NSMutableDictionary *out = [(del.result ?: @{ @"kind": @"none" }) mutableCopy];
+  out[@"event"] = @"pk";
+  out[@"calledSynchronously"] = @(syncCalled);
+  out[@"calls"] = @(del.calls);
+  emit(out);
+}
+
 static nw_path_monitor_t g_monitor;
 
 int main(void) {
   @autoreleasepool {
-    char buf[256];
+    static char buf[16384];
     while (fgets(buf, sizeof buf, stdin)) {
       NSString *cmd = [[NSString stringWithUTF8String:buf] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
       if ([cmd isEqualToString:@"quit"]) break;
+      if ([cmd hasPrefix:@"pk-run "]) { pk_run([cmd substringFromIndex:7]); continue; }
       if ([cmd hasPrefix:@"cam-"]) {
         if (!handle_camera([cmd componentsSeparatedByString:@" "])) emit(@{ @"error": @"unknown command" });
         continue;

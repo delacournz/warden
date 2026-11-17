@@ -2,6 +2,7 @@
 title: Network
 description: Test the app offline, on 3G, on a flapping link or with one host failing, from a spec or a suite.
 icon: Wifi
+simulatorOnly: true
 ---
 
 `device.network` shapes what the app's own requests see: offline, a preset speed, a flapping link or one host that fails. The rest of the Mac's traffic is untouched, and the network is back to the suite's baseline when the test ends.

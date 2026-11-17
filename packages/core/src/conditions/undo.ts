@@ -16,9 +16,17 @@ import {
 } from "./a11y-keys";
 import { cameraFeedDir, clearCameraFeeds } from "./camera-media";
 import { activeConditions, clearCondition } from "./conditions";
-import { type ConditionArea, type ConditionRecord, IME_STASH_DEFAULT, IME_STASH_ENABLED } from "./conditions.types";
+import {
+	type ConditionArea,
+	type ConditionRecord,
+	IME_STASH_DEFAULT,
+	IME_STASH_ENABLED,
+	PASSKEY_PROVIDER_PACKAGE,
+	type PasskeyProviderSettings,
+} from "./conditions.types";
 import { injectStatePath, neutralizeInjectState } from "./inject-state";
 import { launchSettingsPath, writeLaunchSettings } from "./launch-settings";
+import { passkeyStorePath, removePasskeyStore } from "./passkey-paths";
 
 export type UndoDeps = {
 	store: Store;
@@ -96,9 +104,30 @@ function resetCommands(
 			return [[...base, "shell", "dumpsys", "battery", "reset"]];
 		case "keyboard":
 			return androidKeyboardResets(base, record);
+		case "passkeys":
+			return androidPasskeyResets(base, record.value.previousProvider);
 		default:
 			return [];
 	}
+}
+
+/**
+ * Android passkeys: uninstall warden's provider first (uninstalling blanks both credential-provider settings), then
+ * put back exactly what the device had: a value with `settings put`, an unset one with `settings delete` (never an
+ * empty string, which Android reads as "no provider"). Nothing recorded = the provider never got enabled.
+ */
+function androidPasskeyResets(base: string[], previous: PasskeyProviderSettings | undefined): string[][] {
+	const uninstall = [...base, "shell", "sh", "-c", `'pm uninstall ${PASSKEY_PROVIDER_PACKAGE} >/dev/null 2>&1; true'`];
+	if (!previous) return [uninstall];
+	const restore = (key: string, value: string | null) =>
+		value === null
+			? [...base, "shell", "settings", "delete", "secure", key]
+			: [...base, "shell", "settings", "put", "secure", key, `'${value}'`];
+	return [
+		uninstall,
+		restore("credential_service", previous.service),
+		restore("credential_service_primary", previous.primary),
+	];
 }
 
 /**
@@ -219,10 +248,13 @@ function stopOwned(deps: UndoDeps, record: ConditionRecord): { killed: number[];
 
 /**
  * iOS areas the injected dylib serves: an app that is still running keeps reading its state file, so it goes back
- * online on the real clock with blank camera feeds; the camera's staged host files are then removed.
+ * online on the real clock with blank camera feeds and, for `passkeys`, no authenticator; the camera's staged host
+ * files are then removed. The passkey store is removed per platform in `resetRecord`.
  */
+const IOS_INJECTED: ReadonlySet<ConditionArea> = new Set(["clock", "network", "camera", "keyboard", "passkeys"]);
+
 function resetIosInjected(deps: UndoDeps, udid: string, area: ConditionRecord["area"]): string[] {
-	if (area !== "clock" && area !== "network" && area !== "camera" && area !== "keyboard") return [];
+	if (!IOS_INJECTED.has(area)) return [];
 	const home = wardenHome(deps.env);
 	const failed = neutralizeInjectState(injectStatePath(home, udid), area);
 	const out = failed ? [failed] : [];
@@ -258,6 +290,10 @@ export async function resetRecord(
 	// iOS has no device-side timezone or locale: only the staged launch settings go
 	if (device?.platform === "ios" && record.area === "locale") {
 		const failed = writeLaunchSettings(launchSettingsPath(wardenHome(deps.env), device.id), {});
+		if (failed) resets.push(failed);
+	}
+	if (device && record.area === "passkeys" && resets.length === 0) {
+		const failed = removePasskeyStore(passkeyStorePath(wardenHome(deps.env), device.id));
 		if (failed) resets.push(failed);
 	}
 	const released = await releaseProxy(deps, leaseId, record);

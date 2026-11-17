@@ -42,6 +42,9 @@ const FRAMEWORKS = [
 	"QuartzCore",
 	"-framework",
 	"CoreGraphics",
+	// the virtual authenticator's P-256 keys and signatures (`#pragma mark - passkeys`); AuthenticationServices is dlopen'ed
+	"-framework",
+	"Security",
 ];
 
 /**
@@ -89,6 +92,9 @@ export function harnessArgv(out: string): string[] {
 		"-fobjc-arc",
 		...FLAGS,
 		...FRAMEWORKS,
+		// the harness builds real passkey requests; the dylib itself dlopens AuthenticationServices
+		"-framework",
+		"AuthenticationServices",
 		HARNESS_SOURCE,
 		"-o",
 		out,

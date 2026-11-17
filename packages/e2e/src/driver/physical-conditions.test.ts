@@ -20,6 +20,8 @@ describe("physicalConditionOps", () => {
 			ops.keyboardState(),
 			ops.memoryWarning(),
 			ops.push({ aps: { alert: "hi" } }),
+			ops.camera(null),
+			ops.passkeys({ kind: "status" }),
 		];
 		for (const call of calls) {
 			const result = await call;

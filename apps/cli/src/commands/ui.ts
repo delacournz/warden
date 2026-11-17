@@ -5,6 +5,7 @@ import { registerConditionCommands } from "../agent-ui/conditions-register";
 import { registerDevtoolsCommands } from "../agent-ui/devtools-register";
 import { defaultUiDeps, type UiDeps } from "../agent-ui/driver";
 import { registerNetworkGroup } from "../agent-ui/network-register";
+import { registerPasskeyGroup } from "../agent-ui/passkey-register";
 import { registerSettingsCommands } from "../agent-ui/settings-register";
 import { withUiOptions } from "../agent-ui/ui-options";
 import { type Command, defineCommand } from "../command";
@@ -339,6 +340,7 @@ export function createUiCommand(deps: UiDeps): Command {
 			registerConditionCommands(cmd, ctx, done, deps);
 			registerSettingsCommands(cmd, ctx, done, deps);
 			registerCameraGroup(cmd, ctx, done, deps);
+			registerPasskeyGroup(cmd, ctx, done, deps);
 		},
 	});
 }

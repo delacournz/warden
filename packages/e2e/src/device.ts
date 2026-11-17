@@ -24,6 +24,7 @@ import {
 	type DeviceConditions,
 	type DeviceLocation,
 	type DeviceNetwork,
+	type DevicePasskeys,
 	type DevicePermissions,
 	registerConditions,
 	type TimelineStepInput,
@@ -231,6 +232,12 @@ export type Device = DeviceA11y & {
 	 * Android: a `--camera` device; an image shows on the next camera open, a video feed reboots the emulator.
 	 */
 	readonly camera: DeviceCamera;
+	/**
+	 * Simulated passkeys (a virtual authenticator, test keys only): `set({ mode, uv })`, `off`, `add`, `remove`, `clear`,
+	 * `list`, `status`. The app's real passkey create / sign-in calls are answered by warden. iOS: live in an app launched
+	 * with it, else from the next launch. Android: API 34+. Credentials stay for the lease; mode and uv go back at test end.
+	 */
+	readonly passkeys: DevicePasskeys;
 	/** Android: a critical trim-memory signal to the app. iOS: `E_UNSUPPORTED`. */
 	memoryWarning: DeviceConditions["memoryWarning"];
 	/** iOS: delivers an APNs payload to the app. Android: `E_UNSUPPORTED`. */
@@ -441,6 +448,7 @@ export function createDevice({
 			return (await unwrap(() => driver.keyboardState(), "read the keyboard", signal())).visible;
 		},
 		camera: conditions.camera,
+		passkeys: conditions.passkeys,
 		memoryWarning: conditions.memoryWarning,
 		push: conditions.push,
 		timeline: (steps) => conditions.timeline(steps),

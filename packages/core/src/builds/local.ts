@@ -287,6 +287,7 @@ async function cacheEnv(deps: LocalBuildDeps): Promise<Record<string, string>> {
 			gitTop: gitTop || undefined,
 			xcodeMajor: xcode?.success ? xcode.data.major : undefined,
 			ccacheBinary: ccacheBinary || undefined,
+			...(xcode?.success ? { xcode: { version: xcode.data.version, build: xcode.data.build } } : {}),
 			enabled: true,
 			baseEnv: deps.env,
 		}),
@@ -431,8 +432,12 @@ function podsLine(outcome: PodsOutcome): string {
  * iOS: restore (or install and snapshot) the Pods sandbox from the shared cache before the build command, so its own
  * `pod install` guard finds `Podfile.lock == Pods/Manifest.lock` and does nothing. Never fails the build: an error or
  * throw is a warning, and the command's guard runs a real `pod install`.
+ *
+ * It runs with the build's compiler-cache env (`caching`): React Native wires `ccache-clang.sh` into the Pods project
+ * only when `pod install` sees `USE_CCACHE=1`, and the command's own `pod install` is skipped once the lockfiles match,
+ * so without it every compile is plain clang. `USE_CCACHE` is a pods key input, so an entry installed without it misses.
  */
-async function preparePods(deps: LocalBuildDeps): Promise<void> {
+async function preparePods(deps: LocalBuildDeps, caching: Record<string, string>): Promise<void> {
 	const { pods, project, platform } = deps;
 	if (!pods || platform !== "ios" || deps.env[WARDEN_PODS_CACHE_ENV] === "0") return;
 	if (!RUNS_POD_INSTALL.test(project.build[platform])) return;
@@ -443,7 +448,7 @@ async function preparePods(deps: LocalBuildDeps): Promise<void> {
 	const { install = podsInstall, ...rest } = pods;
 	try {
 		const res = await install(
-			{ ...rest, exec: deps.exec, env: deps.env, log: deps.log },
+			{ ...rest, exec: deps.exec, env: { ...deps.env, ...caching }, log: deps.log },
 			{
 				projectRoot: project.root,
 				framework: project.framework === "expo" ? "expo" : "react-native",
@@ -587,10 +592,10 @@ export async function runLocalBuild(deps: LocalBuildDeps): AsyncResult<LocalBuil
 	await dropStaleNativeDir(deps, deps.native ?? deps.hash);
 	// before the pods restore: a CNG hit creates ios/, which `prebuildMovedKey` must still read as the build's own prebuild
 	const before = await beforeBuild(deps);
-	await preparePods(deps);
+	const caching = await cacheEnv(deps);
+	await preparePods(deps, caching);
 	deps.log(`building ${platform} locally: ${command} (in ${project.root})`);
 	const argv = ["sh", "-c", command];
-	const caching = await cacheEnv(deps);
 	const progress = startHeartbeat(deps);
 	let res: ExecResult;
 	const startedAt = Date.now();

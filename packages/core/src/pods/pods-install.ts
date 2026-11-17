@@ -146,7 +146,8 @@ export async function podsInstall(deps: PodsDeps, opts: PodsInstallOptions): Asy
 		env: deps.env,
 		readFile: readFileOrUndefined,
 	});
-	const installEnv: Env = plan.env;
+	// the caller's env (a build's USE_CCACHE / CCACHE_*) is a key input, so the prebuild and pod install must see it too
+	const installEnv: Env = { ...deps.env, ...plan.env };
 
 	if (opts.noCache !== undefined) return plainInstall(deps, target, opts, installEnv, opts.noCache, t0);
 

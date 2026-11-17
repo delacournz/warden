@@ -4,16 +4,17 @@
 //
 // Env (set by warden at launch):
 //   WARDEN_NET_PROXY=127.0.0.1:<port>   route NSURLSession HTTP+HTTPS through the lease's shaping proxy
-//   WARDEN_INJECT_STATE=<file>          control file, watched live: {"seq":n,"offline":bool,"clockOffsetMs":n,"clockFrozenMs":n?,"keyboard":"software"|"hardware"?,"camera":{"back"?:{kind,path,loop},"front"?:…}}
+//   WARDEN_INJECT_STATE=<file>          control file, watched live: {"seq":n,"offline":bool,"clockOffsetMs":n,"clockFrozenMs":n?,"keyboard":"software"|"hardware"?,"camera":{"back"?:{kind,path,loop},"front"?:…},"passkeys"?:{mode,uv,storePath}}
 //   WARDEN_CLOCK_OFFSET_MS=<n>          initial wall-clock offset (the state file overrides it)
 //   WARDEN_CLOCK_FROZEN_MS=<n>          initial frozen wall time, ms since the epoch (the state file overrides it)
 //   WARDEN_CAMERA=1                     fake the AVFoundation capture stack from the state file's `camera` feeds (see "camera")
+//   WARDEN_PASSKEYS=1                   answer platform passkey requests with a virtual authenticator from the state file's `passkeys` (see "passkeys")
 //   WARDEN_KEYBOARD=software|hardware   initial keyboard mode (the state file's `keyboard` overrides it live); see "keyboard"
 //   WARDEN_INJECT_DEBUG=1               log to stderr
 //
 // Control channel: the simulator shares the host filesystem, so the channel is a file. The host replaces
 // `WARDEN_INJECT_STATE` atomically (write + rename); a vnode watch on its directory fires, the new state is applied
-// and `<file>.ack` is written with `{"seq":n,"pid":p,"proxy":bool,"camera":bool,"bundle":id}` (`proxy`: launched with WARDEN_NET_PROXY; `camera`: launched with WARDEN_CAMERA=1; `bundle`: so the host ignores another injected app). No sockets, no polling, nothing running while idle.
+// and `<file>.ack` is written with `{"seq":n,"pid":p,"proxy":bool,"camera":bool,"passkeys":bool,"bundle":id}` (`proxy`: launched with WARDEN_NET_PROXY; `camera`: launched with WARDEN_CAMERA=1; `passkeys`: launched with WARDEN_PASSKEYS=1; `bundle`: so the host ignores another injected app). No sockets, no polling, nothing running while idle.
 //
 // Accessibility read (A11Y-1): a state with `"a11yRead":true` makes the app walk its UIKit accessibility tree on the main
 // thread and write `<file>.a11y` = {"req":seq,"nodes":[{cls,ae,label,hint,value,id,traits:"0x..",frame:[x,y,w,h] (screen
@@ -48,6 +49,10 @@
 #import <Network/Network.h>
 #import <SystemConfiguration/SystemConfiguration.h>
 #import <objc/runtime.h>
+#import <objc/message.h>
+#import <dlfcn.h>
+#import <Security/Security.h>
+#import <CommonCrypto/CommonDigest.h>
 #import <stdatomic.h>
 #import <fcntl.h>
 #import <sys/time.h>
@@ -2088,12 +2093,472 @@ static void camera_apply(NSDictionary *camera) {
   });
 }
 
+#pragma mark - passkeys
+// A virtual authenticator (WDN-PASS): with WARDEN_PASSKEYS=1 the app's platform passkey calls on
+// `ASAuthorizationController` are answered in-process with a software P-256 authenticator instead of reaching the OS,
+// so an app signed without associated domains, on a simulator with no iCloud account, still registers and signs in.
+// Facts it is built on are in docs/plans/wdn-pass-0-ios-findings.md (iOS 27.2 only was run; every selector below that
+// is missing on another OS makes the feature a no-op, never a crash).
+//
+// State (the `passkeys` key of the state file, absent = authenticator off = the real OS answers):
+//   {"mode":"auto"|"cancel"|"fail"|"unavailable","uv":"match"|"nomatch"|"skip","storePath":"<store.json>"}
+// Credentials live in the store file (`{version:1,credentials:[{credentialId,rpId,userHandle,userName,displayName,
+// privateKey (PKCS#8 DER, base64url),signCount,createdAt,backupEligible,backupState}]}`), read on every request and
+// appended to (tmp + rename) when the app registers, so the host's `add` / `list` see the same credentials.
+//
+// Intercepted: -[ASAuthorizationController performRequests], -performRequestsWithOptions: and
+// -performAutoFillAssistedRequests, iff the controller holds at least one platform passkey request (the first one is
+// answered, every other request is dropped). Security-key-only, password-only and Apple ID requests reach the OS.
+// The delegate is called asynchronously on the main queue, like the real controller; -cancel before that completes
+// with 1001. Conditional UI (autofill) stays pending like the real QuickType flow for cancel / unavailable / nomatch.
+#define PK_ERR_DOMAIN @"com.apple.AuthenticationServices.AuthorizationError"
+
+static BOOL g_passkeys_enabled = NO;
+static NSObject *g_pk_lock;
+static BOOL g_pk_active = NO;
+static NSString *g_pk_mode = @"auto";
+static NSString *g_pk_uv = @"match";
+static NSString *g_pk_store = nil;
+
+static NSString *pk_b64u(NSData *d) {
+  NSString *s = [d base64EncodedStringWithOptions:0];
+  s = [[s stringByReplacingOccurrencesOfString:@"+" withString:@"-"] stringByReplacingOccurrencesOfString:@"/" withString:@"_"];
+  while ([s hasSuffix:@"="]) s = [s substringToIndex:s.length - 1];
+  return s;
+}
+
+static NSData *pk_unb64u(NSString *s) {
+  NSMutableString *m = [[[s stringByReplacingOccurrencesOfString:@"-" withString:@"+"] stringByReplacingOccurrencesOfString:@"_" withString:@"/"] mutableCopy];
+  while (m.length % 4) [m appendString:@"="];
+  return [[NSData alloc] initWithBase64EncodedString:m options:0];
+}
+
+static NSData *pk_sha256(NSData *d) {
+  uint8_t h[CC_SHA256_DIGEST_LENGTH];
+  CC_SHA256(d.bytes, (CC_LONG)d.length, h);
+  return [NSData dataWithBytes:h length:sizeof h];
+}
+
+// a minimal CBOR writer: unsigned / negative ints, byte and text strings, map and array heads
+static void pk_cbor_head(NSMutableData *o, uint8_t major, uint64_t n) {
+  uint8_t b[5];
+  size_t l;
+  if (n < 24) { b[0] = (uint8_t)((major << 5) | n); l = 1; }
+  else if (n < 256) { b[0] = (uint8_t)((major << 5) | 24); b[1] = (uint8_t)n; l = 2; }
+  else if (n < 65536) { b[0] = (uint8_t)((major << 5) | 25); b[1] = (uint8_t)(n >> 8); b[2] = (uint8_t)n; l = 3; }
+  else { b[0] = (uint8_t)((major << 5) | 26); b[1] = (uint8_t)(n >> 24); b[2] = (uint8_t)(n >> 16); b[3] = (uint8_t)(n >> 8); b[4] = (uint8_t)n; l = 5; }
+  [o appendBytes:b length:l];
+}
+static void pk_cbor_text(NSMutableData *o, NSString *s) { NSData *d = [s dataUsingEncoding:NSUTF8StringEncoding]; pk_cbor_head(o, 3, d.length); [o appendData:d]; }
+static void pk_cbor_bytes(NSMutableData *o, NSData *d) { pk_cbor_head(o, 2, d.length); [o appendData:d]; }
+static void pk_cbor_int(NSMutableData *o, int64_t n) { if (n >= 0) pk_cbor_head(o, 0, (uint64_t)n); else pk_cbor_head(o, 1, (uint64_t)(-1 - n)); }
+
+/** rpIdHash || flags || signCount [|| AAGUID || credId length || credId || COSE_Key (ES256) when `pub65` is given]. */
+static NSData *pk_auth_data(NSString *rp, uint8_t flags, uint32_t signCount, NSData *credId, NSData *pub65) {
+  NSMutableData *a = [NSMutableData data];
+  [a appendData:pk_sha256([rp dataUsingEncoding:NSUTF8StringEncoding])];
+  [a appendBytes:&flags length:1];
+  uint8_t sc[4] = { (uint8_t)(signCount >> 24), (uint8_t)(signCount >> 16), (uint8_t)(signCount >> 8), (uint8_t)signCount };
+  [a appendBytes:sc length:4];
+  if (pub65) {
+    // warden's AAGUID: "warden-passkey" 00 01
+    static const uint8_t aaguid[16] = { 0x77, 0x61, 0x72, 0x64, 0x65, 0x6e, 0x2d, 0x70, 0x61, 0x73, 0x73, 0x6b, 0x65, 0x79, 0x00, 0x01 };
+    [a appendBytes:aaguid length:16];
+    uint8_t l[2] = { (uint8_t)(credId.length >> 8), (uint8_t)credId.length };
+    [a appendBytes:l length:2];
+    [a appendData:credId];
+    NSMutableData *k = [NSMutableData data];
+    pk_cbor_head(k, 5, 5);
+    pk_cbor_int(k, 1); pk_cbor_int(k, 2);       // kty EC2
+    pk_cbor_int(k, 3); pk_cbor_int(k, -7);      // alg ES256
+    pk_cbor_int(k, -1); pk_cbor_int(k, 1);      // crv P-256
+    pk_cbor_int(k, -2); pk_cbor_bytes(k, [pub65 subdataWithRange:NSMakeRange(1, 32)]);
+    pk_cbor_int(k, -3); pk_cbor_bytes(k, [pub65 subdataWithRange:NSMakeRange(33, 32)]);
+    [a appendData:k];
+  }
+  return a;
+}
+
+/** UP | UV (unless uv=skip) | BE | BS (per credential) [| AT]: 0x5d on registration and 0x1d on assertion, like iOS. */
+static uint8_t pk_flags(NSString *uv, BOOL be, BOOL bs, BOOL attested) {
+  uint8_t f = 0x01;
+  if (![uv isEqualToString:@"skip"]) f |= 0x04;
+  if (be) f |= 0x08;
+  if (bs) f |= 0x10;
+  if (attested) f |= 0x40;
+  return f;
+}
+
+#pragma mark passkeys: keys and store
+
+/**
+ * A PKCS#8 P-256 key (what the store holds) as the `04||X||Y||D` blob SecKeyCreateWithData takes. PKCS#8 itself is not
+ * accepted, so the ECPrivateKey inside is located (`02 01 01 04 20 <D>`, then an optional `a0` parameters block, then
+ * `a1 44 03 42 00 <04||X||Y>`). A key without its public point (SEC1 without the optional field) cannot be imported.
+ */
+static NSData *pk_raw_key(NSData *der, NSData **pub65) {
+  const uint8_t *b = der.bytes;
+  NSUInteger n = der.length;
+  static const uint8_t head[5] = { 0x02, 0x01, 0x01, 0x04, 0x20 };
+  for (NSUInteger i = 0; i + 5 + 32 <= n; i++) {
+    if (memcmp(b + i, head, 5) != 0) continue;
+    NSUInteger p = i + 5;
+    NSData *d = [der subdataWithRange:NSMakeRange(p, 32)];
+    p += 32;
+    if (p + 2 <= n && b[p] == 0xa0) p += 2 + b[p + 1];
+    static const uint8_t pubHead[5] = { 0xa1, 0x44, 0x03, 0x42, 0x00 };
+    if (p + 5 + 65 > n || memcmp(b + p, pubHead, 5) != 0 || b[p + 5] != 0x04) return nil;
+    NSData *pub = [der subdataWithRange:NSMakeRange(p + 5, 65)];
+    if (pub65) *pub65 = pub;
+    NSMutableData *raw = [pub mutableCopy];
+    [raw appendData:d];
+    return raw;
+  }
+  return nil;
+}
+
+/** The PKCS#8 DER OpenSSL / node write for a P-256 key (`04||X||Y||D` in), so the host's `crypto.createPrivateKey` reads the store. */
+static NSData *pk_pkcs8(NSData *raw97) {
+  static const uint8_t pre[36] = {
+    0x30, 0x81, 0x87, 0x02, 0x01, 0x00, 0x30, 0x13, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01,
+    0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07, 0x04, 0x6d, 0x30, 0x6b, 0x02, 0x01, 0x01, 0x04, 0x20 };
+  static const uint8_t mid[5] = { 0xa1, 0x44, 0x03, 0x42, 0x00 };
+  NSMutableData *o = [NSMutableData dataWithBytes:pre length:sizeof pre];
+  [o appendData:[raw97 subdataWithRange:NSMakeRange(65, 32)]];
+  [o appendBytes:mid length:sizeof mid];
+  [o appendData:[raw97 subdataWithRange:NSMakeRange(0, 65)]];
+  return o;
+}
+
+/** The store's credentials; NO when the file exists and does not parse (a missing file is an empty store). */
+static BOOL pk_load(NSString *path, NSArray<NSDictionary *> **out) {
+  NSData *data = [NSData dataWithContentsOfFile:path];
+  if (!data) { *out = @[]; return YES; }
+  id json = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+  NSArray *list = [json isKindOfClass:[NSDictionary class]] ? ((NSDictionary *)json)[@"credentials"] : nil;
+  if (![list isKindOfClass:[NSArray class]]) return NO;
+  NSMutableArray *ok = [NSMutableArray array];
+  for (id c in list) {
+    if (![c isKindOfClass:[NSDictionary class]]) return NO;
+    [ok addObject:c];
+  }
+  *out = ok;
+  return YES;
+}
+
+/** Add `cred` to the store (read, append, tmp + rename, 0600); NO when the existing store is unreadable or the write fails. */
+static BOOL pk_append(NSString *path, NSDictionary *cred) {
+  NSArray<NSDictionary *> *all = nil;
+  if (!pk_load(path, &all)) return NO;
+  NSData *body = [NSJSONSerialization dataWithJSONObject:@{ @"version": @1, @"credentials": [all arrayByAddingObject:cred] } options:0 error:nil];
+  if (!body) return NO;
+  NSFileManager *fm = NSFileManager.defaultManager;
+  if (![fm createDirectoryAtPath:[path stringByDeletingLastPathComponent] withIntermediateDirectories:YES attributes:@{ NSFilePosixPermissions: @0700 } error:nil]) return NO;
+  NSString *tmp = [NSString stringWithFormat:@"%@.%d.tmp", path, getpid()];
+  if (![fm createFileAtPath:tmp contents:body attributes:@{ NSFilePosixPermissions: @0600 }]) return NO;
+  if (rename(tmp.fileSystemRepresentation, path.fileSystemRepresentation) != 0) { unlink(tmp.fileSystemRepresentation); return NO; }
+  return YES;
+}
+
+#pragma mark passkeys: credential and authorization objects
+
+static const void *kPkProps = &kPkProps;
+static const void *kPkPending = &kPkPending;
+static const void *kPkCancelled = &kPkCancelled;
+static Class g_pk_reg_cred, g_pk_asr_cred, g_pk_auth_class;
+
+/** A subclass of `super` whose getters answer from an associated dictionary; `nilProps` answer nil (extension outputs). */
+static Class pk_cred_class(const char *name, Class super_, NSArray<NSString *> *props, NSArray<NSString *> *nilProps) {
+  Class c = objc_allocateClassPair(super_, name, 0);
+  if (!c) return Nil;
+  for (NSString *p in props) {
+    class_addMethod(c, NSSelectorFromString(p), imp_implementationWithBlock(^id(id self_) { return [objc_getAssociatedObject(self_, kPkProps) objectForKey:p]; }), "@@:");
+  }
+  for (NSString *p in nilProps) {
+    class_addMethod(c, NSSelectorFromString(p), imp_implementationWithBlock(^id(id self_) { (void)self_; return nil; }), "@@:");
+  }
+  class_addMethod(c, NSSelectorFromString(@"attachment"), imp_implementationWithBlock(^NSInteger(id self_) { (void)self_; return 0; }), "q@:");  // platform
+  class_addMethod(c, NSSelectorFromString(@"copyWithZone:"), imp_implementationWithBlock(^id(id self_, NSZone *z) { (void)z; return self_; }), "@@:^v");
+  objc_registerClassPair(c);
+  return c;
+}
+
+static BOOL pk_make_classes(void) {
+  static dispatch_once_t once;
+  static BOOL ok = NO;
+  dispatch_once(&once, ^{
+    Class reg = NSClassFromString(@"ASAuthorizationPlatformPublicKeyCredentialRegistration");
+    Class asr = NSClassFromString(@"ASAuthorizationPlatformPublicKeyCredentialAssertion");
+    if (!reg || !asr) return;
+    NSArray *nilProps = @[@"prf", @"largeBlob", @"__prfSwift", @"__largeBlobSwift", @"coreCredential"];
+    g_pk_reg_cred = pk_cred_class("WardenFakePlatformRegistration", reg, @[@"credentialID", @"rawAttestationObject", @"rawClientDataJSON"], nilProps);
+    g_pk_asr_cred = pk_cred_class("WardenFakePlatformAssertion", asr, @[@"credentialID", @"rawAuthenticatorData", @"rawClientDataJSON", @"signature", @"userID"], nilProps);
+    ok = g_pk_reg_cred != Nil && g_pk_asr_cred != Nil;
+  });
+  return ok;
+}
+
+static id pk_make_cred(Class c, NSDictionary *props) {
+  id o = class_createInstance(c, 0);  // no -init: the real inits need a core credential
+  objc_setAssociatedObject(o, kPkProps, props, OBJC_ASSOCIATION_RETAIN);
+  return o;
+}
+
+/** `-[ASAuthorization initWithProvider:credential:]` (not in the public headers), else a runtime subclass answering `credential` / `provider`. */
+static id pk_make_authorization(id credential, NSString *rp) {
+  Class pc = NSClassFromString(@"ASAuthorizationPlatformPublicKeyCredentialProvider");
+  Class ac = NSClassFromString(@"ASAuthorization");
+  if (!pc || !ac) return nil;
+  id prov = ((id (*)(id, SEL, id))objc_msgSend)([pc alloc], NSSelectorFromString(@"initWithRelyingPartyIdentifier:"), rp);
+  SEL init = NSSelectorFromString(@"initWithProvider:credential:");
+  if ([ac instancesRespondToSelector:init]) return ((id (*)(id, SEL, id, id))objc_msgSend)([ac alloc], init, prov, credential);
+  if (!g_pk_auth_class) {
+    Class c = objc_allocateClassPair(ac, "WardenFakeAuthorization", 0);
+    if (!c) return nil;
+    class_addMethod(c, NSSelectorFromString(@"credential"), imp_implementationWithBlock(^id(id self_) { return objc_getAssociatedObject(self_, kPkProps); }), "@@:");
+    class_addMethod(c, NSSelectorFromString(@"provider"), imp_implementationWithBlock(^id(id self_) { return objc_getAssociatedObject(self_, kPkPending); }), "@@:");
+    objc_registerClassPair(c);
+    g_pk_auth_class = c;
+  }
+  id auth = class_createInstance(g_pk_auth_class, 0);
+  objc_setAssociatedObject(auth, kPkProps, credential, OBJC_ASSOCIATION_RETAIN);
+  objc_setAssociatedObject(auth, kPkPending, prov, OBJC_ASSOCIATION_RETAIN);
+  return auth;
+}
+
+#pragma mark passkeys: completion
+
+/** An error as the real controller delivers it: empty userInfo, except `reason` for "No credentials available for login.". */
+static NSError *pk_error(NSInteger code, BOOL noCredentials) {
+  NSDictionary *info = noCredentials ? @{
+    NSLocalizedFailureReasonErrorKey: @"No credentials available for login.",
+    NSLocalizedDescriptionKey: @"The operation couldn’t be completed. No credentials available for login.",
+  } : @{};
+  return [NSError errorWithDomain:PK_ERR_DOMAIN code:code userInfo:info];
+}
+
+/** Call the delegate on the next main-queue turn, exactly one of `auth` / `error`; a -cancel that came first wins (1001). */
+static void pk_deliver(id ctl, id auth, NSError *error) {
+  objc_setAssociatedObject(ctl, kPkPending, @YES, OBJC_ASSOCIATION_RETAIN);
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (!objc_getAssociatedObject(ctl, kPkPending)) return;
+    objc_setAssociatedObject(ctl, kPkPending, nil, OBJC_ASSOCIATION_RETAIN);
+    id a = auth;
+    NSError *e = error;
+    if (objc_getAssociatedObject(ctl, kPkCancelled)) { a = nil; e = pk_error(1001, NO); }
+    id delegate = [ctl respondsToSelector:NSSelectorFromString(@"delegate")] ? [ctl valueForKey:@"delegate"] : nil;
+    if (!delegate) return;
+    if (a) {
+      SEL s = NSSelectorFromString(@"authorizationController:didCompleteWithAuthorization:");
+      if ([delegate respondsToSelector:s]) ((void (*)(id, SEL, id, id))objc_msgSend)(delegate, s, ctl, a);
+    } else {
+      SEL s = NSSelectorFromString(@"authorizationController:didCompleteWithError:");
+      if ([delegate respondsToSelector:s]) ((void (*)(id, SEL, id, id))objc_msgSend)(delegate, s, ctl, e);
+    }
+  });
+}
+
+#pragma mark passkeys: the authenticator
+
+typedef NS_ENUM(int, PkVia) { PK_VIA_PERFORM = 0, PK_VIA_OPTIONS = 1, PK_VIA_AUTOFILL = 2 };
+
+static NSData *pk_random(NSUInteger n) {
+  NSMutableData *d = [NSMutableData dataWithLength:n];
+  arc4random_buf(d.mutableBytes, n);
+  return d;
+}
+
+static NSData *pk_data_prop(id obj, NSString *key) {
+  if (![obj respondsToSelector:NSSelectorFromString(key)]) return nil;
+  id v = [obj valueForKey:key];
+  return [v isKindOfClass:[NSData class]] ? v : nil;
+}
+
+static NSString *pk_string_prop(id obj, NSString *key) {
+  if (![obj respondsToSelector:NSSelectorFromString(key)]) return nil;
+  id v = [obj valueForKey:key];
+  return [v isKindOfClass:[NSString class]] ? v : nil;
+}
+
+/** The credential ids of a request's allowed / excluded descriptors, base64url. */
+static NSSet<NSString *> *pk_descriptor_ids(id request, NSString *key) {
+  NSMutableSet *ids = [NSMutableSet set];
+  if (![request respondsToSelector:NSSelectorFromString(key)]) return ids;
+  id list = [request valueForKey:key];
+  if (![list isKindOfClass:[NSArray class]]) return ids;
+  for (id d in list) {
+    NSData *cid = pk_data_prop(d, @"credentialID");
+    if (cid) [ids addObject:pk_b64u(cid)];
+  }
+  return ids;
+}
+
+/** Answer the platform passkey request `pk` of `ctl`; the mode / uv rules of the plan, errors per the findings. */
+static void pk_answer(id ctl, id pk, PkVia via, NSUInteger options, NSString *mode, NSString *uv, NSString *storePath) {
+  BOOL autofill = via == PK_VIA_AUTOFILL;
+  NSString *rp = pk_string_prop(pk, @"relyingPartyIdentifier");
+  BOOL isReg = [pk respondsToSelector:NSSelectorFromString(@"excludedCredentials")];
+  if (!rp.length || !pk_make_classes()) { pk_deliver(ctl, nil, pk_error(1004, NO)); return; }
+  if ([mode isEqualToString:@"cancel"]) { if (!autofill) pk_deliver(ctl, nil, pk_error(1001, NO)); return; }
+  if ([mode isEqualToString:@"fail"]) { pk_deliver(ctl, nil, pk_error(1004, NO)); return; }
+  if ([mode isEqualToString:@"unavailable"]) {
+    if (isReg) { pk_deliver(ctl, nil, pk_error(1004, NO)); return; }
+    if (!autofill) pk_deliver(ctl, nil, pk_error(1001, (options & 1) != 0));
+    return;
+  }
+  if ([uv isEqualToString:@"nomatch"]) { if (!autofill) pk_deliver(ctl, nil, pk_error(1001, NO)); return; }
+
+  NSData *challenge = pk_data_prop(pk, @"challenge");
+  if (!challenge) {
+    id clientData = [pk respondsToSelector:NSSelectorFromString(@"clientData")] ? [pk valueForKey:@"clientData"] : nil;
+    challenge = pk_data_prop(clientData, @"challenge");
+  }
+  if (!challenge) { pk_deliver(ctl, nil, pk_error(1004, NO)); return; }
+  // {type, challenge, origin}: iOS writes no crossOrigin
+  NSData *cdj = [[NSString stringWithFormat:@"{\"type\":\"webauthn.%@\",\"challenge\":\"%@\",\"origin\":\"https://%@\"}", isReg ? @"create" : @"get", pk_b64u(challenge), rp] dataUsingEncoding:NSUTF8StringEncoding];
+
+  NSArray<NSDictionary *> *all = nil;
+  if (!storePath.length || !pk_load(storePath, &all)) { pk_deliver(ctl, nil, pk_error(1004, NO)); return; }
+
+  if (isReg) {
+    NSSet *excluded = pk_descriptor_ids(pk, @"excludedCredentials");
+    for (NSDictionary *c in all) {
+      if ([excluded containsObject:c[@"credentialId"]] && [c[@"rpId"] isEqual:rp]) { pk_deliver(ctl, nil, pk_error(1006, NO)); return; }
+    }
+    NSDictionary *attrs = @{ (id)kSecAttrKeyType: (id)kSecAttrKeyTypeECSECPrimeRandom, (id)kSecAttrKeySizeInBits: @256 };
+    SecKeyRef priv = SecKeyCreateRandomKey((__bridge CFDictionaryRef)attrs, NULL);
+    NSData *raw = priv ? CFBridgingRelease(SecKeyCopyExternalRepresentation(priv, NULL)) : nil;
+    if (priv) CFRelease(priv);
+    if (raw.length != 97) { pk_deliver(ctl, nil, pk_error(1004, NO)); return; }
+    NSData *pub = [raw subdataWithRange:NSMakeRange(0, 65)];
+    NSData *credId = pk_random(16);
+    NSData *userId = pk_data_prop(pk, @"userID") ?: [NSData data];
+    NSString *name = pk_string_prop(pk, @"name") ?: @"";
+    NSString *display = pk_string_prop(pk, @"displayName") ?: name;
+    NSDictionary *record = @{
+      @"credentialId": pk_b64u(credId), @"rpId": rp, @"userHandle": pk_b64u(userId), @"userName": name, @"displayName": display,
+      @"privateKey": pk_b64u(pk_pkcs8(raw)), @"signCount": @0, @"createdAt": @((long long)([NSDate date].timeIntervalSince1970 * 1000)),
+      @"backupEligible": @YES, @"backupState": @YES,
+    };
+    if (!pk_append(storePath, record)) { pk_deliver(ctl, nil, pk_error(1004, NO)); return; }
+    NSMutableData *att = [NSMutableData data];
+    pk_cbor_head(att, 5, 3);
+    pk_cbor_text(att, @"fmt"); pk_cbor_text(att, @"none");
+    pk_cbor_text(att, @"attStmt"); pk_cbor_head(att, 5, 0);
+    pk_cbor_text(att, @"authData"); pk_cbor_bytes(att, pk_auth_data(rp, pk_flags(uv, YES, YES, YES), 0, credId, pub));
+    id cred = pk_make_cred(g_pk_reg_cred, @{ @"credentialID": credId, @"rawAttestationObject": att, @"rawClientDataJSON": cdj });
+    id auth = pk_make_authorization(cred, rp);
+    pk_deliver(ctl, auth, auth ? nil : pk_error(1004, NO));
+    return;
+  }
+
+  NSSet *allowed = pk_descriptor_ids(pk, @"allowedCredentials");
+  NSDictionary *pick = nil;
+  for (NSDictionary *c in all) {
+    if (![c[@"rpId"] isEqual:rp]) continue;
+    if (allowed.count && ![allowed containsObject:c[@"credentialId"]]) continue;
+    if (!pick || [c[@"createdAt"] longLongValue] > [pick[@"createdAt"] longLongValue]) pick = c;
+  }
+  if (!pick) { if (!autofill) pk_deliver(ctl, nil, pk_error(1001, (options & 1) != 0)); return; }
+  NSData *der = pk_unb64u(pick[@"privateKey"] ?: @"");
+  NSData *raw = der ? pk_raw_key(der, NULL) : nil;
+  SecKeyRef key = raw ? SecKeyCreateWithData((__bridge CFDataRef)raw, (__bridge CFDictionaryRef)@{ (id)kSecAttrKeyType: (id)kSecAttrKeyTypeECSECPrimeRandom, (id)kSecAttrKeyClass: (id)kSecAttrKeyClassPrivate }, NULL) : NULL;
+  if (!key) { pk_deliver(ctl, nil, pk_error(1004, NO)); return; }
+  NSData *authData = pk_auth_data(rp, pk_flags(uv, [pick[@"backupEligible"] boolValue], [pick[@"backupState"] boolValue], NO), (uint32_t)[pick[@"signCount"] unsignedIntValue], nil, nil);
+  NSMutableData *signed_ = [authData mutableCopy];
+  [signed_ appendData:pk_sha256(cdj)];
+  NSData *sig = CFBridgingRelease(SecKeyCreateSignature(key, kSecKeyAlgorithmECDSASignatureMessageX962SHA256, (__bridge CFDataRef)signed_, NULL));
+  CFRelease(key);
+  NSData *credId = pk_unb64u(pick[@"credentialId"]);
+  NSData *userId = pk_unb64u(pick[@"userHandle"] ?: @"") ?: [NSData data];
+  if (!sig || !credId) { pk_deliver(ctl, nil, pk_error(1004, NO)); return; }
+  id cred = pk_make_cred(g_pk_asr_cred, @{ @"credentialID": credId, @"rawAuthenticatorData": authData, @"rawClientDataJSON": cdj, @"signature": sig, @"userID": userId });
+  id auth = pk_make_authorization(cred, rp);
+  pk_deliver(ctl, auth, auth ? nil : pk_error(1004, NO));
+}
+
+/** Intercept `ctl` iff the authenticator is on and it holds a platform passkey request; YES when it did (the original must not run). */
+static BOOL pk_intercept(id ctl, PkVia via, NSUInteger options) {
+  NSString *mode, *uv, *store;
+  @synchronized(g_pk_lock) {
+    if (!g_pk_active) return NO;
+    mode = g_pk_mode; uv = g_pk_uv; store = g_pk_store;
+  }
+  Class regReq = NSClassFromString(@"ASAuthorizationPlatformPublicKeyCredentialRegistrationRequest");
+  Class asrReq = NSClassFromString(@"ASAuthorizationPlatformPublicKeyCredentialAssertionRequest");
+  if (!regReq || !asrReq || ![ctl respondsToSelector:NSSelectorFromString(@"authorizationRequests")]) return NO;
+  id requests = [ctl valueForKey:@"authorizationRequests"];
+  if (![requests isKindOfClass:[NSArray class]]) return NO;
+  id pk = nil;
+  for (id r in requests) {
+    if ([r isKindOfClass:regReq] || [r isKindOfClass:asrReq]) { pk = r; break; }
+  }
+  if (!pk) return NO;
+  DLOG("passkeys: intercepting %s mode=%s uv=%s", NSStringFromClass([pk class]).UTF8String, mode.UTF8String, uv.UTF8String);
+  pk_answer(ctl, pk, via, options, mode, uv, store);
+  return YES;
+}
+
+static IMP g_pk_o_perform, g_pk_o_options, g_pk_o_autofill, g_pk_o_cancel;
+
+static void pk_install(void) {
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    g_pk_lock = [NSObject new];
+    dlopen("/System/Library/Frameworks/AuthenticationServices.framework/AuthenticationServices", RTLD_NOW);
+    Class c = NSClassFromString(@"ASAuthorizationController");
+    if (!c) { DLOG("passkeys: no ASAuthorizationController"); return; }
+    Method perform = class_getInstanceMethod(c, NSSelectorFromString(@"performRequests"));
+    Method options = class_getInstanceMethod(c, NSSelectorFromString(@"performRequestsWithOptions:"));
+    Method autofill = class_getInstanceMethod(c, NSSelectorFromString(@"performAutoFillAssistedRequests"));
+    Method cancel = class_getInstanceMethod(c, NSSelectorFromString(@"cancel"));
+    if (perform) {
+      g_pk_o_perform = method_setImplementation(perform, imp_implementationWithBlock(^void(id self_) {
+        if (!pk_intercept(self_, PK_VIA_PERFORM, 0)) ((void (*)(id, SEL))g_pk_o_perform)(self_, NSSelectorFromString(@"performRequests"));
+      }));
+    }
+    if (options) {
+      g_pk_o_options = method_setImplementation(options, imp_implementationWithBlock(^void(id self_, NSUInteger o) {
+        if (!pk_intercept(self_, PK_VIA_OPTIONS, o)) ((void (*)(id, SEL, NSUInteger))g_pk_o_options)(self_, NSSelectorFromString(@"performRequestsWithOptions:"), o);
+      }));
+    }
+    if (autofill) {
+      g_pk_o_autofill = method_setImplementation(autofill, imp_implementationWithBlock(^void(id self_) {
+        if (!pk_intercept(self_, PK_VIA_AUTOFILL, 0)) ((void (*)(id, SEL))g_pk_o_autofill)(self_, NSSelectorFromString(@"performAutoFillAssistedRequests"));
+      }));
+    }
+    if (cancel) {
+      g_pk_o_cancel = method_setImplementation(cancel, imp_implementationWithBlock(^void(id self_) {
+        if (objc_getAssociatedObject(self_, kPkPending)) objc_setAssociatedObject(self_, kPkCancelled, @YES, OBJC_ASSOCIATION_RETAIN);
+        ((void (*)(id, SEL))g_pk_o_cancel)(self_, NSSelectorFromString(@"cancel"));
+      }));
+    }
+    DLOG("passkeys: installed");
+  });
+}
+
+/** Apply the state file's `passkeys` object; anything else (absent, malformed) turns the authenticator off. */
+static void pk_apply(id passkeys) {
+  if (!g_passkeys_enabled) return;
+  NSDictionary *d = [passkeys isKindOfClass:[NSDictionary class]] ? passkeys : nil;
+  NSString *store = [d[@"storePath"] isKindOfClass:[NSString class]] ? d[@"storePath"] : nil;
+  NSString *mode = [d[@"mode"] isKindOfClass:[NSString class]] ? d[@"mode"] : @"auto";
+  NSString *uv = [d[@"uv"] isKindOfClass:[NSString class]] ? d[@"uv"] : @"match";
+  if (![@[@"auto", @"cancel", @"fail", @"unavailable"] containsObject:mode]) mode = @"auto";
+  if (![@[@"match", @"nomatch", @"skip"] containsObject:uv]) uv = @"match";
+  @synchronized(g_pk_lock) {
+    g_pk_active = d != nil && store.length > 0;
+    g_pk_mode = mode; g_pk_uv = uv; g_pk_store = [store copy];
+  }
+  DLOG("passkeys: %s mode=%s uv=%s", g_pk_active ? "on" : "off", mode.UTF8String, uv.UTF8String);
+}
+
 #pragma mark - control channel
 
 static void write_ack(long long seq) {
   NSString *ack = [g_state_path stringByAppendingString:@".ack"];
   NSString *bundle = [[NSBundle mainBundle] bundleIdentifier] ?: @"";  // reverse-DNS: nothing to escape
-  NSString *body = [NSString stringWithFormat:@"{\"seq\":%lld,\"pid\":%d,\"proxy\":%s,\"camera\":%s,\"bundle\":\"%@\"}", seq, getpid(), g_proxy_dict ? "true" : "false", g_camera_enabled ? "true" : "false", bundle];
+  NSString *body = [NSString stringWithFormat:@"{\"seq\":%lld,\"pid\":%d,\"proxy\":%s,\"camera\":%s,\"passkeys\":%s,\"bundle\":\"%@\"}", seq, getpid(), g_proxy_dict ? "true" : "false", g_camera_enabled ? "true" : "false", g_passkeys_enabled ? "true" : "false", bundle];
   [body writeToFile:ack atomically:YES encoding:NSUTF8StringEncoding error:nil];
 }
 
@@ -2162,6 +2627,7 @@ static void apply_state_file(void) {
   if ([state[@"dismissKeyboard"] respondsToSelector:@selector(boolValue)] && [state[@"dismissKeyboard"] boolValue]) keyboard_dismiss();
 #endif
   if (g_camera_enabled) camera_apply([state[@"camera"] isKindOfClass:[NSDictionary class]] ? state[@"camera"] : @{});
+  pk_apply(state[@"passkeys"]);
   if ([state[@"a11yRead"] respondsToSelector:@selector(boolValue)] && [state[@"a11yRead"] boolValue]) write_a11y(seq);
   DLOG("state seq=%lld offline=%d clockOffsetMs=%lld frozen=%d", seq, offline, off, frozen);
   if (wasOffline != offline) notify_connectivity_changed();
@@ -2209,10 +2675,14 @@ __attribute__((constructor)) static void warden_inject_init(void) {
       g_camera_enabled = YES;
       camera_install();
     }
+    if ([env[@"WARDEN_PASSKEYS"] isEqualToString:@"1"]) {
+      g_passkeys_enabled = YES;
+      pk_install();
+    }
     if (state.length) {
       g_state_path = [state copy];
-      // the camera must have its feeds before the app's first look at AVFoundation: apply the staged state now
-      if (g_camera_enabled) apply_state_file();
+      // the camera must have its feeds, and the authenticator its mode, before the app's first look: apply the staged state now
+      if (g_camera_enabled || g_passkeys_enabled) apply_state_file();
       watch_state();
     }
     DLOG("loaded in pid %d", getpid());

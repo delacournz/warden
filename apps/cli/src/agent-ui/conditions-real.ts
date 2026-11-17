@@ -7,6 +7,7 @@ import { androidTools } from "@delacour/warden-core/providers/android";
 import { wardenHome } from "@delacour/warden-core/store";
 import { spawnDetachedTicker, spawnDetachedTickerVia } from "@delacour/warden-e2e/conditions/route-ticker.spawn";
 import { spawnDetachedScheduler, spawnDetachedSchedulerVia } from "@delacour/warden-e2e/conditions/scheduler.spawn";
+import type { AdbSession } from "@delacour/warden-e2e/driver/android/adb-session";
 import { uiadFromEnv } from "@delacour/warden-e2e/driver/android/uiad-backend";
 import { leaseClockRecorder } from "@delacour/warden-e2e/driver/clock-recorder";
 import type { Driver } from "@delacour/warden-e2e/driver/driver.types";
@@ -77,6 +78,47 @@ export async function androidUiCamera(o: {
 }
 
 /**
+ * The virtual authenticator for `warden ui passkey` on Android: the full driver's op (API check, provider APK install,
+ * provider settings, `content call`, host store mirror) over the command's adb shell. The Credential Manager sheet is
+ * answered by the driver's snapshot path, so `warden ui snapshot` / `wait` tap through it. Loaded only for `passkey`.
+ */
+export async function androidUiPasskeys(o: {
+	serial: string;
+	env: Record<string, string | undefined>;
+	exec: Exec;
+	session: Pick<AdbSession, "run">;
+}): Promise<Driver["passkeys"]> {
+	const [{ createAndroidPasskeys }, { installArgv, shellCommand }] = await Promise.all([
+		import("@delacour/warden-e2e/driver/android/passkeys"),
+		import("@delacour/warden-e2e/driver/android/android-argv"),
+	]);
+	const { adb } = androidTools(o.env);
+	const shell = async (argv: readonly string[]) => {
+		const done = await o.session.run(shellCommand(argv));
+		return done.success
+			? { ok: done.data.exitCode === 0, stdout: done.data.stdout }
+			: { ok: false, stdout: done.error.message };
+	};
+	return createAndroidPasskeys({
+		serial: o.serial,
+		wardenHome: wardenHome(o.env),
+		shell,
+		sdk: async () => {
+			const out = await shell(["getprop", "ro.build.version.sdk"]);
+			const sdk = Number.parseInt(out.stdout.trim(), 10);
+			return out.ok && Number.isFinite(sdk) ? sdk : undefined;
+		},
+		install: async (path) => {
+			const res = await o.exec(installArgv(adb, o.serial, path));
+			const text = `${res.stdout}${res.stderr}`;
+			return res.exitCode === 0 && text.includes("Success")
+				? { success: true, data: undefined }
+				: driverErr("E_IO", `adb install failed: ${text.slice(-200)}`);
+		},
+	}).op;
+}
+
+/**
  * Android without the full driver (no animation changes, no uiad, no host): the resident adb shell for network and
  * `adb emu geo fix` for a point. A moving location is the route ticker's job.
  */
@@ -126,6 +168,7 @@ async function openAndroid(ctx: CommandContext, device: UiDevice): Promise<Resul
 		},
 		clock: (op) => applyAndroidClock({ session, exec: ctx.exec, adb, serial }, op),
 		camera: await androidUiCamera({ serial, env: ctx.env, exec: ctx.exec }),
+		passkeys: await androidUiPasskeys({ serial, env: ctx.env, exec: ctx.exec, session }),
 		close: () => session.close(),
 	});
 }

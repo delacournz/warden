@@ -1,9 +1,16 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { createPasskeyCredential, readPasskeyStore } from "@delacour/warden-core/conditions/passkey-store";
 import type { DriverResult } from "../driver.types";
 import { fakeProxy } from "../network-proxy.testing";
 import { createInjectChannel, type InjectFs } from "./inject";
 import { createIosNetwork, INJECT_ACK_MS } from "./ios-network";
 
+const TMP = mkdtempSync(join(tmpdir(), "warden-ios-network-"));
+afterAll(() => rmSync(TMP, { recursive: true, force: true }));
+let rigs = 0;
 const STATE = "/s/state.json";
 const ACK = `${STATE}.ack`;
 const NOW = 1_700_000_000_000;
@@ -21,14 +28,20 @@ function rig(
 			files.set(path, text);
 			if (path === STATE && app.injected) {
 				const seq = (JSON.parse(text) as { seq: number }).seq;
-				if (!app.silent) files.set(ACK, JSON.stringify({ seq, pid: 501, proxy: app.proxy, camera: app.camera }));
+				if (!app.silent)
+					files.set(
+						ACK,
+						JSON.stringify({ seq, pid: 501, proxy: app.proxy, camera: app.camera, passkeys: app.passkeys })
+					);
 			}
 		},
 		read: (path) => files.get(path),
 		remove: (path) => void files.delete(path),
 		pidAlive: (pid) => alive.has(pid),
 	};
-	const app = { injected: false, proxy: true, camera: false, silent: false };
+	const app = { injected: false, proxy: true, camera: false, passkeys: false, silent: false };
+	rigs += 1;
+	const passkeyStore = join(TMP, `rig-${rigs}`, "store.json");
 	let t = 0;
 	const channel = createInjectChannel({
 		statePath: STATE,
@@ -40,39 +53,48 @@ function rig(
 	});
 	const proxy = fakeProxy(19_090, init.proxyLive);
 	const relaunches: string[] = [];
-	const net = createIosNetwork({
-		proxy,
-		channel,
-		dylib: () =>
-			init.dylib === false
-				? { success: false, error: { code: "E_HELPER_MISSING", message: "no dylib", retryable: false } }
-				: { success: true, data: "/d/libwarden-inject.dylib" },
-		isRunning: async (bundle) =>
-			init.runningFails
-				? { success: false, error: { code: "E_IO", message: "simctl spawn launchctl failed", retryable: true } }
-				: { success: true, data: bundle === init.running },
-		lastBundle: () => init.lastBundle,
-		now: () => NOW,
-		relaunch: async (bundle): DriverResult<void> => {
-			relaunches.push(bundle);
-			app.injected = true;
-			alive.add(501);
-			return { success: true, data: undefined };
-		},
-	});
+	const make = () =>
+		createIosNetwork({
+			proxy,
+			channel,
+			passkeyStore,
+			dylib: () =>
+				init.dylib === false
+					? { success: false, error: { code: "E_HELPER_MISSING", message: "no dylib", retryable: false } }
+					: { success: true, data: "/d/libwarden-inject.dylib" },
+			isRunning: async (bundle) =>
+				init.runningFails
+					? { success: false, error: { code: "E_IO", message: "simctl spawn launchctl failed", retryable: true } }
+					: { success: true, data: bundle === init.running },
+			lastBundle: () => init.lastBundle,
+			now: () => NOW,
+			relaunch: async (bundle): DriverResult<void> => {
+				relaunches.push(bundle);
+				app.injected = true;
+				alive.add(501);
+				return { success: true, data: undefined };
+			},
+		});
+	const net = make();
 	return {
 		net,
+		fresh: make,
 		proxy,
 		files,
+		passkeyStore,
 		relaunches,
 		app,
 		/** the app is running with the dylib loaded */
-		attach: (opts: { proxy?: boolean; camera?: boolean } = {}) => {
+		attach: (opts: { proxy?: boolean; camera?: boolean; passkeys?: boolean } = {}) => {
 			app.injected = true;
 			app.proxy = opts.proxy ?? true;
 			app.camera = opts.camera ?? false;
+			app.passkeys = opts.passkeys ?? false;
 			alive.add(501);
-			files.set(ACK, JSON.stringify({ seq: 0, pid: 501, proxy: app.proxy, camera: app.camera }));
+			files.set(
+				ACK,
+				JSON.stringify({ seq: 0, pid: 501, proxy: app.proxy, camera: app.camera, passkeys: app.passkeys })
+			);
 		},
 	};
 }
@@ -448,5 +470,124 @@ describe("camera", () => {
 		await r.net.camera({ back });
 		await r.net.network({ kind: "offline" });
 		expect(stateOf(r).camera).toEqual({ back });
+	});
+});
+
+describe("passkeys", () => {
+	const stateOf = (r: ReturnType<typeof rig>) => JSON.parse(r.files.get(STATE) ?? "{}");
+	const credential = (rpId: string, createdAt: number) => {
+		const made = createPasskeyCredential({ rpId, userName: "ada" }, { now: () => createdAt });
+		if (!made.success) throw new Error(made.error);
+		return made.data;
+	};
+
+	test("an app launched with the authenticator gets mode and uv live, acked, with the store path", async () => {
+		const r = rig();
+		r.attach({ passkeys: true });
+		const done = await r.net.passkeys({ kind: "set", mode: "cancel", uv: "skip" });
+		expect(done).toEqual({ success: true, data: { enabled: true, mode: "cancel", uv: "skip", credentials: [] } });
+		expect(stateOf(r).passkeys).toEqual({ mode: "cancel", uv: "skip", storePath: r.passkeyStore });
+	});
+
+	test("a field left out keeps its value; the first set is auto / match", async () => {
+		const r = rig();
+		r.attach({ passkeys: true });
+		const first = await r.net.passkeys({ kind: "set" });
+		expect(first.success && [first.data.mode, first.data.uv]).toEqual(["auto", "match"]);
+		await r.net.passkeys({ kind: "set", mode: "fail" });
+		const second = await r.net.passkeys({ kind: "set", uv: "nomatch" });
+		expect(second.success && [second.data.mode, second.data.uv]).toEqual(["fail", "nomatch"]);
+	});
+
+	test("nothing running: it waits for the next launch, which loads the dylib with the authenticator on, no proxy", async () => {
+		const r = rig();
+		const done = await r.net.passkeys({ kind: "set", mode: "auto" });
+		expect(done).toEqual({
+			success: true,
+			data: { enabled: true, mode: "auto", uv: "match", credentials: [], appliesOnLaunch: true },
+		});
+		const env = await r.net.launchEnv({});
+		expect(env.success && env.data?.WARDEN_PASSKEYS).toBe("1");
+		expect(env.success && env.data?.DYLD_INSERT_LIBRARIES).toBe("/d/libwarden-inject.dylib");
+		expect(env.success && env.data).not.toHaveProperty("WARDEN_NET_PROXY");
+		expect(stateOf(r).passkeys).toEqual({ mode: "auto", uv: "match", storePath: r.passkeyStore });
+		expect(r.proxy.calls.some((c) => c.op === "ensure")).toBe(false);
+	});
+
+	test("an injected app launched without the authenticator cannot get it live", async () => {
+		const r = rig();
+		r.attach({ passkeys: false });
+		const done = await r.net.passkeys({ kind: "set" });
+		expect(done.success && done.data.appliesOnLaunch).toBe(true);
+	});
+
+	test("an app that never acks is E_TIMEOUT", async () => {
+		const r = rig();
+		r.attach({ passkeys: true });
+		r.app.silent = true;
+		const done = await r.net.passkeys({ kind: "set" });
+		expect(!done.success && done.error.code).toBe("E_TIMEOUT");
+		expect(!done.success && done.error.message).toContain(String(INJECT_ACK_MS));
+	});
+
+	test("off removes the state key for the running app, keeps the credentials, and launches stay plain", async () => {
+		const r = rig();
+		r.attach({ passkeys: true });
+		await r.net.passkeys({ kind: "set" });
+		await r.net.passkeys({ kind: "add", credential: credential("example.com", 1) });
+		const off = await r.net.passkeys({ kind: "off" });
+		expect(off.success && [off.data.enabled, off.data.credentials.length]).toEqual([false, 1]);
+		expect(stateOf(r)).not.toHaveProperty("passkeys");
+		expect(await r.net.launchEnv({})).toEqual({ success: true, data: undefined });
+	});
+
+	test("the authenticator survives a network change and a new driver reads it back from the state file", async () => {
+		const r = rig();
+		r.attach({ passkeys: true });
+		await r.net.passkeys({ kind: "set", mode: "fail" });
+		await r.net.network({ kind: "offline" });
+		expect(stateOf(r).passkeys).toMatchObject({ mode: "fail" });
+		const again = await r.fresh().passkeys({ kind: "status" });
+		expect(again.success && [again.data.enabled, again.data.mode]).toEqual([true, "fail"]);
+	});
+
+	test("add, remove, clear and list work on the store file; list filters by rp, newest first, keys only with withKeys", async () => {
+		const r = rig();
+		const a = credential("a.example.com", 1);
+		const b = credential("a.example.com", 3);
+		const c = credential("b.example.com", 2);
+		for (const credentialOp of [a, b, c]) await r.net.passkeys({ kind: "add", credential: credentialOp });
+		const stored = readPasskeyStore(r.passkeyStore);
+		expect(stored.success && stored.data.map((x) => x.credentialId)).toEqual([a, b, c].map((x) => x.credentialId));
+
+		const listed = await r.net.passkeys({ kind: "list", rpId: "a.example.com" });
+		expect(listed.success && listed.data.credentials.map((x) => x.credentialId)).toEqual([
+			b.credentialId,
+			a.credentialId,
+		]);
+		expect(listed.success && listed.data.credentials[0]).not.toHaveProperty("privateKey");
+		const withKeys = await r.net.passkeys({ kind: "list", withKeys: true });
+		expect(withKeys.success && withKeys.data.credentials.every((x) => typeof x.privateKey === "string")).toBe(true);
+
+		const removed = await r.net.passkeys({ kind: "remove", credentialId: b.credentialId });
+		expect(removed.success && removed.data.credentials.map((x) => x.credentialId)).toEqual([
+			c.credentialId,
+			a.credentialId,
+		]);
+		const cleared = await r.net.passkeys({ kind: "clear" });
+		expect(cleared.success && cleared.data.credentials).toEqual([]);
+		expect(r.files.has(STATE)).toBe(false);
+	});
+
+	test("a store that does not parse is E_PASSKEY_STORE", async () => {
+		const r = rig();
+		r.attach({ passkeys: true });
+		await r.net.passkeys({ kind: "set" });
+		mkdirSync(dirname(r.passkeyStore), { recursive: true });
+		writeFileSync(r.passkeyStore, "{ nope");
+		for (const op of [{ kind: "list" }, { kind: "status" }, { kind: "clear" }] as const) {
+			const result = await r.net.passkeys(op);
+			expect(!result.success && result.error.code).toBe("E_PASSKEY_STORE");
+		}
 	});
 });

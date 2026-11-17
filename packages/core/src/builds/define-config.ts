@@ -514,6 +514,38 @@ export interface WardenConditionsConfig {
 	timezone?: string | undefined;
 	/** Not applied yet. */
 	a11y?: Record<string, unknown> | undefined;
+	/** `software` (the on-screen keyboard shows, the default) or `hardware` (hidden, input as from a keyboard). */
+	keyboard?: "software" | "hardware" | undefined;
+	/**
+	 * warden's virtual authenticator, on from the first `app.open()`: a mode (`auto`, `cancel`, `fail`, `unavailable`)
+	 * or `{ mode, uv, credentials }`; `credentials` are seeded once per lease. iOS launches the app with the injected
+	 * library; Android needs API 34+.
+	 */
+	passkeys?: WardenPasskeyMode | WardenPasskeysConfig | undefined;
+}
+
+/** What the virtual authenticator answers: succeed without UI, the user cancels, the platform fails, no credential. */
+export type WardenPasskeyMode = "auto" | "cancel" | "fail" | "unavailable";
+
+/** `conditions.passkeys` as an object. */
+export interface WardenPasskeysConfig {
+	/** @default "auto" */
+	mode?: WardenPasskeyMode | undefined;
+	/** User verification: `match` (UV flag set), `nomatch` (a failed Face ID / fingerprint), `skip` (no UV). @default "match" */
+	uv?: "match" | "nomatch" | "skip" | undefined;
+	/** Credentials to seed, as `device.passkeys.add` takes them. Test keys only. */
+	credentials?: WardenPasskeyCredential[] | undefined;
+}
+
+/** A credential to seed: rp id and user name; ids (base64url) and the P-256 key (PEM or base64url PKCS#8) are generated when left out. */
+export interface WardenPasskeyCredential {
+	rpId: string;
+	userName: string;
+	displayName?: string | undefined;
+	userHandle?: string | undefined;
+	credentialId?: string | undefined;
+	privateKey?: string | undefined;
+	signCount?: number | undefined;
 }
 
 /** `e2e.<suite>.spec`: how `warden e2e` runs the `*.e2e.ts` specs (`bun test` with `@delacour/warden-e2e`). */

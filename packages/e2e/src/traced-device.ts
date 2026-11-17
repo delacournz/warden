@@ -12,7 +12,7 @@ import type { SpanRunner } from "./runner/span";
  */
 export function traceDevice(device: Device, span: SpanRunner | undefined): Device {
 	if (span === undefined) return device;
-	const { network, location, clock, permissions, camera } = device;
+	const { network, location, clock, permissions, camera, passkeys } = device;
 	const { screenReader } = device;
 	const traced: Device = {
 		os: device.os,
@@ -71,6 +71,15 @@ export function traceDevice(device: Device, span: SpanRunner | undefined): Devic
 			set: (path, options) => span("device.camera.set", () => camera.set(path, options)),
 			clear: (facing) => span("device.camera.clear", () => camera.clear(facing)),
 			status: () => span("device.camera.status", () => camera.status()),
+		},
+		passkeys: {
+			set: (options) => span("device.passkeys.set", () => passkeys.set(options)),
+			off: () => span("device.passkeys.off", () => passkeys.off()),
+			add: (input) => span("device.passkeys.add", () => passkeys.add(input)),
+			remove: (credentialId) => span("device.passkeys.remove", () => passkeys.remove(credentialId)),
+			clear: () => span("device.passkeys.clear", () => passkeys.clear()),
+			list: (options) => span("device.passkeys.list", () => passkeys.list(options)),
+			status: () => span("device.passkeys.status", () => passkeys.status()),
 		},
 		memoryWarning: (options) => span("device.memoryWarning", () => device.memoryWarning(options)),
 		push: (payload, options) => span("device.push", () => device.push(payload, options)),
