@@ -211,6 +211,14 @@
         "typescript": "^5.9.3",
       },
     },
+    "scripts/ax-witness": {
+      "name": "@delacour/warden-ax-witness",
+      "version": "0.1.0",
+      "devDependencies": {
+        "@delacour/warden-tsconfig": "workspace:*",
+        "typescript": "^5.9.3",
+      },
+    },
     "scripts/demo": {
       "name": "@delacour/warden-demo",
       "version": "0.1.0",
@@ -483,6 +491,8 @@
     "@delacour/react-native-bottom-sheet": ["@delacour/react-native-bottom-sheet@0.3.0", "", { "peerDependencies": { "react": ">=19", "react-native": ">=0.88", "react-native-gesture-handler": ">=3.3", "react-native-keyboard-controller": ">=1.18", "react-native-reanimated": ">=4", "react-native-safe-area-context": ">=5", "react-native-teleport": ">=1.2", "react-native-worklets": ">=0.5" } }, "sha512-INebA8AuX9Nun7C/GBrs/ZYVknRuV1M6gnSJS+CduIQvE+qsPS87BWvQpeaFSecTm7mFIDmNHIM47I/Gf57how=="],
 
     "@delacour/warden": ["@delacour/warden@workspace:apps/cli"],
+
+    "@delacour/warden-ax-witness": ["@delacour/warden-ax-witness@workspace:scripts/ax-witness"],
 
     "@delacour/warden-biome-config": ["@delacour/warden-biome-config@workspace:packages/biome-config"],
 

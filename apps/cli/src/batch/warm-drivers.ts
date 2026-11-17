@@ -63,6 +63,16 @@ export const REBOOT_ALLOWANCE_MS = 90_000;
  * helper reads ~13 s after the restart (one 10 s timeout, maybe two), so three in a row (~40 s) is a wedge that stayed.
  */
 export const REBOOT_AFTER_TRIES = 3;
+
+/**
+ * A device whose reads time out this many times in a row, over at least `SILENT_REBOOT_AFTER_MS`, is rebooted even
+ * though no wedge was found in its sim log: on some hosts `log show` cannot compose the runtime's messages (every
+ * system line reads `<compose failure>`), so the marker check is blind and answers `not-wedged` (or fails) on a sim
+ * that is wedged. A sim that is only slow answers its cold first read within ~20 s on a 3-vCPU CI runner, so three
+ * timeouts spanning a minute are no slow sim. A read that fails fast (the sim answers) starts the count over.
+ */
+export const SILENT_REBOOT_AFTER_TRIES = 3;
+export const SILENT_REBOOT_AFTER_MS = 60_000;
 /** One device's warm-up outcome. */
 export type Warmed = {
 	worker: number;
@@ -145,7 +155,15 @@ type Stop = {
 	late: () => Late;
 	/** push the device's deadline back by `ms` (a reboot) */
 	extend: (ms: number) => void;
+	/** what the loop knows so far: the outer deadline reports it, so a timed-out device keeps its evidence */
+	progress: Progress;
 };
+
+/** The last failed read and the recovery record so far, as the outer deadline sees them. */
+type Progress = { lastError?: string; axRecovery?: AxRecoveryRecord };
+
+/** `snapshot failed: E_TIMEOUT: …` → `E_TIMEOUT: …` */
+const bare = (error: string): string => error.replace(/^snapshot failed: /, "");
 
 /** Wait `ms` through `run.after`; resolves false when `stop` aborted first (the timer is cancelled). */
 function pause(run: WarmRun, ms: number, stop: AbortSignal): Promise<boolean> {
@@ -203,6 +221,10 @@ type Recovering = {
 	restartFailed: boolean;
 	rebootTried: boolean;
 	record?: AxRecoveryRecord;
+	/** reads in a row that timed out on the current helper, and when the first of them started (a fast failure resets) */
+	silence: { tries: number; since: number };
+	/** the wedge check answered `not-wedged` (logged once) */
+	notWedgedNoted: boolean;
 };
 
 /** What the ladder steps share: the run, `connect`, the device, its stop and its log. */
@@ -247,7 +269,12 @@ async function recoverOnce(l: Ladder, state: Recovering): Promise<string | undef
 	const recover = state.helper.recover;
 	if (state.recovered || state.rebootTried || !recover) return undefined;
 	const outcome = await recover().catch((error: unknown): WarmRecovery => ({ kind: "failed", error: message(error) }));
-	if (outcome.kind === "not-wedged") return undefined;
+	if (outcome.kind === "not-wedged") {
+		if (!state.notWedgedNoted)
+			l.note("the sim log names no accessibility-server wedge (or cannot be read back on this host); retrying");
+		state.notWedgedNoted = true;
+		return undefined;
+	}
 	if (outcome.kind === "failed") {
 		l.note(`accessibility service recovery failed: ${outcome.error}`);
 		state.record = { outcome: "failed", error: outcome.error, ...(outcome.stage ? { stage: outcome.stage } : {}) };
@@ -261,11 +288,15 @@ async function recoverOnce(l: Ladder, state: Recovering): Promise<string | undef
 }
 
 /** Why the device is due its one reboot, else undefined. */
-function rebootDue(state: Recovering): string | undefined {
+function rebootDue(state: Recovering, now: number): string | undefined {
 	if (state.rebootTried || !state.helper.reboot) return undefined;
 	if (state.restartFailed) return "backboardd could not be restarted";
 	if (state.recovered && state.failsSinceRecovery >= REBOOT_AFTER_TRIES)
 		return `still not answering ${state.failsSinceRecovery} snapshots after the backboardd restart`;
+	const { tries, since } = state.silence;
+	const silentMs = now - since;
+	if (!state.recovered && tries >= SILENT_REBOOT_AFTER_TRIES && silentMs >= SILENT_REBOOT_AFTER_MS)
+		return `${tries} snapshots in a row timed out over ${Math.round(silentMs / 1000)} s, with no wedge found in the sim log`;
 	return undefined;
 }
 
@@ -307,7 +338,7 @@ async function rebootOnce(l: Ladder, state: Recovering, why: string): Promise<st
 async function climb(l: Ladder, state: Recovering): Promise<string | undefined> {
 	const recoverError = await recoverOnce(l, state);
 	if (recoverError !== undefined) return recoverError;
-	const why = rebootDue(state);
+	const why = rebootDue(state, l.run.now());
 	return why === undefined ? undefined : rebootOnce(l, state, why);
 }
 
@@ -319,10 +350,14 @@ function afterFailure(
 	ladder: Ladder,
 	state: Recovering,
 	attempt: number,
-	lastError: string
+	lastError: string,
+	readStarted: number
 ): Promise<string | undefined> {
 	const timedOut = TIMED_OUT.test(lastError);
 	if (state.recovered) state.failsSinceRecovery = timedOut ? state.failsSinceRecovery + 1 : 0;
+	if (!timedOut) state.silence = { tries: 0, since: readStarted };
+	else if (state.silence.tries === 0) state.silence = { tries: 1, since: readStarted };
+	else state.silence.tries++;
 	return attempt >= RECOVER_FROM_TRY && timedOut ? climb(ladder, state) : Promise.resolve(undefined);
 }
 
@@ -348,6 +383,8 @@ async function snapshotUntilWarm(
 		failsSinceRecovery: 0,
 		restartFailed: false,
 		rebootTried: false,
+		silence: { tries: 0, since: started },
+		notWedgedNoted: false,
 	};
 	let budget = budgetMs;
 	const grow = (ms: number) => {
@@ -357,12 +394,17 @@ async function snapshotUntilWarm(
 	const ladder: Ladder = { run, connect, udid, stop, note, grow };
 	let waited = 0;
 	for (let attempt = 1; ; attempt++) {
+		const readStarted = run.now();
+		const helperRead = state.helper;
 		const lastError = await snapshotOnce(state.helper);
 		if (lastError === undefined) return ended(state, state.helper);
+		stop.progress.lastError = lastError;
 		const wait = attempt === 1 ? FIRST_RETRY_WAIT_MS : RETRY_WAIT_MS;
 		const spent = Math.max(run.now() - started, waited);
 		if (givingUp(stop, spent + wait >= budget, attempt, lastError, note)) return ended(state, state.helper, lastError);
-		const reconnectError = await afterFailure(ladder, state, attempt, lastError);
+		const reconnectError = await afterFailure(ladder, state, attempt, lastError, readStarted);
+		if (state.record) stop.progress.axRecovery = state.record;
+		if (state.helper !== helperRead) state.silence = { tries: 0, since: run.now() };
 		if (reconnectError !== undefined) return ended(state, undefined, reconnectError);
 		if (!(await pause(run, wait, stop.signal))) return ended(state, state.helper, lastError);
 		waited += wait;
@@ -378,9 +420,7 @@ function givingUp(
 	note: (line: string) => void
 ): boolean {
 	const out = stop.signal.aborted || spent;
-	note(
-		`snapshot try ${attempt} failed: ${lastError.replace(/^snapshot failed: /, "")}; ${out ? "giving up" : "retrying"}`
-	);
+	note(`snapshot try ${attempt} failed: ${bare(lastError)}; ${out ? "giving up" : "retrying"}`);
 	return out;
 }
 
@@ -442,6 +482,7 @@ function settleDevice(
 	const stopper = new AbortController();
 	const started = run.now();
 	let total = budgetMs;
+	const progress: Progress = {};
 	return new Promise<Step>((resolve) => {
 		const finish = (s: Step) => {
 			cancel();
@@ -451,7 +492,11 @@ function settleDevice(
 		};
 		const onTimeout = () => {
 			late = "timeout";
-			finish({ error: `timed out after ${total / 1000}s` });
+			const last = progress.lastError !== undefined ? `; last: ${bare(progress.lastError)}` : "";
+			finish({
+				error: `timed out after ${total / 1000}s${last}`,
+				...(progress.axRecovery ? { axRecovery: progress.axRecovery } : {}),
+			});
 		};
 		let cancel = run.after(budgetMs, onTimeout);
 		const onAbort = () => {
@@ -465,7 +510,7 @@ function settleDevice(
 			total += ms;
 			cancel = run.after(Math.max(0, started + total - run.now()), onTimeout);
 		};
-		const stop: Stop = { signal: stopper.signal, late: () => late, extend };
+		const stop: Stop = { signal: stopper.signal, late: () => late, extend, progress };
 		void warmOne(run, connect, udid, budgetMs, stop, note).then((s) => {
 			if (s.helper && late === "timeout") void discard(s.helper);
 			else if (s.helper && late === "interrupt") void s.helper.close().catch(() => {});

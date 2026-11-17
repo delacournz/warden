@@ -57,6 +57,9 @@ inputs:
   xcode-path:
     description: Xcode to use (`/Applications/Xcode_27.2.app`); sets DEVELOPER_DIR for every later step. Empty keeps the runner's default.
     default: ""
+  dyld-cache:
+    description: "`true` builds every installed simulator runtime's dyld shared cache (`xcrun simctl runtime dyld_shared_cache update --all`, at most 10 min) before the first boot, so a sim does not boot against a half-built cache; `false` skips. The step logs how long it took."
+    default: "true"
   report-path:
     description: Where the e2e-report.json goes, relative to the workspace.
     default: warden-e2e-report.json
@@ -123,6 +126,7 @@ runs:
       env:
         XCODE_PATH: ${{ inputs.xcode-path }}
         HEADROOM_GB: ${{ inputs.headroom-gb }}
+        DYLD_CACHE: ${{ inputs.dyld-cache }}
         CACHE: ${{ inputs.cache }}
         ARTIFACTS: ${{ inputs.artifacts }}
         UPLOAD: ${{ inputs.upload-artifacts }}
@@ -131,6 +135,7 @@ runs:
         echo "started=$(date +%s)" >> "$GITHUB_OUTPUT"
         case "$CACHE" in github|none) ;; *) echo "cache must be github or none, not \"$CACHE\"" >&2; exit 1 ;; esac
         case "$UPLOAD" in true|false) ;; *) echo "upload-artifacts must be true or false, not \"$UPLOAD\"" >&2; exit 1 ;; esac
+        case "$DYLD_CACHE" in true|false) ;; *) echo "dyld-cache must be true or false, not \"$DYLD_CACHE\"" >&2; exit 1 ;; esac
         case "$ARTIFACTS" in
           all|none) ;;
           *) for group in $(echo "$ARTIFACTS" | tr ',' ' '); do
@@ -166,6 +171,17 @@ runs:
         start=$(date +%s)
         xcrun simctl list devices available -j > /dev/null
         echo "CoreSimulator answered after $(( $(date +%s) - start )) s"
+        # A runtime whose dyld shared cache is still being built boots slowly and its accessibility service can
+        # come up wedged. Build it now, bounded, and say how long it took; a failure only warns (boots build it on demand).
+        if [ "$DYLD_CACHE" = true ]; then
+          start=$(date +%s)
+          if perl -e 'alarm shift; exec @ARGV' 600 xcrun simctl runtime dyld_shared_cache update --all; then
+            echo "runtime dyld shared caches ready after $(( $(date +%s) - start )) s"
+          else
+            status=$?
+            echo "::warning::xcrun simctl runtime dyld_shared_cache update --all exited $status after $(( $(date +%s) - start )) s; simulators build the cache on demand"
+          fi
+        fi
 
     - name: Install bun
       shell: bash

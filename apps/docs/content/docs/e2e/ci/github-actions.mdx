@@ -170,7 +170,7 @@ jobs:
 
 Pin the action to a commit SHA or release tag. In order, it:
 
-1. Sets `WARDEN_TELEMETRY_DISABLED=1` and `DO_NOT_TRACK=1`, selects `xcode-path` through `DEVELOPER_DIR` when given, and lets `simctl` answer once so the first CoreSimulator call does not land inside a claim's 30 s timeout.
+1. Sets `WARDEN_TELEMETRY_DISABLED=1` and `DO_NOT_TRACK=1`, selects `xcode-path` through `DEVELOPER_DIR` when given, and lets `simctl` answer once so the first CoreSimulator call does not land inside a claim's 30 s timeout. Then builds every installed runtime's dyld shared cache (`xcrun simctl runtime dyld_shared_cache update --all`, at most 10 min, logged as `runtime dyld shared caches ready after N s`; a failure only warns), so the first sim does not boot against a half-built cache (`dyld-cache: false` skips).
 2. Installs bun from npm (`npm i -g bun@<version>`) when none is on `PATH`, so it needs no third-party action; `bun-version` defaults to the root `packageManager`. Runs `install-command` (default `bun install --frozen-lockfile`) with `npm-token` as `NPM_TOKEN`.
 3. Installs the release binary of `warden-version` (checksum verified) and runs `warden doctor --fetch-helper`.
 4. Restores the caches below and imports `app-path` when given. On a native build cache miss it says so first (a `native build cache miss` notice: the app is built from source before the first spec), installs `ccache` (a pinned release binary when none is on `PATH`, Homebrew if that download fails) and restores the compiler cache. Then it builds the app in its own step (`warden e2e --build-only` with the same suite, profile and `args`, so the run finds it cached), runs `warden e2e` with `--report` and the inputs as flags, and prints one line splitting the job's time up to the suite's end:
@@ -199,6 +199,7 @@ Pin the action to a commit SHA or release tag. In order, it:
 | `github-token` | `github.token` | reads the job's start for the `job timing` line (needs `actions: read`); never passed to warden |
 | `xcode-path` | runner default | e.g. `/Applications/Xcode_27.2.app` |
 | `headroom-gb` | 1 on hosts of 16 GB or less | `WARDEN_CAPACITY_HEADROOM_GB` |
+| `dyld-cache` | `true` | build the runtimes' dyld shared caches before the first boot; `false` skips |
 | `suite-timeout-minutes` | `35` | stops the suite (SIGINT, SIGKILL 60 s later) so a hung run still prints and uploads its evidence. The app build runs before it and is not counted: set the job timeout above a cold native build plus this |
 | `report-path` | `warden-e2e-report.json` | where the report goes |
 | `cache` | `github` | `github` saves and restores with `actions/cache`; `none` leaves storing to you (see below) |
@@ -326,7 +327,7 @@ Build the `.app` with ad-hoc signing and pass it in. `CODE_SIGNING_ALLOWED=NO` l
 | `queued #1 of 1 … mem binds: need 1792 of 0 memory` | a 7 GB hosted runner leaves no budget after warden's 8 GB headroom | the action sets `WARDEN_CAPACITY_HEADROOM_GB=1`; a lone claim is admitted either way |
 | ``xcrun simctl list devices … did not finish within 30s`` | the first CoreSimulator call of a cold image, under a native build's load | the action calls it once before the run; keep `count` at 1 on a 3-core runner |
 | first spec on each simulator fails, the rest pass | the in-sim bridge is up but silent | `retry: 1`; warm-up retries its snapshot for 120 s and warms one device at a time |
-| one simulator's every spec fails `E_TIMEOUT` (`did not answer within the query's 10.0s timeout`), warm-up `timed out after 120s` | the sim's accessibility service in backboardd wedged on first use (its log: `Could not auto-register for pid status change`) | the warm-up restarts backboardd once on that line (`warm-<n>.log`: `accessibility service wedged: restarted backboardd`); upgrade warden if you still see it |
+| one simulator's every spec fails `E_TIMEOUT` (`did not answer within the query's 10.0s timeout`), warm-up `timed out after 120s` | the sim's accessibility service in backboardd wedged on first use (its log: `Could not auto-register for pid status change`) | the warm-up restarts backboardd once on that line (`warm-<n>.log`: `accessibility service wedged: restarted backboardd`). A host whose `log show` cannot read the runtime's messages (`native.log` full of `<compose failure>`) hides that line: the warm-up then reboots the sim after 3 reads in a row time out over 60 s (`rebooting <udid>: …`), and drops and quarantines it if it is still silent. Upgrade warden if you still see it |
 | `errSecMissingEntitlement` / `-34018` in the app | simulator app built with `CODE_SIGNING_ALLOWED=NO` | build with `CODE_SIGN_IDENTITY=-` |
 | golden "not settled after 300s" | a loaded 3-core runner | the run still works. With `cache: github` the action exports it with `warden golden export --allow-unsettled`, so the next run restores it instead of building it again. A bigger runner settles it |
 | `warden: command not found` | `warden-version: none` without an earlier install | install warden first or leave the default |

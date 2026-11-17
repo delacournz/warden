@@ -5,6 +5,7 @@ import { splitCameraProfile } from "../camera-profile";
 import { type Exec, type ExecResult, execError } from "../exec";
 import { isGoldenName } from "../golden/golden";
 import { realMarkerFs, writeMarker } from "../ownership";
+import { axPrefsEnabled, writePrebootAxPrefs } from "../sims/ax-prefs";
 import { disabledStoreRoot } from "../sims/disabled-store";
 import { slimSimulator } from "../sims/slim";
 import { prepareOfflineSlim, runtimeSupportsPersistentOverrides, verifyOfflineSlim } from "../sims/slim.offline";
@@ -430,8 +431,17 @@ export function createIosProvider(deps: ProviderDeps, options: IosProviderOption
 		const parsed = inv.success ? parseSimctlDevices(inv.data) : inv;
 		return parsed.success ? parsed.data.find((d) => d.id === id)?.runtime : undefined;
 	};
+	/** Pre-boot accessibility prefs on a sim warden created (a foreign one is read-only); a failure is a note. */
+	const prepareAxPrefs = async (id: string): Promise<void> => {
+		if (!axPrefsEnabled(deps.env)) return;
+		const rec = deps.store.listDevices("ios").find((d) => d.id === id);
+		if (!rec) return;
+		const written = await writePrebootAxPrefs(runner, deps.env, id);
+		if (!written.success) note(`${rec.name} accessibility prefs not written (${written.error})`);
+	};
 	const prepareBoot = async (id: string): Promise<void> => {
 		if (isPhysicalIosId(id)) return;
+		await prepareAxPrefs(id);
 		const target = slim === false ? undefined : slimTarget(id);
 		if (slim === false || !target) return;
 		const runtime = await runtimeOf(id, target.runtime);

@@ -1,8 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { err, ok } from "@delacour/warden-types/result";
+import { axVerdict } from "./ax-quarantine";
 import {
 	REBOOT_AFTER_TRIES,
 	REBOOT_ALLOWANCE_MS,
+	SILENT_REBOOT_AFTER_MS,
+	SILENT_REBOOT_AFTER_TRIES,
 	WARM_TIMEOUT_MS,
 	type WarmConnect,
 	type WarmHelper,
@@ -215,7 +218,7 @@ describe("warmDrivers", () => {
 		f.timers.find((t) => !t.cancelled && t.ms === 9_000)?.fire();
 		const out = await running;
 		await Bun.sleep(1);
-		expect(out.devices[0]).toMatchObject({ ok: false, error: "timed out after 9s" });
+		expect(out.devices[0]).toMatchObject({ ok: false, error: "timed out after 9s; last: E_TIMEOUT" });
 		expect(one.snapshots()).toBe(1);
 		expect(one.stopped()).toBe(true);
 	});
@@ -666,7 +669,7 @@ describe("warmDrivers: reboot when a backboardd restart does not clear the wedge
 		});
 	});
 
-	test("a recovery that could not read the log (maybe not wedged) never reboots", async () => {
+	test("a recovery that could not read the log, silent for less than SILENT_REBOOT_AFTER_MS, never reboots", async () => {
 		const f = fixture(undefined, { autoRetry: true });
 		const stuck = sim("U0", {
 			recover: { kind: "failed", stage: "log", error: "log show: exit 1" },
@@ -701,7 +704,7 @@ describe("warmDrivers: reboot when a backboardd restart does not clear the wedge
 		expect(reboots).toBe(0);
 	});
 
-	test("a device never found wedged is never rebooted", async () => {
+	test("a device never found wedged, silent for less than SILENT_REBOOT_AFTER_MS, is never rebooted", async () => {
 		const f = fixture(undefined, { autoRetry: true });
 		const slow = sim("U0", { recover: { kind: "not-wedged" }, reboot: { kind: "rebooted" } });
 		const { connect } = connectSeq([slow.helper]);
@@ -710,45 +713,45 @@ describe("warmDrivers: reboot when a backboardd restart does not clear the wedge
 	});
 });
 
-describe("warmDrivers: a restart that did not clear the wedge, on a real clock (CI run 42264338937)", () => {
-	/**
-	 * A clock that moves only when the fake does work: a read takes its timeout, a reboot its duration, a retry wait its
-	 * length. Timers fire when the clock passes them, in order; the budget deadline among them.
-	 */
-	function clocked() {
-		let clock = 0;
-		const timers: Array<{ due: number; fn: () => void; cancelled: boolean }> = [];
-		const fireDue = () => {
-			for (const t of timers.sort((a, b) => a.due - b.due)) {
-				if (!t.cancelled && t.due <= clock) {
-					t.cancelled = true;
-					t.fn();
-				}
+/**
+ * A clock that moves only when the fake does work: a read takes its timeout, a reboot its duration, a retry wait its
+ * length. Timers fire when the clock passes them, in order; the budget deadline among them.
+ */
+function clocked() {
+	let clock = 0;
+	const timers: Array<{ due: number; fn: () => void; cancelled: boolean }> = [];
+	const fireDue = () => {
+		for (const t of timers.sort((a, b) => a.due - b.due)) {
+			if (!t.cancelled && t.due <= clock) {
+				t.cancelled = true;
+				t.fn();
 			}
-		};
-		const advance = async (ms: number) => {
-			clock += ms;
-			fireDue();
-			await Promise.resolve();
-		};
-		const run: WarmRun = {
-			devices: [{ worker: 0, udid: "U0" }],
-			logDir: "/logs",
-			now: () => clock,
-			after: (ms, fn) => {
-				const t = { due: clock + ms, fn, cancelled: false };
-				timers.push(t);
-				// a retry wait passes by itself: nothing else is working meanwhile
-				if (ms <= 5_000) queueMicrotask(() => void advance(ms));
-				return () => {
-					t.cancelled = true;
-				};
-			},
-			writeFile: async () => {},
-		};
-		return { run, advance, now: () => clock };
-	}
+		}
+	};
+	const advance = async (ms: number) => {
+		clock += ms;
+		fireDue();
+		await Promise.resolve();
+	};
+	const run: WarmRun = {
+		devices: [{ worker: 0, udid: "U0" }],
+		logDir: "/logs",
+		now: () => clock,
+		after: (ms, fn) => {
+			const t = { due: clock + ms, fn, cancelled: false };
+			timers.push(t);
+			// a retry wait passes by itself: nothing else is working meanwhile
+			if (ms <= 5_000) queueMicrotask(() => void advance(ms));
+			return () => {
+				t.cancelled = true;
+			};
+		},
+		writeFile: async () => {},
+	};
+	return { run, advance, now: () => clock };
+}
 
+describe("warmDrivers: a restart that did not clear the wedge, on a real clock (CI run 42264338937)", () => {
 	test("rebooted after three timeouts on the fresh helper, inside the grown budget, then warm", async () => {
 		const c = clocked();
 		const timeout = (ms: number) => async () => {
@@ -811,5 +814,149 @@ describe("warmDrivers: a restart that did not clear the wedge, on a real clock (
 		expect(out.devices[0]).toMatchObject({ ok: true, axRecovery: { outcome: "rebooted" } });
 		expect(c.now()).toBeGreaterThan(WARM_TIMEOUT_MS);
 		expect(c.now()).toBeLessThan(WARM_TIMEOUT_MS + REBOOT_ALLOWANCE_MS);
+	});
+});
+
+describe("warmDrivers: silent for a minute, no wedge in the sim log (log unreadable on the host)", () => {
+	const TIMEOUT =
+		"E_TIMEOUT: The simulator's accessibility service did not answer within the query's 10.0s timeout, 10.0s into the read; retry the read.";
+
+	/**
+	 * A helper on `c` whose reads all time out (the first in 20 s, later ones in 10 s, as on the CI runner), whose wedge
+	 * check costs 2 s and answers `recover`, and whose reboot (when given) takes 45 s.
+	 */
+	function silent(c: ReturnType<typeof clocked>, o: { recover?: WarmRecovery; reboot?: WarmReboot } = {}) {
+		let reads = 0;
+		let reboots = 0;
+		const reboot = o.reboot;
+		const helper: WarmHelper = {
+			socketPath: "/s/U0.sock",
+			snapshot: async () => {
+				await c.advance(reads++ === 0 ? 20_000 : 10_000);
+				return err(TIMEOUT);
+			},
+			close: async () => {},
+			stop: async () => {},
+			recover: async () => {
+				await c.advance(2_000);
+				return o.recover ?? { kind: "not-wedged" };
+			},
+			...(reboot
+				? {
+						reboot: async () => {
+							reboots++;
+							await c.advance(45_000);
+							return reboot;
+						},
+					}
+				: {}),
+		};
+		return { helper, reads: () => reads, reboots: () => reboots };
+	}
+
+	/** a helper on `c` whose reads answer in 1 s */
+	const answering = (c: ReturnType<typeof clocked>): WarmHelper => ({
+		socketPath: "/s/U0.sock",
+		snapshot: async () => {
+			await c.advance(1_000);
+			return ok(null);
+		},
+		close: async () => {},
+		stop: async () => {},
+	});
+
+	/** `connect` handing out `seq` in order, the last one again when it runs out */
+	const sequence = (seq: readonly WarmHelper[]): WarmConnect => {
+		let i = 0;
+		return async () => ok(seq[Math.min(i++, seq.length - 1)] as WarmHelper);
+	};
+
+	/** a run on `c` that keeps every warm log line */
+	const logged = (c: ReturnType<typeof clocked>) => {
+		const files = new Map<string, string>();
+		const run: WarmRun = {
+			...c.run,
+			writeFile: async (path, data) => {
+				files.set(path, data);
+			},
+		};
+		return { run, log: () => files.get("/logs/warm-0.log") ?? "" };
+	};
+
+	test("rebooted once SILENT_REBOOT_AFTER_TRIES reads in a row timed out over SILENT_REBOOT_AFTER_MS, then warm", async () => {
+		const c = clocked();
+		const { run, log } = logged(c);
+		const stuck = silent(c, { reboot: { kind: "rebooted" } });
+		const out = await warmDrivers(run, { connect: sequence([stuck.helper, answering(c)]) });
+		expect(stuck.reboots()).toBe(1);
+		expect(stuck.reads()).toBeGreaterThanOrEqual(SILENT_REBOOT_AFTER_TRIES);
+		expect(out.devices[0]).toMatchObject({ ok: true, axRecovery: { outcome: "rebooted" } });
+		expect(c.now()).toBeGreaterThanOrEqual(SILENT_REBOOT_AFTER_MS);
+		expect(c.now()).toBeLessThan(WARM_TIMEOUT_MS + REBOOT_ALLOWANCE_MS);
+		expect(log()).toContain("the sim log names no accessibility-server wedge");
+		expect(log()).toMatch(/rebooting U0: \d+ snapshots in a row timed out over \d+ s/);
+		expect(log()).toContain("snapshot ok");
+	});
+
+	test("a wedge check that could not read the sim log reboots on the same silence", async () => {
+		const c = clocked();
+		const stuck = silent(c, {
+			recover: { kind: "failed", stage: "log", error: "log show: exit 1" },
+			reboot: { kind: "rebooted" },
+		});
+		const out = await warmDrivers(c.run, { connect: sequence([stuck.helper, answering(c)]) });
+		expect(stuck.reboots()).toBe(1);
+		expect(out.devices[0]).toMatchObject({ ok: true, axRecovery: { outcome: "rebooted" } });
+	});
+
+	test("a read that fails fast breaks the silence: the count starts over, no reboot", async () => {
+		const c = clocked();
+		let reads = 0;
+		let reboots = 0;
+		const helper: WarmHelper = {
+			socketPath: "/s/U0.sock",
+			snapshot: async () => {
+				reads++;
+				if (reads % 3 === 0) {
+					await c.advance(500);
+					return err("E_AX_UNAVAILABLE: named no frontmost application");
+				}
+				await c.advance(10_000);
+				return err(TIMEOUT);
+			},
+			close: async () => {},
+			stop: async () => {},
+			recover: async () => ({ kind: "not-wedged" }),
+			reboot: async () => {
+				reboots++;
+				return { kind: "rebooted" };
+			},
+		};
+		await warmDrivers(c.run, { connect: sequence([helper]) });
+		expect(reads).toBeGreaterThan(SILENT_REBOOT_AFTER_TRIES * 2);
+		expect(reboots).toBe(0);
+	});
+
+	test("still silent after the reboot: cold with its last read and the reboot recorded, so the run quarantines it", async () => {
+		const c = clocked();
+		const stuck = silent(c, { reboot: { kind: "rebooted" } });
+		const still = silent(c);
+		const out = await warmDrivers(c.run, { connect: sequence([stuck.helper, still.helper]) });
+		const device = out.devices[0];
+		expect(device).toMatchObject({ ok: false, axRecovery: { outcome: "rebooted" } });
+		expect(device?.error).toContain("did not answer within");
+		expect(axVerdict(device ?? {}).kind).toBe("quarantine");
+	});
+
+	test("the outer timeout keeps the last read's error and the recovery so far (not a bare `timed out after`)", async () => {
+		const c = clocked();
+		const stuck = silent(c, { recover: { kind: "failed", stage: "log", error: "log show: exit 1" } });
+		// the outer deadline fires mid-read (20 s read, 2 s check, 2 s wait, then a 10 s read past 30 s), as on CI
+		const out = await warmDrivers(c.run, { connect: sequence([stuck.helper]), timeoutMs: 30_000 });
+		expect(out.devices[0]).toMatchObject({
+			ok: false,
+			axRecovery: { outcome: "failed", stage: "log", error: "log show: exit 1" },
+		});
+		expect(out.devices[0]?.error).toMatch(/^timed out after 30s; last: E_TIMEOUT: .*did not answer within/);
 	});
 });
