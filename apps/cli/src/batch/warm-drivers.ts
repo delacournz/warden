@@ -196,8 +196,8 @@ const TIMED_OUT = /E_TIMEOUT|did not answer within/;
 
 /**
  * warden-simd refusing a frontmost lookup under its backoff (`FrontmostRescue.swift`): it did not ask the sim, so the
- * try is an echo of the earlier silence, neither a timeout nor an answer. A refusal that carries the bridge's own
- * timeout (`axbridge before it: … did not answer within`) still counts as one: the bridge did ask, and heard nothing.
+ * try is an echo of the earlier silence, neither a timeout nor an answer. `TIMED_OUT` is tested first, so any error
+ * that also names a timeout still counts as one.
  */
 const BACKOFF_REFUSAL = /frontmost lookup failed recently/;
 

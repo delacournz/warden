@@ -971,8 +971,9 @@ describe("warmDrivers: silent for a minute, no wedge in the sim log (log unreada
 		expect(log()).toMatch(/rebooting U0: \d+ snapshots in a row timed out over \d+ s/);
 	});
 
-	test("a backoff refusal that carries the bridge's timeout counts towards the silence", async () => {
+	test("an error naming both the backoff and a timeout counts towards the silence", async () => {
 		const c = clocked();
+		// warden-simd sends no such reply today; this pins that TIMED_OUT is tested before BACKOFF_REFUSAL.
 		const REFUSED_AFTER_BRIDGE =
 			"E_AX_UNAVAILABLE: the frontmost app could not be resolved and no app pid is known (the frontmost lookup failed recently (asked again after a backoff from 20 s)) (axbridge before it: The simulator's accessibility service did not answer within the query's 10.0s timeout, 10.0s into the read; retry the read.)";
 		let reads = 0;
