@@ -38,7 +38,10 @@ export type JsKeyDeps = {
 };
 
 /** The env that reaches the bundle, sorted by name: `NAME=value` lines. */
-function bundleEnvLines(env: Record<string, string | undefined>, kindEnv: Record<string, string> = {}): string[] {
+export function bundleEnvLines(
+	env: Record<string, string | undefined>,
+	kindEnv: Record<string, string> = {}
+): string[] {
 	const merged = new Map<string, string>();
 	for (const [name, value] of Object.entries(env))
 		if (value !== undefined && BUNDLE_ENV.test(name)) merged.set(name, value);

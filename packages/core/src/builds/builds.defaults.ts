@@ -214,6 +214,10 @@ export const CCACHE_SLOPPINESS =
 	"clang_index_store,file_stat_matches,include_file_ctime,include_file_mtime,ivfsoverlay,pch_defines,modules,system_headers,time_macros";
 /** Subdirectory of WARDEN_HOME holding the shared ccache. */
 export const CCACHE_DIR_NAME = "ccache";
+/** Subdirectory of WARDEN_HOME holding the repack bundler's Metro caches (`<safe projectKey>/<platform>-<bundle env>`). */
+export const METRO_CACHE_DIR_NAME = "metro-cache";
+/** A repack's Metro cache no bundle used for this long is deleted the next time that project bundles. */
+export const METRO_CACHE_MAX_IDLE_MS = 7 * 24 * 60 * 60_000;
 /** First Xcode major with compilation caching (`COMPILATION_CACHE_ENABLE_CACHING`). */
 export const XCODE_COMPILATION_CACHE_MIN_MAJOR = 26;
 /** Timeout for the quick `git` / `xcodebuild -version` probes before a build. */

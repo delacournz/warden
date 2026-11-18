@@ -35,6 +35,7 @@ import { type EnsureKindInput, ensureKindBuild, LOCAL_PROFILE } from "./ensure";
 import { type GitContext, gitContext, readRepackMeta, writeRepackMeta } from "./js-key";
 import { computeKindKey, type KindKeys } from "./kind-key";
 import { type BuildLockDeps, buildLockKey, withBuildLock } from "./lock";
+import { metroCacheDir, prepareMetroCache } from "./metro-cache";
 import type { ApplyRepack, BundleOutput } from "./repack.types";
 import { androidKeepsSigner } from "./repack-android";
 
@@ -124,6 +125,9 @@ function packageMain(root: string): string | undefined {
  * `--minify false`: `hermesc -O` optimises the bytecode itself, so minifying first costs ~30% of the bundler's time for
  * the same bytecode (React Native's own Hermes build does the same, `react-native-xcode.sh` "Hermes doesn't require JS
  * minification"). A JSC base runs the unminified bundle: same code, bigger file.
+ *
+ * No `--reset-cache`: Metro keeps its cache between repacks in a dir warden owns per project and bundle env
+ * (`bundleEnv`), so a JS edit transforms only the files it changed. `force` empties that dir.
  */
 export function bundlerFlags(platform: Platform, framework: "expo" | "react-native", entryRel: string): string[] {
 	return [
@@ -136,7 +140,6 @@ export function bundlerFlags(platform: Platform, framework: "expo" | "react-nati
 		"false",
 		"--entry-file",
 		entryRel,
-		"--reset-cache",
 	];
 }
 
@@ -440,6 +443,16 @@ function lockDeps(input: RepackInput): BuildLockDeps {
 	};
 }
 
+/**
+ * The bundler's env: the run's env, the kind's env, and `TMPDIR` set to the project's persistent Metro cache for this
+ * bundle env (`metroCacheDir`), readied now and emptied first on `force`.
+ */
+function bundleEnv(input: RepackInput, kindEnv: Record<string, string>, flags: readonly string[]): Env {
+	const dir = metroCacheDir({ env: input.env, kindEnv, projectKey: input.projectKey, platform: input.platform, flags });
+	const tmp = prepareMetroCache(dir, { now: input.now(), ...(input.force ? { reset: true } : {}) });
+	return { ...input.env, ...kindEnv, TMPDIR: tmp };
+}
+
 /** Start the bundler in its own scratch dir, now; never rejects (`done` carries the result). */
 function startEarlyBundle(input: RepackInput, flags: readonly string[], entry: string, keys: KindKeys): EarlyBundle {
 	const scratchRoot = input.scratchRoot ?? tmpdir();
@@ -454,7 +467,7 @@ function startEarlyBundle(input: RepackInput, flags: readonly string[], entry: s
 		framework: input.project.framework,
 		flags,
 		entry,
-		env: { ...input.env, ...keys.settings.env },
+		env: bundleEnv(input, keys.settings.env, flags),
 		scratch,
 		hermes: true,
 		log: () => {},
@@ -644,7 +657,7 @@ async function makeRepack(input: RepackInput, made: Made, early?: EarlyBundle): 
 			framework: project.framework,
 			flags: made.flags,
 			entry: made.entry,
-			env: { ...input.env, ...made.keys.settings.env },
+			env: early ? { ...input.env, ...made.keys.settings.env } : bundleEnv(input, made.keys.settings.env, made.flags),
 			scratch,
 			hermes,
 			log: input.log,

@@ -105,6 +105,8 @@ type HostOver = {
 	events?: string[];
 	/** what `unzip -Z1 <apk>` lists */
 	apkEntries?: string[];
+	/** the env each bundler run got */
+	bundlerEnvs?: Record<string, string | undefined>[];
 };
 
 function host(over: HostOver = {}): Host {
@@ -116,7 +118,10 @@ function host(over: HostOver = {}): Host {
 		if (cmd.join(" ") === "sh -c fp") return { ...done, stdout: '{"hash":"native-1"}' };
 		if (bin === "git") return bunExec(cmd, opts);
 		calls.push([...cmd]);
-		if (bin.endsWith("/.bin/expo") || bin.endsWith("/.bin/react-native")) return fakeBundler(over, args);
+		if (bin.endsWith("/.bin/expo") || bin.endsWith("/.bin/react-native")) {
+			over.bundlerEnvs?.push({ ...opts?.env });
+			return fakeBundler(over, args);
+		}
 		if (bin === "unzip" && over.apkEntries) return { ...done, stdout: `${over.apkEntries.join("\n")}\n` };
 		if (bin.endsWith("/hermesc")) return fakeHermesc(over, flagOf(args, "-out"));
 		if (bin === "node") {
@@ -300,7 +305,8 @@ describe("repackApp", () => {
 		const bundler = h.calls.find((c) => c[0]?.endsWith("/.bin/expo"));
 		// Hermes compiles its own optimised bytecode: a minified input buys nothing (React Native's own Hermes path)
 		expect(bundler?.slice(1, 8)).toEqual(["export:embed", "--platform", "ios", "--dev", "false", "--minify", "false"]);
-		expect(bundler).toContain("--reset-cache");
+		// Metro keeps its cache between repacks (warden's own dir per bundle env), so it is never reset
+		expect(bundler).not.toContain("--reset-cache");
 		expect(h.calls.some((c) => c[0]?.endsWith("/hermesc") && c.includes("-emit-binary"))).toBe(true);
 		// the bytecode map is written, but composing it with Metro's (~6 s, read by nothing) is left to whoever needs it
 		expect(h.calls.some((c) => c[0]?.endsWith("/hermesc") && c.includes("-output-source-map"))).toBe(true);
@@ -427,6 +433,27 @@ describe("repackApp", () => {
 		await seedBase("base B");
 		await repackApp(input(h, applied, { hermes: async () => false }));
 		expect(getInstall(store, "ios", "SIM-1", "com.x.app")).toBeUndefined();
+	});
+
+	test("Metro gets a persistent cache dir per project and bundle env as its TMPDIR; force empties it", async () => {
+		await seedBase();
+		const bundlerEnvs: Record<string, string | undefined>[] = [];
+		const run = (over: Partial<RepackInput> = {}) =>
+			repackApp(input(host({ bundlerEnvs }), fresh(), { hermes: async () => false, ...over }));
+		await run();
+		const tmp = bundlerEnvs[0]?.TMPDIR ?? "";
+		expect(tmp.startsWith(join(dir, "home", "metro-cache"))).toBe(true);
+		expect(tmp.endsWith("/")).toBe(true);
+		writeFileSync(join(tmp, "cached-transform"), "x");
+		writeFileSync(join(root, "src", "a.ts"), "edited");
+		await run();
+		expect(bundlerEnvs[1]?.TMPDIR).toBe(tmp);
+		expect(existsSync(join(tmp, "cached-transform"))).toBe(true);
+		await run({ env: { ...env, EXPO_PUBLIC_API: "other" } });
+		expect(bundlerEnvs[2]?.TMPDIR).not.toBe(tmp);
+		await run({ force: true });
+		expect(bundlerEnvs[3]?.TMPDIR).toBe(tmp);
+		expect(existsSync(join(tmp, "cached-transform"))).toBe(false);
 	});
 
 	test("force rebuilds a cached repack", async () => {
@@ -557,7 +584,8 @@ describe("repackApp: a base built in this run", () => {
 
 	test("iOS: the JS is bundled and Hermes-compiled while the base builds; the base then says which to apply", async () => {
 		const events: string[] = [];
-		const h = host({ events });
+		const bundlerEnvs: Record<string, string | undefined>[] = [];
+		const h = host({ events, bundlerEnvs });
 		const applied = fresh();
 		mkdirSync(join(root, "node_modules", "hermes-compiler", "hermesc", "osx-bin"), { recursive: true });
 		writeFileSync(join(root, "node_modules", "hermes-compiler", "hermesc", "osx-bin", "hermesc"), "");
@@ -575,6 +603,7 @@ describe("repackApp: a base built in this run", () => {
 		expect(applied).toEqual({ count: 1, bundles: [true] });
 		expect(h.calls.filter((c) => c[0]?.endsWith("/.bin/expo"))).toHaveLength(1);
 		expect(h.calls.filter((c) => c[0]?.endsWith("/hermesc"))).toHaveLength(1);
+		expect(bundlerEnvs[0]?.TMPDIR?.startsWith(join(dir, "home", "metro-cache"))).toBe(true);
 		expect(res.data.bundleMs).toBeGreaterThan(0);
 		expect(res.data.fromBase).toBeUndefined();
 		expect(getBuild(store, KEY, "ios", res.data.hash)).toMatchObject({ kind: "simulator-repack" });
@@ -759,9 +788,7 @@ describe("helpers", () => {
 
 	test("bundlerFlags carry no scratch path; the entry is root-relative", () => {
 		const flags = bundlerFlags("android", "expo", "index.ts");
-		expect(flags.join(" ")).toBe(
-			"export:embed --platform android --dev false --minify false --entry-file index.ts --reset-cache"
-		);
+		expect(flags.join(" ")).toBe("export:embed --platform android --dev false --minify false --entry-file index.ts");
 	});
 
 	test("findHermesc prefers hermes-compiler, falls back to react-native/sdks", () => {

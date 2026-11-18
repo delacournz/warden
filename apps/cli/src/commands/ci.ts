@@ -145,7 +145,11 @@ async function cacheCmd(ctx: CommandContext, deps: CiDeps, opts: CacheOpts): Pro
 		? line("golden", groups.golden)
 		: `${color.bold("golden ")} off (the suite creates fresh simulators)`;
 	const ccache = groups.ccache ? line("ccache", groups.ccache) : `${color.bold("ccache ")} off (build.cache: false)`;
-	ctx.out([line("builds", groups.builds), line("repack", groups.repack), golden, ccache].join("\n"));
+	ctx.out(
+		[line("builds", groups.builds), line("repack", groups.repack), golden, ccache, line("metro", groups.metro)].join(
+			"\n"
+		)
+	);
 	return 0;
 }
 
@@ -161,7 +165,7 @@ export function createCiCommand(deps: CiDeps = defaultCiDeps): Command {
 			cmd
 				.command("cache")
 				.description(
-					"print the CI cache groups (builds, repack, golden, ccache): each key, its paths, and the golden's import/export commands"
+					"print the CI cache groups (builds, repack, golden, ccache, metro): each key, its paths, and the golden's import/export commands"
 				)
 				.option("--platform <platform>", "ios (default; the only one with cacheable builds and a golden)")
 				.option("--project <dir>", "project directory (default: cwd)")
