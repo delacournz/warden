@@ -51,7 +51,7 @@ function contains(rect: Rect, point: Point): boolean {
 	return point.x >= rect.x && point.x <= rect.x + rect.width && point.y >= rect.y && point.y <= rect.y + rect.height;
 }
 
-/** Controls drawn over `entry`'s frame: later in document order, visible, interactive, not its own, not keys. */
+/** Controls whose panel (`coverRegion`) lies over `entry`'s frame: later in document order, visible, interactive, not its own, not keys. */
 export function coversOf(entry: NodeEntry, index: NodeIndex): NodeEntry[] {
 	const frame = entry.element.frame;
 	return index.entries.filter(
@@ -59,9 +59,10 @@ export function coversOf(entry: NodeEntry, index: NodeIndex): NodeEntry[] {
 			other.position > entry.position &&
 			other.visible &&
 			isInteractiveRole(other.role) &&
-			overlaps(other.element.frame, frame) &&
 			!within(other, entry) &&
-			!inKeyboard(other)
+			!inKeyboard(other) &&
+			// by its panel, not its own frame: a row under only a sticky footer's padding is clear of the button
+			overlaps(coverRegion(other, entry), frame)
 	);
 }
 

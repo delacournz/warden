@@ -85,6 +85,18 @@ describe("clearTapPoint", () => {
 		if (result.kind === "covered") expect(result.region).toEqual({ x: 0, y: 740, width: 400, height: 100 });
 	});
 
+	test("a target under only the padding of a footer's bar, clear of its button, is covered by that bar", () => {
+		const bar = el("other", {
+			frame: { x: 0, y: 740, width: 400, height: 100 },
+			children: [el("button", { id: "sign-out", label: "Sign out", frame: { x: 20, y: 756, width: 360, height: 52 } })],
+		});
+		const low = el("button", { id: "row", label: "Network", frame: { x: 20, y: 812, width: 360, height: 40 } });
+		const { entry, index } = target([low, bar]);
+		const result = clearTapPoint(entry, index);
+		expect(result.kind).toBe("covered");
+		if (result.kind === "covered") expect(result.region).toEqual({ x: 0, y: 740, width: 400, height: 100 });
+	});
+
 	test("a full-screen overlay holding a floating button is not the cover, the button is", () => {
 		const overlay = el("other", {
 			frame: { x: 0, y: 0, width: 400, height: 900 },
