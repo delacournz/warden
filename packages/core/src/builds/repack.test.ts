@@ -302,7 +302,9 @@ describe("repackApp", () => {
 		expect(bundler?.slice(1, 8)).toEqual(["export:embed", "--platform", "ios", "--dev", "false", "--minify", "false"]);
 		expect(bundler).toContain("--reset-cache");
 		expect(h.calls.some((c) => c[0]?.endsWith("/hermesc") && c.includes("-emit-binary"))).toBe(true);
-		expect(h.calls.some((c) => c[0] === "node" && c.includes("-o"))).toBe(true);
+		// the bytecode map is written, but composing it with Metro's (~6 s, read by nothing) is left to whoever needs it
+		expect(h.calls.some((c) => c[0]?.endsWith("/hermesc") && c.includes("-output-source-map"))).toBe(true);
+		expect(h.calls.some((c) => c[0] === "node")).toBe(false);
 		expect(stagingLeft()).toEqual([]);
 		expect(existsSync(join(dir, "scratch")) ? readdirSync(join(dir, "scratch")) : []).toEqual([]);
 

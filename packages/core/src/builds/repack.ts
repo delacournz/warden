@@ -181,15 +181,6 @@ export function findHermesc(
 	}
 }
 
-/** `node_modules/react-native/scripts/compose-source-maps.js` nearest to `root`. */
-function findComposeScript(root: string, exists: (path: string) => boolean = existsSync): string | undefined {
-	for (let dir = root; ; dir = dirname(dir)) {
-		const script = join(dir, "node_modules", "react-native", "scripts", "compose-source-maps.js");
-		if (exists(script)) return script;
-		if (dirname(dir) === dir) return undefined;
-	}
-}
-
 /**
  * Is the base built with Hermes? iOS: `Frameworks/hermesvm.framework` (RN 0.86; `hermes.framework` before) in the
  * `.app`. Android: a `lib/<abi>/libhermes*.so` entry in the apk.
@@ -233,7 +224,10 @@ type BundleStep = {
 	output?: (line: string) => void;
 };
 
-/** Hermes-compile `bundle` (hermesc, then the composed source map) into the scratch dir. */
+/**
+ * Hermes-compile `bundle` into the scratch dir, with hermesc's own source map beside it. The two maps are not composed
+ * (`compose-source-maps.js` cost ~6 s a repack for a file nothing read); `BundleOutput` says how to compose them.
+ */
 async function compileHermes(step: BundleStep, bundle: string, assetsDir: string): AsyncResult<BundleOutput> {
 	const { exec, root, scratch } = step;
 	const hermesc = findHermesc(root);
@@ -244,15 +238,13 @@ async function compileHermes(step: BundleStep, bundle: string, assetsDir: string
 	if (compile.exitCode !== 0)
 		return err(`repack: hermesc failed: ${(compile.stderr || compile.stdout).trim().slice(-2000)}`);
 	if (!hasHbcMagic(hbc)) return err("repack: hermesc output is not Hermes bytecode (bad magic bytes)");
-	let sourcemap = `${bundle}.map`;
-	const compose = findComposeScript(root);
-	if (compose && existsSync(`${hbc}.map`)) {
-		const composed = join(scratch, `${basename(bundle)}.composed.map`);
-		const merged = await exec(["node", compose, `${bundle}.map`, `${hbc}.map`, "-o", composed], { cwd: root });
-		if (merged.exitCode === 0 && existsSync(composed)) sourcemap = composed;
-		else step.log("composing source maps failed: keeping the JS source map");
-	}
-	return ok({ bundle: hbc, assetsDir, sourcemap, hermes: true });
+	return ok({
+		bundle: hbc,
+		assetsDir,
+		sourcemap: `${bundle}.map`,
+		hermes: true,
+		...(existsSync(`${hbc}.map`) ? { bytecodeSourcemap: `${hbc}.map` } : {}),
+	});
 }
 
 /** The bundler's plain JS output in the scratch dir, before any Hermes compile. */
@@ -595,22 +587,31 @@ async function bundleFor(
 	early: EarlyBundle | undefined,
 	now: () => number
 ): AsyncResult<{ bundled: BundleOutput; bundleMs: number }> {
-	let started = now();
-	let raw: Result<RawBundle, string>;
-	let earlyMs = 0;
-	if (early) {
-		const result = await early.done;
-		raw = result.raw;
-		earlyMs = Math.max(0, result.endedAt - early.startedAt);
-		started = now();
-		if (raw.success && step.hermes && result.hermes) {
-			if (!result.hermes.success) return result.hermes;
-			step.log("Hermes bytecode compiled while the base built");
-			return ok({ bundled: result.hermes.data, bundleMs: earlyMs });
-		}
-	} else raw = await runBundler(step);
+	if (early) return earlyBundleFor(step, early, now);
+	const started = now();
+	const raw = await runBundler(step);
 	if (!raw.success) return raw;
 	const bundled = await finishBundle(step, raw.data);
+	if (!bundled.success) return bundled;
+	return ok({ bundled: bundled.data, bundleMs: Math.max(0, now() - started) });
+}
+
+/** `bundleFor` over the `early` bundle: its Hermes compile when the base runs Hermes and it made one, else finished now. */
+async function earlyBundleFor(
+	step: BundleStep,
+	early: EarlyBundle,
+	now: () => number
+): AsyncResult<{ bundled: BundleOutput; bundleMs: number }> {
+	const result = await early.done;
+	const earlyMs = Math.max(0, result.endedAt - early.startedAt);
+	if (!result.raw.success) return result.raw;
+	if (step.hermes && result.hermes) {
+		if (!result.hermes.success) return result.hermes;
+		step.log("Hermes bytecode compiled while the base built");
+		return ok({ bundled: result.hermes.data, bundleMs: earlyMs });
+	}
+	const started = now();
+	const bundled = await finishBundle(step, result.raw.data);
 	if (!bundled.success) return bundled;
 	return ok({ bundled: bundled.data, bundleMs: earlyMs + Math.max(0, now() - started) });
 }
