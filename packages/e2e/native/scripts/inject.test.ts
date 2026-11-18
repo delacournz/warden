@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { bunExec } from "@delacour/warden-core/exec";
 import { createInjectChannel, injectLaunchEnv } from "../../src/driver/ios/inject";
-import { dylibArgv, harnessArgv, INJECT_DYLIB, IOS_MIN, main } from "./inject";
+import { checkSimulatorDylib, dylibArgv, harnessArgv, INJECT_DYLIB, IOS_MIN, main } from "./inject";
 
 describe("build argv", () => {
 	test("simulator dylib targets arm64 iphonesimulator with the deployment floor", () => {
@@ -15,6 +15,28 @@ describe("build argv", () => {
 		expect(argv.slice(-2)).toEqual(["-o", "/o/lib.dylib"]);
 		expect(argv.join(" ")).toContain("-framework Network -framework SystemConfiguration");
 		expect(argv.join(" ")).toContain("-framework UIKit");
+	});
+
+	test("the simulator dylib is universal (arm64 + x86_64); the host build stays arm64", () => {
+		const arches = (argv: string[]) => argv.flatMap((a, i) => (a === "-arch" ? [argv[i + 1]] : []));
+		expect(arches(dylibArgv("ios-simulator", "/o/x"))).toEqual(["arm64", "x86_64"]);
+		expect(arches(dylibArgv("macos", "/o/x"))).toEqual(["arm64"]);
+		expect(arches(harnessArgv("/o/h"))).toEqual(["arm64"]);
+	});
+
+	test("a built simulator dylib must hold both slices and say IOSSIMULATOR", () => {
+		expect(checkSimulatorDylib("Architectures in the fat file: x are: x86_64 arm64", "platform IOSSIMULATOR")).toEqual({
+			ok: true,
+			arches: ["x86_64", "arm64"],
+		});
+		expect(checkSimulatorDylib("Non-fat file: x is architecture: arm64", "platform IOSSIMULATOR")).toEqual({
+			ok: false,
+			reason: "missing x86_64 slice (has arm64)",
+		});
+		expect(checkSimulatorDylib("Architectures in the fat file: x are: x86_64 arm64", "platform MACOS")).toEqual({
+			ok: false,
+			reason: "not an iOS simulator binary",
+		});
 	});
 
 	test("the host (macOS) dylib has no UIKit to link", () => {

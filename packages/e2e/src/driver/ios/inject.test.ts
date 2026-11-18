@@ -160,6 +160,12 @@ describe("locateInjectDylib", () => {
 		expect(locateInjectDylib({ ...base, exists: (p) => p === home })).toEqual({ success: true, data: home });
 	});
 
+	test("the warden home copy is keyed by version: a new warden never loads an older cached dylib", () => {
+		const old = `/home/.warden/simd/1.2.2/${INJECT_DYLIB}`;
+		const found = locateInjectDylib({ ...base, exists: (p) => p === old });
+		expect(found.success).toBe(false);
+	});
+
 	test("WARDEN_INJECT_DYLIB that points at nothing is an error, not a fall-through", () => {
 		const result = locateInjectDylib({ ...base, env: { WARDEN_INJECT_DYLIB: "/nope" }, exists: (p) => p !== "/nope" });
 		expect(result.success).toBe(false);
