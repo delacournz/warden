@@ -909,6 +909,13 @@ describe("device.biometrics", () => {
 		]);
 	});
 
+	test("reenroll re-enrols the device (a new enrolment) and passes the shim's generation through", async () => {
+		const { device, driver } = setup();
+		await device.biometrics.enroll();
+		expect(await device.biometrics.reenroll()).toEqual({ enrolled: true, modality: "face" });
+		expect(driver.callsOf("biometrics").map((c) => c.op)).toEqual(["enroll", "reenroll"]);
+	});
+
 	test("E_UNSUPPORTED surfaces as an E2eError", async () => {
 		const driver = fakeDriver({
 			screens: [snapshotOf([])],

@@ -94,6 +94,7 @@ export function traceDevice(device: Device, span: SpanRunner | undefined): Devic
 			status: () => span("device.biometrics.status", () => device.biometrics.status()),
 			enroll: () => span("device.biometrics.enroll", () => device.biometrics.enroll()),
 			unenroll: () => span("device.biometrics.unenroll", () => device.biometrics.unenroll()),
+			reenroll: () => span("device.biometrics.reenroll", () => device.biometrics.reenroll()),
 			match: () => span("device.biometrics.match", () => device.biometrics.match()),
 			fail: () => span("device.biometrics.fail", () => device.biometrics.fail()),
 		},

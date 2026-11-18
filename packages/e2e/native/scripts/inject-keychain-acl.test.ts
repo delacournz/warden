@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInjectChannel } from "../../src/driver/ios/inject";
@@ -67,10 +67,29 @@ type Ran = {
 	hooks: boolean;
 };
 
+/** `kacl-add`: the app adds account `a<account>` (default 0) with `acl` through the interposed `SecItemAdd`. */
+type Add = {
+	/** what the fake Keychain holds once the add went through (the read-back the shim keys the record on) */
+	items: (Acl | null)[];
+	acl: Acl | null;
+	account?: number;
+	/** the fake add answers errSecDuplicateItem (-25299) */
+	duplicate?: boolean;
+};
+
+type Added = {
+	event: "kacl-add";
+	status: number;
+	/** the fake `SecItemAdd` calls (the off path calls the real one: none here) */
+	adds: { account: string; accessControl: boolean }[];
+	probes: { keys: string[] }[];
+};
+
 type Rig = {
 	send(cmd: string): void;
 	next<T>(): Promise<T>;
 	run(args: Run): Promise<Ran>;
+	add(args: Add): Promise<Added>;
 	stop(): Promise<void>;
 };
 
@@ -104,6 +123,10 @@ function startRig(env: Record<string, string>): Rig {
 		async run(args) {
 			send(`kacl-run ${JSON.stringify(args)}`);
 			return next<Ran>();
+		},
+		async add(args) {
+			send(`kacl-add ${JSON.stringify(args)}`);
+			return next<Added>();
 		},
 		async stop() {
 			send("quit");
@@ -382,5 +405,151 @@ run("keychain acl: reads", () => {
 		expect((await ackOf(ON)).keychainAcl).toBe(true);
 		expect((await ackOf({})).keychainAcl).toBe(false);
 		rmSync(stateDir, { recursive: true, force: true });
+	});
+});
+
+/**
+ * KACL-5: `warden ui biometrics reenroll` bumps the enrolment generation in the state file; the shim records the
+ * generation each access-controlled item was added at (`keychain-acl-items.json`, the dylib its only writer) and reads
+ * a `.biometryCurrentSet` item from before the bump like a device whose Face ID set changed.
+ */
+run("keychain acl: enrolment generation", () => {
+	type Gen = {
+		h: Rig;
+		itemsPath: string;
+		set(o: { generation: number; enabled?: boolean }): Promise<void>;
+		relaunch(): Promise<void>;
+		records(): Record<string, number> | undefined;
+		done(): Promise<void>;
+	};
+
+	async function gen(generation = 0): Promise<Gen> {
+		const stateDir = mkdtempSync(join(tmpdir(), "warden-inject-kacl-gen-"));
+		const channel = createInjectChannel({
+			statePath: join(stateDir, "state.json"),
+			now: Date.now,
+			sleep: (ms) => Bun.sleep(ms),
+		});
+		const itemsPath = join(stateDir, "keychain-acl-items.json");
+		const g: Gen = {
+			h: startRig({ ...ON, WARDEN_INJECT_STATE: channel.statePath }),
+			itemsPath,
+			async set(o) {
+				const state = channel.write({
+					keychainAcl: { enabled: o.enabled ?? true, generation: o.generation, itemsPath },
+				});
+				expect(await channel.acked(state.seq, 5_000)).toBe(true);
+			},
+			async relaunch() {
+				await g.h.stop();
+				g.h = startRig({ ...ON, WARDEN_INJECT_STATE: channel.statePath });
+				await g.set({ generation: channel.current().keychainAcl?.generation ?? 0 });
+			},
+			records: () =>
+				existsSync(itemsPath) ? (JSON.parse(readFileSync(itemsPath, "utf8")) as Record<string, number>) : undefined,
+			async done() {
+				await g.h.stop();
+				rmSync(stateDir, { recursive: true, force: true });
+			},
+		};
+		await g.set({ generation });
+		return g;
+	}
+
+	test("a .biometryCurrentSet-only item added before a re-enrolment reads -25300, with no prompt and no read", async () => {
+		expect(built).toBe(true);
+		const g = await gen(0);
+		const added = await g.h.add({ items: ["currentSet"], acl: "currentSet" });
+		expect(added.status).toBe(0);
+		expect(added.adds).toEqual([{ account: "a0", accessControl: true }]);
+		expect(Object.values(g.records() ?? {})).toEqual([0]);
+		await g.set({ generation: 1 });
+		const r = await g.h.run({ items: ["currentSet"], returnData: true });
+		expect(r.status).toBe(-25300);
+		expect(r.evals).toEqual([]);
+		expect(r.reads).toEqual([]);
+		await g.done();
+	});
+
+	test(".biometryCurrentSet .or .devicePasscode after a re-enrolment asks for the passcode policy, even on a context the app evaluated", async () => {
+		const g = await gen(0);
+		await g.h.add({ items: ["currentSet-or-passcode"], acl: "currentSet-or-passcode" });
+		await g.set({ generation: 1 });
+		const r = await g.h.run({ items: ["currentSet-or-passcode"], returnData: true });
+		expect(r.evals).toEqual([{ policy: OWNER, reason: "Authenticate to access this item", context: "shim" }]);
+		expect(r.status).toBe(0);
+		expect(r.data).toBe("secret");
+		const app = await g.h.run({ items: ["currentSet-or-passcode"], returnData: true, context: { evaluate: BIO } });
+		expect(app.evals.map((e) => [e.context, e.policy])).toEqual([
+			["app", BIO],
+			["shim", OWNER],
+		]);
+		const cancelled = await g.h.run({ items: ["currentSet-or-passcode"], returnData: true, evalCode: -2 });
+		expect(cancelled.status).toBe(-128);
+		await g.done();
+	});
+
+	test(".biometryAny and passcode-only items ignore the generation", async () => {
+		const g = await gen(0);
+		await g.h.add({ items: ["any"], acl: "any" });
+		await g.set({ generation: 1 });
+		const any = await g.h.run({ items: ["any"], returnData: true });
+		expect([any.status, any.evals.map((e) => e.policy)]).toEqual([0, [BIO]]);
+		await g.h.add({ items: ["passcode"], acl: "passcode", account: 0 });
+		await g.set({ generation: 2 });
+		const passcode = await g.h.run({ items: ["passcode"], returnData: true });
+		expect([passcode.status, passcode.evals.map((e) => e.policy)]).toEqual([0, [OWNER]]);
+		await g.done();
+	});
+
+	test("an item added after the re-enrolment carries the new generation and reads normally", async () => {
+		const g = await gen(0);
+		await g.set({ generation: 1 });
+		await g.h.add({ items: ["currentSet"], acl: "currentSet" });
+		expect(Object.values(g.records() ?? {})).toEqual([1]);
+		const r = await g.h.run({ items: ["currentSet"], returnData: true });
+		expect([r.status, r.evals.map((e) => e.policy)]).toEqual([0, [BIO]]);
+		await g.done();
+	});
+
+	test("the record survives a relaunch; no record is generation 0; a fresh inject dir (generation 0, no sidecar) reads normally", async () => {
+		const g = await gen(0);
+		await g.h.add({ items: ["currentSet"], acl: "currentSet" });
+		await g.set({ generation: 1 });
+		await g.relaunch();
+		expect((await g.h.run({ items: ["currentSet"], returnData: true })).status).toBe(-25300);
+		// never recorded (added before the dylib was loaded) = written at generation 0
+		rmSync(g.itemsPath);
+		const unknown = await g.h.run({ items: ["currentSet"], returnData: true });
+		expect([unknown.status, unknown.evals]).toEqual([-25300, []]);
+		// the lease dir deleted: generation 0 and no sidecar
+		await g.set({ generation: 0 });
+		const fresh = await g.h.run({ items: ["currentSet"], returnData: true });
+		expect([fresh.status, fresh.evals.map((e) => e.policy)]).toEqual([0, [BIO]]);
+		await g.done();
+	});
+
+	test("SecItemAdd: only access-controlled items are recorded, a duplicate keeps the record, the off switch writes nothing", async () => {
+		const g = await gen(0);
+		const plain = await g.h.add({ items: [null], acl: null });
+		expect(plain.adds).toEqual([{ account: "a0", accessControl: false }]);
+		expect(g.records()).toBeUndefined();
+		await g.h.add({ items: ["currentSet"], acl: "currentSet" });
+		const key = Object.keys(g.records() ?? {});
+		expect(key).toHaveLength(1);
+		expect(key[0]).toMatch(/^[0-9a-f]{64}$/);
+		await g.set({ generation: 2 });
+		const dup = await g.h.add({ items: ["currentSet"], acl: "currentSet", duplicate: true });
+		expect(dup.status).toBe(-25299);
+		expect(g.records()).toEqual({ [key[0] ?? ""]: 0 });
+		// another account is another record
+		await g.h.add({ items: ["currentSet", "currentSet"], acl: "currentSet", account: 1 });
+		expect(Object.values(g.records() ?? {}).sort()).toEqual([0, 2]);
+		await g.set({ generation: 3, enabled: false });
+		rmSync(g.itemsPath);
+		const off = await g.h.add({ items: ["currentSet"], acl: "currentSet", account: 0 });
+		expect(off.adds).toEqual([]);
+		expect(g.records()).toBeUndefined();
+		await g.done();
 	});
 });

@@ -186,8 +186,10 @@ export function createUiCommand(deps: UiDeps): Command {
 			withUiOptions(
 				cmd
 					.command("biometrics")
-					.description("simulated Face ID / Touch ID / fingerprint: status (default), enroll, unenroll, match, fail")
-					.argument("[op]", "status | enroll | unenroll | match | fail")
+					.description(
+						"simulated Face ID / Touch ID / fingerprint: status (default), enroll, unenroll, reenroll (a new enrolment), match, fail"
+					)
+					.argument("[op]", "status | enroll | unenroll | reenroll | match | fail")
 					.option("--settle [ms]", SETTLE)
 			).action(async (op, opts) => {
 				const { uiBiometrics } = await import("../agent-ui/controls");

@@ -3,6 +3,7 @@ import { writeFileSync } from "node:fs";
 import type { KindApp } from "@delacour/warden-core/builds/ensure-kind";
 import { type DriverCall, el, failWith, snapshotOf } from "@delacour/warden-e2e/driver/driver.testing";
 import type { Snapshot } from "@delacour/warden-e2e/driver/driver.types";
+import { ok } from "@delacour/warden-types/result";
 import type { UiDeps } from "../agent-ui/driver";
 import { readState, updateState } from "../agent-ui/state";
 import type { VideoSpec } from "../agent-ui/video";
@@ -1019,6 +1020,19 @@ describe("device controls", () => {
 		expect(await h.run("biometrics", "unenroll", "--json")).toBe(0);
 		expect(doc(h.c).result.biometrics.enrolled).toBe(false);
 		expect(h.driver.callsOf("biometrics").map((c) => c.op)).toEqual(["status", "enroll", "match", "fail", "unenroll"]);
+	});
+
+	test("biometrics reenroll: a new enrolment; the shim's generation is in the text and --json", async () => {
+		const h = harness([snapshotOf(LOGIN)], {
+			onCall: (call) =>
+				call.method === "biometrics" && call.op === "reenroll"
+					? ok({ enrolled: true, modality: "face" as const, generation: 2 })
+					: undefined,
+		});
+		expect(await h.run("biometrics", "reenroll")).toBe(0);
+		expect(h.c.stdout.join("\n")).toContain("reenroll: face enrolled (Keychain ACL generation 2)");
+		expect(await h.run("biometrics", "reenroll", "--json")).toBe(0);
+		expect(doc(h.c).result.biometrics).toEqual({ enrolled: true, modality: "face", generation: 2 });
 	});
 
 	for (const platform of ["ios", "android"] as const) {

@@ -84,6 +84,8 @@ export type IosNetwork = {
 	 * `WARDEN_KEYCHAIN_ACL=1`, else from the next launch, which loads the dylib for it: `appliesOnLaunch`).
 	 */
 	keychainAcl(op: KeychainAclOp): DriverResult<KeychainAclState>;
+	/** After a biometric re-enrolment: the shim's new enrolment generation, or undefined with the shim off. */
+	keychainAclReenrolled(): Promise<number | undefined>;
 };
 
 const okVoid = { success: true as const, data: undefined };
@@ -356,6 +358,7 @@ export function createIosNetwork(deps: IosNetworkDeps): IosNetwork {
 		},
 		passkeys: (op) => pk.run(op, writeState),
 		keychainAcl: (op) => kacl.run(op, writeState),
+		keychainAclReenrolled: () => kacl.bump(writeState),
 	};
 }
 

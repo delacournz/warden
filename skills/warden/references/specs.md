@@ -77,7 +77,7 @@ Never import subpaths (`/device`, `/screen/*`, `/env`). Only `.` and `./preload`
 | `home()` / `back()` | home key / Android back (iOS throws) |
 | `orientation(set?)` | `"portrait" \| "portraitUpsideDown" \| "landscapeLeft" \| "landscapeRight"`; returns current. iOS: a set returns once the rotation animation is over (~0.7 s), so the next tap lands |
 | `appearance(set?)` | `"light" \| "dark"`; returns current |
-| `biometrics.status()` / `enroll()` / `unenroll()` / `match()` / `fail()` | simulated Face ID / Touch ID / fingerprint; each returns `{ enrolled, modality: "face" \| "fingerprint" }` after the op (type `BiometricState`). `match` / `fail` answer the pending prompt. Android `enroll` / `unenroll` and any physical device throw `ACTION_FAILED` (driver `E_UNSUPPORTED`) |
+| `biometrics.status()` / `enroll()` / `unenroll()` / `reenroll()` / `match()` / `fail()` | simulated Face ID / Touch ID / fingerprint; each returns `{ enrolled, modality: "face" \| "fingerprint", generation? }` after the op (type `BiometricState`). `match` / `fail` answer the pending prompt. `reenroll()` = a new enrolment; with `keychainAcl` on it carries the new `generation` and `.biometryCurrentSet` Keychain items written before read `-25300` (passcode sheet when the ACL allows it). Android `enroll` / `unenroll` / `reenroll` and any physical device throw `ACTION_FAILED` (driver `E_UNSUPPORTED`) |
 | `clipboard()` / `setClipboard(text)` | read / write |
 | `hideKeyboard()` | iOS resigns the first responder through the injected library (never Return, so no `onSubmitEditing`); an app launched without the library falls back to Enter with a log warning; Android presses back |
 | `screenshot(name)` | saves `<attemptDir>/screenshots/NNN-<slug>.png`, returns the path |

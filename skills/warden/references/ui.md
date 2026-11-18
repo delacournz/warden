@@ -117,7 +117,7 @@ Line: `@eN [role] "name" id=<testID> value="..." placeholder="..." <states> (x,y
 | `alert` | `accept\|dismiss\|get [--settle]` | `get` with none = empty list; accept/dismiss with none = `no_alert`; `accept` prefers OK/Allow/…/`Try Face ID Again`/`Try Again`/`Retry`, never a Cancel-like button (`ACTION_FAILED` names the buttons); `dismiss` = Cancel |
 | `home` | `[--settle]` | |
 | `back` | `[--settle]` | Android only |
-| `biometrics` | `[status\|enroll\|unenroll\|match\|fail] [--settle]` | simulated Face ID / Touch ID / fingerprint; no op = `status`; answers `result.biometrics: { enrolled, modality: "face"\|"fingerprint" }`; bad op = `usage`; not recorded by `record`. See "Biometrics" below |
+| `biometrics` | `[status\|enroll\|unenroll\|reenroll\|match\|fail] [--settle]` | simulated Face ID / Touch ID / fingerprint; no op = `status`; `reenroll` = a new enrolment (unenroll + enroll); answers `result.biometrics: { enrolled, modality: "face"\|"fingerprint", generation? }` (`generation`: after `reenroll` with the Keychain ACL shim on); bad op = `usage`; not recorded by `record`. See "Biometrics" below |
 | `screen rotate` | `[portrait\|portrait-upside-down\|landscape-left\|landscape-right]` | device orientation; no arg reads it |
 | `screen appearance` | `[light\|dark]` | no arg reads it |
 | `screen screenshot` | `[path]` | default `$WARDEN_HOME/ui/<udid>/shots/NNN.png` |
@@ -149,7 +149,8 @@ Line: `@eN [role] "name" id=<testID> value="..." placeholder="..." <states> (x,y
 `warden ui biometrics enroll` → app prompts → `warden ui biometrics match` (or `fail`). Simulators and emulators only; a physical device or a non-`emulator-*` serial fails `failed`, `details.driver: E_UNSUPPORTED`.
 
 - iOS: `enroll` / `unenroll` / `match` / `fail` all work; modality is Face ID or Touch ID by device model. Enrollment is lost on reboot. Enroll before the app is installed or launched: a new enrollment invalidates keys bound to the current biometry set. The first prompt per app shows "Allow X to use Face ID?": `warden ui alert accept`.
-- Android: fingerprint only. `match` / `fail` / `status` work; `enroll` / `unenroll` fail `E_UNSUPPORTED` (enrollment is baked into the `+bio` golden snapshot: claim with `--biometrics`, see suites.md).
+- `warden ui biometrics reenroll` (iOS): with the Keychain ACL shim on, `.biometryCurrentSet` items written before it read `-25300` (or ask for the passcode when their ACL has `.or .devicePasscode`), like a phone after a face is re-added. Destructive for those items: enrol before the app writes them.
+- Android: fingerprint only. `match` / `fail` / `status` work; `enroll` / `unenroll` / `reenroll` fail `E_UNSUPPORTED` (enrollment is baked into the `+bio` golden snapshot: claim with `--biometrics`, see suites.md).
 - Never add an app-side bypass: drive the real `LAContext` / `BiometricPrompt` flow.
 
 `screen ...` = the device (orientation, appearance, screenshot, video); `gesture ...` = touch. `screen rotate landscape-left` turns the device, `gesture rotate @e3 45` turns two fingers. After `screen rotate`, snapshot frames, screenshots and `press x y` are in the app's interface space: an app that rotates reads landscape (e.g. 874×402), a portrait-locked one still reads portrait. Take coordinates from a fresh snapshot, never rotate them yourself. `screen rotate` (and `device.orientation(set)`) returns once the rotation animation is over (~0.7 s), so the next tap lands. The old top-level `rotate` `appearance` `screenshot` `video` `swipe` `longpress` are removed (unknown command). Max 2 fingers. Bad scale/degrees/`--path` = `usage` (exit 1); unsupported device = `failed`, `details.driver: E_UNSUPPORTED` (exit 1).

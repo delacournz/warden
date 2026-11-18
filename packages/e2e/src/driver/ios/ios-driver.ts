@@ -1074,7 +1074,13 @@ export function createIosDriver(
 			if (result.success) opts.clockRecorder?.(op);
 			return result;
 		},
-		biometrics: (op) => simctl.biometrics(op),
+		async biometrics(op) {
+			const state = await simctl.biometrics(op);
+			if (op !== "reenroll" || !state.success || !net) return state;
+			// a new enrolment invalidates `.biometryCurrentSet` items: the shim compares their generation with this one
+			const generation = await net.keychainAclReenrolled();
+			return generation === undefined ? state : { success: true, data: { ...state.data, generation } };
+		},
 		keychainAcl: async (op) =>
 			net
 				? net.keychainAcl(op)

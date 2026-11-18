@@ -105,7 +105,8 @@ export type { BiometricState };
 /**
  * Simulated Face ID / Touch ID / fingerprint (simulators and emulators only). Every method answers the state after the op.
  * iOS: the first prompt per app shows an "Allow X to use Face ID?" alert; answer it with `device.alert("accept")`.
- * Enroll before installing or launching the app: a new enrollment invalidates biometry-bound keys.
+ * Enroll before installing or launching the app: a new enrollment invalidates biometry-bound keys (`reenroll` does that
+ * on purpose; with the Keychain ACL shim on, `.biometryCurrentSet` Keychain items written before it stop reading).
  * Android: `enroll` / `unenroll` throw `ACTION_FAILED` (driver `E_UNSUPPORTED`); enrollment comes from the golden snapshot, so set
  * the profile's `biometrics: true`.
  */
@@ -115,6 +116,12 @@ export type DeviceBiometrics = {
 	enroll(): Promise<BiometricState>;
 	/** iOS: removes the enrollment. Android: unsupported. */
 	unenroll(): Promise<BiometricState>;
+	/**
+	 * iOS: a new enrolment (unenroll + enroll), like removing and adding a face. With the Keychain ACL shim on the
+	 * answer carries the new `generation`: `.biometryCurrentSet` items written before read `errSecItemNotFound`
+	 * (`-25300`), or ask for the passcode when their ACL allows it. Android: unsupported.
+	 */
+	reenroll(): Promise<BiometricState>;
 	/** Presents a matching face / finger to the pending prompt. */
 	match(): Promise<BiometricState>;
 	/** Presents a non-matching face / finger to the pending prompt. */
@@ -170,7 +177,7 @@ export type Device = DeviceA11y & {
 	back(): Promise<void>;
 	orientation(set?: Orientation): Promise<Orientation>;
 	appearance(set?: "light" | "dark"): Promise<"light" | "dark">;
-	/** Simulated biometrics: `status`, `enroll`, `unenroll`, `match`, `fail`; see {@link DeviceBiometrics}. */
+	/** Simulated biometrics: `status`, `enroll`, `unenroll`, `reenroll`, `match`, `fail`; see {@link DeviceBiometrics}. */
 	readonly biometrics: DeviceBiometrics;
 	clipboard(): Promise<string>;
 	setClipboard(text: string): Promise<void>;
@@ -525,6 +532,7 @@ export function createDevice({
 			status: () => biometric("status"),
 			enroll: () => biometric("enroll"),
 			unenroll: () => biometric("unenroll"),
+			reenroll: () => biometric("reenroll"),
 			match: () => biometric("match"),
 			fail: () => biometric("fail"),
 		},

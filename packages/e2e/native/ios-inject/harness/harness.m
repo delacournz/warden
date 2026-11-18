@@ -503,7 +503,7 @@ static void pk_run(NSString *json) {
 }
 
 #pragma mark - keychain acl
-// `kacl-parse` / `kacl-parse-text <desc>` / `kacl-run <json>` drive the Keychain ACL shim (`#pragma mark - keychain acl`
+// `kacl-parse` / `kacl-parse-text <desc>` / `kacl-run <json>` / `kacl-add <json>` drive the Keychain ACL shim (`#pragma mark - keychain acl`
 // in WardenInject.m). The Keychain and LocalAuthentication are fakes installed through the host build's test hooks:
 // a Mac cannot hold an access-controlled item without entitlements, and a test must never show a real dialog.
 
@@ -543,8 +543,15 @@ static id k_access_control(NSString *name) {
   return CFBridgingRelease(SecAccessControlCreateWithFlags(NULL, kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly, (SecAccessControlCreateFlags)flags.unsignedLongValue, NULL));
 }
 
+/** What a Keychain hands back for item `i`: the app's attributes plus the ones the system assigns (`agrp`, `sync`). */
 static NSDictionary *k_attrs(id item, NSUInteger i) {
-  NSMutableDictionary *d = [@{ (id)kSecAttrService: @"svc", (id)kSecAttrAccount: [NSString stringWithFormat:@"a%lu", (unsigned long)i] } mutableCopy];
+  NSMutableDictionary *d = [@{
+    (id)kSecClass: (id)kSecClassGenericPassword,
+    (id)kSecAttrService: @"svc",
+    (id)kSecAttrAccount: [NSString stringWithFormat:@"a%lu", (unsigned long)i],
+    (id)kSecAttrAccessGroup: @"TEAM.example",
+    (id)kSecAttrSynchronizable: @0,
+  } mutableCopy];
   if ([item isKindOfClass:[NSString class]]) d[(id)kSecAttrAccessControl] = k_access_control(item);
   return d;
 }
@@ -565,14 +572,28 @@ static OSStatus k_fake_copy(CFDictionaryRef query, CFTypeRef *result) {
     if (isRead) [g_k_reads addObject:@{ @"keys": k_keys(q) }];
     else [g_k_probes addObject:@{ @"keys": k_keys(q), @"limit": all ? @"all" : @"one", @"returnAttributes": @(attrs) }];
   }
-  if (g_k_items.count == 0) return errSecItemNotFound;
   NSMutableArray *out = [NSMutableArray array];
   for (NSUInteger i = 0; i < g_k_items.count; i++) {
-    id one = data ? (id)[@"secret" dataUsingEncoding:NSUTF8StringEncoding] : k_attrs(g_k_items[i], i);
-    [out addObject:one];
+    NSDictionary *attrs = k_attrs(g_k_items[i], i);
+    // a query naming an account matches only that item (the shim's read-back after an add does)
+    if (q[(id)kSecAttrAccount] && ![q[(id)kSecAttrAccount] isEqual:attrs[(id)kSecAttrAccount]]) continue;
+    [out addObject:data ? (id)[@"secret" dataUsingEncoding:NSUTF8StringEncoding] : attrs];
   }
+  if (out.count == 0) return errSecItemNotFound;
   if (result) *result = CFBridgingRetain(all ? out : out.firstObject);
   return errSecSuccess;
+}
+
+static NSMutableArray *g_k_adds;
+static BOOL g_k_duplicate;
+
+static OSStatus k_fake_add(CFDictionaryRef attributes, CFTypeRef *result) {
+  NSDictionary *a = (__bridge NSDictionary *)attributes;
+  @synchronized(g_k_lock) {
+    [g_k_adds addObject:@{ @"account": a[(id)kSecAttrAccount] ?: @"", @"accessControl": a[(id)kSecAttrAccessControl] ? @YES : @NO }];
+  }
+  if (result) *result = NULL;
+  return g_k_duplicate ? errSecDuplicateItem : errSecSuccess;
 }
 
 static void k_fake_eval(id ctx, NSInteger policy, NSString *reason, void (^reply)(BOOL, NSError *)) {
@@ -590,7 +611,7 @@ static NSInteger k_fake_can(id ctx, NSInteger policy) {
 static BOOL k_install_hooks(void) {
   KaclHooksFn hooks = (KaclHooksFn)dlsym(RTLD_DEFAULT, "warden_inject_kacl_test_hooks");
   if (!hooks) return NO;
-  hooks(k_fake_copy, NULL, k_fake_eval, k_fake_can);
+  hooks(k_fake_copy, k_fake_add, k_fake_eval, k_fake_can);
   return YES;
 }
 
@@ -664,6 +685,29 @@ static void kacl_run(NSString *json) {
   });
 }
 
+/** `kacl-add <json>`: the app adds account `a<account>` with `acl` (null = none) through the interposed `SecItemAdd`. */
+static void kacl_add(NSString *json) {
+  NSDictionary *a = [NSJSONSerialization JSONObjectWithData:[json dataUsingEncoding:NSUTF8StringEncoding] options:0 error:nil];
+  if (!g_k_lock) g_k_lock = [NSObject new];
+  k_install_hooks();
+  g_k_items = [a[@"items"] isKindOfClass:[NSArray class]] ? a[@"items"] : @[];
+  g_k_probes = [NSMutableArray array];
+  g_k_reads = [NSMutableArray array];
+  g_k_evals = [NSMutableArray array];
+  g_k_adds = [NSMutableArray array];
+  g_k_duplicate = [a[@"duplicate"] boolValue];
+  g_k_query = nil;
+  NSMutableDictionary *attrs = [@{
+    (id)kSecClass: (id)kSecClassGenericPassword,
+    (id)kSecAttrService: @"svc",
+    (id)kSecAttrAccount: [NSString stringWithFormat:@"a%ld", (long)[a[@"account"] integerValue]],
+    (id)kSecValueData: [@"secret" dataUsingEncoding:NSUTF8StringEncoding],
+  } mutableCopy];
+  if ([a[@"acl"] isKindOfClass:[NSString class]]) attrs[(id)kSecAttrAccessControl] = k_access_control(a[@"acl"]);
+  OSStatus status = SecItemAdd((__bridge CFDictionaryRef)attrs, NULL);
+  emit(@{ @"event": @"kacl-add", @"status": @(status), @"adds": g_k_adds, @"probes": g_k_probes });
+}
+
 static nw_path_monitor_t g_monitor;
 
 int main(void) {
@@ -676,6 +720,7 @@ int main(void) {
       if ([cmd isEqualToString:@"kacl-parse"]) { kacl_parse_table(); continue; }
       if ([cmd hasPrefix:@"kacl-parse-text "]) { emit(@{ @"event": @"kacl-parse-text", @"parsed": k_parse([cmd substringFromIndex:16]) }); continue; }
       if ([cmd hasPrefix:@"kacl-run "]) { kacl_run([cmd substringFromIndex:9]); continue; }
+      if ([cmd hasPrefix:@"kacl-add "]) { kacl_add([cmd substringFromIndex:9]); continue; }
       if ([cmd hasPrefix:@"cam-"]) {
         if (!handle_camera([cmd componentsSeparatedByString:@" "])) emit(@{ @"error": @"unknown command" });
         continue;

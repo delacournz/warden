@@ -112,6 +112,36 @@ describe("ios keychain acl", () => {
 	});
 });
 
+describe("ios keychain acl: re-enrolment generation", () => {
+	const GEN = `${DIR}/${KEYCHAIN_ACL_GENERATION_FILE}`;
+
+	test("bump with the shim on: +1 in the host file and the state, and a later driver reads it", async () => {
+		const r = rig();
+		await r.kacl.run({ kind: "on" }, r.writeState);
+		expect(await r.kacl.bump(r.writeState)).toBe(1);
+		expect(JSON.parse(r.files.get(GEN) ?? "{}")).toEqual({ generation: 1 });
+		expect(JSON.parse(r.files.get(STATE) ?? "{}").keychainAcl.generation).toBe(1);
+		expect(await r.kacl.bump(r.writeState)).toBe(2);
+		const later = r.make();
+		expect(later.state()?.generation).toBe(2);
+	});
+
+	test("bump with the shim off: undefined, nothing written", async () => {
+		const r = rig();
+		expect(await r.kacl.bump(r.writeState)).toBeUndefined();
+		expect(r.files.has(GEN)).toBe(false);
+		expect(r.files.has(STATE)).toBe(false);
+	});
+
+	test("a running injected app acknowledges the new generation before bump answers", async () => {
+		const r = rig({ keychainAcl: true });
+		await r.kacl.run({ kind: "on" }, r.writeState);
+		expect(await r.kacl.bump(r.writeState)).toBe(1);
+		const ack = JSON.parse(r.files.get(ACK) ?? "{}") as { seq: number };
+		expect(ack.seq).toBe(JSON.parse(r.files.get(STATE) ?? "{}").seq);
+	});
+});
+
 describe("rawLaunchKeychainAcl (a launch that bypasses the driver)", () => {
 	const dylib = () => ({ success: true as const, data: "/opt/libwarden-inject.dylib" });
 

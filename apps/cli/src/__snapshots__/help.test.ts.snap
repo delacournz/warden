@@ -2128,8 +2128,8 @@ Commands:
   home                            press the home button
   back                            press back (Android only)
   biometrics [op]                 simulated Face ID / Touch ID / fingerprint:
-                                  status (default), enroll, unenroll, match,
-                                  fail
+                                  status (default), enroll, unenroll, reenroll
+                                  (a new enrolment), match, fail
   screen                          the device screen: orientation, appearance,
                                   screenshot, video
   gesture                         touch gestures: swipe, longpress, pinch,
@@ -2647,10 +2647,10 @@ $ warden ui biometrics --help
 Usage: warden ui biometrics [options] [op]
 
 simulated Face ID / Touch ID / fingerprint: status (default), enroll, unenroll,
-match, fail
+reenroll (a new enrolment), match, fail
 
 Arguments:
-  op                     status | enroll | unenroll | match | fail
+  op                     status | enroll | unenroll | reenroll | match | fail
 
 Options:
   --settle [ms]          wait for a quiet screen afterwards (default budget 3000

@@ -419,7 +419,7 @@ function biometricsOp(session: AdbSession, exec: Exec, adb: string, serial: stri
 		if (!isEmulatorSerial(serial)) {
 			return driverErr("E_UNSUPPORTED", `biometrics need an emulator, not the physical device ${serial}`);
 		}
-		if (op === "enroll" || op === "unenroll") {
+		if (op === "enroll" || op === "unenroll" || op === "reenroll") {
 			return driverErr(
 				"E_UNSUPPORTED",
 				`Android fingerprint enrollment comes from the golden snapshot (profile \`biometrics: true\`); \`${op}\` is not available at run time`

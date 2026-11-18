@@ -607,6 +607,14 @@ describe("keychain acl", () => {
 		expect(stateOf(r).keychainAcl).toEqual({ enabled: true, generation: 0, itemsPath: "/s/keychain-acl-items.json" });
 	});
 
+	test("a re-enrolment bumps the generation the shim compares items against (only with the shim on)", async () => {
+		const r = rig();
+		expect(await r.net.keychainAclReenrolled()).toBeUndefined();
+		await r.net.keychainAcl({ kind: "on" });
+		expect(await r.net.keychainAclReenrolled()).toBe(1);
+		expect(stateOf(r).keychainAcl.generation).toBe(1);
+	});
+
 	test("off: a plain launch carries no dylib", async () => {
 		const r = rig();
 		await r.net.keychainAcl({ kind: "on" });

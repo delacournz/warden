@@ -770,7 +770,7 @@ export function fakeDriver(options: FakeDriverOptions): FakeDriver {
 		},
 		async biometrics(op) {
 			return run({ method: "biometrics", op }, () => {
-				if (op === "enroll") enrolled = true;
+				if (op === "enroll" || op === "reenroll") enrolled = true;
 				if (op === "unenroll") enrolled = false;
 				return { enrolled, modality: "face" as const };
 			});

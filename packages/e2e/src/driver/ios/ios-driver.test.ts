@@ -12,7 +12,7 @@ import { withReadDeadline } from "../read-deadline";
 import { HASH_FALLBACK_MIN_QUIET_MS, settleDetailOf } from "../settle";
 import { collectSpanDetail, type SpanDetail } from "../span-detail";
 import { canPasteText, canSelectAll, canTypeQuickly } from "../typing";
-import { type ExecCall, fakeExec, joined } from "./exec.testing";
+import { type ExecCall, type FakeExecHandler, fakeExec, joined } from "./exec.testing";
 import type { InjectFs } from "./inject";
 import {
 	BRIDGE_COLD_DEADLINE_MS,
@@ -1819,6 +1819,29 @@ describe("network conditions", () => {
 			generation: 0,
 			itemsPath: "/w/inject/UDID-1/keychain-acl-items.json",
 		});
+	});
+
+	test("biometrics reenroll: unenroll then enroll on the sim, and with the shim on the generation goes up once", async () => {
+		const dir = stateDir();
+		const enrolled: FakeExecHandler[] = [
+			["xcrun simctl spawn UDID-1 notifyutil -g", { stdout: "com.apple.BiometricKit.enrollmentChanged 1\n" }],
+			["xcrun simctl spawn UDID-1 notifyutil", {}],
+		];
+		const { driver, calls } = await open(
+			lifecycle,
+			{ networkProxy: fakeProxy(19_127), injectFs: dir.fs, exists, wardenHome: "/w" },
+			enrolled
+		);
+		const plain = await driver.biometrics("reenroll");
+		expect(plain).toEqual({ success: true, data: { enrolled: true, modality: expect.any(String) } });
+		const notify = calls.map((c) => c.cmd.join(" ")).filter((c) => c.includes("notifyutil -s"));
+		expect(notify.map((c) => c.at(-1))).toEqual(["0", "1"]);
+		await keychainAcl(driver, { kind: "on" });
+		const bumped = await driver.biometrics("reenroll");
+		expect(bumped.success && bumped.data.generation).toBe(1);
+		expect(JSON.parse(dir.files.get("/w/inject/UDID-1/keychain-acl.json") ?? "{}")).toEqual({ generation: 1 });
+		const status = await driver.biometrics("status");
+		expect(status.success && "generation" in status.data).toBe(false);
 	});
 
 	test("a plain run launches exactly as before: no injected env at all", async () => {

@@ -23,6 +23,11 @@ export type IosKeychainAcl = {
 	/** the `keychainAcl` key of the next state write; undefined until it was ever switched on */
 	state(): InjectKeychainAcl | undefined;
 	run(op: KeychainAclOp, writeState: () => { seq: number }): DriverResult<KeychainAclState>;
+	/**
+	 * A biometric re-enrolment happened: with the shim on, the generation goes up by one (host file + state; a running
+	 * injected app acknowledges it first, so a read right after sees it) and the new one is the answer; off = undefined.
+	 */
+	bump(writeState: () => { seq: number }): Promise<number | undefined>;
 };
 
 function readGeneration(fs: InjectFs, path: string): number | undefined {
@@ -74,6 +79,16 @@ export function createIosKeychainAcl(deps: { channel: InjectChannel; fs: InjectF
 					detail: { pid: channel.attached()?.pid, statePath: channel.statePath },
 				}
 			);
+		},
+		async bump(writeState) {
+			if (!enabled) return undefined;
+			const next = generation() + 1;
+			fs.mkdir(dir);
+			fs.writeAtomic(generationPath, JSON.stringify({ generation: next }));
+			const written = writeState();
+			// a running app that misses the ack still picks the generation up from the state file on its next poll
+			if (live()) await channel.acked(written.seq, deps.ackMs);
+			return next;
 		},
 	};
 }

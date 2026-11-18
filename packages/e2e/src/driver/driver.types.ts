@@ -206,11 +206,18 @@ export type KeyName = "Enter" | "Backspace" | "Tab" | "Space" | "Escape" | "Dele
 
 export type Modifier = "shift" | "cmd" | "alt" | "ctrl";
 
-/** What `Driver.biometrics` does: read the enrollment, (un)enroll, or present a matching / non-matching biometric. */
-export type BiometricOp = "status" | "enroll" | "unenroll" | "match" | "fail";
+/**
+ * What `Driver.biometrics` does: read the enrollment, (un)enroll, re-enroll (a new enrolment, like removing and adding
+ * a face), or present a matching / non-matching biometric.
+ */
+export type BiometricOp = "status" | "enroll" | "unenroll" | "reenroll" | "match" | "fail";
 
-/** `modality`: what the device scans, iOS Face ID (`face`) or Touch ID and Android (`fingerprint`). */
-export type BiometricState = { enrolled: boolean; modality: "face" | "fingerprint" };
+/**
+ * `modality`: what the device scans, iOS Face ID (`face`) or Touch ID and Android (`fingerprint`). `generation`: after
+ * `reenroll` on an iOS simulator with the Keychain ACL shim on, the enrolment generation `.biometryCurrentSet` items
+ * are checked against (absent otherwise).
+ */
+export type BiometricState = { enrolled: boolean; modality: "face" | "fingerprint"; generation?: number };
 
 export type AlertInfo = { title?: string; message?: string; buttons: Element[] };
 
