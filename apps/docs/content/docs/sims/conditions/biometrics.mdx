@@ -43,7 +43,7 @@ warden ui biometrics reenroll        # .biometryCurrentSet items written before 
 warden ui open com.example.app --no-keychain-acl --udid $UDID
 ```
 
-`warden dev --keychain-acl` does the same for a dev client. It stays on for the device until `--no-keychain-acl` or the lease is released; a simulator with no face enrolled gets a warning (claim with `--biometrics`). iOS simulators only. What it emulates and what only a phone proves: [Keychain access control](/docs/e2e/conditions/keychain-acl).
+`warden dev --keychain-acl` does the same for a dev client. It stays on for the device until `--no-keychain-acl` or the lease ends (released, or expired: the next claim switches it off); a simulator with no face enrolled gets a warning (claim with `--biometrics`). iOS simulators only. What it emulates and what only a phone proves: [Keychain access control](/docs/e2e/conditions/keychain-acl).
 
 ## Practice
 

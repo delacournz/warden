@@ -219,7 +219,8 @@ async function runReclaimPhase(
 /**
  * The Keychain ACL shim is the lease's: `ui open` / `dev --keychain-acl` switch it on without a condition record, so
  * each released iOS device lease switches it off here (a file read per lease; nothing loaded), or the next lease on
- * the simulator would inherit prompts it never asked for. A failure is a note; the release goes ahead.
+ * the simulator would inherit prompts it never asked for. A failure is a note; the release goes ahead. A lease deleted
+ * without a release (expired, evicted) is covered by the next claim of the simulator (core `claim.ts`).
  */
 function switchOffKeychainAclFor(host: ReleaseHost, leaseIds: readonly string[], opts: ReleaseOptions): void {
 	const store = host.store();
