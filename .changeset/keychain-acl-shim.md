@@ -1,7 +1,0 @@
----
-"@delacour/warden": minor
----
-
-- iOS simulator apps can have Keychain items behind access control (`.biometryCurrentSet`, `.biometryAny`, `.devicePasscode`, `.userPresence`, `.or`) behave like they do on a device: with the Keychain ACL shim on, reading such an item shows the real Face ID / Touch ID or passcode sheet, driven by `warden ui biometrics match|fail`, and answers the code a device is expected to give (cancel `-128`, no UI allowed `-25308`, biometry unusable for a biometry-only item `-25300`). It emulates the prompt and the codes; real enforcement is still verified on a physical device.
-- Turn the Keychain ACL shim on with `keychainAcl: true` in `warden.config.ts` (top level, `e2e.<suite>` or `batches.<preset>`), `--keychain-acl` on `warden e2e`, `warden batch`, `warden dev` and `warden ui open`, or `WARDEN_KEYCHAIN_ACL=1` for a spec process; `--no-keychain-acl` turns it off. It stays on for the device's lease (relaunches keep it) and goes off when the lease is released. `warden ui open --keychain-acl` warns when the simulator has no Face ID enrolled, and fails `unsupported` on Android or a physical device.
-- `warden ui biometrics reenroll` and `device.biometrics.reenroll()` re-enrol a simulator (a new enrolment, like removing and adding a face). With the Keychain ACL shim on, `.biometryCurrentSet` items written before it then read `errSecItemNotFound` (`-25300`); an item that also allows the passcode stays readable (on a simulator Face ID is offered first), and the answer carries the new enrolment `generation`.

@@ -1,5 +1,33 @@
 # @delacour/warden
 
+## 0.20.0
+
+### Minor Changes
+
+- [#303](https://github.com/delacournz/warden/pull/303) [`ee37b5e`](https://github.com/delacournz/warden/commit/ee37b5ecac02e057149395a3457b4e0cf961fbcb) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - iOS simulator apps can have Keychain items behind access control (`.biometryCurrentSet`, `.biometryAny`, `.devicePasscode`, `.userPresence`, `.or`) behave like they do on a device: with the Keychain ACL shim on, reading such an item shows the real Face ID / Touch ID or passcode sheet, driven by `warden ui biometrics match|fail`, and answers the code a device is expected to give (cancel `-128`, no UI allowed `-25308`, biometry unusable for a biometry-only item `-25300`). It emulates the prompt and the codes; real enforcement is still verified on a physical device.
+  - Turn the Keychain ACL shim on with `keychainAcl: true` in `warden.config.ts` (top level, `e2e.<suite>` or `batches.<preset>`), `--keychain-acl` on `warden e2e`, `warden batch`, `warden dev` and `warden ui open`, or `WARDEN_KEYCHAIN_ACL=1` for a spec process; `--no-keychain-acl` turns it off. It stays on for the device's lease (relaunches keep it) and goes off when the lease is released. `warden ui open --keychain-acl` warns when the simulator has no Face ID enrolled, and fails `unsupported` on Android or a physical device.
+  - `warden ui biometrics reenroll` and `device.biometrics.reenroll()` re-enrol a simulator (a new enrolment, like removing and adding a face). With the Keychain ACL shim on, `.biometryCurrentSet` items written before it then read `errSecItemNotFound` (`-25300`); an item that also allows the passcode stays readable (on a simulator Face ID is offered first), and the answer carries the new enrolment `generation`.
+
+### Patch Changes
+
+- [#303](https://github.com/delacournz/warden/pull/303) [`ee37b5e`](https://github.com/delacournz/warden/commit/ee37b5ecac02e057149395a3457b4e0cf961fbcb) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - `warden ui` selectors accept multi-word bare values: `warden ui press 'label=Try Face ID Again'` works without quotes, and the value ends at the next `role=`, `nth=` or other key.
+  - `warden ui alert accept` presses "Try Face ID Again", "Try Again" or "Retry" on a Face ID sheet instead of "Cancel", and fails with `ACTION_FAILED` naming the buttons when none is affirmative rather than pressing a cancel button.
+  - `warden ui alert get` lists each alert button once.
+  - `warden ui alert accept` and `device.alert("accept")` press "Try Face ID Again" once and answer: on a simulator the "Face Not Recognized" sheet stays up after it, which no longer fails with `ACTION_FAILED` "alert still showing". `device.biometrics.match()` also works from that sheet without pressing Try Again.
+
+- [#301](https://github.com/delacournz/warden/pull/301) [`e92297d`](https://github.com/delacournz/warden/commit/e92297d10ced2e6bab30fa855d58dbc94971f85d) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - The e2e GitHub Action takes `build-only: true`: it builds the app and saves the build, repack, compiler and Metro caches but runs no spec, and `passed` is the build's outcome. A suite with a golden still builds it on a cache miss and saves it too. Use it on a push to the default branch whose specs already ran on the pull request, to keep the caches every pull request restores warm without running the flows twice.
+
+- [#303](https://github.com/delacournz/warden/pull/303) [`ee37b5e`](https://github.com/delacournz/warden/commit/ee37b5ecac02e057149395a3457b4e0cf961fbcb) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - A spec `tap()` / `scrollTo()` on a row that sits under only the padding of a sticky footer (clear of the footer's button) now scrolls it clear instead of tapping the footer, where the press did nothing.
+  - `scrollTo()` / `scrollUntilVisible()` on a row cut off by the bottom of its list and also under a sticky footer's bar now drags from above the bar. Every swipe used to start on the bar, so the list never moved ("still scrolled past the bottom … after 10 swipes", seen on Android).
+
+- [#304](https://github.com/delacournz/warden/pull/304) [`a88fa3f`](https://github.com/delacournz/warden/commit/a88fa3f61900cf4dd2df383643fb791e46c2363d) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - Keychain ACL shim: a lease that expired or was taken back without a release (a crashed `warden ui` session, an evicted claim) no longer leaves the shim on for the next holder. Every claim of an iOS simulator now switches it off before handing the device out, and so does `warden ui --claim` / `warden perf --claim` when it takes over a stale lease, so a later `warden ui open` without `--keychain-acl`, or a suite with no `keychainAcl` key, gets no Face ID prompts it never asked for.
+
+- [#304](https://github.com/delacournz/warden/pull/304) [`a88fa3f`](https://github.com/delacournz/warden/commit/a88fa3f61900cf4dd2df383643fb791e46c2363d) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - Keychain ACL shim: a `.biometryCurrentSet` item the app wrote while the shim was off (a suite with `keychainAcl: false`, `warden dev` without `--keychain-acl`) no longer reads `-25300` on a simulator that was re-enrolled in an earlier lease. The shim records such an item the first time it reads it, so only a `reenroll` after that invalidates it.
+
+- [#255](https://github.com/delacournz/warden/pull/255) [`0ad6afc`](https://github.com/delacournz/warden/commit/0ad6afcb65363d7d01bb475abdd3683cffcab345) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - The npm listings of `@delacour/warden` and `@delacour/warden-e2e` now carry React Native and Expo E2E search keywords (`react-native-testing`, `expo-testing`, `end-to-end-testing`, `test-automation`, `detox-alternative`, `maestro-alternative`), and the `@delacour/warden` README opens by describing warden as end-to-end testing for Expo (React Native) apps and says `warden e2e` needs an Expo app
+- Updated dependencies []:
+  - @delacour/warden-e2e@0.20.0
+
 ## 0.19.0
 
 ### Minor Changes
