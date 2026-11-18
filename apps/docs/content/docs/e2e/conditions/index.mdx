@@ -5,7 +5,7 @@ icon: Signal
 simulatorOnly: true
 ---
 
-import { Accessibility, BatteryMedium, BellRing, Camera, Clock, FingerprintPattern, KeyRound, Keyboard, Languages, MapPin, ShieldCheck, Wifi } from "lucide-react";
+import { Accessibility, BatteryMedium, BellRing, Camera, Clock, FingerprintPattern, KeyRound, Keyboard, Languages, LockKeyhole, MapPin, ShieldCheck, Wifi } from "lucide-react";
 
 A spec can put the device into a condition (offline, 3G, one host failing, a moving GPS fix, a clock two weeks ahead, a failed Face ID, a denied permission, a QR code in front of the camera) and check what the app does. Everything a test changes belongs to its lease: when the test ends, warden puts it back, so the next spec never inherits a shaped device.
 
@@ -31,6 +31,7 @@ The example app has a Conditions screen (`warden-example://conditions`) and a sp
 <Card icon={<MapPin />} title="Location" href="/docs/e2e/conditions/location">A GPS point, a route or GPX file played at a speed, bundled scenarios.</Card>
 <Card icon={<Clock />} title="Clock" href="/docs/e2e/conditions/clock">Expire a trial in one step: advance, jump or freeze the clock.</Card>
 <Card icon={<FingerprintPattern />} title="Biometrics" href="/docs/e2e/conditions/biometrics">Match and fail the real Face ID, Touch ID and fingerprint prompt.</Card>
+<Card icon={<LockKeyhole />} title="Keychain access control" href="/docs/e2e/conditions/keychain-acl">Keychain items behind Face ID that prompt like a phone; re-enrolment invalidates them.</Card>
 <Card icon={<ShieldCheck />} title="Permissions" href="/docs/e2e/conditions/permissions">Skip the prompt, or test the denied path on purpose.</Card>
 <Card icon={<Camera />} title="Camera" href="/docs/e2e/conditions/camera">Scan a known QR code, capture a known photo.</Card>
 <Card icon={<KeyRound />} title="Passkeys" href="/docs/e2e/conditions/passkeys">Passkey sign-up and sign-in with test keys; cancel and fail on demand.</Card>

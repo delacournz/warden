@@ -14,7 +14,7 @@ simulatorOnly: true
 ```bash
 warden ui biometrics                 # status
 warden ui biometrics enroll
-warden ui biometrics match           # or fail, unenroll
+warden ui biometrics match           # or fail, unenroll, reenroll
 ```
 
 With `--json` the answer is `result.biometrics`. `enroll` and `unenroll` are iOS only. `fail` does not end the prompt: iOS shows "Face Not Recognized" (Try Face ID Again / Cancel), Android shows "Not recognized". From a spec: [Biometrics in E2E tests](/docs/e2e/conditions/biometrics).
@@ -30,9 +30,25 @@ warden claim android --biometrics
 - **Android.** The golden snapshot is built with a fingerprint enrolled (screen-lock PIN `1111`), saved past the lock screen with the screen kept on, and the AVD gets `hw.fingerprint=yes`. A claim builds a missing snapshot inline (about 80 s); prebuild it with `warden golden ensure --platform android --profile pixel-10+bio`. A claim returns only once adb, the package manager and the unlocked screen answer; an emulator that never gets there is shut down rather than left locked. Emulators have fingerprint only.
 - **iOS.** Enrollment does not survive a reboot, so warden enrolls every `+bio` simulator on boot and again when a spec process starts, before the app is installed.
 
+## Keychain items behind Face ID
+
+<DemoClip src="/demos/keychain/acl" label="warden ui reading a Keychain item bound to Face ID on a leased simulator: Face ID sheet, match, then refused with no prompt after a re-enrolment" />
+
+A simulator ignores `SecAccessControl`: a Keychain item saved behind Face ID or the passcode reads back with no sheet. `--keychain-acl` turns on warden's shim for the device, so the read shows the real Face ID sheet and returns what a phone would:
+
+```bash
+warden ui open com.example.app --keychain-acl --udid $UDID   # relaunches an app started without it
+warden ui biometrics match           # the read returns the data; fail + Cancel = -128
+warden ui biometrics reenroll        # .biometryCurrentSet items written before now read -25300
+warden ui open com.example.app --no-keychain-acl --udid $UDID
+```
+
+`warden dev --keychain-acl` does the same for a dev client. It stays on for the device until `--no-keychain-acl` or the lease is released; a simulator with no face enrolled gets a warning (claim with `--biometrics`). iOS simulators only. What it emulates and what only a phone proves: [Keychain access control](/docs/e2e/conditions/keychain-acl).
+
 ## Practice
 
 - Enroll before the app is installed or launched: a new enrollment invalidates keys bound to the current biometry set.
-- The first prompt per iOS app shows "Allow X to use Face ID?": answer it before `match`.
+- iOS can show "Allow X to use Face ID?" before the first prompt of an install (an iOS 27.2 simulator did not): answer it with `warden ui alert accept` when `alert get` shows it.
+- After `fail`, `match` works straight from the "Face Not Recognized" sheet; "Try Face ID Again" brings the same sheet back on a simulator. Home while the prompt is up ends it with `system_cancel`. The passcode sheet (no face enrolled, device fallback on) takes any code: `warden ui fill 'id="Passcode field"' 1111 --secure`, `warden ui key Enter`.
 
 Errors and fixes are in [Debugging](/docs/e2e/debugging).
