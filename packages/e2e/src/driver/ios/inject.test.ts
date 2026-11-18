@@ -67,6 +67,22 @@ describe("release reset (core)", () => {
 	});
 });
 
+describe("release reset of the Keychain ACL shim (core)", () => {
+	test("switches the gate of a still-running app off, keeping its generation and sidecar", () => {
+		const dir = mkdtempSync(join(tmpdir(), "warden-inject-"));
+		try {
+			const path = injectStatePath(dir, "U1");
+			mkdirSync(dirname(path), { recursive: true });
+			const kacl = { enabled: true, generation: 2, itemsPath: "/w/i.json" };
+			writeFileSync(path, encodeInjectState({ seq: 3, keychainAcl: kacl }));
+			expect(neutralizeInjectState(path)).toBeUndefined();
+			expect(parseInjectState(readFileSync(path, "utf8"))?.keychainAcl).toEqual({ ...kacl, enabled: false });
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+});
+
 describe("injectLaunchEnv", () => {
 	test("loads the dylib and names the channel; the proxy and clock only when set", () => {
 		expect(injectLaunchEnv({ dylib: "/d/lib.dylib", statePath: "/s/state.json" })).toEqual({
@@ -88,6 +104,38 @@ describe("injectLaunchEnv", () => {
 			WARDEN_CLOCK_OFFSET_MS: "3600000",
 			WARDEN_INJECT_DEBUG: "1",
 		});
+	});
+});
+
+describe("keychain acl", () => {
+	const kacl = { enabled: true, generation: 2, itemsPath: "/w/inject/U/keychain-acl-items.json" };
+
+	test("the state round-trips; a malformed value is dropped", () => {
+		const text = encodeInjectState({ seq: 3, keychainAcl: kacl });
+		expect(JSON.parse(text).keychainAcl).toEqual(kacl);
+		expect(parseInjectState(text)?.keychainAcl).toEqual(kacl);
+		expect(parseInjectState(JSON.stringify({ seq: 1, keychainAcl: { enabled: true } }))?.keychainAcl).toBeUndefined();
+		expect(parseInjectState(JSON.stringify({ seq: 1 }))?.keychainAcl).toBeUndefined();
+	});
+
+	test("the ack says whether the app was launched with the shim", () => {
+		expect(parseInjectAck(JSON.stringify({ seq: 1, pid: 2, keychainAcl: true }))?.keychainAcl).toBe(true);
+		expect(parseInjectAck(JSON.stringify({ seq: 1, pid: 2, keychainAcl: false }))?.keychainAcl).toBeUndefined();
+	});
+
+	test("the launch env turns the shim on only when asked", () => {
+		const base = { dylib: "/d.dylib", statePath: "/s/state.json" };
+		expect(injectLaunchEnv({ ...base, keychainAcl: true })).toMatchObject({
+			DYLD_INSERT_LIBRARIES: "/d.dylib",
+			WARDEN_KEYCHAIN_ACL: "1",
+		});
+		expect(injectLaunchEnv(base)).not.toHaveProperty("WARDEN_KEYCHAIN_ACL");
+	});
+
+	test("the shim alone is a reason to inject", () => {
+		const none = { networkActive: false, clockActive: false, requested: false };
+		expect(shouldInject({ ...none, keychainAclActive: true })).toBe(true);
+		expect(shouldInject({ ...none, keychainAclActive: false })).toBe(false);
 	});
 });
 

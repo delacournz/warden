@@ -35,6 +35,7 @@ import type {
 import { driverErr, driverError } from "../errors";
 import { DEFAULT_RADIUS, type GesturePlan, planGesture, rotatePlan } from "../gesture-geometry";
 import { keyboardVisible } from "../keyboard-state";
+import type { ControlsKeychainAcl } from "../keychain-acl";
 import type { AuditsNatively } from "../native-audit";
 import type { NetworkProxyPort } from "../network-proxy";
 import { readDeadlineRemaining } from "../read-deadline";
@@ -82,6 +83,7 @@ export type IosDriver = Driver &
 	ReadsAlertOn &
 	ProbesFrontmost &
 	RecoversAxWedge &
+	ControlsKeychainAcl &
 	ReadsA11y &
 	ReadsA11yEvents &
 	AuditsNatively;
@@ -1073,6 +1075,13 @@ export function createIosDriver(
 			return result;
 		},
 		biometrics: (op) => simctl.biometrics(op),
+		keychainAcl: async (op) =>
+			net
+				? net.keychainAcl(op)
+				: driverErr(
+						"E_UNSUPPORTED",
+						"the Keychain ACL shim on iOS needs a device lease for the injected dylib: run the spec with `warden e2e`, or `warden ui`; a bare `bun test` has no lease"
+					),
 		async clipboard(set) {
 			if (set === undefined) return simctl.pbpaste();
 			const copied = await simctl.pbcopy(set);
@@ -1291,6 +1300,7 @@ function iosNetworkFactory(
 				bundleId: ctx.lastBundle,
 				...(o.injectFs ? { fs: o.injectFs } : {}),
 			}),
+			...(o.injectFs ? { fs: o.injectFs } : {}),
 			passkeyStore: passkeyStorePath(wardenHome, o.udid),
 			dylib: () => injectDylibFor(o),
 			isRunning: (bundleId) => simctl.isRunning(bundleId),

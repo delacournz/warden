@@ -18,8 +18,10 @@ import type {
 	PasskeyState,
 } from "../driver.types";
 import { driverErr, driverError } from "../errors";
+import type { KeychainAclOp, KeychainAclState } from "../keychain-acl";
 import { faultNotes, type NetworkProxyPort, proxyConditionsFor } from "../network-proxy";
-import { type InjectChannel, injectLaunchEnv, shouldInject } from "./inject";
+import { type InjectChannel, type InjectFs, injectLaunchEnv, nodeInjectFs, shouldInject } from "./inject";
+import { createIosKeychainAcl } from "./ios-keychain-acl";
 import { createIosPasskeys } from "./ios-passkeys";
 
 /**
@@ -38,6 +40,8 @@ export const INJECT_LOAD_MS = 8_000;
 export type IosNetworkDeps = {
 	proxy: NetworkProxyPort;
 	channel: InjectChannel;
+	/** file operations beside the state file (the Keychain ACL shim's generation); default the real filesystem */
+	fs?: InjectFs;
 	/** the lease's passkey credentials (`passkeyStorePath`): the dylib reads and appends to it, `passkeys` ops edit it */
 	passkeyStore?: string;
 	/** the dylib path, resolved on first use so a run without conditions never looks for it */
@@ -75,6 +79,11 @@ export type IosNetwork = {
 	 * edited in the store file, which the dylib reads on every request.
 	 */
 	passkeys(op: PasskeyOp): DriverResult<PasskeyState>;
+	/**
+	 * The Keychain ACL shim (`ControlsKeychainAcl`): the switch goes to the state file (live on an app launched with
+	 * `WARDEN_KEYCHAIN_ACL=1`, else from the next launch, which loads the dylib for it: `appliesOnLaunch`).
+	 */
+	keychainAcl(op: KeychainAclOp): DriverResult<KeychainAclState>;
 };
 
 const okVoid = { success: true as const, data: undefined };
@@ -92,6 +101,9 @@ export function createIosNetwork(deps: IosNetworkDeps): IosNetwork {
 	let cameraSent = channel.current().camera !== undefined;
 
 	const pk = createIosPasskeys({ channel, store: deps.passkeyStore, ackMs: INJECT_ACK_MS });
+	const kacl = createIosKeychainAcl({ channel, fs: deps.fs ?? nodeInjectFs, ackMs: INJECT_ACK_MS });
+	/** the last launch asked for the shim: its ack must say it loaded */
+	let expectKeychainAcl = false;
 
 	const routing = () => condition.kind !== "online" || faults.length > 0;
 	const clockActive = () => clockOffsetMs !== 0 || clockFrozenMs !== undefined;
@@ -99,6 +111,7 @@ export function createIosNetwork(deps: IosNetworkDeps): IosNetwork {
 	const launchFlags = () => ({
 		...(cameraActive() ? { camera: true } : {}),
 		...(pk.on() ? { passkeys: true } : {}),
+		...(kacl.on() ? { keychainAcl: true } : {}),
 		...(deps.debug ? { debug: true } : {}),
 	});
 	const launchClock = (): { clockOffsetMs?: number; clockFrozenMs?: number } => ({
@@ -112,6 +125,7 @@ export function createIosNetwork(deps: IosNetworkDeps): IosNetwork {
 			...(clockFrozenMs === undefined ? {} : { clockFrozenMs }),
 			...(cameraSent || cameraActive() ? { camera } : {}),
 			...(pk.state() ? { passkeys: pk.state() } : {}),
+			...(kacl.state() ? { keychainAcl: kacl.state() } : {}),
 		});
 
 	/** Push the current condition + faults to the proxy and the state file. */
@@ -232,6 +246,7 @@ export function createIosNetwork(deps: IosNetworkDeps): IosNetwork {
 					clockActive: clockActive(),
 					cameraActive: cameraActive(),
 					passkeysActive: pk.on(),
+					keychainAclActive: kacl.on(),
 					requested: opts.inject === true,
 				})
 			) {
@@ -250,6 +265,7 @@ export function createIosNetwork(deps: IosNetworkDeps): IosNetwork {
 			channel.reset();
 			writeState();
 			expectLoad = true;
+			expectKeychainAcl = kacl.on();
 			return {
 				success: true,
 				data: injectLaunchEnv({
@@ -265,7 +281,19 @@ export function createIosNetwork(deps: IosNetworkDeps): IosNetwork {
 			if (!expectLoad) return okVoid;
 			expectLoad = false;
 			const state = channel.current();
-			if (await channel.acked(state.seq, INJECT_LOAD_MS)) return okVoid;
+			const shim = expectKeychainAcl;
+			expectKeychainAcl = false;
+			if (await channel.acked(state.seq, INJECT_LOAD_MS)) {
+				if (!shim || channel.attached()?.keychainAcl === true) return okVoid;
+				return {
+					success: false,
+					error: driverError(
+						"E_INTERNAL",
+						"the app loaded libwarden-inject.dylib without the Keychain ACL shim: the dylib is older than this warden. Rebuild it (`bun run --cwd packages/e2e native:inject`) or run `warden doctor --fetch-helper`",
+						{ detail: { statePath: channel.statePath } }
+					),
+				};
+			}
 			return {
 				success: false,
 				error: driverError(
@@ -327,6 +355,7 @@ export function createIosNetwork(deps: IosNetworkDeps): IosNetwork {
 			return { success: true, data: { feeds: camera } };
 		},
 		passkeys: (op) => pk.run(op, writeState),
+		keychainAcl: (op) => kacl.run(op, writeState),
 	};
 }
 

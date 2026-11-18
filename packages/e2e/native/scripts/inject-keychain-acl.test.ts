@@ -339,6 +339,31 @@ run("keychain acl: reads", () => {
 		await h.stop();
 	});
 
+	test("the state file switches the gate live; a state without the key leaves it as launched", async () => {
+		const stateDir = mkdtempSync(join(tmpdir(), "warden-inject-kacl-live-"));
+		const channel = createInjectChannel({
+			statePath: join(stateDir, "state.json"),
+			now: Date.now,
+			sleep: (ms) => Bun.sleep(ms),
+		});
+		const itemsPath = join(stateDir, "keychain-acl-items.json");
+		const h = startRig({ ...ON, WARDEN_INJECT_STATE: channel.statePath });
+		const set = async (enabled?: boolean) => {
+			const state = channel.write(enabled === undefined ? {} : { keychainAcl: { enabled, generation: 0, itemsPath } });
+			expect(await channel.acked(state.seq, 5_000)).toBe(true);
+		};
+		await set(false);
+		const off = await h.run({ items: ["currentSet-or-passcode"], returnData: true });
+		expect(off.evals).toEqual([]);
+		expect(off.probes).toEqual([]);
+		await set(true);
+		expect((await h.run({ items: ["currentSet-or-passcode"], returnData: true })).evals).toHaveLength(1);
+		await set(undefined);
+		expect((await h.run({ items: ["currentSet-or-passcode"], returnData: true })).evals).toHaveLength(1);
+		await h.stop();
+		rmSync(stateDir, { recursive: true, force: true });
+	});
+
 	test("the ack says keychainAcl when launched with WARDEN_KEYCHAIN_ACL=1", async () => {
 		const stateDir = mkdtempSync(join(tmpdir(), "warden-inject-kacl-state-"));
 		const channel = createInjectChannel({

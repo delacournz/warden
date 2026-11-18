@@ -4,7 +4,7 @@
 //
 // Env (set by warden at launch):
 //   WARDEN_NET_PROXY=127.0.0.1:<port>   route NSURLSession HTTP+HTTPS through the lease's shaping proxy
-//   WARDEN_INJECT_STATE=<file>          control file, watched live: {"seq":n,"offline":bool,"clockOffsetMs":n,"clockFrozenMs":n?,"keyboard":"software"|"hardware"?,"camera":{"back"?:{kind,path,loop},"front"?:…},"passkeys"?:{mode,uv,storePath}}
+//   WARDEN_INJECT_STATE=<file>          control file, watched live: {"seq":n,"offline":bool,"clockOffsetMs":n,"clockFrozenMs":n?,"keyboard":"software"|"hardware"?,"camera":{"back"?:{kind,path,loop},"front"?:…},"passkeys"?:{mode,uv,storePath},"keychainAcl"?:{enabled,generation,itemsPath}}
 //   WARDEN_CLOCK_OFFSET_MS=<n>          initial wall-clock offset (the state file overrides it)
 //   WARDEN_CLOCK_FROZEN_MS=<n>          initial frozen wall time, ms since the epoch (the state file overrides it)
 //   WARDEN_CAMERA=1                     fake the AVFoundation capture stack from the state file's `camera` feeds (see "camera")
@@ -2589,7 +2589,8 @@ static void pk_apply(id passkeys) {
 #define KACL_POLICY_BIO 1
 #define KACL_POLICY_OWNER 2
 
-static BOOL g_kacl_enabled = NO;
+static BOOL g_kacl_enabled = NO;   // launched with WARDEN_KEYCHAIN_ACL=1 (interposed, swizzled)
+static _Atomic int g_kacl_active = 1; // the state file's `keychainAcl.enabled` (a state without the key keeps it)
 static IMP g_kacl_orig_eval = NULL;
 static IMP g_kacl_orig_can = NULL;
 static Class g_kacl_context_class = Nil;
@@ -2773,7 +2774,7 @@ static OSStatus kacl_gate(NSDictionary *q, CFDictionaryRef query, CFTypeRef *res
 
 static OSStatus kacl_copy_matching(CFDictionaryRef query, CFTypeRef *result) {
   // off (and a Keychain call made from inside the gate) is the real function: no hook, no ObjC, no allocation
-  if (!g_kacl_enabled || g_kacl_depth > 0 || !query) return SecItemCopyMatching(query, result);
+  if (!g_kacl_enabled || !atomic_load(&g_kacl_active) || g_kacl_depth > 0 || !query) return SecItemCopyMatching(query, result);
   NSDictionary *q = (__bridge NSDictionary *)query;
   if (![q[(id)kSecReturnData] respondsToSelector:@selector(boolValue)] || ![q[(id)kSecReturnData] boolValue]) {
     return g_kacl_copy(query, result);
@@ -2800,6 +2801,14 @@ static void kacl_install(void) {
     g_kacl_enabled = YES;
     DLOG("keychain acl: installed");
   });
+}
+
+/** Apply the state file's `keychainAcl` (`{enabled, generation, itemsPath}`); absent or malformed keeps what was. */
+static void kacl_apply(id value) {
+  if (!g_kacl_enabled || ![value isKindOfClass:[NSDictionary class]]) return;
+  NSDictionary *d = value;
+  if ([d[@"enabled"] respondsToSelector:@selector(boolValue)]) atomic_store(&g_kacl_active, [d[@"enabled"] boolValue] ? 1 : 0);
+  DLOG("keychain acl: %s", atomic_load(&g_kacl_active) ? "on" : "off");
 }
 
 #ifdef WARDEN_INJECT_TEST_HOOKS
@@ -2895,6 +2904,7 @@ static void apply_state_file(void) {
 #endif
   if (g_camera_enabled) camera_apply([state[@"camera"] isKindOfClass:[NSDictionary class]] ? state[@"camera"] : @{});
   pk_apply(state[@"passkeys"]);
+  kacl_apply(state[@"keychainAcl"]);
   if ([state[@"a11yRead"] respondsToSelector:@selector(boolValue)] && [state[@"a11yRead"] boolValue]) write_a11y(seq);
   DLOG("state seq=%lld offline=%d clockOffsetMs=%lld frozen=%d", seq, offline, off, frozen);
   if (wasOffline != offline) notify_connectivity_changed();
