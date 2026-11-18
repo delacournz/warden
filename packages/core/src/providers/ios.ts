@@ -11,6 +11,7 @@ import { slimSimulator } from "../sims/slim";
 import { prepareOfflineSlim, runtimeSupportsPersistentOverrides, verifyOfflineSlim } from "../sims/slim.offline";
 import { DEFAULT_SLIM_PROFILE, desiredLabels, type SlimProfile } from "../sims/slim.profile";
 import { type DeviceState, type InventoryDevice, isPhysicalIosId } from "../types";
+import { bootPhaseClock } from "./boot-phases";
 import { listPhysicalIos, probePhysicalIos } from "./devicectl";
 import { execWithin, probeIosHealth, probeIosWarm, realTimer, type TimedExec, type Timer } from "./health";
 import type { BootReady, DeviceProvider, ProviderDeps } from "./provider.types";
@@ -275,15 +276,28 @@ export function timedOutError(cmd: readonly string[], timeoutMs: number): string
 	return `\`${cmd.join(" ")}\` did not finish within ${Math.round(timeoutMs / 1000)}s`;
 }
 
-/** Run `cmd`; with `timeoutMs`, a call still running then is an error (and the process is killed). */
-async function runCmd(runner: TimedExec, cmd: string[], timeoutMs?: number): Promise<ExecResult | string> {
-	if (timeoutMs === undefined) return runner.exec(cmd);
-	return (await execWithin(runner, cmd, timeoutMs)) ?? timedOutError(cmd, timeoutMs);
+/**
+ * Run `cmd`; with `timeoutMs`, a call still running then is an error (and the process is killed). `onLine` sees
+ * each output line as it arrives.
+ */
+async function runCmd(
+	runner: TimedExec,
+	cmd: string[],
+	timeoutMs?: number,
+	onLine?: (line: string) => void
+): Promise<ExecResult | string> {
+	if (timeoutMs === undefined) return runner.exec(cmd, onLine ? { onLine } : undefined);
+	return (await execWithin(runner, cmd, timeoutMs, onLine)) ?? timedOutError(cmd, timeoutMs);
 }
 
-async function simctl(runner: TimedExec, args: string[], timeoutMs?: number): AsyncResult<string> {
+async function simctl(
+	runner: TimedExec,
+	args: string[],
+	timeoutMs?: number,
+	onLine?: (line: string) => void
+): AsyncResult<string> {
 	const cmd = ["xcrun", "simctl", ...args];
-	const result = await runCmd(runner, cmd, timeoutMs);
+	const result = await runCmd(runner, cmd, timeoutMs, onLine);
 	if (typeof result === "string") return err(result);
 	return result.exitCode === 0 ? ok(result.stdout) : err(execError(cmd, result));
 }
@@ -407,8 +421,8 @@ export function createIosProvider(deps: ProviderDeps, options: IosProviderOption
 	const { exec } = deps;
 	const runner = timedExec(exec, deps.timer);
 	const sleep = options.sleep ?? Bun.sleep;
-	const waitReady = async (id: string, timeoutMs: number): AsyncResult<void> => {
-		const out = await simctl(runner, ["bootstatus", id, "-b"], timeoutMs);
+	const waitReady = async (id: string, timeoutMs: number, onLine?: (line: string) => void): AsyncResult<void> => {
+		const out = await simctl(runner, ["bootstatus", id, "-b"], timeoutMs, onLine);
 		return out.success ? ok(undefined) : err(`${id} not ready within ${Math.round(timeoutMs / 1000)}s: ${out.error}`);
 	};
 	const record = (id: string, name: string, profile: string, runtime: string): InventoryDevice => {
@@ -566,27 +580,37 @@ export function createIosProvider(deps: ProviderDeps, options: IosProviderOption
 		 * `bootstatus -b` boots a shut-down sim itself, so a separate `simctl boot` is one CoreSimulator
 		 * round trip too many (16-15). When bootstatus answers with an error (not a timeout) — e.g. a sim
 		 * still `Shutting Down` — fall back to `boot` (which waits that out) and wait again, with only what
-		 * is left of `timeoutMs`, so the whole call stays within one ready budget.
+		 * is left of `timeoutMs`, so the whole call stays within one ready budget. Logs how long each bootstatus phase
+		 * took (`booted in …` / `not ready after …`), so a slow first boot's data migration shows in CI output.
 		 */
 		async bootReady(id, timeoutMs): Promise<BootReady> {
 			if (isPhysicalIosId(id)) return { kind: "boot-failed", error: physicalRefusal("boot", id) };
 			const started = deps.now();
+			const phases = bootPhaseClock(deps.now);
+			const report = (ready: boolean): void =>
+				note(`${id}: ${ready ? "booted in" : "not ready after"} ${phases.summary()}`);
 			const cmd = ["xcrun", "simctl", "bootstatus", id, "-b"];
-			const status = await runCmd(runner, cmd, timeoutMs);
-			if (typeof status !== "string" && status.exitCode === 0) return { kind: "ready" };
+			const status = await runCmd(runner, cmd, timeoutMs, phases.line);
+			if (typeof status !== "string" && status.exitCode === 0) {
+				report(true);
+				return { kind: "ready" };
+			}
 			if (typeof status === "string") {
+				report(false);
 				return { kind: "not-ready", error: `${id} not ready within ${Math.round(timeoutMs / 1000)}s: ${status}` };
 			}
 			const booted = await bootAfterShutdown(runner, id, sleep);
 			if (!booted.success) return { kind: "boot-failed", error: booted.error };
 			const left = timeoutMs - (deps.now() - started);
 			if (left <= 0) {
+				report(false);
 				return {
 					kind: "not-ready",
 					error: `${id} not ready within ${Math.round(timeoutMs / 1000)}s: booted, no time left`,
 				};
 			}
-			const ready = await waitReady(id, left);
+			const ready = await waitReady(id, left, phases.line);
+			report(ready.success);
 			return ready.success ? { kind: "ready" } : { kind: "not-ready", error: ready.error };
 		},
 

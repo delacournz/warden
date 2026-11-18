@@ -40,16 +40,18 @@ const spawn = (udid: string, ...args: string[]) => ["xcrun", "simctl", "spawn", 
 
 /**
  * Run `cmd`, giving up (undefined) after `timeoutMs`. The exec gets the same timeout so a real process
- * is killed; the timer race bounds an exec that never returns at all.
+ * is killed; the timer race bounds an exec that never returns at all. `onLine` sees each output line as it arrives.
  */
 export async function execWithin(
 	deps: TimedExec,
 	cmd: readonly string[],
-	timeoutMs: number
+	timeoutMs: number,
+	onLine?: (line: string) => void
 ): Promise<ExecResult | undefined> {
 	const timer = deps.timer(timeoutMs);
 	try {
-		const res = await Promise.race([deps.exec(cmd, { timeoutMs }), timer.promise.then((): undefined => undefined)]);
+		const opts = onLine ? { timeoutMs, onLine } : { timeoutMs };
+		const res = await Promise.race([deps.exec(cmd, opts), timer.promise.then((): undefined => undefined)]);
 		// a killed exec is the same "no answer" as our own timer firing first
 		return res !== undefined && KILLED_EXIT_CODES.has(res.exitCode) ? undefined : res;
 	} finally {
