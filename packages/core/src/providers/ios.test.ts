@@ -555,6 +555,59 @@ describe("createIosProvider bootReady (16-15)", () => {
 		if (result.kind === "boot-failed") expect(result.error).toContain("Invalid device");
 	});
 
+	/** bootstatus that streams its progress lines, moving the clock between them. */
+	function streamingBootstatus(clock: { t: number }, steps: Array<[line: string, ms: number]>, exitCode = 0): Exec {
+		return async (cmd, opts) => {
+			if (cmd[2] !== "bootstatus") return { exitCode: 0, stdout: "", stderr: "" };
+			for (const [line, ms] of steps) {
+				opts?.onLine?.(line);
+				clock.t += ms;
+			}
+			return { exitCode, stdout: "", stderr: "" };
+		};
+	}
+	function loggingProvider(exec: Exec, clock: { t: number }, logs: string[]): DeviceProvider {
+		return createIosProvider(
+			{
+				exec,
+				store,
+				env: { WARDEN_SIM_LAUNCHD_STORE_ROOT: dir },
+				now: () => clock.t,
+				owner: { kind: "agent", sessionId: "s1", cwd: "/" },
+				log: (line) => logs.push(line),
+			},
+			{ sleep: async () => {} }
+		);
+	}
+
+	test("a boot logs how long each bootstatus phase took", async () => {
+		const clock = { t: 0 };
+		const logs: string[] = [];
+		const exec = streamingBootstatus(clock, [
+			["Booting", 9_000],
+			["Waiting on BackBoard", 4_000],
+			["Waiting on Data Migration", 85_000],
+			["Finished", 0],
+		]);
+		expect(await run(loggingProvider(exec, clock, logs), "U1")).toEqual({ kind: "ready" });
+		expect(logs).toEqual(["U1: booted in 98.0 s (booting 9.0 s, backboard 4.0 s, data migration 85.0 s)"]);
+	});
+
+	test("a boot that runs out of time logs the phase it was stuck in", async () => {
+		const clock = { t: 0 };
+		const logs: string[] = [];
+		const exec = streamingBootstatus(
+			clock,
+			[
+				["Waiting on BackBoard", 5_000],
+				["Waiting on Data Migration", 115_000],
+			],
+			143
+		);
+		expect((await run(loggingProvider(exec, clock, logs), "U1")).kind).toBe("not-ready");
+		expect(logs).toEqual(["U1: not ready after 120.0 s (backboard 5.0 s, data migration 115.0 s)"]);
+	});
+
 	test("bootstatus timing out is not ready, with no extra boot", async () => {
 		const calls: Call[] = [];
 		const p = bootProvider(fake([["xcrun simctl bootstatus", { exitCode: 143 }]], calls));
@@ -1001,10 +1054,18 @@ describe("createIosProvider pre-boot accessibility prefs", () => {
 	}
 	const record = (id: string): void =>
 		store.recordDevice({ platform: "ios", id, name: `warden-iphone-17-${id}`, profile: "iphone-17" }, 1);
+	/** plutil writes, without the read of the first-boot migration record. */
 	const plutilCalls = (calls: Call[]): string[] =>
-		calls.map((c) => c.cmd.join(" ")).filter((c) => c.startsWith("plutil"));
+		calls.map((c) => c.cmd.join(" ")).filter((c) => c.startsWith("plutil") && !c.startsWith("plutil -convert"));
+	/** W1's migration record, as `plutil -convert json` prints it: its first boot migrated. */
+	const migrated: [string, Partial<ExecResult>] = [
+		"plutil -convert json",
+		{ stdout: JSON.stringify({ DMLastMigrationResults: { buildVersion: "24B8117", success: true } }) },
+	];
+	/** W1 booted before: its first boot's Data Migration record sits beside the plist. */
 	beforeEach(() => {
 		mkdirSync(dirname(plist("W1")), { recursive: true });
+		writeFileSync(join(dirname(plist("W1")), "com.apple.migration.plist"), "");
 		mkdirSync(dirname(plist("F1")), { recursive: true });
 	});
 
@@ -1012,11 +1073,19 @@ describe("createIosProvider pre-boot accessibility prefs", () => {
 		record("W1");
 		writeFileSync(plist("W1"), "");
 		const calls: Call[] = [];
-		await axProvider(fake([["plutil", {}]], calls), {}, false).prepareBoot?.("W1");
+		await axProvider(fake([migrated, ["plutil", {}]], calls), {}, false).prepareBoot?.("W1");
 		expect(plutilCalls(calls)).toEqual([
 			`plutil -replace AutomationEnabled -bool true ${plist("W1")}`,
 			`plutil -replace IgnoreAXServerEntitlements -bool true ${plist("W1")}`,
 		]);
+	});
+
+	test("a warden sim simctl just created (no migration record yet) boots without them", async () => {
+		record("N1");
+		mkdirSync(dirname(plist("N1")), { recursive: true });
+		const calls: Call[] = [];
+		await axProvider(fake([["plutil", {}]], calls), {}, false).prepareBoot?.("N1");
+		expect(plutilCalls(calls)).toEqual([]);
 	});
 
 	test("WARDEN_AX_PREFS=0 writes nothing", async () => {
@@ -1037,7 +1106,7 @@ describe("createIosProvider pre-boot accessibility prefs", () => {
 		const logs: string[] = [];
 		const p = createIosProvider(
 			{
-				exec: fake([["plutil", { exitCode: 1, stderr: "denied" }]]),
+				exec: fake([migrated, ["plutil", { exitCode: 1, stderr: "denied" }]]),
 				store,
 				env: { HOME: dir },
 				now: () => 42,
