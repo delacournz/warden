@@ -152,20 +152,35 @@ describe("warden dev --keychain-acl", () => {
 		expect(JSON.parse(readFileSync(statePath, "utf8")).keychainAcl.enabled).toBe(false);
 	});
 
-	test("no flag: a plain launch; a device switched on earlier (ui open --keychain-acl) keeps it", async () => {
+	test("no flag: a plain launch; the session's own lease switched on earlier (ui open --keychain-acl) keeps it", async () => {
 		const plain = await launchWith([]);
 		expect(plain.env.SIMCTL_CHILD_WARDEN_KEYCHAIN_ACL).toBeUndefined();
 		expect(plain.env.SIMCTL_CHILD_DYLD_INSERT_LIBRARIES).toBeUndefined();
-		const sticky = await launchWith([], (c) => {
+		const switchedOn = (c: TestContext) => {
 			const dir = join(c.env.WARDEN_HOME ?? "", "inject", "U1");
 			mkdirSync(dir, { recursive: true });
 			writeFileSync(
 				join(dir, "state.json"),
 				JSON.stringify({ seq: 1, keychainAcl: { enabled: true, generation: 0, itemsPath: join(dir, "items.json") } })
 			);
+		};
+		const sticky = await launchWith([], (c) => {
+			switchedOn(c);
+			c.store().insertLease(
+				{
+					resource: { kind: "device", platform: "ios", id: "U1", name: "warden-iphone-17-1" },
+					owner: resolveOwner(c),
+					ttlMs: 60_000,
+				},
+				c.now()
+			);
 		});
 		expect(sticky.launch[4]).toBe("U1");
 		expect(sticky.env.SIMCTL_CHILD_WARDEN_KEYCHAIN_ACL).toBe("1");
+		// left on by a lease that ended without a release: the claim switches it off, the launch is plain
+		const stale = await launchWith([], switchedOn);
+		expect(stale.launch[4]).toBe("U1");
+		expect(stale.env.SIMCTL_CHILD_WARDEN_KEYCHAIN_ACL).toBeUndefined();
 	});
 
 	test("--no-keychain-acl launches plain and records off", async () => {
