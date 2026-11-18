@@ -97,12 +97,22 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * `bootstatus -b` can return before it's done, so this is the real gate.
  */
 export function migrationDone(plistJson: string, runtimeBuild: string): boolean {
+	const last = lastMigration(plistJson);
+	return last !== undefined && last.success === true && last.buildVersion === runtimeBuild;
+}
+
+/** The record's first-boot migration finished with success, on any runtime build: the device has booted before. */
+export function migrationSucceeded(plistJson: string): boolean {
+	return lastMigration(plistJson)?.success === true;
+}
+
+function lastMigration(plistJson: string): Record<string, unknown> | undefined {
 	try {
 		const data: unknown = JSON.parse(plistJson);
 		const last = isRecord(data) ? data.DMLastMigrationResults : undefined;
-		return isRecord(last) && last.success === true && last.buildVersion === runtimeBuild;
+		return isRecord(last) ? last : undefined;
 	} catch {
-		return false;
+		return undefined;
 	}
 }
 

@@ -1054,8 +1054,14 @@ describe("createIosProvider pre-boot accessibility prefs", () => {
 	}
 	const record = (id: string): void =>
 		store.recordDevice({ platform: "ios", id, name: `warden-iphone-17-${id}`, profile: "iphone-17" }, 1);
+	/** plutil writes, without the read of the first-boot migration record. */
 	const plutilCalls = (calls: Call[]): string[] =>
-		calls.map((c) => c.cmd.join(" ")).filter((c) => c.startsWith("plutil"));
+		calls.map((c) => c.cmd.join(" ")).filter((c) => c.startsWith("plutil") && !c.startsWith("plutil -convert"));
+	/** W1's migration record, as `plutil -convert json` prints it: its first boot migrated. */
+	const migrated: [string, Partial<ExecResult>] = [
+		"plutil -convert json",
+		{ stdout: JSON.stringify({ DMLastMigrationResults: { buildVersion: "24B8117", success: true } }) },
+	];
 	/** W1 booted before: its first boot's Data Migration record sits beside the plist. */
 	beforeEach(() => {
 		mkdirSync(dirname(plist("W1")), { recursive: true });
@@ -1067,7 +1073,7 @@ describe("createIosProvider pre-boot accessibility prefs", () => {
 		record("W1");
 		writeFileSync(plist("W1"), "");
 		const calls: Call[] = [];
-		await axProvider(fake([["plutil", {}]], calls), {}, false).prepareBoot?.("W1");
+		await axProvider(fake([migrated, ["plutil", {}]], calls), {}, false).prepareBoot?.("W1");
 		expect(plutilCalls(calls)).toEqual([
 			`plutil -replace AutomationEnabled -bool true ${plist("W1")}`,
 			`plutil -replace IgnoreAXServerEntitlements -bool true ${plist("W1")}`,
@@ -1100,7 +1106,7 @@ describe("createIosProvider pre-boot accessibility prefs", () => {
 		const logs: string[] = [];
 		const p = createIosProvider(
 			{
-				exec: fake([["plutil", { exitCode: 1, stderr: "denied" }]]),
+				exec: fake([migrated, ["plutil", { exitCode: 1, stderr: "denied" }]]),
 				store,
 				env: { HOME: dir },
 				now: () => 42,

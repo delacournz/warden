@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import { execError } from "../exec";
+import { migrationSucceeded } from "../golden/golden";
 import { execWithin, type TimedExec } from "../providers/health";
 
 /**
@@ -46,6 +47,17 @@ export function migrationRecordPath(env: Record<string, string | undefined>, udi
 }
 
 /**
+ * The device's first boot finished its Data Migration (the record says so, read with `plutil`). A record missing,
+ * unreadable or without a successful result (a sim shut down mid-migration migrates again) counts as never booted.
+ */
+async function bootedBefore(deps: TimedExec, env: Record<string, string | undefined>, udid: string): Promise<boolean> {
+	const record = migrationRecordPath(env, udid);
+	if (!existsSync(record)) return false;
+	const read = await execWithin(deps, ["plutil", "-convert", "json", "-o", "-", record], AX_PREFS_WRITE_TIMEOUT_MS);
+	return read !== undefined && read.exitCode === 0 && migrationSucceeded(read.stdout);
+}
+
+/**
  * Write every `PREBOOT_AX_KEYS` key as `true` on the host, with the sim shut down (no cfprefsd running, so a file
  * write persists). Existing keys are kept; only a plist missing on disk is created, so a failed write on an existing
  * one is returned, never answered by replacing it with an empty plist. A device that has never booted (no Data
@@ -58,7 +70,7 @@ export async function writePrebootAxPrefs(
 	udid: string
 ): AsyncResult<"written" | "not-booted-yet"> {
 	const plist = accessibilityPlistPath(env, udid);
-	if (!existsSync(migrationRecordPath(env, udid))) return ok("not-booted-yet");
+	if (!(await bootedBefore(deps, env, udid))) return ok("not-booted-yet");
 	if (!existsSync(plist)) {
 		const created = await plutil(deps, ["plutil", "-create", "binary1", plist]);
 		if (!created.success) return created;

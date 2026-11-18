@@ -16,9 +16,14 @@ afterEach(() => {
 	rmSync(home, { recursive: true, force: true });
 });
 
-function fake(answer: (joined: string) => Partial<ExecResult>, calls: string[]): Exec {
+/** A finished first-boot migration, as `plutil -convert json` prints the record. */
+const MIGRATED = JSON.stringify({ DMLastMigrationResults: { buildVersion: "24B8117", success: true } });
+
+/** `plutil` writes answer by `answer`; reading the migration record answers `record` and is not in `calls`. */
+function fake(answer: (joined: string) => Partial<ExecResult>, calls: string[], record = MIGRATED): Exec {
 	return async (cmd) => {
 		const joined = cmd.join(" ");
+		if (joined.startsWith("plutil -convert json")) return { exitCode: 0, stdout: record, stderr: "" };
 		calls.push(joined);
 		return { exitCode: 0, stdout: "", stderr: "", ...answer(joined) };
 	};
@@ -102,6 +107,15 @@ describe("writePrebootAxPrefs", () => {
 		justCreated("U1");
 		const calls: string[] = [];
 		const out = await writePrebootAxPrefs({ exec: fake(() => ({}), calls), timer: realTimer }, { HOME: home }, "U1");
+		expect(out).toEqual({ success: true, data: "not-booted-yet" });
+		expect(calls).toEqual([]);
+	});
+
+	test("a migration record without a finished migration is left for its next boot", async () => {
+		migrated("U1");
+		const calls: string[] = [];
+		const exec = fake(() => ({}), calls, JSON.stringify({ DMMigrationPluginResults: {} }));
+		const out = await writePrebootAxPrefs({ exec, timer: realTimer }, { HOME: home }, "U1");
 		expect(out).toEqual({ success: true, data: "not-booted-yet" });
 		expect(calls).toEqual([]);
 	});
