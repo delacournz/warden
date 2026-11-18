@@ -94,7 +94,7 @@ test("a new face asks for the password again", async ({ device, screen }) => {
 });
 ```
 
-`reenroll()` returns `{ enrolled, modality, generation }`; `generation` is there only while the shim is on. Items written after it read normally. By hand: `warden ui biometrics reenroll`. Destructive for the items it invalidates, as on a phone: enrol before the app writes them when that is not the point of the test.
+`reenroll()` returns `{ enrolled, modality, generation }`; `generation` is there only while the shim is on. Items written after it read normally. An item the app wrote while the shim was off counts from the first time the shim reads it: only a re-enrolment after that invalidates it. By hand: `warden ui biometrics reenroll`. Destructive for the items it invalidates, as on a phone: enrol before the app writes them when that is not the point of the test.
 
 ## What it emulates, and what only a phone proves
 
