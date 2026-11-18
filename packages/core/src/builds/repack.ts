@@ -120,6 +120,10 @@ function packageMain(root: string): string | undefined {
 /**
  * The bundler flags that shape the bundle and not where it is written: the `bundlerFlags` of `computeKindKey` (so
  * they are in the JS key). The entry is root-relative so two checkouts of one commit share a key.
+ *
+ * `--minify false`: `hermesc -O` optimises the bytecode itself, so minifying first costs ~30% of the bundler's time for
+ * the same bytecode (React Native's own Hermes build does the same, `react-native-xcode.sh` "Hermes doesn't require JS
+ * minification"). A JSC base runs the unminified bundle: same code, bigger file.
  */
 export function bundlerFlags(platform: Platform, framework: "expo" | "react-native", entryRel: string): string[] {
 	return [
@@ -129,7 +133,7 @@ export function bundlerFlags(platform: Platform, framework: "expo" | "react-nati
 		"--dev",
 		"false",
 		"--minify",
-		"true",
+		"false",
 		"--entry-file",
 		entryRel,
 		"--reset-cache",

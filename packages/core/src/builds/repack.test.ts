@@ -294,7 +294,8 @@ describe("repackApp", () => {
 		});
 		expect(existsSync(join(dirname(first.data.artifact), "meta.json"))).toBe(true);
 		const bundler = h.calls.find((c) => c[0]?.endsWith("/.bin/expo"));
-		expect(bundler?.slice(1, 8)).toEqual(["export:embed", "--platform", "ios", "--dev", "false", "--minify", "true"]);
+		// Hermes compiles its own optimised bytecode: a minified input buys nothing (React Native's own Hermes path)
+		expect(bundler?.slice(1, 8)).toEqual(["export:embed", "--platform", "ios", "--dev", "false", "--minify", "false"]);
 		expect(bundler).toContain("--reset-cache");
 		expect(h.calls.some((c) => c[0]?.endsWith("/hermesc") && c.includes("-emit-binary"))).toBe(true);
 		expect(h.calls.some((c) => c[0] === "node" && c.includes("-o"))).toBe(true);
@@ -694,7 +695,7 @@ describe("helpers", () => {
 	test("bundlerFlags carry no scratch path; the entry is root-relative", () => {
 		const flags = bundlerFlags("android", "expo", "index.ts");
 		expect(flags.join(" ")).toBe(
-			"export:embed --platform android --dev false --minify true --entry-file index.ts --reset-cache"
+			"export:embed --platform android --dev false --minify false --entry-file index.ts --reset-cache"
 		);
 	});
 
