@@ -289,13 +289,14 @@ function finishBundle(step: BundleStep, raw: RawBundle): AsyncResult<BundleOutpu
 
 /**
  * The bundler run while the simulator base builds: it needs only the worktree's JS, so it overlaps the native build
- * instead of following it. Its own scratch dir, quiet (the build's output is what streams); the Hermes compile waits
- * for the base, which says whether Hermes is on.
+ * instead of following it. Its own scratch dir, quiet (the build's output is what streams). When the worktree has a
+ * `hermesc`, the bundle is also Hermes-compiled right away (`hermes`), before the base says whether Hermes is on: the
+ * compile leaves the critical path, and a JSC base just gets the plain bundle.
  */
 type EarlyBundle = {
 	scratch: string;
 	startedAt: number;
-	done: Promise<{ raw: Result<RawBundle, string>; endedAt: number }>;
+	done: Promise<{ raw: Result<RawBundle, string>; hermes?: Result<BundleOutput, string>; endedAt: number }>;
 };
 
 /**
@@ -454,7 +455,7 @@ function startEarlyBundle(input: RepackInput, flags: readonly string[], entry: s
 	const scratch = mkdtempSync(join(scratchRoot, "warden-repack-"));
 	const startedAt = input.now();
 	input.log(`bundling ${input.platform} JS while the simulator base builds`);
-	const done = runBundler({
+	const step: BundleStep = {
 		exec: input.exec,
 		root: input.project.root,
 		platform: input.platform,
@@ -463,13 +464,18 @@ function startEarlyBundle(input: RepackInput, flags: readonly string[], entry: s
 		entry,
 		env: { ...input.env, ...keys.settings.env },
 		scratch,
+		hermes: true,
 		log: () => {},
-	})
-		.catch(
-			(error: unknown): Result<RawBundle, string> =>
-				err(`repack: ${error instanceof Error ? error.message : String(error)}`)
-		)
-		.then((raw) => ({ raw, endedAt: input.now() }));
+	};
+	const failed = (error: unknown) => err(`repack: ${error instanceof Error ? error.message : String(error)}`);
+	const done = (async () => {
+		const raw = await runBundler(step).catch((error: unknown): Result<RawBundle, string> => failed(error));
+		if (!raw.success || !findHermesc(step.root)) return { raw, endedAt: input.now() };
+		const hermes = await compileHermes(step, raw.data.bundle, raw.data.assetsDir).catch(
+			(error: unknown): Result<BundleOutput, string> => failed(error)
+		);
+		return { raw, hermes, endedAt: input.now() };
+	})();
 	return { scratch, startedAt, done };
 }
 
@@ -581,8 +587,8 @@ function commitRepack(input: RepackInput, made: Made, staged: Staged): string {
 }
 
 /**
- * The repacker's bundle, timed: the `early` bundle's run plus its Hermes compile, or a bundle run now. `bundleMs` is
- * bundler + Hermes time either way, not the wait for the base.
+ * The repacker's bundle, timed: the `early` bundle's run (with the Hermes compile it already made when the base runs
+ * Hermes), or a bundle run now. `bundleMs` is bundler + Hermes time either way, not the wait for the base.
  */
 async function bundleFor(
 	step: BundleStep,
@@ -597,6 +603,11 @@ async function bundleFor(
 		raw = result.raw;
 		earlyMs = Math.max(0, result.endedAt - early.startedAt);
 		started = now();
+		if (raw.success && step.hermes && result.hermes) {
+			if (!result.hermes.success) return result.hermes;
+			step.log("Hermes bytecode compiled while the base built");
+			return ok({ bundled: result.hermes.data, bundleMs: earlyMs });
+		}
 	} else raw = await runBundler(step);
 	if (!raw.success) return raw;
 	const bundled = await finishBundle(step, raw.data);

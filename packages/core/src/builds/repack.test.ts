@@ -73,7 +73,11 @@ afterEach(() => {
 type Host = { exec: Exec; calls: string[][] };
 
 /** hermesc: fails, or writes bytecode (with bad magic when asked) plus its map at `out` */
-function fakeHermesc(over: { hermescFails?: boolean; hermescBadMagic?: boolean }, out: string): ExecResult {
+function fakeHermesc(
+	over: { hermescFails?: boolean; hermescBadMagic?: boolean; events?: string[] },
+	out: string
+): ExecResult {
+	over.events?.push("hermesc");
 	if (over.hermescFails) return { exitCode: 1, stdout: "", stderr: "hermesc boom" };
 	writeFileSync(out, over.hermescBadMagic ? new Uint8Array(10) : HBC);
 	writeFileSync(`${out}.map`, "{}");
@@ -549,7 +553,7 @@ describe("repackApp", () => {
 describe("repackApp: a base built in this run", () => {
 	const scratchLeft = () => (existsSync(join(dir, "scratch")) ? readdirSync(join(dir, "scratch")) : []);
 
-	test("iOS: the JS is bundled while the base builds, Hermes-compiled once the base is there", async () => {
+	test("iOS: the JS is bundled and Hermes-compiled while the base builds; the base then says which to apply", async () => {
 		const events: string[] = [];
 		const h = host({ events });
 		const applied = fresh();
@@ -562,14 +566,73 @@ describe("repackApp: a base built in this run", () => {
 		const res = await repackApp(input(h, applied, { build: true, hermes, ensureBase: baseBuilder(events, "ios") }));
 		if (!res.success || res.data.kind !== "repacked") throw new Error(JSON.stringify(res));
 		expect(events.indexOf("bundle")).toBeLessThan(events.indexOf("base:end"));
+		// hermesc no longer waits for the base: it runs off the critical path, right after the bundler
+		expect(events.indexOf("hermesc")).toBeGreaterThan(events.indexOf("bundle:end"));
+		expect(events.indexOf("hermesc")).toBeLessThan(events.indexOf("base:end"));
 		expect(events.indexOf("hermes?")).toBeGreaterThan(events.indexOf("base:end"));
 		expect(applied).toEqual({ count: 1, bundles: [true] });
 		expect(h.calls.filter((c) => c[0]?.endsWith("/.bin/expo"))).toHaveLength(1);
+		expect(h.calls.filter((c) => c[0]?.endsWith("/hermesc"))).toHaveLength(1);
 		expect(res.data.bundleMs).toBeGreaterThan(0);
 		expect(res.data.fromBase).toBeUndefined();
 		expect(getBuild(store, KEY, "ios", res.data.hash)).toMatchObject({ kind: "simulator-repack" });
 		expect(stagingLeft()).toEqual([]);
 		expect(scratchLeft()).toEqual([]);
+	});
+
+	test("iOS: a JSC base built alongside gets the plain bundle; the speculative bytecode is dropped", async () => {
+		const events: string[] = [];
+		const h = host({ events });
+		const applied = fresh();
+		mkdirSync(join(root, "node_modules", "hermes-compiler", "hermesc", "osx-bin"), { recursive: true });
+		writeFileSync(join(root, "node_modules", "hermes-compiler", "hermesc", "osx-bin", "hermesc"), "");
+		const res = await repackApp(
+			input(h, applied, { build: true, hermes: async () => false, ensureBase: baseBuilder(events, "ios") })
+		);
+		expect(res).toMatchObject({ success: true, data: { kind: "repacked" } });
+		expect(applied.bundles).toEqual([false]);
+		expect(scratchLeft()).toEqual([]);
+	});
+
+	test("iOS: a speculative hermesc failure only fails a Hermes base", async () => {
+		mkdirSync(join(root, "node_modules", "hermes-compiler", "hermesc", "osx-bin"), { recursive: true });
+		writeFileSync(join(root, "node_modules", "hermes-compiler", "hermesc", "osx-bin", "hermesc"), "");
+		const jsc = fresh();
+		const ok1 = await repackApp(
+			input(host({ hermescFails: true }), jsc, {
+				build: true,
+				hermes: async () => false,
+				ensureBase: baseBuilder([], "ios"),
+			})
+		);
+		expect(ok1).toMatchObject({ success: true, data: { kind: "repacked" } });
+		expect(jsc.bundles).toEqual([false]);
+		rmSync(join(dir, "home", "builds"), { recursive: true, force: true });
+		store.db.run("DELETE FROM builds");
+		const hermesBase = fresh();
+		const failed = await repackApp(
+			input(host({ hermescFails: true }), hermesBase, {
+				build: true,
+				hermes: async () => true,
+				ensureBase: baseBuilder([], "ios"),
+			})
+		);
+		expect(!failed.success && failed.error).toContain("hermesc boom");
+		expect(hermesBase.count).toBe(0);
+		expect(scratchLeft()).toEqual([]);
+	});
+
+	test("iOS: without hermesc in node_modules nothing is compiled ahead; a Hermes base then reports it", async () => {
+		const events: string[] = [];
+		const res = await repackApp(
+			input(host({ events }), fresh(), {
+				build: true,
+				hermes: async () => true,
+				ensureBase: baseBuilder(events, "ios"),
+			})
+		);
+		expect(events).not.toContain("hermesc");
+		expect(!res.success && res.error).toContain("hermesc was not found");
 	});
 
 	test("iOS: a cached base is never raced (bundled after, as before)", async () => {
