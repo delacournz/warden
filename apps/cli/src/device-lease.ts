@@ -50,6 +50,10 @@ export type EnsureLeaseOptions = {
 	exclusive?: boolean;
 	/** a real phone: stamped on a lease this call creates (an existing lease keeps what it has) */
 	physical?: DeviceResource["physical"];
+	/** warden's home (`wardenHome(env)`): a takeover switches the Keychain ACL shim off in the device's inject state */
+	home: string;
+	/** a takeover could not switch the shim off; the lease stands */
+	onNote?: (note: string) => void;
 };
 
 /** Message shown to the model/user when a device is held by someone else. */
@@ -77,6 +81,8 @@ function heldByOtherProcess(lease: Lease, opts: EnsureLeaseOptions): boolean {
  * The one lease check for a caller using a device (`warden ui`), atomically:
  * own lease → heartbeat (with `exclusive`, one a live warden process holds → `device_busy`; a shared
  * `warden dev` lease → `attached`); another live owner → `device_foreign`; stale or missing → taken over when `claim`, else `device_not_leased`.
+ * A takeover (`reclaimed` / `leased`) of an iOS device switches the Keychain ACL shim off: the lease it replaces ended
+ * without a release (expired, or none), so nothing else did, and the new holder never inherits its prompts.
  */
 export function ensureCallerLease(
 	store: Store,
@@ -86,7 +92,7 @@ export function ensureCallerLease(
 	opts: EnsureLeaseOptions
 ): Result<CallerLease, DeviceLeaseError> {
 	const probe: DeviceResource = { kind: "device", platform, id, name: opts.name ?? id };
-	return store.transaction((): Result<CallerLease, DeviceLeaseError> => {
+	const result = store.transaction((): Result<CallerLease, DeviceLeaseError> => {
 		const existing = store.findLeaseByResource(probe);
 		if (existing && sameOwner(existing.owner, owner)) return ownLease(store, existing, opts);
 		if (existing && isLeaseAlive(existing, opts.now, opts.pidAlive)) {
@@ -106,6 +112,12 @@ export function ensureCallerLease(
 		if (existing) store.deleteLeases([existing.id], { type: "expired", now: opts.now });
 		return ok({ lease: insertCallerLease(store, owner, probe, opts), action: existing ? "reclaimed" : "leased" });
 	});
+	const takenOver = result.success && (result.data.action === "reclaimed" || result.data.action === "leased");
+	if (takenOver && platform === "ios") {
+		const failed = switchOffKeychainAcl(injectStatePath(opts.home, id));
+		if (failed) opts.onNote?.(failed);
+	}
+	return result;
 }
 
 /**
