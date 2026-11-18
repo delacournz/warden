@@ -193,6 +193,14 @@ describe("device.alert on iOS: a press that does not land", () => {
 		expect(driver.callsOf("tap")).toHaveLength(3);
 	});
 
+	test("a retry button is pressed once: the simulator raises the same alert again, which is no failure", async () => {
+		for (const retry of ["Try Face ID Again", "Try Again", "Retry"]) {
+			const { device, driver } = sheet(0, { screens: [withAlert(retry, "Cancel")], answerAlertOnTap: false });
+			expect(await device.alert("accept")).toBe(true);
+			expect(driver.callsOf("tap")).toHaveLength(1);
+		}
+	});
+
 	test("a different alert after the press counts as answered", async () => {
 		let taps = 0;
 		const { device, driver } = sheet(0, {

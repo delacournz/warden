@@ -22,6 +22,18 @@ export const ACCEPT_BUTTONS = [
 	"Try Again",
 	"Retry",
 ];
+
+/**
+ * Accept buttons that ask again rather than close: on a simulator LocalAuthentication's "Face Not Recognized" sheet comes
+ * straight back after "Try Face ID Again" (no face is presented), so the same alert after the press is the answer.
+ */
+export const RETRY_BUTTONS = ["Try Face ID Again", "Try Again", "Retry"];
+
+/** Whether `button` is one of `RETRY_BUTTONS`. */
+export function isRetryButton(button: Element): boolean {
+	const name = nameOf(button);
+	return name !== undefined && RETRY_BUTTONS.some((retry) => normalise(retry) === normalise(name));
+}
 export const DISMISS_BUTTONS = ["Cancel", "Don't Allow", "Not Now", "Dismiss", "No", "Close"];
 
 function normalise(text: string): string {

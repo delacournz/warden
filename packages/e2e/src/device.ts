@@ -12,6 +12,7 @@ import {
 	findButton,
 	firstOf,
 	isAutofillSaveSheet,
+	isRetryButton,
 	lastUnlessDismiss,
 	nameOf,
 } from "./alert-buttons";
@@ -482,7 +483,8 @@ export function createDevice({
 			const target = alertTarget(info, action, driver.platform);
 			if (target === undefined) return false;
 			await pressAlertButton(target, "press alert button");
-			if (driver.platform === "ios") await confirmAlertGone(info, target);
+			// a retry button brings the same sheet back by design: one press, no "still showing" check
+			if (driver.platform === "ios" && !isRetryButton(target)) await confirmAlertGone(info, target);
 			return true;
 		},
 
