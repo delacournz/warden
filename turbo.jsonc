@@ -49,11 +49,12 @@
 
 		// `skill.ts` embeds skills/warden/**; skill.test + skill-coverage.test read it. Sibling
 		// workspaces (core, e2e, perf, types) are dependencies, so `transit` covers fixtures read there.
+		// contracts/json-schema.test compares the generated JSON Schemas in apps/docs/public/schemas.
 		"@delacour/warden#test": {
 			"dependsOn": ["transit"],
 			"cache": true,
 			"outputs": [],
-			"inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/skills/**"]
+			"inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/skills/**", "$TURBO_ROOT$/apps/docs/public/schemas/**"]
 		},
 
 		// ios-runner/stage.test packs the Swift sources `collectRunnerSources` walks (pack.ts) from
@@ -73,6 +74,16 @@
 				"$TURBO_ROOT$/packages/e2e/native/ios/Sources/warden-simd/Protocol/*.swift",
 				"$TURBO_ROOT$/packages/e2e/native/ios/Sources/warden-simd/Model/*.swift"
 			]
+		},
+
+		// native/scripts/guest-pin.test.ts runs (or skips) its guard on the extracted idb libraries, which are
+		// gitignored, so `$TURBO_DEFAULT$` never hashes them. The stamp `native:deps` writes on every extraction
+		// names the release and its sha256: without it a guard skipped before `native:deps` is replayed as green.
+		"@delacour/warden-e2e#test": {
+			"dependsOn": ["transit"],
+			"cache": true,
+			"outputs": [],
+			"inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/packages/e2e/native/idb-libraries/.warden-idb.json"]
 		},
 
 		// landing.test checks each claim's proof file (apps/cli/src, packages/core/src, skills/warden)

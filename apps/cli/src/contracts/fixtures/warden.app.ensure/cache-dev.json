@@ -1,0 +1,9 @@
+{
+	"schemaVersion": 1,
+	"appPath": "/warden-home/builds/ios/demo.app",
+	"hash": "abc123def456:dev",
+	"source": "cache",
+	"installed": true,
+	"kind": "dev",
+	"requestedKind": "dev"
+}

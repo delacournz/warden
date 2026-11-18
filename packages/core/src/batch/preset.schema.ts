@@ -47,6 +47,8 @@ export const batchPresetSchema = z
 		slim: slimConfigSchema.optional(),
 		/** devices of this run have a fingerprint / Face ID enrolled (own golden, own pool); `biometrics` of the top-level config is the default */
 		biometrics: z.boolean().optional(),
+		/** iOS simulators: launches load the Keychain ACL shim (`WARDEN_KEYCHAIN_ACL=1` in the job env); `keychainAcl` of the top-level config is the default */
+		keychainAcl: z.boolean().optional(),
 		/** `erase` | `uninstall` | `none`: reclaim the run's devices when they are released; `reclaim` of the top-level config is the default */
 		reclaim: reclaimSchema.optional(),
 		retry: z.number().int().min(0).optional(),

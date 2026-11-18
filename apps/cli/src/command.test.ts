@@ -1,11 +1,14 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { Chalk } from "chalk";
 import { type Command, type CommandEntry, defineCommand, runLazyProgram, runProgram } from "./command";
+import { expectContract } from "./contracts/contracts.testing";
 import { reportError } from "./output";
 import { withSpinner } from "./spinner-context";
 import { commandPathOf } from "./telemetry/properties";
 import type { Finished, Tracker } from "./telemetry/tracker";
 import { scriptedUi, type TestContext, testContext } from "./testing";
+
+class DeviceFailure extends Error {}
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
@@ -194,13 +197,24 @@ describe("runProgram --json failures", () => {
 	test("a reported failure → one envelope on stdout with the first error, exit code kept, stderr still says it", async () => {
 		expect(await runJson(["delta", "--json"])).toBe(1);
 		expect(ctx?.stdout).toHaveLength(1);
-		expect(doc()).toEqual({ ok: false, command: "delta", error: { code: "failed", message: "boom" } });
+		expect(doc()).toEqual({
+			ok: false,
+			schemaVersion: 1,
+			command: "delta",
+			error: { code: "failed", message: "boom" },
+		});
 		expect(ctx?.stderr.join("\n")).toContain("warden delta: boom");
+		expectContract("warden.failure", doc(), { name: "failed" });
 	});
 
 	test("the command path names the subcommand", async () => {
 		expect(await runJson(["eps", "sub", "--json"])).toBe(2);
-		expect(doc()).toEqual({ ok: false, command: "eps sub", error: { code: "failed", message: "nope" } });
+		expect(doc()).toEqual({
+			ok: false,
+			schemaVersion: 1,
+			command: "eps sub",
+			error: { code: "failed", message: "nope" },
+		});
 	});
 
 	test("an error reported from under a spinner is still the envelope's", async () => {
@@ -215,16 +229,23 @@ describe("runProgram --json failures", () => {
 
 	test("a failure nobody reported still gets an envelope, naming the exit code", async () => {
 		expect(await runJson(["delta", "--json", "--silent"])).toBe(4);
-		expect(doc()).toEqual({ ok: false, command: "delta", error: { code: "failed", message: "warden delta exited 4" } });
+		expect(doc()).toEqual({
+			ok: false,
+			schemaVersion: 1,
+			command: "delta",
+			error: { code: "failed", message: "warden delta exited 4" },
+		});
 	});
 
 	test("a usage error under --json → code usage", async () => {
 		expect(await runJson(["delta", "--json", "--nope"])).toBe(1);
 		expect(doc()).toEqual({
 			ok: false,
+			schemaVersion: 1,
 			command: "delta",
 			error: { code: "usage", message: "unknown option '--nope'" },
 		});
+		expectContract("warden.failure", doc(), { name: "usage" });
 	});
 
 	test("without --json (or with it only after --) stdout stays empty", async () => {
@@ -298,6 +319,48 @@ describe("runProgram telemetry", () => {
 		});
 		await expect(runProgram([boom], ["boom"], ctx)).rejects.toThrow("kaboom");
 		expect(seen.finished[0]).toMatchObject({ outcome: "error" });
+	});
+
+	test("a failure finishes with the first code the command classified, and the class of a caught throw", async () => {
+		const classified = defineCommand({
+			name: "classified",
+			summary: "s",
+			register: (cmd, c, done) =>
+				void cmd.action(() => {
+					c.failure?.classify?.("failed", new DeviceFailure("/Users/me/x"));
+					c.failure?.classify?.("target_not_found");
+					done(1);
+				}),
+		});
+		const claimed = defineCommand({
+			name: "claimed",
+			summary: "s",
+			register: (cmd, c, done) =>
+				void cmd.action(() => {
+					reportError(c, "claimed", "no device", { code: "NO_DEVICE", hint: "wait" });
+					done(5);
+				}),
+		});
+		const { seen } = await withTracker(["classified"], [classified]);
+		expect(seen.finished).toHaveLength(1);
+		expect(seen.finished[0]).toMatchObject({ outcome: "error", exitCode: 1, errorCode: "failed" });
+		expect(seen.finished[0]?.error).toBeInstanceOf(DeviceFailure);
+		expect((await withTracker(["claimed"], [claimed])).seen.finished).toEqual([
+			{ outcome: "error", exitCode: 5, errorCode: "NO_DEVICE" },
+		]);
+	});
+
+	test("a zero exit drops a classified failure", async () => {
+		const recovered = defineCommand({
+			name: "recovered",
+			summary: "s",
+			register: (cmd, c, done) =>
+				void cmd.action(() => {
+					c.failure?.classify?.("failed");
+					done(0);
+				}),
+		});
+		expect((await withTracker(["recovered"], [recovered])).seen.finished).toEqual([{ outcome: "success" }]);
 	});
 
 	test("help and usage errors run no action, so nothing is tracked", async () => {

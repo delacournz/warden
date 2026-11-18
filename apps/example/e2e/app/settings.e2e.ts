@@ -20,6 +20,7 @@ const ROWS: readonly Row[] = [
 	{ name: "Accessibility", row: ids.settings.a11y, screen: ids.a11y.screen, back: ids.a11y.back },
 	{ name: "Camera", row: ids.settings.camera, screen: ids.camera.screen, back: ids.camera.back },
 	{ name: "Biometrics", row: ids.settings.biometrics, screen: ids.biometrics.screen, back: ids.biometrics.back },
+	{ name: "Keychain", row: ids.settings.keychain, screen: ids.keychain.screen, back: ids.keychain.back },
 	{ name: "Network", row: ids.settings.network, screen: ids.network.screen, back: ids.network.back },
 	{ name: "Location", row: ids.settings.location, screen: ids.location.screen, back: ids.location.back },
 	{ name: "Clock", row: ids.settings.clock, screen: ids.clock.screen, back: ids.clock.back },

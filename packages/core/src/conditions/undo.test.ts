@@ -9,6 +9,7 @@ import type { Lease, Owner } from "../types";
 import { activeConditions, recordCondition } from "./conditions";
 import { injectStatePath } from "./inject-state";
 import { launchSettingsPath, writeLaunchSettings } from "./launch-settings";
+import { passkeyStorePath } from "./passkey-paths";
 import { type UndoDeps, undoConditions } from "./undo";
 
 const owner: Owner = { kind: "agent", sessionId: "s1", cwd: "/tmp" };
@@ -522,6 +523,110 @@ describe("android camera", () => {
 		expect(r.success).toBe(false);
 		expect(existsSync(join(feedDir(), "mode.json"))).toBe(true);
 		expect(store.listDevices("android")).toHaveLength(1);
+		expect(activeConditions(store, l.id)).toHaveLength(1);
+	});
+});
+
+describe("passkeys", () => {
+	const PKG = "nz.co.delacour.warden.passkeys";
+	const GMS =
+		"com.google.android.gms/com.google.android.gms.auth.api.credentials.credman.service.PasswordAndPasskeyService";
+
+	function seedStore(home: string, device: string): string {
+		const path = passkeyStorePath(home, device);
+		mkdirSync(dirname(path), { recursive: true });
+		writeFileSync(path, JSON.stringify({ version: 1, credentials: [] }));
+		return path;
+	}
+
+	test("ios: turns the authenticator off in a running injected app, removes the store, clears the row", async () => {
+		const home = join(dir, "home");
+		const state = injectStatePath(home, UDID);
+		mkdirSync(dirname(state), { recursive: true });
+		writeFileSync(state, JSON.stringify({ seq: 2, passkeys: { mode: "auto", uv: "match", storePath: "/s" } }));
+		const store_ = seedStore(home, UDID);
+		const l = lease("ios", UDID);
+		recordCondition(store, l.id, "passkeys", { mode: "auto", uv: "match" }, 1);
+		const res = await undoConditions({ ...deps(), env: { WARDEN_HOME: home } }, l);
+		expect(res).toEqual({ success: true, data: { reset: ["passkeys"], killed: [] } });
+		const written = JSON.parse(readFileSync(state, "utf8"));
+		expect(written.seq).toBe(3);
+		expect("passkeys" in written).toBe(false);
+		expect(existsSync(store_)).toBe(false);
+		expect(calls).toEqual([]);
+		expect(activeConditions(store, l.id)).toEqual([]);
+	});
+
+	test("ios: releasing another injected area keeps the running app's authenticator on", async () => {
+		const home = join(dir, "home");
+		const state = injectStatePath(home, UDID);
+		mkdirSync(dirname(state), { recursive: true });
+		const passkeys = { mode: "cancel", uv: "skip", storePath: "/s" };
+		writeFileSync(state, JSON.stringify({ seq: 2, clockOffsetMs: 5, passkeys }));
+		const l = lease("ios", UDID);
+		recordCondition(store, l.id, "clock", { kind: "offset", ms: 5 }, 1);
+		await undoConditions({ ...deps(), env: { WARDEN_HOME: home } }, l);
+		expect(JSON.parse(readFileSync(state, "utf8"))).toMatchObject({ seq: 3, clockOffsetMs: 0, passkeys });
+	});
+
+	test("android: uninstalls the provider, then puts the recorded provider settings back", async () => {
+		const home = join(dir, "home");
+		const store_ = seedStore(home, "emulator-5554");
+		const l = lease("android", "emulator-5554");
+		recordCondition(
+			store,
+			l.id,
+			"passkeys",
+			{ mode: "auto", uv: "match", previousProvider: { service: GMS, primary: GMS } },
+			1
+		);
+		const res = await undoConditions({ ...deps(), env: { WARDEN_HOME: home } }, l);
+		expect(res.success).toBe(true);
+		expect(calls).toEqual([
+			[...ADB, "shell", "sh", "-c", `'pm uninstall ${PKG} >/dev/null 2>&1; true'`],
+			[...ADB, "shell", "settings", "put", "secure", "credential_service", `'${GMS}'`],
+			[...ADB, "shell", "settings", "put", "secure", "credential_service_primary", `'${GMS}'`],
+		]);
+		expect(existsSync(store_)).toBe(false);
+		expect(activeConditions(store, l.id)).toEqual([]);
+	});
+
+	test("android: a setting that was unset before is deleted, never left blank", async () => {
+		const l = lease("android", "emulator-5554");
+		recordCondition(
+			store,
+			l.id,
+			"passkeys",
+			{ mode: "auto", uv: "match", previousProvider: { service: null, primary: null } },
+			1
+		);
+		await undoConditions(deps(), l);
+		expect(calls.slice(1)).toEqual([
+			[...ADB, "shell", "settings", "delete", "secure", "credential_service"],
+			[...ADB, "shell", "settings", "delete", "secure", "credential_service_primary"],
+		]);
+	});
+
+	test("android: without recorded settings (provider never enabled) only the uninstall runs", async () => {
+		const l = lease("android", "emulator-5554");
+		recordCondition(store, l.id, "passkeys", { mode: "auto", uv: "match" }, 1);
+		await undoConditions(deps(), l);
+		expect(calls).toHaveLength(1);
+		expect(calls[0]?.join(" ")).toContain(`pm uninstall ${PKG}`);
+	});
+
+	test("android: a failed settings restore keeps the row for the retry", async () => {
+		const l = lease("android", "emulator-5554");
+		recordCondition(
+			store,
+			l.id,
+			"passkeys",
+			{ mode: "auto", uv: "match", previousProvider: { service: GMS, primary: GMS } },
+			1
+		);
+		fail = (cmd) => cmd.includes("credential_service");
+		const res = await undoConditions(deps(), l);
+		expect(res.success).toBe(false);
 		expect(activeConditions(store, l.id)).toHaveLength(1);
 	});
 });

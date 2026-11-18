@@ -753,3 +753,29 @@ describe("warden gc: warm pool", () => {
 		expect(JSON.parse(c.db.getMeta("warm_set") ?? "{}").warm).toEqual([]);
 	});
 });
+
+describe("warden gc: pods cache prune", () => {
+	const podsEntry = (key: string, lastUsedAt: number) => ({
+		key,
+		mode: "cng" as const,
+		root: "/r",
+		projectRel: ".",
+		sizeBytes: 100,
+		createdAt: lastUsedAt,
+		lastUsedAt,
+		podVersion: "1.16.2",
+		xcodeVersion: "27.0",
+	});
+
+	test("removes entries unused for 30 days, keeps recent ones", async () => {
+		const { insertPodsEntry, listPodsEntries, podsRoot } = await import("@delacour/warden-core/pods/pods-store");
+		const c = setup(["--json"], []);
+		mkdirSync(podsRoot(c.env), { recursive: true });
+		const day = 86_400_000;
+		insertPodsEntry(c.db, podsEntry("old", NOW - 40 * day));
+		insertPodsEntry(c.db, podsEntry("new", NOW - day));
+		expect(await gcCommand.run(c)).toBe(0);
+		expect(listPodsEntries(c.db).map((e) => e.key)).toEqual(["new"]);
+		expect(JSON.parse(c.stdout.join("\n")).notes.join("\n")).toContain("pruned 1 cached pods install");
+	});
+});

@@ -1,0 +1,32 @@
+{
+	"id": "ID-4",
+	"result": {
+		"answers": [
+			{
+				"accessibility": {
+					"answer": {
+						"hitTest": {
+							"response": {
+								"element": {
+									"pid": 94775,
+									"tree": {
+										"XC_kAXXCAttributeAutomationType": 9,
+										"XC_kAXXCAttributeChildren": [],
+										"XC_kAXXCAttributeElementBaseType": "NSObject",
+										"XC_kAXXCAttributeElementType": "SwiftUI.AccessibilityNode",
+										"XC_kAXXCAttributeFrame": { "Height": 52, "Width": 370, "X": 16, "Y": 397.33333333333337 },
+										"XC_kAXXCAttributeIdentifier": "com.apple.settings.actionButton",
+										"XC_kAXXCAttributeLabel": "Action Button",
+										"XC_kAXXCAttributeTraits": 8589934657
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		],
+		"exitCode": 0
+	},
+	"version": 6
+}

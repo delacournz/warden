@@ -20,13 +20,15 @@ The site serves a public open-source audience discovering warden and is the work
 
 ## Product Purpose
 
-`warden` is an open-source CLI plus e2e framework that closes the loop for coding agents on mobile: an agent claims a simulator or emulator, drives the app with `warden ui`, saves what it verified as a spec written with `@delacour/warden-e2e`, and `warden e2e` runs the suite across N leased devices in parallel. Underneath, every device, port and app build on the Mac is leased machine-wide, so parallel agents and runs never collide.
+`warden` is an open-source AI agent toolkit (a CLI plus an e2e framework) that closes the loop for coding agents on mobile: an agent claims a simulator or emulator, drives the app with `warden ui`, saves what it verified as a spec written with `@delacour/warden-e2e`, and `warden e2e` runs the suite across N leased devices in parallel. Underneath, every device, port and app build on the Mac is leased machine-wide, so parallel agents and runs never collide.
 
 Success: an agent proves its own UI change on a real simulator in the same session, the proof stays as a test, and the suite finishes in a fraction of the serial time on the same Mac.
 
 ## Positioning
 
-Tagline: **"Every agent gets its own simulator."** Lead with isolation for parallel agents across worktrees (devices, ports, builds), then what the agent does on that device; testing is one capability, not the headline.
+Category: **AI agent toolkit for React Native** (and Expo, and native iOS/Android). Say "toolkit" wherever the copy names what warden is: the landing `<title>`, docs titles, meta descriptions, README, npm, the skill.
+
+Tagline (the h1): **"Every agent gets its own simulator."** The lede under it names the verbs: drive, debug (component tree, Metro logs, network requests), profile, and keep what was checked as E2E tests. Isolation for parallel agents across worktrees (devices, ports, builds) is what makes the toolkit safe to run N at once; testing is one capability, not the headline.
 
 Leasing, agent device control and an e2e test framework in one CLI, on one shared driver (no second tool for device control, no separate lease daemon), made parallel-safe by machine-level leasing. One sqlite lease registry (`~/.warden/warden.db`, `BEGIN IMMEDIATE` as the cross-process mutex) is shared by every agent session, worktree, repo, CI job and user shell on the Mac. `warden ui` and the spec runner use the same driver, so `warden ui record` … `export` turns an exploration into a spec. It never touches devices it didn't create or lease.
 

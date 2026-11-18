@@ -142,6 +142,20 @@ describe("parseWardenConfig", () => {
 		expect(parsed.data.e2e?.s?.biometrics).toBe(false);
 	});
 
+	test("keychainAcl: a boolean at the top level, on an e2e suite and on a batch preset; the suite's own wins", () => {
+		const suite = { specsDir: "specs" };
+		expect(parseWardenConfig({ keychainAcl: true, e2e: { s: suite } }).success).toBe(true);
+		expect(parseWardenConfig({ e2e: { s: { ...suite, keychainAcl: true } } }).success).toBe(true);
+		expect(parseWardenConfig({ batches: { b: { platform: "ios", cmd: ["true"], keychainAcl: true } } }).success).toBe(
+			true
+		);
+		expect(parseWardenConfig({ keychainAcl: "on", e2e: { s: suite } }).success).toBe(false);
+		const parsed = parseWardenConfig({ keychainAcl: true, e2e: { s: { ...suite, keychainAcl: false } } });
+		if (!parsed.success) throw new Error(parsed.error);
+		expect(parsed.data.keychainAcl).toBe(true);
+		expect(parsed.data.e2e?.s?.keychainAcl).toBe(false);
+	});
+
 	test("e2e suite run settings: metro, isolate, jobTimeoutMs and device legs, with defaults", () => {
 		const suite = { specsDir: "specs" };
 		const parse = (extra: Record<string, unknown>) => parseWardenConfig({ e2e: { s: { ...suite, ...extra } } });
@@ -238,6 +252,25 @@ describe("loadProject", () => {
 			projects: [{ name: "a", bundleId: {}, ios: { device: { bundleIdentifier: "no spaces allowed" } } }],
 		});
 		expect(bad.success).toBe(false);
+	});
+
+	test("projects[].ios.pods.env becomes the project's pods env names; an empty name is refused", () => {
+		write(JSON_CONFIG_FILE, {
+			projects: [{ name: "a", bundleId: { ios: "com.x.app" }, ios: { pods: { env: ["CI", "SENTRY_*"] } } }],
+		});
+		const res = loadProject({ start: dir, env, stopAt: dir });
+		if (!res.success) throw new Error(res.error);
+		expect(res.data.podsEnv).toEqual(["CI", "SENTRY_*"]);
+		expect(res.data.podsCache).toBeUndefined();
+		const bad = parseWardenConfig({ projects: [{ name: "a", bundleId: {}, ios: { pods: { env: [""] } } }] });
+		expect(bad.success).toBe(false);
+	});
+
+	test("projects[].ios.pods.cache: false turns the pods cache off for the project", () => {
+		write(JSON_CONFIG_FILE, { projects: [{ name: "a", bundleId: {}, ios: { pods: { cache: false } } }] });
+		const res = loadProject({ start: dir, env, stopAt: dir });
+		if (!res.success) throw new Error(res.error);
+		expect(res.data.podsCache).toBe(false);
 	});
 
 	test("config at repo root, project picked by containing dir", () => {

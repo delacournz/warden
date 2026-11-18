@@ -14,13 +14,13 @@ final class AlertBackendTests: XCTestCase {
   private final class Readers: @unchecked Sendable {
     private let lock = NSLock()
     private var reads: [AXBackend: Int] = [:]
-    private let answers: [AXBackend: Result<AccessibilityDocument, any Error>]
+    private let answers: [AXBackend: Result<RawDocument, any Error>]
 
-    init(_ answers: [AXBackend: Result<AccessibilityDocument, any Error>]) { self.answers = answers }
+    init(_ answers: [AXBackend: Result<RawDocument, any Error>]) { self.answers = answers }
 
     func count(_ backend: AXBackend) -> Int { lock.withLock { reads[backend] ?? 0 } }
 
-    func read(_ backend: AXBackend) throws -> AccessibilityDocument? {
+    func read(_ backend: AXBackend) throws -> RawDocument? {
       lock.withLock { reads[backend, default: 0] += 1 }
       return try answers[backend]?.get()
     }
@@ -34,10 +34,10 @@ final class AlertBackendTests: XCTestCase {
     alert["buttons"]?.arrayValue?.compactMap { $0["label"]?.stringValue } ?? []
   }
 
-  private var plain: AccessibilityDocument { get throws { try DocumentFixture.document("sign-in.document.json") } }
-  private var hostAlert: AccessibilityDocument { get throws { try DocumentFixture.document("alert-host.document.json") } }
-  private var bridgeAlert: AccessibilityDocument { get throws { try DocumentFixture.document("alert-bridge.document.json") } }
-  private var keychain: AccessibilityDocument { get throws { try DocumentFixture.document("keychain-sheet.document.json") } }
+  private var plain: RawDocument { get throws { try DocumentFixture.document("sign-in.document.json") } }
+  private var hostAlert: RawDocument { get throws { try DocumentFixture.document("alert-host.document.json") } }
+  private var bridgeAlert: RawDocument { get throws { try DocumentFixture.document("alert-bridge.document.json") } }
+  private var keychain: RawDocument { get throws { try DocumentFixture.document("keychain-sheet.document.json") } }
 
   // MARK: request parsing
 
@@ -149,11 +149,11 @@ final class AlertBackendTests: XCTestCase {
   // MARK: a modal without readable buttons
 
   /// idb names a blocking modal but no container with a button is in the tree.
-  private func modalWithoutButtons() throws -> AccessibilityDocument {
+  private func modalWithoutButtons() throws -> RawDocument {
     let source = try plain
-    return AccessibilityDocument(
+    return RawDocument(
       elements: source.elements,
-      modal: AccessibilityModalInfo(kind: .system, elementType: "Alert", label: "Open in “warden-example”?"),
+      modal: RawModal(elementType: "Alert", label: "Open in “warden-example”?"),
       truncated: false, screen: source.screen)
   }
 

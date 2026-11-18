@@ -7,6 +7,7 @@ import {
 	snapshotOf,
 } from "@delacour/warden-e2e/driver/driver.testing";
 import type { Snapshot } from "@delacour/warden-e2e/driver/driver.types";
+import { readDeadlineRemaining } from "@delacour/warden-e2e/driver/read-deadline";
 import { ok } from "@delacour/warden-types/result";
 import { defaultUiDeps, type UiDeps } from "../agent-ui/driver";
 import { readLastSnapshot, readState } from "../agent-ui/state";
@@ -103,6 +104,58 @@ describe("warden ui snapshot", () => {
 				'@e4 [button] "Sign in" id=sign-in-submit enabled hittable (0,150 390×44)',
 			].join("\n")
 		);
+	});
+
+	test("-i folds the on-screen keyboard into one line; --keys lists the keys; press on it presses return", async () => {
+		const key = (label: string, x: number, extra: Partial<ElementSpec> = {}): ElementSpec =>
+			el("button", { label, frame: { x, y: 597, width: 39, height: 54 }, hittable: true, ...extra });
+		const TYPING: ElementSpec[] = [
+			el("window", {
+				children: [
+					el("textfield", { label: "Email", id: "email", hittable: true, focused: true }),
+					el("keyboard", {
+						id: "inputView",
+						hittable: true,
+						frame: { x: 0, y: 573, width: 390, height: 271 },
+						children: [
+							key("Padding-Left", 0, { frame: { x: 0, y: 590, width: 0, height: 0 }, hittable: false }),
+							key("q", 5),
+							key("w", 44),
+							key("go", 301, { id: "Go", frame: { x: 301, y: 759, width: 89, height: 54 } }),
+						],
+					}),
+				],
+			}),
+		];
+		const h = harness([snapshotOf(TYPING)]);
+		expect(await h.run("snapshot", "-i")).toBe(0);
+		expect(h.c.stdout.join("\n")).toBe(
+			[
+				"generation 1 · axbridge · 390×844@3x · 2 of 7 elements",
+				'@e2 [textbox] "Email" id=email enabled hittable focused (0,50 390×44)',
+				'@e7 [keyboard] return="go" visible (0,573 390×271) 3 keys (--keys)',
+			].join("\n")
+		);
+
+		expect(await h.run("snapshot", "-i", "--json")).toBe(0);
+		expect(doc(h.c).result.elements.at(-1)).toEqual({
+			ref: "@e7",
+			role: "keyboard",
+			name: "go",
+			enabled: true,
+			frame: { x: 0, y: 573, width: 390, height: 271 },
+			keys: 3,
+		});
+
+		expect(await h.run("snapshot", "-i", "--keys")).toBe(0);
+		const lines = h.c.stdout.join("\n").split("\n");
+		expect(lines).toContain('@e5 [button] "q" enabled hittable (5,597 39×54)');
+		expect(lines).toContain('@e7 [button] "go" id=Go enabled hittable (301,759 89×54)');
+		expect(lines.some((line) => line.includes("[keyboard]"))).toBe(false);
+
+		expect(await h.run("snapshot", "-i")).toBe(0);
+		expect(await h.run("press", "@e7")).toBe(0);
+		expect(h.driver.callsOf("tap").at(-1)).toMatchObject({ point: { x: 345.5, y: 786 } });
 	});
 
 	test("--depth limits levels without renumbering refs", async () => {
@@ -265,6 +318,34 @@ describe("warden ui snapshot", () => {
 		expect(await command.run(h.c)).toBe(3);
 		expect(doc(h.c).error.code).toBe("engine_unavailable");
 	});
+
+	test("--timeout is the read deadline, so the cold iOS bridge wait stops there instead of after 60 s", async () => {
+		const seen: (number | undefined)[] = [];
+		const h = harness(() => {
+			seen.push(readDeadlineRemaining());
+			return snapshotOf(LOGIN);
+		});
+		expect(await h.run("snapshot", "-i")).toBe(0);
+		expect(await h.run("snapshot", "--timeout", "2000")).toBe(0);
+		expect(seen).toEqual([5000, 2000]);
+	});
+
+	test("a driver timeout is `failed` (exit 1) with a hint to raise --timeout", async () => {
+		const h = harness([snapshotOf(LOGIN)]);
+		const failing = fakeDriver({
+			screens: [snapshotOf(LOGIN)],
+			onCall: (call) =>
+				call.method === "snapshot"
+					? { error: { code: "E_TIMEOUT", message: "no answer", retryable: true } }
+					: undefined,
+		});
+		const command = createUiCommand({ driver: async () => ok(failing), sleep: async () => undefined });
+		h.c.argv = ["snapshot", "--udid", UDID, "--json"];
+		expect(await command.run(h.c)).toBe(1);
+		const { error } = doc(h.c);
+		expect(error.code).toBe("failed");
+		expect(error.hint).toContain("--timeout 60000");
+	});
 });
 
 describe("warden ui find", () => {
@@ -296,6 +377,16 @@ describe("warden ui find", () => {
 		expect(doc(h.c).result).toEqual({ count: 0, elements: [] });
 		expect(await h.run("find", "bogus", "--json")).toBe(1);
 		expect(doc(h.c).error.code).toBe("usage");
+	});
+
+	test("--timeout is the read deadline of find too", async () => {
+		const seen: (number | undefined)[] = [];
+		const h = harness(() => {
+			seen.push(readDeadlineRemaining());
+			return SCREEN;
+		});
+		expect(await h.run("find", "id=save", "--timeout", "3000")).toBe(0);
+		expect(seen).toEqual([3000]);
 	});
 
 	test("find stores the snapshot its refs belong to", async () => {

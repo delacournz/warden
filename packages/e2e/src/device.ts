@@ -12,6 +12,8 @@ import {
 	findButton,
 	firstOf,
 	isAutofillSaveSheet,
+	isFaceIdRetryButton,
+	lastUnlessDismiss,
 	nameOf,
 } from "./alert-buttons";
 import { createAlertReader } from "./alert-reader";
@@ -24,6 +26,7 @@ import {
 	type DeviceConditions,
 	type DeviceLocation,
 	type DeviceNetwork,
+	type DevicePasskeys,
 	type DevicePermissions,
 	registerConditions,
 	type TimelineStepInput,
@@ -103,7 +106,8 @@ export type { BiometricState };
 /**
  * Simulated Face ID / Touch ID / fingerprint (simulators and emulators only). Every method answers the state after the op.
  * iOS: the first prompt per app shows an "Allow X to use Face ID?" alert; answer it with `device.alert("accept")`.
- * Enroll before installing or launching the app: a new enrollment invalidates biometry-bound keys.
+ * Enroll before installing or launching the app: a new enrollment invalidates biometry-bound keys (`reenroll` does that
+ * on purpose; with the Keychain ACL shim on, `.biometryCurrentSet` Keychain items written before it stop reading).
  * Android: `enroll` / `unenroll` throw `ACTION_FAILED` (driver `E_UNSUPPORTED`); enrollment comes from the golden snapshot, so set
  * the profile's `biometrics: true`.
  */
@@ -113,6 +117,12 @@ export type DeviceBiometrics = {
 	enroll(): Promise<BiometricState>;
 	/** iOS: removes the enrollment. Android: unsupported. */
 	unenroll(): Promise<BiometricState>;
+	/**
+	 * iOS: a new enrolment (unenroll + enroll), like removing and adding a face. With the Keychain ACL shim on the
+	 * answer carries the new `generation`: `.biometryCurrentSet` items written before read `errSecItemNotFound`
+	 * (`-25300`), or ask for the passcode when their ACL allows it. Android: unsupported.
+	 */
+	reenroll(): Promise<BiometricState>;
 	/** Presents a matching face / finger to the pending prompt. */
 	match(): Promise<BiometricState>;
 	/** Presents a non-matching face / finger to the pending prompt. */
@@ -168,7 +178,7 @@ export type Device = DeviceA11y & {
 	back(): Promise<void>;
 	orientation(set?: Orientation): Promise<Orientation>;
 	appearance(set?: "light" | "dark"): Promise<"light" | "dark">;
-	/** Simulated biometrics: `status`, `enroll`, `unenroll`, `match`, `fail`; see {@link DeviceBiometrics}. */
+	/** Simulated biometrics: `status`, `enroll`, `unenroll`, `reenroll`, `match`, `fail`; see {@link DeviceBiometrics}. */
 	readonly biometrics: DeviceBiometrics;
 	clipboard(): Promise<string>;
 	setClipboard(text: string): Promise<void>;
@@ -231,6 +241,12 @@ export type Device = DeviceA11y & {
 	 * Android: a `--camera` device; an image shows on the next camera open, a video feed reboots the emulator.
 	 */
 	readonly camera: DeviceCamera;
+	/**
+	 * Simulated passkeys (a virtual authenticator, test keys only): `set({ mode, uv })`, `off`, `add`, `remove`, `clear`,
+	 * `list`, `status`. The app's real passkey create / sign-in calls are answered by warden. iOS: live in an app launched
+	 * with it, else from the next launch. Android: API 34+. Credentials stay for the lease; mode and uv go back at test end.
+	 */
+	readonly passkeys: DevicePasskeys;
 	/** Android: a critical trim-memory signal to the app. iOS: `E_UNSUPPORTED`. */
 	memoryWarning: DeviceConditions["memoryWarning"];
 	/** iOS: delivers an APNs payload to the app. Android: `E_UNSUPPORTED`. */
@@ -281,17 +297,24 @@ function buttonNames(info: AlertInfo): string {
 	return info.buttons.map((b) => nameOf(b) ?? "?").join(", ");
 }
 
+function acceptTarget(buttons: readonly Element[], platform: Platform): Element | undefined {
+	const found =
+		platform !== "android"
+			? (firstOf(buttons, ACCEPT_BUTTONS) ?? lastUnlessDismiss(buttons))
+			: (androidButton(buttons, ANDROID_PERMISSION_ALLOW_IDS) ??
+				firstOf(buttons, ACCEPT_BUTTONS) ??
+				androidButton(buttons, [ANDROID_POSITIVE_ID]) ??
+				lastUnlessDismiss(buttons));
+	if (found === undefined && buttons.length > 0) {
+		const names = buttons.map((b) => nameOf(b) ?? "?").join(", ");
+		throw new E2eError("ACTION_FAILED", `alert has no affirmative button to accept (buttons: ${names})`);
+	}
+	return found;
+}
+
 function alertTarget(info: AlertInfo, action: AlertAction, platform: Platform): Element | undefined {
 	const { buttons } = info;
-	if (action === "accept") {
-		if (platform !== "android") return firstOf(buttons, ACCEPT_BUTTONS) ?? buttons[buttons.length - 1];
-		return (
-			androidButton(buttons, ANDROID_PERMISSION_ALLOW_IDS) ??
-			firstOf(buttons, ACCEPT_BUTTONS) ??
-			androidButton(buttons, [ANDROID_POSITIVE_ID]) ??
-			buttons[buttons.length - 1]
-		);
-	}
+	if (action === "accept") return acceptTarget(buttons, platform);
 	// Cancel on "Open in …?" only throws away a link the test opened: open it
 	if (action === "dismiss" && isOpenInSheet(info)) return findButton(buttons, "Open");
 	if (action === "dismiss") {
@@ -441,6 +464,7 @@ export function createDevice({
 			return (await unwrap(() => driver.keyboardState(), "read the keyboard", signal())).visible;
 		},
 		camera: conditions.camera,
+		passkeys: conditions.passkeys,
 		memoryWarning: conditions.memoryWarning,
 		push: conditions.push,
 		timeline: (steps) => conditions.timeline(steps),
@@ -459,7 +483,8 @@ export function createDevice({
 			const target = alertTarget(info, action, driver.platform);
 			if (target === undefined) return false;
 			await pressAlertButton(target, "press alert button");
-			if (driver.platform === "ios") await confirmAlertGone(info, target);
+			// the Face ID retry button leaves its sheet up on a simulator: one press, no "still showing" check
+			if (driver.platform === "ios" && !isFaceIdRetryButton(target)) await confirmAlertGone(info, target);
 			return true;
 		},
 
@@ -509,6 +534,7 @@ export function createDevice({
 			status: () => biometric("status"),
 			enroll: () => biometric("enroll"),
 			unenroll: () => biometric("unenroll"),
+			reenroll: () => biometric("reenroll"),
 			match: () => biometric("match"),
 			fail: () => biometric("fail"),
 		},

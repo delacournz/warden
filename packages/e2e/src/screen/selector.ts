@@ -65,6 +65,15 @@ function readRegex(input: string, start: number): Result<{ value: SelectorValue;
 	return ok({ value: { kind: "regex", source, flags }, end: flagsEnd });
 }
 
+const NEXT_KEY = new RegExp(`\\s(?:${KEY_ORDER.join("|")})=`, "g");
+
+/** Where an unquoted value ends: before the next ` <known-key>=` token, else at the end of the input. */
+function unquotedEnd(input: string, start: number): number {
+	NEXT_KEY.lastIndex = start;
+	const next = NEXT_KEY.exec(input);
+	return next === null ? input.length : next.index;
+}
+
 function readValue(input: string, start: number, key: string): Result<{ value: SelectorValue; end: number }> {
 	const first = input[start];
 	if (isSpace(first)) return err(`missing value for ${key}=`);
@@ -75,9 +84,8 @@ function readValue(input: string, start: number, key: string): Result<{ value: S
 		return ok({ value: { kind: "text", value: quoted.data.value }, end: quoted.data.end });
 	}
 	if (first === "/") return readRegex(input, start);
-	let end = start;
-	while (!isSpace(input[end])) end += 1;
-	return ok({ value: { kind: "text", value: input.slice(start, end) }, end });
+	const end = unquotedEnd(input, start);
+	return ok({ value: { kind: "text", value: input.slice(start, end).trimEnd() }, end });
 }
 
 function tokenize(input: string): Result<Token[]> {

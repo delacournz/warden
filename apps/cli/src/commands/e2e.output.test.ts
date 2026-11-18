@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { jsonl } from "../batch/results.testing";
+import { expectContract } from "../contracts/contracts.testing";
 import type { E2eEvent } from "../e2e/report-output";
 import { type Harness, harness } from "./batch.testing";
 import { createE2eCommand } from "./e2e";
@@ -50,6 +51,29 @@ describe("warden e2e output", () => {
 		expect(out[1]).toMatchObject({ event: "test", spec: "chats", title: ["sends"], status: "failed", line: 22 });
 		const last = out[2];
 		expect(last?.event === "report" && last.report.ok).toBe(false);
+	});
+
+	test("--json-lines events, the report and results.jsonl match their published schemas", async () => {
+		const c = setup(["--files", "src/chat/lazy.tsx", "--json-lines"]);
+		const h = failing();
+		expect(await createE2eCommand(h.deps).run(c)).toBe(1);
+		const out = events(c.stdout);
+		const paths: Array<[string, string]> = [[dir, "/repo"]];
+		out.forEach((event, i) => {
+			expectContract("warden.e2e.event", event, { name: `${event.event}-${i}`, paths });
+		});
+		const last = out.at(-1);
+		if (last?.event !== "report") throw new Error("no report event");
+		expectContract("warden.e2e.report", last.report, { name: "failed", paths });
+		const written = [...h.files.entries()].find(([path]) => path.endsWith("e2e-report.json"));
+		expect(written).toBeDefined();
+		expectContract("warden.e2e.report", JSON.parse(written?.[1] ?? "{}"));
+		const results = [...h.files.entries()].find(([path]) => path.endsWith("results.jsonl"));
+		const lines = (results?.[1] ?? "").split("\n").filter((l) => l.trim() !== "");
+		expect(lines.length).toBeGreaterThan(0);
+		lines.forEach((line, i) => {
+			expectContract("warden.e2e.result", JSON.parse(line), { name: `result-${i}`, paths });
+		});
 	});
 
 	test("the verdict prints test totals, the shared error and where the evidence is", async () => {

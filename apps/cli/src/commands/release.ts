@@ -2,6 +2,8 @@ import { describeOwner, type Lease, sameOwner } from "@delacour/warden-core/type
 import { resolveOwner } from "../claim-flags";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
+import type { ReleaseJson } from "../contracts/release.schema";
+import { SCHEMA_VERSIONS } from "../contracts/versions";
 import { releaseDevices } from "../device-lease";
 import { type ShutdownOutcome, shutdownReleasedDevices } from "../device-shutdown";
 import {
@@ -107,20 +109,16 @@ async function release(ctx: CommandContext, ids: string[], opts: ReleaseOpts): P
 			: []),
 		...[...notes, ...bad.notes].map((n) => color.yellow(n)),
 	].join("\n");
-	emit(
-		ctx,
-		opts.json === true,
-		{
-			released: leases.map((l) => l.id),
-			shutdown,
-			deleted,
-			quarantined: bad.quarantined,
-			unknown,
-			notes: [...notes, ...bad.notes],
-		},
-		text,
-		title
-	);
+	const doc: ReleaseJson = {
+		schemaVersion: SCHEMA_VERSIONS["warden.release"],
+		released: leases.map((l) => l.id),
+		shutdown,
+		deleted,
+		quarantined: bad.quarantined,
+		unknown,
+		notes: [...notes, ...bad.notes],
+	};
+	emit(ctx, opts.json === true, doc, text, title);
 	return unknown.length > 0 ? 1 : 0;
 }
 

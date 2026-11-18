@@ -22,10 +22,22 @@ import {
 	type LocationCondition,
 	type LocationScenario,
 	type NetworkCondition,
+	PASSKEY_MODES,
+	PASSKEY_UV,
+	type PasskeyCondition,
+	type PasskeyCredential,
+	type PasskeyMode,
+	type PasskeyProviderSettings,
+	type PasskeyUv,
 	type PermissionCondition,
 	type PermissionName,
 	type PermissionState,
 } from "@delacour/warden-core/conditions/conditions.types";
+import {
+	createPasskeyCredential,
+	type PasskeyInput,
+	type PasskeyView,
+} from "@delacour/warden-core/conditions/passkey-store";
 import { appliedA11y, resolveTextSize } from "@delacour/warden-core/conditions/text-size";
 import { parseDuration } from "@delacour/warden-core/duration";
 import { wardenHome } from "@delacour/warden-core/store";
@@ -40,6 +52,8 @@ import type {
 	KeyboardResult,
 	LocaleState,
 	NetworkState,
+	PasskeyOp,
+	PasskeyState,
 	PermissionGrants,
 	PermissionsState,
 	PushPayload,
@@ -203,8 +217,41 @@ export type DeviceCamera = {
 	status(): Promise<CameraState>;
 };
 
+export type PasskeySetOptions = {
+	/** what the authenticator answers: `auto` (succeed, no UI), `cancel`, `fail`, `unavailable`; default kept, `auto` at first */
+	mode?: PasskeyMode;
+	/** user verification: `match` (UV flag set), `nomatch` (a failed Face ID / fingerprint), `skip` (no UV); default kept, `match` at first */
+	uv?: PasskeyUv;
+};
+
+export type DevicePasskeys = {
+	/**
+	 * Turns warden's virtual authenticator on and sets how it answers the app's passkey create / sign-in calls. Test
+	 * keys, no iCloud / Google account. iOS: live in an app launched with the authenticator, else from the next launch
+	 * (`appliesOnLaunch`). Android: API 34+ (`E_PASSKEY_API`). Put back to the suite's `conditions.passkeys` (else
+	 * off) when the test ends; credentials stay for the lease.
+	 */
+	set(options?: PasskeySetOptions): Promise<PasskeyState>;
+	/** Turns the authenticator off; the app's passkey calls get the platform's own answer. Credentials stay. */
+	off(): Promise<PasskeyState>;
+	/**
+	 * Stores a credential as if the app had created it (P-256; `privateKey` PEM or base64url PKCS#8, generated when
+	 * left out), so a backend fixture can pre-register its public key. Returns it with its private key.
+	 */
+	add(input: PasskeyInput): Promise<PasskeyCredential>;
+	/** Deletes one credential by its base64url id. */
+	remove(credentialId: string): Promise<PasskeyState>;
+	/** Deletes every credential. */
+	clear(): Promise<PasskeyState>;
+	/** The credentials, newest first, for one rp (`rpId`) or all; private keys only with `withKeys`. */
+	list(options?: { rpId?: string; withKeys?: boolean }): Promise<PasskeyView[]>;
+	/** On or off, mode, uv and every credential (no keys). */
+	status(): Promise<PasskeyState>;
+};
+
 export type DeviceConditions = {
 	camera: DeviceCamera;
+	passkeys: DevicePasskeys;
 	network: DeviceNetwork;
 	location: DeviceLocation;
 	clock: DeviceClock;
@@ -372,6 +419,10 @@ export function createDeviceConditions(deps: DeviceConditionsDeps): DeviceCondit
 	let currentKeyboard: KeyboardMode = DEFAULT_KEYBOARD_MODE;
 	let cameraDirty = false;
 	let currentCamera: CameraCondition = {};
+	let passkeysDirty = false;
+	let passkeysOn = false;
+	/** Android: the provider settings the first enable reported; kept on every later record so release restores them */
+	let passkeyProvider: PasskeyProviderSettings | undefined;
 	/** permission states this test set, per name, and the app they are for */
 	const permissionStates = new Map<PermissionName, PermissionState>();
 	let permissionBundle: string | undefined;
@@ -673,6 +724,7 @@ export function createDeviceConditions(deps: DeviceConditionsDeps): DeviceCondit
 			| "battery"
 			| "keyboard"
 			| "camera"
+			| "passkeys"
 			| "memoryWarning"
 			| "push",
 	>(name: K): Driver[K] {
@@ -874,6 +926,88 @@ export function createDeviceConditions(deps: DeviceConditionsDeps): DeviceCondit
 		},
 	};
 
+	/** One authenticator op through the driver; a state change is recorded on the lease (never settled: the store and,
+	 * on Android, the provider app stay until release undoes them) and emitted. */
+	async function passkeysCall(op: PasskeyOp): Promise<PasskeyState> {
+		const run = settingOp("passkeys");
+		const state = await call("passkeys", () => run(op));
+		if (op.kind === "list" || op.kind === "status") return state;
+		passkeysDirty = true;
+		passkeyProvider = passkeyProvider ?? state.previousProvider;
+		if (op.kind === "set" || op.kind === "off") {
+			passkeysOn = state.enabled;
+			const value: PasskeyCondition = {
+				mode: state.mode,
+				uv: state.uv,
+				...(passkeyProvider === undefined ? {} : { previousProvider: passkeyProvider }),
+			};
+			recorder?.record("passkeys", value);
+			emit({ area: "passkeys", value: { enabled: state.enabled, mode: state.mode, uv: state.uv } });
+		}
+		return state;
+	}
+
+	function passkeySetOp(options: PasskeySetOptions | undefined): PasskeyOp {
+		const mode = options?.mode;
+		const uv = options?.uv;
+		if (mode !== undefined && !(PASSKEY_MODES as readonly string[]).includes(mode)) {
+			throw invalid(`unknown passkeys mode "${String(mode)}" (use ${PASSKEY_MODES.join(", ")})`);
+		}
+		if (uv !== undefined && !(PASSKEY_UV as readonly string[]).includes(uv)) {
+			throw invalid(`unknown passkeys uv "${String(uv)}" (use ${PASSKEY_UV.join(", ")})`);
+		}
+		return { kind: "set", ...(mode === undefined ? {} : { mode }), ...(uv === undefined ? {} : { uv }) };
+	}
+
+	async function addPasskey(input: PasskeyInput): Promise<PasskeyCredential> {
+		const made = createPasskeyCredential(input, { now: () => Date.now() });
+		if (!made.success) throw invalid(`passkeys.add: ${made.error}`);
+		await passkeysCall({ kind: "add", credential: made.data });
+		return made.data;
+	}
+
+	const passkeysApi: DevicePasskeys = {
+		set: async (options) => passkeysCall(passkeySetOp(options)),
+		off: () => passkeysCall({ kind: "off" }),
+		add: addPasskey,
+		remove: (credentialId) => passkeysCall({ kind: "remove", credentialId }),
+		clear: () => passkeysCall({ kind: "clear" }),
+		list: async (options) =>
+			(
+				await passkeysCall({
+					kind: "list",
+					...(options?.rpId === undefined ? {} : { rpId: options.rpId }),
+					...(options?.withKeys === undefined ? {} : { withKeys: options.withKeys }),
+				})
+			).credentials,
+		status: () => passkeysCall({ kind: "status" }),
+	};
+
+	/** The suite's authenticator on, its seeded credentials added once (one with the same id, or rp + user, is kept). */
+	async function applyBaselinePasskeys(): Promise<void> {
+		const suite = baseline.passkeys;
+		if (suite === undefined) return;
+		await passkeysCall({ kind: "set", mode: suite.mode, uv: suite.uv });
+		if (suite.credentials === undefined || suite.credentials.length === 0) return;
+		const present = (await passkeysCall({ kind: "list" })).credentials;
+		for (const input of suite.credentials) {
+			const known = present.some((c) =>
+				input.credentialId === undefined
+					? c.rpId === input.rpId && c.userName === input.userName
+					: c.credentialId === input.credentialId
+			);
+			if (!known) await addPasskey(input);
+		}
+	}
+
+	/** Back to the suite's mode and uv, or off; credentials stay for the lease. */
+	async function resetPasskeys(): Promise<void> {
+		const suite = baseline.passkeys;
+		if (suite !== undefined) await passkeysCall({ kind: "set", mode: suite.mode, uv: suite.uv });
+		else if (passkeysOn) await passkeysCall({ kind: "off" });
+		passkeysDirty = false;
+	}
+
 	/** The suite's `camera` as staged feeds. */
 	function baselineCamera(): CameraCondition {
 		const feeds: CameraCondition = {};
@@ -935,6 +1069,7 @@ export function createDeviceConditions(deps: DeviceConditionsDeps): DeviceCondit
 		baseline.timezone !== undefined ||
 		baseline.a11y !== undefined ||
 		baseline.keyboard !== undefined ||
+		baseline.passkeys !== undefined ||
 		ownsDevice ||
 		env.cameraFeeds !== undefined;
 
@@ -973,6 +1108,7 @@ export function createDeviceConditions(deps: DeviceConditionsDeps): DeviceCondit
 		async () => {
 			if (baseline.keyboard !== undefined || ownsDevice) await applyKeyboard(keyboardGoal);
 		},
+		applyBaselinePasskeys,
 	];
 
 	/** What `teardown` undoes after `stopRuns`, in order: each runs only while its area is dirty. */
@@ -1026,6 +1162,7 @@ export function createDeviceConditions(deps: DeviceConditionsDeps): DeviceCondit
 				cameraDirty = false;
 			},
 		},
+		{ dirty: () => passkeysDirty, run: resetPasskeys },
 	];
 
 	const internals: ConditionsInternals = {
@@ -1040,15 +1177,19 @@ export function createDeviceConditions(deps: DeviceConditionsDeps): DeviceCondit
 			batteryDirty ||
 			keyboardDirty ||
 			cameraDirty ||
+			passkeysDirty ||
 			runs.size > 0,
 		wantsInject: () =>
 			baseline.network !== undefined ||
 			baseline.clock !== undefined ||
 			currentNetwork.kind !== "online" ||
-			currentClock.kind !== "real",
+			currentClock.kind !== "real" ||
+			baseline.passkeys !== undefined ||
+			passkeysOn,
 		async applyBaseline() {
 			for (const step of baselineSteps) await step();
 			cameraDirty = false;
+			passkeysDirty = false;
 			networkDirty = false;
 			locationDirty = false;
 			clockDirty = false;
@@ -1086,6 +1227,7 @@ export function createDeviceConditions(deps: DeviceConditionsDeps): DeviceCondit
 		battery: applyBattery,
 		keyboard: applyKeyboard,
 		camera: cameraApi,
+		passkeys: passkeysApi,
 		memoryWarning: async (options) => {
 			const op = settingOp("memoryWarning");
 			await call("memoryWarning", () => op(options ?? { bundleId: env.bundleId }));

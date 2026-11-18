@@ -6,9 +6,11 @@ import {
 	readLaunchSettings,
 	writeLaunchSettings,
 } from "@delacour/warden-core/conditions/launch-settings";
+import { passkeyStorePath } from "@delacour/warden-core/conditions/passkey-paths";
 import type { Exec } from "@delacour/warden-core/exec";
 import { wardenHome as resolveWardenHome } from "@delacour/warden-core/store";
 import { ok, type Result } from "@delacour/warden-types/result";
+import { dedupeAlertButtons } from "../../alert-buttons";
 import type { E2eEnv } from "../../env";
 import type { ReadsA11yEvents } from "../a11y-events";
 import type { ReadsA11y } from "../a11y-read";
@@ -33,12 +35,13 @@ import type {
 import { driverErr, driverError } from "../errors";
 import { DEFAULT_RADIUS, type GesturePlan, planGesture, rotatePlan } from "../gesture-geometry";
 import { keyboardVisible } from "../keyboard-state";
+import type { ControlsKeychainAcl } from "../keychain-acl";
 import type { AuditsNatively } from "../native-audit";
 import type { NetworkProxyPort } from "../network-proxy";
 import { readDeadlineRemaining } from "../read-deadline";
 import { hashFallbackQuietMs, type SettleDetail, settleByHash, snapshotHash } from "../settle";
 import { noteSpanDetail } from "../span-detail";
-import type { PastesText, SelectsAll } from "../typing";
+import type { PastesText, SelectsAll, TypesQuickly } from "../typing";
 import { createInjectChannel, INJECT_DYLIB_ENV, type InjectFs, injectStatePath, locateInjectDylib } from "./inject";
 import { createIosA11y, type IosA11y } from "./ios-a11y";
 import { createIosNativeAudit, type IosNativeAudit, type IosNativeAuditOptions } from "./ios-audit";
@@ -60,7 +63,7 @@ import type {
 	SnapshotData,
 } from "./simd-protocol";
 import type { SimdSpawn } from "./simd-transport";
-import { typeTextBudgetMs } from "./type-budget";
+import { keyPacingSet, QUICK_KEY_PACING, typeTextBudgetMs } from "./type-budget";
 
 /**
  * The iOS `Driver`: input, AX and app launch / terminate / openUrl through `warden-simd` (socket when
@@ -76,9 +79,11 @@ export type IosDriverEnv = Pick<E2eEnv, "simd" | "simdSocket" | "helperDir"> & P
 export type IosDriver = Driver &
 	SelectsAll &
 	PastesText &
+	Partial<TypesQuickly> &
 	ReadsAlertOn &
 	ProbesFrontmost &
 	RecoversAxWedge &
+	ControlsKeychainAcl &
 	ReadsA11y &
 	ReadsA11yEvents &
 	AuditsNatively;
@@ -127,6 +132,11 @@ export type OpenIosDriverOptions = {
 	stagedSettings?: StagedSettings;
 	/** state-file operations of the injected dylib's control channel, injected for tests */
 	injectFs?: InjectFs;
+	/**
+	 * Where the `WARDEN_SIMD_*` key pacing variables are read (default `process.env`): any of them set turns
+	 * `typeTextQuick` off, so every key uses the pacing the user chose.
+	 */
+	keyPacingEnv?: Readonly<Record<string, string | undefined>>;
 	/**
 	 * Launch apps with the injected library so `readA11y` works (hint, custom actions, order). Default: `WARDEN_A11Y=1`.
 	 * Off, a launch pays nothing for it.
@@ -437,6 +447,8 @@ export function createIosDriver(
 		coldBridgeBudgetMs?: number;
 		/** told about every successful `clock` op */
 		clockRecorder?: ClockRecorder;
+		/** offer `typeTextQuick` (`QUICK_KEY_PACING`); off when the user set the helper's key pacing */
+		quickTyping?: boolean;
 		/** device settings (`ios-settings.ts`); absent: those ops answer `E_UNSUPPORTED` */
 		settings?: (ctx: { lastBundle: () => string | undefined }) => IosSettings;
 		/** screen-reader facts from the injected dylib (`ios-a11y.ts`); absent: `readA11y` answers `E_UNSUPPORTED` */
@@ -712,8 +724,9 @@ export function createIosDriver(
 		return result;
 	}
 
-	async function typeText(text: string): DriverResult<void> {
-		const typed = await sendVoid("typeText", { text }, typeTextBudgetMs(text));
+	/** `typeText` at the helper's pacing; `pacing` (per request) replaces it, e.g. `QUICK_KEY_PACING` for `typeTextQuick`. */
+	async function typeText(text: string, pacing?: typeof QUICK_KEY_PACING): DriverResult<void> {
+		const typed = await sendVoid("typeText", { text, ...pacing }, typeTextBudgetMs(text));
 		if (typed.success || typed.error.code !== "E_UNSUPPORTED_TEXT") return typed;
 		const rest = restOf(typed.error, text);
 		if (rest === undefined) return typed;
@@ -863,7 +876,7 @@ export function createIosDriver(
 
 	function toAlertInfo(data: NonNullable<AlertButtonsData>): AlertInfo {
 		const { title, message, buttons } = data;
-		const info: AlertInfo = { buttons: normalizeElements(buttons, client.ready.screen).elements };
+		const info: AlertInfo = { buttons: dedupeAlertButtons(normalizeElements(buttons, client.ready.screen).elements) };
 		if (title !== undefined) info.title = title;
 		if (message !== undefined) info.message = message;
 		return info;
@@ -983,7 +996,8 @@ export function createIosDriver(
 			),
 		rotate: (center, degrees, o) => sendGesture(rotatePlan(center, degrees, o, DEFAULT_RADIUS)),
 		gesture: (paths, o) => sendGesture(planGesture(paths, o, 2)),
-		typeText,
+		typeText: (text) => typeText(text),
+		...(opts.quickTyping ? { typeTextQuick: (text: string) => typeText(text, QUICK_KEY_PACING) } : {}),
 		key: (key, modifiers) => sendVoid("key", params({ usage: KEY_USAGE[key], modifiers: modifiers && [...modifiers] })),
 		selectAll: () => sendVoid("selectAll"),
 		pasteText,
@@ -1045,6 +1059,13 @@ export function createIosDriver(
 						"E_UNSUPPORTED",
 						"the simulated camera on iOS needs a device lease for the injected dylib: run the spec with `warden e2e`, or `warden ui`; a bare `bun test` has no lease"
 					),
+		passkeys: async (op) =>
+			net
+				? net.passkeys(op)
+				: driverErr(
+						"E_UNSUPPORTED",
+						"the simulated passkeys on iOS need a device lease for the injected dylib: run the spec with `warden e2e`, or `warden ui`; a bare `bun test` has no lease"
+					),
 		memoryWarning: (o) => (settings ? settings.memoryWarning(o) : noSettings()),
 		push: (payload, o) => (settings ? settings.push(payload, o) : noSettings()),
 		async clock(op, o) {
@@ -1053,7 +1074,20 @@ export function createIosDriver(
 			if (result.success) opts.clockRecorder?.(op);
 			return result;
 		},
-		biometrics: (op) => simctl.biometrics(op),
+		async biometrics(op) {
+			const state = await simctl.biometrics(op);
+			if (op !== "reenroll" || !state.success || !net) return state;
+			// a new enrolment invalidates `.biometryCurrentSet` items: the shim compares their generation with this one
+			const generation = await net.keychainAclReenrolled();
+			return generation === undefined ? state : { success: true, data: { ...state.data, generation } };
+		},
+		keychainAcl: async (op) =>
+			net
+				? net.keychainAcl(op)
+				: driverErr(
+						"E_UNSUPPORTED",
+						"the Keychain ACL shim on iOS needs a device lease for the injected dylib: run the spec with `warden e2e`, or `warden ui`; a bare `bun test` has no lease"
+					),
 		async clipboard(set) {
 			if (set === undefined) return simctl.pbpaste();
 			const copied = await simctl.pbcopy(set);
@@ -1193,7 +1227,8 @@ function helperPreflight(o: OpenIosDriverOptions): { success: false; error: Driv
 }
 
 /**
- * Open the iOS driver for `udid`. Writes `AutomationEnabled` (best effort) while the helper starts.
+ * Open the iOS driver for `udid`. Writes `AutomationEnabled` and turns the keyboard's typing aids off (autocorrect,
+ * prediction, spell check: they rewrite typed text) while the helper starts, both best effort.
  * `E_HELPER_MISSING` (with the `warden doctor` hint) when no helper binary can be found.
  */
 export async function openIosDriver(o: OpenIosDriverOptions): DriverResult<Driver> {
@@ -1208,8 +1243,13 @@ export async function openIosDriver(o: OpenIosDriverOptions): DriverResult<Drive
 	const connecting = o.client
 		? Promise.resolve<Result<SimdClient, DriverError>>({ success: true, data: o.client })
 		: connect(o, log);
-	const [client, automation] = await Promise.all([connecting, simctl.enableAutomation()]);
+	const [client, automation, typingAids] = await Promise.all([
+		connecting,
+		simctl.enableAutomation(),
+		simctl.disableTypingAids(),
+	]);
 	if (!automation.success) log(`[ios] could not enable AX automation: ${automation.error.message}`);
+	if (!typingAids.success) log(`[ios] could not turn the keyboard's typing aids off: ${typingAids.error.message}`);
 	if (!client.success) return client;
 	const swap = swappableClient(client.data, {
 		now,
@@ -1233,6 +1273,7 @@ export async function openIosDriver(o: OpenIosDriverOptions): DriverResult<Drive
 			nativeAudit: (ctx) => nativeAuditFor(o, exec, log, ctx),
 			settings: (ctx) => settingsFor(o, exec, ctx),
 			...(o.clockRecorder ? { clockRecorder: o.clockRecorder } : {}),
+			quickTyping: !keyPacingSet(o.keyPacingEnv ?? process.env),
 		}),
 	};
 }
@@ -1265,21 +1306,32 @@ function iosNetworkFactory(
 				bundleId: ctx.lastBundle,
 				...(o.injectFs ? { fs: o.injectFs } : {}),
 			}),
-			dylib: () =>
-				locateInjectDylib({
-					env: { [INJECT_DYLIB_ENV]: process.env[INJECT_DYLIB_ENV], WARDEN_HELPER_DIR: o.env?.helperDir },
-					execPath: o.execPath ?? process.execPath,
-					importDir: o.importDir ?? import.meta.dir,
-					wardenHome,
-					exists: o.exists ?? existsSync,
-					realpath: o.realpath ?? realpathSync,
-					...(o.version ? { version: o.version } : {}),
-				}),
+			...(o.injectFs ? { fs: o.injectFs } : {}),
+			passkeyStore: passkeyStorePath(wardenHome, o.udid),
+			dylib: () => injectDylibFor(o),
 			isRunning: (bundleId) => simctl.isRunning(bundleId),
 			lastBundle: ctx.lastBundle,
 			relaunch: ctx.relaunch,
 			...(o.debug ? { debug: true } : {}),
 		});
+}
+
+/**
+ * `libwarden-inject.dylib` for `o`. The version falls back to `WARDEN_VERSION` like `locateHelper` does: a spec process
+ * run by a source warden has bun as its `execPath`, so only the version names the helper dir `warden doctor
+ * --fetch-helper` filled; without it every app launched without the dylib and `device.keyboard` did nothing.
+ */
+export function injectDylibFor(o: OpenIosDriverOptions): Result<string, DriverError> {
+	const version = o.version ?? o.env?.wardenVersion;
+	return locateInjectDylib({
+		env: { [INJECT_DYLIB_ENV]: process.env[INJECT_DYLIB_ENV], WARDEN_HELPER_DIR: o.env?.helperDir },
+		execPath: o.execPath ?? process.execPath,
+		importDir: o.importDir ?? import.meta.dir,
+		wardenHome: o.wardenHome ?? resolveWardenHome(),
+		exists: o.exists ?? existsSync,
+		realpath: o.realpath ?? realpathSync,
+		...(version ? { version } : {}),
+	});
 }
 
 /** The keyboard mode layer of `o`: its own handle on the device's state file. */
@@ -1293,16 +1345,7 @@ function iosKeyboardFor(o: OpenIosDriverOptions, now: () => number, sleep: (ms: 
 			...(o.bundleId ? { bundleId: () => o.bundleId } : {}),
 			...(o.injectFs ? { fs: o.injectFs } : {}),
 		}),
-		dylib: () =>
-			locateInjectDylib({
-				env: { [INJECT_DYLIB_ENV]: process.env[INJECT_DYLIB_ENV], WARDEN_HELPER_DIR: o.env?.helperDir },
-				execPath: o.execPath ?? process.execPath,
-				importDir: o.importDir ?? import.meta.dir,
-				wardenHome,
-				exists: o.exists ?? existsSync,
-				realpath: o.realpath ?? realpathSync,
-				...(o.version ? { version: o.version } : {}),
-			}),
+		dylib: () => injectDylibFor(o),
 		...(o.debug ? { debug: true } : {}),
 	});
 }
@@ -1319,16 +1362,7 @@ function iosA11yFor(o: OpenIosDriverOptions, now: () => number, sleep: (ms: numb
 			...(o.injectFs ? { fs: o.injectFs } : {}),
 		}),
 		...(o.injectFs ? { fs: o.injectFs } : {}),
-		dylib: () =>
-			locateInjectDylib({
-				env: { [INJECT_DYLIB_ENV]: process.env[INJECT_DYLIB_ENV], WARDEN_HELPER_DIR: o.env?.helperDir },
-				execPath: o.execPath ?? process.execPath,
-				importDir: o.importDir ?? import.meta.dir,
-				wardenHome,
-				exists: o.exists ?? existsSync,
-				realpath: o.realpath ?? realpathSync,
-				...(o.version ? { version: o.version } : {}),
-			}),
+		dylib: () => injectDylibFor(o),
 		requested: () => o.a11y ?? process.env.WARDEN_A11Y === "1",
 		...(o.debug ? { debug: true } : {}),
 	});

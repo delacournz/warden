@@ -22,7 +22,7 @@ import org.json.JSONObject;
  */
 public final class Main {
 	static final int PROTOCOL = 1;
-	static final String VERSION = "0.6.0";
+	static final String VERSION = "0.7.0";
 	private static final Charset ASCII = Charset.forName("US-ASCII");
 
 	private static FileOutputStream stdout;

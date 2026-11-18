@@ -1348,7 +1348,10 @@ describe("ensureKindBuild", () => {
 			})
 		);
 		if (!res.success) throw new Error(res.error);
-		expect(calls.some((c) => c.includes("SKIP_BUNDLING=1") && c.includes("--configuration Release"))).toBe(true);
+		expect(calls.some((c) => c.includes("SKIP_BUNDLING=1 xcodebuild") && c.includes("-configuration Release"))).toBe(
+			true
+		);
+		expect(calls.some((c) => c.includes("expo run:ios"))).toBe(false);
 		expect(getBuild(store, KEY, "ios", `${nativeFp}:base`)).toMatchObject({
 			kind: "simulator-base",
 			path: join(simulatorBaseDir(env, KEY, "ios", nativeFp), "Built.app"),

@@ -1,4 +1,10 @@
-export type { KeyboardMode } from "@delacour/warden-core/conditions/conditions.types";
+export type {
+	KeyboardMode,
+	PasskeyCredential,
+	PasskeyMode,
+	PasskeyUv,
+} from "@delacour/warden-core/conditions/conditions.types";
+export type { PasskeyInput, PasskeyView } from "@delacour/warden-core/conditions/passkey-store";
 export type {
 	A11yAuditOptions,
 	A11yAuditResult,
@@ -24,12 +30,14 @@ export type {
 	DeviceClock,
 	DeviceLocation,
 	DeviceNetwork,
+	DevicePasskeys,
 	DevicePermissions,
 	Duration,
 	FlapOptions,
 	LocationPoint,
 	NetworkSetOptions,
 	NetworkStatus,
+	PasskeySetOptions,
 	RouteOptions,
 	TimelineStepInput,
 } from "./conditions/device-conditions";
@@ -43,7 +51,14 @@ export type {
 	DeviceScreenReader,
 	ScreenReaderSpokenOptions,
 } from "./device-a11y";
-export type { A11yOp, A11yState, CameraState, KeyboardResult, KeyboardState } from "./driver/driver.types";
+export type {
+	A11yOp,
+	A11yState,
+	CameraState,
+	KeyboardResult,
+	KeyboardState,
+	PasskeyState,
+} from "./driver/driver.types";
 export { E2eError } from "./errors";
 export type { AnnouncedOptions, PassA11yAuditOptions } from "./expect/a11y-matchers";
 export { expect } from "./expect/expect";

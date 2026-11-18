@@ -1,0 +1,12 @@
+{
+	"schemaVersion": 1,
+	"event": "test",
+	"spec": "chats",
+	"file": "/repo/specs/chats.e2e.ts",
+	"title": ["opens"],
+	"status": "passed",
+	"durationMs": 1250,
+	"device": {
+		"udid": "A"
+	}
+}

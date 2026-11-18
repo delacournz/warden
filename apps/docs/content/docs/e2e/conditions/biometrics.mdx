@@ -1,0 +1,52 @@
+---
+title: Biometrics
+description: Test Face ID, Touch ID and Android fingerprint unlocks against the real system prompt from a spec - enroll, match, fail, and the biometrics config key.
+icon: FingerprintPattern
+simulatorOnly: true
+---
+
+A spec controls the simulator's biometric sensor, so the real `LAContext` / `BiometricPrompt` flow runs, with no app-side bypass.
+
+```ts
+import { expect, test } from "@delacour/warden-e2e";
+
+test("unlocks with a matching face", async ({ app, device, screen }) => {
+	await device.biometrics.enroll();
+	await app.open();
+	await screen.getByTestId("unlock").tap();
+	await device.alert("accept");
+	await device.biometrics.match();
+	await expect(screen.getByText("Unlocked")).toBeVisible();
+});
+```
+
+| Member | Does |
+|---|---|
+| `device.biometrics.status()` | `{ enrolled, modality }` without changing anything |
+| `enroll()` / `unenroll()` / `reenroll()` | iOS only. `reenroll()` is a new enrolment (unenroll + enroll); with [Keychain access control](/docs/e2e/conditions/keychain-acl) on it returns the new `generation` |
+| `match()` / `fail()` | present a matching / non-matching face or finger to the pending prompt. `fail()` does not end the prompt: iOS shows a "Face Not Recognized" alert (Try Face ID Again / Cancel) and Android BiometricPrompt shows "Not recognized"; the app only hears back (`user_cancel`) when the prompt is cancelled (`device.alert({ button: "Cancel" })` on iOS). A presentation sent just as the sheet appears can be dropped, so send it again when nothing changed |
+
+Each returns `BiometricState`: `{ enrolled: boolean; modality: "face" | "fingerprint" }`. Android `enroll` / `unenroll` throw `ACTION_FAILED` (driver `E_UNSUPPORTED`).
+
+## Enrolled devices: `biometrics: true`
+
+```ts
+export default defineConfig({
+	biometrics: true,
+	e2e: { login: { biometrics: false } },
+});
+```
+
+`biometrics` sits at the top level, on an `e2e.<suite>` and on a `batches.<preset>` (default `false`; the suite or preset beats the top level). `--biometrics` on `e2e` and `batch` turns it on for one run. Such devices get the profile `<profile>+bio`: their own pool and golden, never mixed with plain devices. How each platform enrolls them: [Biometrics on a simulator](/docs/sims/conditions/biometrics#enrolled-devices).
+
+## Practice
+
+- Enroll before the app is installed or launched: a new enrollment invalidates keys bound to the current biometry set.
+- iOS can show "Allow X to use Face ID?" before the first prompt of an install: `device.alert("accept")` answers it when it is there and returns `false` when it is not, so call it before `match()`.
+- Home while the prompt is up ends it with `system_cancel`; Cancel with `user_cancel`. Lockout and a passcode after a failed face cannot be reached on a simulator (its sheet offers neither); with no face enrolled and the device fallback on, the passcode sheet takes any code: [The passcode sheet](/docs/e2e/conditions/keychain-acl#the-passcode-sheet).
+- On the "Face Not Recognized" sheet `match()` works without pressing anything: after "Try Face ID Again" that sheet stays up on a simulator. `device.alert("accept")` presses "Try Face ID Again" (also "Try Again" and "Retry"), once for "Try Face ID Again", never "Cancel"; `device.alert("dismiss")` presses "Cancel". `accept` throws `ACTION_FAILED` naming the buttons when none is affirmative, rather than guessing.
+- The Face ID glyph shown while a prompt is up is not in the accessibility tree: settle (`wait stable`) before reading the sheet that follows.
+- Never add an app-side bypass; the point is to run the real prompt.
+- Keychain items behind Face ID or the passcode never prompt on a plain simulator: turn on [Keychain access control](/docs/e2e/conditions/keychain-acl) (`keychainAcl: true`). `device.biometrics.reenroll()` then invalidates `.biometryCurrentSet` items as a new face does on a phone.
+
+Errors and fixes are in [Debugging](/docs/e2e/debugging). By hand with `warden ui biometrics`: [Biometrics on a simulator](/docs/sims/conditions/biometrics).

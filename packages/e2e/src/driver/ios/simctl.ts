@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { nodeResetFs, type ResetFs, resetAppData } from "@delacour/warden-core/builds/install";
 import type { LatLon, LocationCondition } from "@delacour/warden-core/conditions/conditions.types";
 import { type Exec, type ExecResult, execError } from "@delacour/warden-core/exec";
+import { binaryPlistFlags, plistBool } from "@delacour/warden-core/plist";
 import { formatCoord } from "../../conditions/geo";
 import { loadGpxPoints } from "../../conditions/location-plan";
 import { IOS_SCENARIO_NAMES } from "../../conditions/location-scenarios.data";
@@ -90,6 +91,7 @@ export const biometricEventArgv = (
 /** The notifications one op posts, in order; `status` posts nothing. */
 export function biometricArgvs(udid: string, modality: BiometricState["modality"], op: BiometricOp): string[][] {
 	if (op === "enroll" || op === "unenroll") return biometricEnrollArgvs(udid, op === "enroll");
+	if (op === "reenroll") return [...biometricEnrollArgvs(udid, false), ...biometricEnrollArgvs(udid, true)];
 	if (op === "match" || op === "fail")
 		return [biometricEventArgv(udid, modality, op === "match" ? "match" : "nomatch")];
 	return [];
@@ -154,11 +156,49 @@ export const defaultDevicesRoot = (): string => join(homedir(), "Library", "Deve
 export const automationPlistPath = (devicesRoot: string, udid: string): string =>
 	join(devicesRoot, udid, "data", "Library", "Preferences", "com.apple.Accessibility.plist");
 
-/** `plutil -extract AutomationEnabled raw -o - <plist>` prints `true` once the default is written. */
+/** `plutil -extract AutomationEnabled raw -o - <plist>` prints `true` (or `1`) once the default is written. */
 export const automationReadArgv = (plist: string): string[] => [
 	"plutil",
 	"-extract",
 	"AutomationEnabled",
+	"raw",
+	"-o",
+	"-",
+	plist,
+];
+
+/**
+ * The keyboard's typing aids that rewrite what a spec types: autocorrect (seen on an EAS worker: `"Buy" + " milk"`
+ * read back as `"But milk"`), predictive text (an inline prediction is accepted by the next space) and spell check.
+ * Key names are the iOS runtime's own (`TextInput.framework`). Autocapitalization stays as the user has it.
+ */
+export const TYPING_AID_KEYS = ["KeyboardAutocorrection", "KeyboardPrediction", "KeyboardCheckSpelling"] as const;
+export type TypingAidKey = (typeof TYPING_AID_KEYS)[number];
+
+const KEYBOARD_DOMAIN = "com.apple.keyboard.preferences";
+
+/** One `simctl spawn defaults write` per key: the sim's `defaults` takes one key per call (see `a11y-keys.ts`). */
+export const typingAidOffArgv = (udid: string, key: TypingAidKey): string[] => [
+	...XCRUN,
+	"spawn",
+	udid,
+	"defaults",
+	"write",
+	KEYBOARD_DOMAIN,
+	key,
+	"-bool",
+	"NO",
+];
+
+export const keyboardPlistPath = (devicesRoot: string, udid: string): string =>
+	join(devicesRoot, udid, "data", "Library", "Preferences", `${KEYBOARD_DOMAIN}.plist`);
+
+/** `plutil -extract <key> raw -o - <plist>`: one key at a time (~10 ms); the keyboard plist holds dates, so a whole-file
+ * `-convert json` always fails. */
+export const plistBoolReadArgv = (plist: string, key: string): string[] => [
+	"plutil",
+	"-extract",
+	key,
 	"raw",
 	"-o",
 	"-",
@@ -346,16 +386,33 @@ export type Simctl = {
 	screenshot(path?: string): DriverResult<{ path?: string; png?: Uint8Array }>;
 	/** `defaults write com.apple.Accessibility AutomationEnabled -bool true` inside the sim */
 	enableAutomation(): DriverResult<void>;
+	/** Turns the keyboard's {@link TYPING_AID_KEYS} off inside the sim; spawns nothing when the plist has them off */
+	disableTypingAids(): DriverResult<void>;
 };
 
 const ok = <T>(data: T) => ({ success: true as const, data });
 const fail = (error: DriverError) => ({ success: false as const, error });
+
+/** A plist flag as a boolean: `true` / `1` on, `false` / `0` off, absent or anything else unknown. */
+const flagBool = (value: boolean | number | undefined): boolean | undefined =>
+	value === undefined ? undefined : plistBool(String(value));
 
 export function createSimctl(deps: SimctlDeps): Simctl {
 	const { udid, exec } = deps;
 	const env = deps.env ?? {};
 	const readText = async (path: string): Promise<string> =>
 		new TextDecoder().decode(await (deps.readFile ?? ((p: string) => readFile(p)))(path));
+
+	/** A sim prefs plist's top-level flags read in-process (~0.1 ms); `undefined` (ask plutil) when not a readable binary plist. */
+	const readPlistFlags = async (path: string): Promise<Map<string, boolean | number> | undefined> => {
+		const bytes = await (deps.readFile ?? ((p: string) => readFile(p)))(path).catch(() => undefined);
+		return bytes === undefined ? undefined : binaryPlistFlags(bytes);
+	};
+	/** One key through `plutil -extract … raw` (~10 ms a spawn), for a plist the in-process reader cannot read. */
+	const plutilBool = async (argv: string[]): Promise<boolean | undefined> => {
+		const read = await exec(argv, { timeoutMs: PLIST_READ_MS }).catch(() => undefined);
+		return read?.exitCode === 0 ? plistBool(read.stdout) : undefined;
+	};
 
 	async function run(argv: string[], timeoutMs: number, appCommand = false, envOverride?: Record<string, string>) {
 		const res = await exec(argv, { timeoutMs, ...(envOverride ? { env: envOverride } : {}) });
@@ -514,9 +571,20 @@ export function createSimctl(deps: SimctlDeps): Simctl {
 		enableAutomation: async () => {
 			// the default survives helper and sim restarts, so after the first open it is already there
 			const plist = automationPlistPath(deps.devicesRoot ?? defaultDevicesRoot(), udid);
-			const current = await exec(automationReadArgv(plist), { timeoutMs: PLIST_READ_MS }).catch(() => undefined);
-			if (current?.exitCode === 0 && current.stdout.trim() === "true") return ok(undefined);
+			const flags = await readPlistFlags(plist);
+			const on = flags ? flagBool(flags.get("AutomationEnabled")) : await plutilBool(automationReadArgv(plist));
+			if (on === true) return ok(undefined);
 			return runVoid(automationArgv(udid));
+		},
+		disableTypingAids: async () => {
+			const plist = keyboardPlistPath(deps.devicesRoot ?? defaultDevicesRoot(), udid);
+			const flags = await readPlistFlags(plist);
+			const isOff = async (key: TypingAidKey): Promise<boolean> =>
+				(flags ? flagBool(flags.get(key)) : await plutilBool(plistBoolReadArgv(plist, key))) === false;
+			const off = await Promise.all(TYPING_AID_KEYS.map(isOff));
+			const on = TYPING_AID_KEYS.filter((_, i) => !off[i]);
+			const writes = await Promise.all(on.map((key) => runVoid(typingAidOffArgv(udid, key))));
+			return writes.find((write) => !write.success) ?? ok(undefined);
 		},
 	};
 }

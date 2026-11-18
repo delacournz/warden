@@ -1,0 +1,58 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"type": "object",
+	"properties": {
+		"schemaVersion": {
+			"type": "number",
+			"const": 1
+		},
+		"released": {
+			"type": "array",
+			"items": {
+				"type": "string"
+			}
+		},
+		"shutdown": {
+			"type": "array",
+			"items": {
+				"type": "string"
+			}
+		},
+		"deleted": {
+			"type": "array",
+			"items": {
+				"type": "string"
+			}
+		},
+		"quarantined": {
+			"type": "array",
+			"items": {
+				"type": "string"
+			}
+		},
+		"unknown": {
+			"type": "array",
+			"items": {
+				"type": "string"
+			}
+		},
+		"notes": {
+			"type": "array",
+			"items": {
+				"type": "string"
+			}
+		}
+	},
+	"required": [
+		"schemaVersion",
+		"released",
+		"shutdown",
+		"deleted",
+		"quarantined",
+		"unknown",
+		"notes"
+	],
+	"additionalProperties": false,
+	"$id": "https://warden.co.nz/schemas/warden.release/1.json",
+	"title": "warden.release"
+}

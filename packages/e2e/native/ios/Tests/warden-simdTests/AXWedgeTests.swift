@@ -13,6 +13,7 @@ private final class Script: @unchecked Sendable {
   var kickstart: Result<Void, AXWedgeStepFailed>
   var markerDelay: Double
   var silent = true
+  var springBoardAnswers = false
 
   init(
     marker: Result<Bool, AXWedgeStepFailed> = .success(true), kickstart: Result<Void, AXWedgeStepFailed> = .success(()),
@@ -42,6 +43,10 @@ private final class Script: @unchecked Sendable {
         note("liveness")
         return silent
       },
+      springBoardAnswers: { [self] in
+        note("springboard")
+        return springBoardAnswers
+      },
       springBoards: { [self] in nextBoards() },
       restartBackboardd: { [self] in
         note("kickstart")
@@ -63,7 +68,7 @@ private final class Clock: @unchecked Sendable {
 /// AX use: both readers then time out for the life of the boot. The helper recognises it (both readers silent, the
 /// marker in the sim log), restarts backboardd once, ends its stale guests and reads on.
 final class AXWedgeTests: XCTestCase {
-  private let silentHost = AccessibilityError.serviceNotAnswering(.query(timeout: 10), elapsed: 10, behindAbandoned: 0)
+  private let silentHost = IdbErrors.map(AccessibilityError.serviceNotAnswering(.query(timeout: 10), elapsed: 10, behindAbandoned: 0))
 
   private func recovery(_ script: Script, max: Int = 1, clock: Clock = Clock()) -> AXWedgeRecovery {
     AXWedgeRecovery(maxRestarts: max, steps: script.steps, now: { clock.now }, log: { _ in })
@@ -82,8 +87,22 @@ final class AXWedgeTests: XCTestCase {
 
   func testOnlyASilentHostServiceCountsAsDead() {
     XCTAssertTrue(AXWedgeRecovery.isServiceSilent(silentHost))
-    XCTAssertFalse(AXWedgeRecovery.isServiceSilent(AccessibilityError.elementNotFound(key: "id", value: "x", depth: 1)))
+    XCTAssertFalse(AXWedgeRecovery.isServiceSilent(IdbErrors.map(AccessibilityError.elementNotFound(key: "id", value: "x", depth: 1))))
     XCTAssertFalse(AXWedgeRecovery.isServiceSilent(WireError(.timeout, "client")))
+  }
+
+  func testOnlyAnErrorTheServerGaveCountsAsAnAnswer() {
+    XCTAssertTrue(AXWedgeRecovery.isServiceAnswer(IdbErrors.map(AccessibilityError.noTranslationObject(.application(pid: 3)))))
+    XCTAssertTrue(AXWedgeRecovery.isServiceAnswer(IdbErrors.map(AccessibilityError.elementNotFound(key: "id", value: "x", depth: 1))))
+    XCTAssertFalse(AXWedgeRecovery.isServiceAnswer(silentHost))
+    XCTAssertFalse(AXWedgeRecovery.isServiceAnswer(IdbErrors.map(AccessibilityError.springBoardNotRunning)))
+    XCTAssertFalse(
+      AXWedgeRecovery.isServiceAnswer(IdbErrors.map(AccessibilityError.springBoardRestarting(exitedProcessIdentifier: 3, restartedAgo: 1))))
+    XCTAssertFalse(AXWedgeRecovery.isServiceAnswer(IdbErrors.map(AccessibilityError.accessibilityUnavailable)))
+    XCTAssertFalse(AXWedgeRecovery.isServiceAnswer(IdbErrors.map(AccessibilityError.dispatcherUnavailable)))
+    XCTAssertFalse(AXWedgeRecovery.isServiceAnswer(IdbErrors.map(AccessibilityError.simulatorNotBooted(description: "Shutdown"))))
+    XCTAssertFalse(AXWedgeRecovery.isServiceAnswer(WireError(.timeout, "SpringBoard control read")))
+    XCTAssertFalse(AXWedgeRecovery.isServiceAnswer(CancellationError()))
   }
 
   func testLogShowsOwnInvocationLineIsNoWedge() {
@@ -182,6 +201,123 @@ final class AXWedgeTests: XCTestCase {
     XCTAssertNotNil(wedge.suspect())
   }
 
+  // MARK: silence without the marker (a host whose `log show` cannot compose the runtime's messages)
+
+  func testNoMarkerButReadersSilentForAMinuteIsAWedge() async throws {
+    let clock = Clock()
+    let script = Script(marker: .success(false))
+    let wedge = recovery(script, clock: clock)
+    let verdict1 = await wedge.suspect()?.value
+    XCTAssertEqual(verdict1, .notWedged)
+    clock.advance(30)
+    XCTAssertNil(wedge.suspect(), "inside the not-wedged window: no check, but the silence counts")
+    clock.advance(31)
+    let outcome = await try XCTUnwrap(wedge.suspect()).value
+    guard case .restarted = outcome else { return XCTFail("expected a restart, got \(outcome)") }
+    XCTAssertEqual(script.log, ["log", "log", "liveness", "springboard", "kickstart", "after"])
+    XCTAssertEqual(wedge.restarts, 1)
+  }
+
+  func testSilenceWhileSpringBoardStillAnswersIsAHungAppNotAWedge() async throws {
+    let clock = Clock()
+    let script = Script(marker: .success(false))
+    script.springBoardAnswers = true
+    let wedge = recovery(script, clock: clock)
+    _ = await wedge.suspect()?.value
+    clock.advance(30)
+    _ = wedge.suspect()
+    clock.advance(31)
+    let verdict = await wedge.suspect()?.value
+    XCTAssertEqual(verdict, .notWedged, "the server answers SpringBoard: only the frontmost app is silent")
+    XCTAssertEqual(script.log, ["log", "log", "liveness", "springboard"])
+    XCTAssertEqual(wedge.restarts, 0)
+  }
+
+  func testTheMarkerNeedsNoSpringBoardControlRead() async throws {
+    let script = Script()
+    script.springBoardAnswers = true
+    let outcome = await try XCTUnwrap(recovery(script).suspect()).value
+    guard case .restarted = outcome else { return XCTFail("expected a restart, got \(outcome)") }
+    XCTAssertEqual(script.log, ["log", "liveness", "kickstart", "after"])
+  }
+
+  func testALogThatCannotBeReadIsNoVerdictOnceTheReadersWereSilentForAMinute() async throws {
+    let clock = Clock()
+    let script = Script(marker: .failure(AXWedgeStepFailed("log show: exit 1")))
+    let wedge = recovery(script, clock: clock)
+    let verdict2 = await wedge.suspect()?.value
+    XCTAssertEqual(verdict2, .failed("log show: exit 1"))
+    clock.advance(30)
+    let verdict3 = await wedge.suspect()?.value
+    XCTAssertEqual(verdict3, .failed("log show: exit 1"))
+    clock.advance(31)
+    let outcome = await try XCTUnwrap(wedge.suspect()).value
+    guard case .restarted = outcome else { return XCTFail("expected a restart, got \(outcome)") }
+    XCTAssertEqual(wedge.restarts, 1)
+  }
+
+  func testSilenceShorterThanAMinuteOrFewerThanThreeReadsIsNoWedge() async throws {
+    let clock = Clock()
+    let script = Script(marker: .success(false))
+    let wedge = recovery(script, clock: clock)
+    _ = await wedge.suspect()?.value
+    clock.advance(61)
+    let verdict4 = await wedge.suspect()?.value
+    XCTAssertEqual(verdict4, .notWedged, "two silent reads, however far apart, are no proof")
+    XCTAssertFalse(script.log.contains("kickstart"))
+  }
+
+  func testAReadThatAnswersStartsTheSilenceOver() async throws {
+    let clock = Clock()
+    let script = Script(marker: .success(false))
+    let wedge = recovery(script, clock: clock)
+    _ = await wedge.suspect()?.value
+    clock.advance(30)
+    _ = wedge.suspect()
+    XCTAssertEqual(wedge.silentReads, 2)
+    wedge.readersAnswered()
+    XCTAssertEqual(wedge.silentReads, 0)
+    clock.advance(31)
+    let verdict5 = await wedge.suspect()?.value
+    XCTAssertEqual(verdict5, .notWedged)
+    XCTAssertFalse(script.log.contains("kickstart"))
+  }
+
+  func testSilenceStillNeedsTheAxReaderToTimeOut() async throws {
+    let clock = Clock()
+    let script = Script(marker: .success(false))
+    script.silent = false
+    let wedge = recovery(script, clock: clock)
+    _ = await wedge.suspect()?.value
+    clock.advance(30)
+    _ = wedge.suspect()
+    clock.advance(31)
+    let verdict6 = await wedge.suspect()?.value
+    XCTAssertEqual(verdict6, .notWedged)
+    XCTAssertEqual(script.log, ["log", "log", "liveness"])
+  }
+
+  func testAnExplicitAskUsesTheSilenceTheReadsRecorded() async throws {
+    let clock = Clock()
+    let script = Script(marker: .success(false))
+    let wedge = recovery(script, clock: clock)
+    _ = await wedge.suspect()?.value
+    clock.advance(30)
+    _ = wedge.suspect()
+    clock.advance(31)
+    _ = wedge.suspect()
+    _ = await wedge.current?.value
+    XCTAssertEqual(wedge.restarts, 1, "the third silent read past the window restarts")
+    let forced = recovery(Script(marker: .success(false)), clock: clock)
+    _ = await forced.suspect()?.value
+    clock.advance(30)
+    _ = forced.suspect()
+    _ = forced.suspect()
+    clock.advance(31)
+    let reply = await Session.axWedge(forced, recover: true)
+    XCTAssertEqual(reply.objectValue?["checked"], "restarted", "the warm-up's ask sees the reads' silence")
+  }
+
   func testTheStateSaysWhatHappenedAndHowLongAgo() async throws {
     let clock = Clock()
     let wedge = recovery(Script(), max: 2, clock: clock)
@@ -220,14 +356,23 @@ final class AXWedgeTests: XCTestCase {
   // MARK: readAX
 
   private func readAX(
+    requested: AXBackend? = nil,
     bridge: @escaping @Sendable () async throws -> String, host: @escaping @Sendable () async throws -> String,
-    wedge: AXWedgeRecovery
+    wedge: AXWedgeRecovery, warmth: BridgeWarmth = .warmed()
   ) async throws -> AXOutcome<String> {
     try await Session.readAX(
-      requested: nil, bridge: bridge, host: host, recover: { _ in },
+      requested: requested, bridge: bridge, host: host, recover: { _ in },
       policy: BridgeDeadline(readMs: 50, coldReadMs: 50, cooldownSeconds: 20), gate: BridgeStallGate(),
-      warmth: .warmed(), health: BridgeHealth(), now: { 1000 }, log: { _ in }, bridgeName: "available",
+      warmth: warmth, health: BridgeHealth(), now: { 1000 }, log: { _ in }, bridgeName: "available",
       wedge: wedge)
+  }
+
+  /// How many times a reader was asked (reads run off the test's task).
+  private final class Asked: @unchecked Sendable {
+    private let lock = NSLock()
+    private var n = 0
+    var count: Int { lock.withLock { n } }
+    func note() { lock.withLock { n += 1 } }
   }
 
   func testBothReadersSilentStartsACheckAndTheFailedReadSaysSo() async throws {
@@ -253,8 +398,21 @@ final class AXWedgeTests: XCTestCase {
     let wedge = recovery(Script())
     let silent = silentHost
     _ = try? await readAX(
-      bridge: { throw AXBridgeError.bridgeUnavailable }, host: { throw silent }, wedge: wedge)
+      bridge: { throw IdbErrors.map(AXBridgeError.bridgeUnavailable) }, host: { throw silent }, wedge: wedge)
     XCTAssertNil(wedge.current)
+  }
+
+  func testAReadThatAnswersClearsTheSilence() async throws {
+    let wedge = recovery(Script(marker: .success(false)))
+    _ = await wedge.suspect()?.value
+    XCTAssertEqual(wedge.silentReads, 1)
+    let outcome = try await readAX(
+      bridge: {
+        try await Task.sleep(for: .seconds(5))
+        return "late"
+      }, host: { "ax" }, wedge: wedge)
+    XCTAssertEqual(outcome.value, "ax")
+    XCTAssertEqual(wedge.silentReads, 0)
   }
 
   func testAFallbackAfterARestartCarriesTheCount() async throws {
@@ -267,5 +425,87 @@ final class AXWedgeTests: XCTestCase {
       }, host: { "ax" }, wedge: wedge)
     XCTAssertEqual(outcome.fallback?.stall?.axWedgeRestarts, 1)
     XCTAssertEqual(outcome.fallback?.stall?.json.objectValue?["axWedgeRestarts"], 1)
+  }
+
+  // MARK: the guest reports the accessibility service silent (idb's own query timeout, not a guest stall)
+
+  func testAGuestReportingTheServiceSilentFallsBackToAxAndCountsTheReadOnce() async throws {
+    let wedge = recovery(Script(marker: .success(false)))
+    let silent = silentHost
+    do {
+      _ = try await readAX(bridge: { throw silent }, host: { throw silent }, wedge: wedge)
+      XCTFail("both readers failed")
+    } catch let error as AXReadersFailed {
+      XCTAssertEqual(error.stall?.axWedge, "checking")
+      XCTAssertTrue(AXWedgeRecovery.isServiceSilent(error.host))
+    }
+    _ = await wedge.current?.value
+    XCTAssertEqual(wedge.silentReads, 1, "one read, one count, however many readers were silent on it")
+  }
+
+  func testAGuestReportingTheServiceSilentThenAnAxAnswerClearsTheSilence() async throws {
+    let wedge = recovery(Script(marker: .success(false)))
+    let silent = silentHost
+    let outcome = try await readAX(bridge: { throw silent }, host: { "ax" }, wedge: wedge)
+    XCTAssertEqual(outcome.value, "ax")
+    XCTAssertEqual(outcome.backend, .ax)
+    XCTAssertNotNil(outcome.fallback)
+    _ = await wedge.current?.value
+    XCTAssertEqual(wedge.silentReads, 0)
+  }
+
+  // MARK: a cold guest (no answer yet since start, recycle or launch) reports the service silent
+
+  func testAColdGuestReportingTheServiceSilentKeepsItsErrorAndDoesNotAskAx() async throws {
+    let wedge = recovery(Script(marker: .success(false)))
+    let silent = silentHost
+    let asked = Asked()
+    do {
+      _ = try await readAX(
+        bridge: { throw silent },
+        host: {
+          asked.note()
+          return "ax"
+        }, wedge: wedge, warmth: BridgeWarmth())
+      XCTFail("a cold guest's silent service is the read's answer")
+    } catch {
+      XCTAssertFalse(error is AXReadersFailed, "no ax fallback was read")
+      XCTAssertTrue(AXWedgeRecovery.isServiceSilent(error), "the guest's own retryable error")
+    }
+    XCTAssertEqual(asked.count, 0, "the warming service is not read a second time through ax")
+    _ = await wedge.current?.value
+    XCTAssertEqual(wedge.silentReads, 1, "still counted towards the wedge check")
+  }
+
+  func testAColdGuestOnASilentServiceCountsEveryReadSoAWedgeIsStillFound() async throws {
+    let wedge = recovery(Script(marker: .success(false)))
+    let silent = silentHost
+    let warmth = BridgeWarmth()
+    for _ in 0..<AXWedgeRecovery.silentReads {
+      _ = try? await readAX(bridge: { throw silent }, host: { "ax" }, wedge: wedge, warmth: warmth)
+      _ = await wedge.current?.value
+    }
+    XCTAssertEqual(wedge.silentReads, AXWedgeRecovery.silentReads)
+  }
+
+  func testAnExplicitAxReadThatIsSilentCountsTheSilence() async throws {
+    let wedge = recovery(Script(marker: .success(false)))
+    let silent = silentHost
+    do {
+      _ = try await readAX(requested: .ax, bridge: { "bridge" }, host: { throw silent }, wedge: wedge)
+      XCTFail("the ax read failed")
+    } catch {
+      XCTAssertTrue(AXWedgeRecovery.isServiceSilent(error), "an explicit ax read keeps its own error")
+    }
+    _ = await wedge.current?.value
+    XCTAssertEqual(wedge.silentReads, 1)
+  }
+
+  func testAnExplicitAxbridgeReadOnASilentServiceCountsTheSilence() async throws {
+    let wedge = recovery(Script(marker: .success(false)))
+    let silent = silentHost
+    _ = try? await readAX(requested: .axbridge, bridge: { throw silent }, host: { "ax" }, wedge: wedge)
+    _ = await wedge.current?.value
+    XCTAssertEqual(wedge.silentReads, 1)
   }
 }

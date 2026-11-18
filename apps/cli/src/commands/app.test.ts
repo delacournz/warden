@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { fakeApp, testProject } from "@delacour/warden-core/builds/builds.testing";
 import { getInstall, recordInstall, storeArtifact } from "@delacour/warden-core/builds/cache";
 import type { ExecResult } from "@delacour/warden-core/exec";
+import { expectContract } from "../contracts/contracts.testing";
 import { OWNER_ENV } from "../simctl.testing";
 import { fakeExec, scriptedUi, type TestContext, testContext } from "../testing";
 import { type AppDeps, createAppCommand, kindAppInput } from "./app";
@@ -184,6 +185,11 @@ describe("git facts of one command", () => {
 		for (const dir of [c.cwd, join(c.cwd, "app"), realpathSync(join(c.cwd, "app"))]) c.git.store(dir, factsOf(c));
 		expect(await createAppCommand(deps).run(c)).toBe(0);
 		expect(JSON.parse(c.stdout.join("\n")).source).toBe("build");
+		const built = JSON.parse(c.stdout.join("\n"));
+		expectContract("warden.app.ensure", built, {
+			name: "build",
+			paths: [[built.appPath, "/warden-home/builds/ios/abc123def456/Built.app"]],
+		});
 		expect(rev(calls)).toEqual([]);
 	});
 });
@@ -217,7 +223,12 @@ describe("warden app ensure", () => {
 		const cmd = createAppCommand(deps);
 		expect(await cmd.run(c)).toBe(0);
 		// the kind-less build is the dev build: found at its old key, ensured and installed under the dev kind's
+		expectContract("warden.app.ensure", JSON.parse(c.stdout.join("\n")), {
+			name: "cache-dev",
+			paths: [[path, "/warden-home/builds/ios/demo.app"]],
+		});
 		expect(JSON.parse(c.stdout.join("\n"))).toEqual({
+			schemaVersion: 1,
 			appPath: path,
 			hash: `${HASH}:dev`,
 			source: "cache",

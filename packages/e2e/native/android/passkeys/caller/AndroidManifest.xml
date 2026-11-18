@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="nz.co.delacour.warden.passkeys.caller">
+    <uses-sdk android:minSdkVersion="34" android:targetSdkVersion="34" />
+    <queries><package android:name="nz.co.delacour.warden.passkeys" /></queries>
+    <application android:label="Passkey caller" android:allowBackup="false">
+        <activity android:name=".CallerActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

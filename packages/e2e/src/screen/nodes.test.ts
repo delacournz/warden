@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { NOT_SHOWING_HINT_TRAIT, SHOWING_HINT_TRAIT } from "../driver/hint-state";
 import { el, snap } from "./element.testing";
 import { allFixtureSnapshots } from "./fixtures.testing";
 import { descendantsOf, indexSnapshot, isWithin, type NodeEntry, type NodeIndex } from "./nodes";
@@ -80,6 +81,107 @@ describe("names, values, secure", () => {
 		expect(empty?.secure).toBe(true);
 		expect(placeholder?.secure).toBe(true);
 		expect(placeholder?.value).toBeUndefined();
+	});
+
+	test("a text field showing its placeholder holds nothing, focused or not; the placeholder is kept", () => {
+		const [idle, focused] = indexSnapshot(
+			snap([
+				el("textfield", { id: "a", value: "ada@example.com", placeholder: "ada@example.com" }),
+				el("textfield", { id: "b", value: "ada@example.com", placeholder: "ada@example.com", focused: true }),
+			])
+		).entries;
+		for (const entry of [idle, focused]) {
+			expect(entry?.value).toBeUndefined();
+			expect(entry?.placeholder).toBe("ada@example.com");
+			expect(entry?.showsPlaceholder).toBe(true);
+			expect(entry?.subtreeText).toBe("");
+		}
+	});
+
+	test("a text field holding other text keeps its value next to its placeholder", () => {
+		const entry = indexSnapshot(
+			snap([el("textfield", { value: "grace@example.com", placeholder: "ada@example.com", label: "Email" })])
+		).entries[0];
+		expect(entry?.value).toBe("grace@example.com");
+		expect(entry?.placeholder).toBe("ada@example.com");
+		expect(entry?.showsPlaceholder).toBe(false);
+		expect(entry?.subtreeText).toBe("Email grace@example.com");
+	});
+
+	test("an Android edit field showing its hint has neither a value nor a name from it", () => {
+		const [hinted, typed] = indexSnapshot(
+			snap(
+				[
+					el("textfield", {
+						id: "a",
+						rawType: "android.widget.EditText",
+						value: "ada@example.com",
+						text: "ada@example.com",
+						placeholder: "ada@example.com",
+					}),
+					el("textfield", {
+						id: "b",
+						rawType: "android.widget.EditText",
+						value: "grace@example.com",
+						text: "grace@example.com",
+						placeholder: "ada@example.com",
+					}),
+				],
+				{ platform: "android" }
+			)
+		).entries;
+		expect(hinted?.value).toBeUndefined();
+		expect(hinted?.name).toBeUndefined();
+		expect(hinted?.subtreeText).toBe("");
+		expect(typed?.value).toBe("grace@example.com");
+		expect(typed?.name).toBe("grace@example.com");
+	});
+
+	test("an Android field known to show its hint is empty whatever its text says", () => {
+		const entry = indexSnapshot(
+			snap(
+				[
+					el("textfield", {
+						rawType: "android.widget.EditText",
+						value: "",
+						placeholder: "ada@example.com",
+						traits: [SHOWING_HINT_TRAIT],
+					}),
+				],
+				{ platform: "android" }
+			)
+		).entries[0];
+		expect(entry?.value).toBeUndefined();
+		expect(entry?.showsPlaceholder).toBe(true);
+		expect(entry?.placeholder).toBe("ada@example.com");
+		expect(entry?.subtreeText).toBe("");
+	});
+
+	test("an Android field known to hold text keeps it as the value, even when it is exactly the hint", () => {
+		const entry = indexSnapshot(
+			snap(
+				[
+					el("textfield", {
+						rawType: "android.widget.EditText",
+						value: "ada@example.com",
+						text: "ada@example.com",
+						placeholder: "ada@example.com",
+						traits: [NOT_SHOWING_HINT_TRAIT],
+					}),
+				],
+				{ platform: "android" }
+			)
+		).entries[0];
+		expect(entry?.value).toBe("ada@example.com");
+		expect(entry?.name).toBe("ada@example.com");
+		expect(entry?.showsPlaceholder).toBe(false);
+		expect(entry?.subtreeText).toBe("ada@example.com");
+	});
+
+	test("a placeholder on anything but a text input changes nothing", () => {
+		const entry = indexSnapshot(snap([el("button", { label: "Go", value: "Go", placeholder: "Go" })])).entries[0];
+		expect(entry?.value).toBe("Go");
+		expect(entry?.showsPlaceholder).toBe(false);
 	});
 
 	test("a text field with a real value is not secure", () => {

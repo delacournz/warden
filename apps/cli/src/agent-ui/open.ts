@@ -1,7 +1,8 @@
 import type { BuildKind } from "@delacour/warden-core/builds/kinds";
 import { androidTools } from "@delacour/warden-core/providers/android";
 import type { Driver } from "@delacour/warden-e2e/driver/driver.types";
-import type { Result } from "@delacour/warden-types/result";
+import { keychainAcl } from "@delacour/warden-e2e/driver/keychain-acl";
+import { ok, type Result } from "@delacour/warden-types/result";
 import { resolveOwner } from "../claim-flags";
 import type { CommandContext } from "../context";
 import { adbReverseArgv, DEV_CLIENT_ARGS, devClientLaunchArgs } from "../metro";
@@ -9,7 +10,7 @@ import { type ActionOptionValues, finishAction, parseSettle } from "./act";
 import { deviceFacade, viaFacade } from "./controls";
 import { sharedNote, type UiDevice } from "./device";
 import { fromDriver, type UiDeps } from "./driver";
-import { type UiError, type UiSuccess, uiError } from "./output";
+import { type UiError, type UiResultOf, type UiSuccess, uiError } from "./output";
 import { runUi, type UiRunEnv } from "./run";
 import { readState, updateState } from "./state";
 
@@ -25,6 +26,8 @@ export type OpenOptionValues = ActionOptionValues & {
 	project?: string;
 	/** `--a11y`: iOS launches carry the injected library from now on (remembered in `state.json`) */
 	a11y?: true;
+	/** `--keychain-acl` / `--no-keychain-acl`: the Keychain ACL shim on / off for the device (sticky in its inject state) */
+	keychainAcl?: boolean;
 };
 
 const URL_SCHEME = /^[a-z][a-z0-9+.-]*:\/\//i;
@@ -89,9 +92,13 @@ export function uiOpen(ctx: CommandContext, deps: UiDeps, what: string, opts: Op
 		if (isUrl && hasLaunchOptions(opts)) {
 			return {
 				success: false,
-				error: uiError("usage", "--metro, --relaunch, --args, --kind and --project apply to a bundle id, not a URL", {
-					hint: "open the bundle id first, then the URL",
-				}),
+				error: uiError(
+					"usage",
+					"--metro, --relaunch, --args, --kind, --project and --keychain-acl apply to a bundle id, not a URL",
+					{
+						hint: "open the bundle id first, then the URL",
+					}
+				),
 			};
 		}
 		const launch = isUrl ? opts : withA11yLaunch(ctx, device, opts);
@@ -121,7 +128,8 @@ function hasLaunchOptions(opts: OpenOptionValues): boolean {
 		opts.relaunch === true ||
 		(opts.args?.length ?? 0) > 0 ||
 		opts.kind !== undefined ||
-		opts.project !== undefined
+		opts.project !== undefined ||
+		opts.keychainAcl !== undefined
 	);
 }
 
@@ -138,7 +146,7 @@ type OpenRun = {
 };
 
 /** `open <url>`: hand the link to the system (accepting iOS's "Open in …?" sheet). */
-async function openUrl(run: OpenRun): Promise<Result<UiSuccess, UiError>> {
+async function openUrl(run: OpenRun): Promise<Result<UiSuccess<UiResultOf<"open">>, UiError>> {
 	const { ctx, deps, env, device, driver, settle, what } = run;
 	const facade = deviceFacade(ctx, deps, device, driver, env.timeoutMs);
 	const opened = await viaFacade(() => facade.openLink(what));
@@ -209,14 +217,39 @@ async function installRequestedKind(run: OpenRun): Promise<Result<KindInstall | 
 	return installKind(run, kind);
 }
 
+const NOT_ENROLLED_WARNING =
+	"no Face ID / Touch ID enrolled on this simulator: a Keychain read behind biometrics fails (claim with --biometrics, or `warden ui biometrics enroll`)";
+
+/**
+ * `--keychain-acl` / `--no-keychain-acl`: switch the shim through the driver before the launch. The switch lives in
+ * the device's inject state, so later launches (`ui open`, relaunches, another process) keep it. An app running
+ * without the dylib only picks it up on its next launch (`appliesOnLaunch`): that one is relaunched.
+ */
+async function switchKeychainAcl(run: OpenRun): Promise<Result<{ relaunch: boolean; warnings: string[] }, UiError>> {
+	const { driver, opts } = run;
+	if (opts.keychainAcl === undefined) return ok({ relaunch: false, warnings: [] });
+	const switched = await keychainAcl(driver, { kind: opts.keychainAcl ? "on" : "off" });
+	if (!switched.success) {
+		const { code, message } = switched.error;
+		if (code !== "E_UNSUPPORTED") return fromDriver(switched);
+		return { success: false, error: uiError("unsupported", `${code}: ${message}`) };
+	}
+	if (!opts.keychainAcl) return ok({ relaunch: false, warnings: [] });
+	const bio = await driver.biometrics("status");
+	const warnings = bio.success && !bio.data.enrolled ? [NOT_ENROLLED_WARNING] : [];
+	return ok({ relaunch: switched.data.appliesOnLaunch === true, warnings });
+}
+
 /** `open <bundleId>`: launch (or attach to) the app and remember it, and the Metro URL, in `state.json`. */
-async function openBundle(run: OpenRun): Promise<Result<UiSuccess, UiError>> {
+async function openBundle(run: OpenRun): Promise<Result<UiSuccess<UiResultOf<"open">>, UiError>> {
 	const { ctx, deps, env, device, driver, settle, what, opts } = run;
 	const kinded = await installRequestedKind(run);
 	if (!kinded.success) return kinded;
 	const installed = kinded.data;
+	const acl = await switchKeychainAcl(run);
+	if (!acl.success) return acl;
 	// a build installed over a running app leaves the old process up: start the new one
-	const relaunch = opts.relaunch === true || installed?.fresh === true;
+	const relaunch = opts.relaunch === true || installed?.fresh === true || acl.data.relaunch;
 	const launchOpts = { ...opts, ...(relaunch ? { relaunch: true as const } : {}) };
 	const launched = await launchBundle(ctx, driver, device, what, launchOpts);
 	if (!launched.success) return launched;
@@ -226,7 +259,7 @@ async function openBundle(run: OpenRun): Promise<Result<UiSuccess, UiError>> {
 		app: what,
 		...(opts.metro !== undefined ? { metroUrl: opts.metro } : {}),
 	}));
-	return finishAction(ctx, deps, env, device, driver, settle, {
+	const done = await finishAction(ctx, deps, env, device, driver, settle, {
 		action: "open",
 		text: bundleText({ ...run, opts: launchOpts }, attached, installed),
 		args: {
@@ -244,4 +277,6 @@ async function openBundle(run: OpenRun): Promise<Result<UiSuccess, UiError>> {
 			...(installed?.fallbackReason !== undefined ? { fallbackReason: installed.fallbackReason } : {}),
 		},
 	});
+	if (!done.success || acl.data.warnings.length === 0) return done;
+	return ok({ ...done.data, warnings: [...(done.data.warnings ?? []), ...acl.data.warnings] });
 }

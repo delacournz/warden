@@ -1,0 +1,10 @@
+{
+	"ok": false,
+	"schemaVersion": 1,
+	"command": "claim",
+	"error": {
+		"message": "Test iPhone is locked",
+		"code": "device_locked",
+		"hint": "unlock the phone, then retry"
+	}
+}

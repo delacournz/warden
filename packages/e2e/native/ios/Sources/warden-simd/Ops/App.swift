@@ -1,5 +1,3 @@
-import FBControlCore
-import FBSimulatorControl
 import Foundation
 
 /// `launch`, `terminate`, `openUrl`: app lifecycle done by this process, which already holds CoreSimulator. A
@@ -42,14 +40,9 @@ struct LaunchRequest: Equatable, Sendable {
     }
   }
 
-  var launchMode: ApplicationLaunchMode {
-    terminateRunning ? .relaunchIfRunning : .foregroundIfRunning
-  }
-
-  var configuration: ApplicationLaunchConfiguration {
-    ApplicationLaunchConfiguration(
-      bundleID: bundleId, bundleName: nil, arguments: arguments, environment: environment, waitForDebugger: false,
-      launchMode: launchMode)
+  var spec: AppLaunchSpec {
+    AppLaunchSpec(
+      bundleID: bundleId, arguments: arguments, environment: environment, terminateRunning: terminateRunning)
   }
 
   static func reply(pid: pid_t) -> JSON {
@@ -110,9 +103,9 @@ extension Session {
     bundlePids.remember(nil, for: request.bundleId)
     // the first read of a just-launched app is slow on a loaded host: give it the cold deadline (`BridgeWarmth`)
     bridgeWarmth.markCold()
-    let launched = try await simulator.application.launch(request.configuration)
-    bundlePids.rememberLaunch(launched.processIdentifier, for: request.bundleId)
-    return LaunchRequest.reply(pid: launched.processIdentifier)
+    let launched = try await apps.launch(request.spec)
+    bundlePids.rememberLaunch(launched, for: request.bundleId)
+    return LaunchRequest.reply(pid: launched)
   }
 
   /// Ends the app's process. A bundle with no running process answers `terminated: false`: either launchd said so
@@ -123,10 +116,10 @@ extension Session {
       bundlePids.forgetLaunch(of: request.bundleId)
     }
     do {
-      try await simulator.application.kill(bundleID: request.bundleId)
+      try await apps.terminate(bundleID: request.bundleId)
     } catch {
       if Session.isNotRunning(error) { return TerminateRequest.reply(terminated: false) }
-      if (try? await simulator.application.processID(forBundleID: request.bundleId)) == nil {
+      if (try? await apps.processID(bundleID: request.bundleId)) == nil {
         return TerminateRequest.reply(terminated: false)
       }
       throw error
@@ -135,13 +128,13 @@ extension Session {
   }
 
   func openUrl(_ request: OpenUrlRequest) async throws -> JSON {
-    try await simulator.lifecycle.open(request.url)
+    try await apps.open(url: request.url)
     return .object([:])
   }
 
   /// launchd has no service for the bundle: nothing is running.
   static func isNotRunning(_ error: any Error) -> Bool {
-    if let error = error as? SimulatorLaunchCtlError, case .noMatchingProcesses = error { return true }
+    if case .noRunningProcess? = error as? GuestError { return true }
     return false
   }
 }

@@ -81,6 +81,28 @@ describe("device.alert", () => {
 		expect(driver.callsOf("tap")[0]?.point).toEqual(rowCentre(2));
 	});
 
+	test("accept presses a retry button, not the Cancel after it", async () => {
+		for (const retry of ["Try Face ID Again", "Try Again", "Retry"]) {
+			const { device, driver } = setup({ screens: [withAlert(retry, "Cancel")] });
+			expect(await device.alert("accept")).toBe(true);
+			expect(driver.callsOf("tap")[0]?.point).toEqual(rowCentre(1));
+		}
+	});
+
+	test("accept never guesses a dismiss button: ACTION_FAILED naming the buttons", async () => {
+		const { device, driver } = setup({ screens: [withAlert("Delete", "Cancel")] });
+		const error = await device.alert("accept").catch((e: unknown) => e);
+		expect((error as E2eError).code).toBe("ACTION_FAILED");
+		expect((error as E2eError).message).toContain("Delete, Cancel");
+		expect(driver.callsOf("tap")).toHaveLength(0);
+	});
+
+	test("dismiss presses Cancel on a retry sheet", async () => {
+		const { device, driver } = setup({ screens: [withAlert("Try Face ID Again", "Cancel")] });
+		await device.alert("dismiss");
+		expect(driver.callsOf("tap")[0]?.point).toEqual(rowCentre(2));
+	});
+
 	test("dismiss presses the first dismiss word", async () => {
 		const { device, driver } = setup({ screens: [withAlert("Save Password", "Not Now")] });
 		expect(await device.alert("dismiss")).toBe(true);
@@ -168,6 +190,22 @@ describe("device.alert on iOS: a press that does not land", () => {
 		const error = (await device.alert({ button: "Cancel" }).catch((e: unknown) => e)) as E2eError;
 		expect(error.code).toBe("ACTION_FAILED");
 		expect(error.message).toContain("Cancel");
+		expect(driver.callsOf("tap")).toHaveLength(3);
+	});
+
+	test("Try Face ID Again is pressed once: the sheet stays up on a simulator, which is no failure", async () => {
+		const { device, driver } = sheet(0, {
+			screens: [withAlert("Try Face ID Again", "Cancel")],
+			answerAlertOnTap: false,
+		});
+		expect(await device.alert("accept")).toBe(true);
+		expect(driver.callsOf("tap")).toHaveLength(1);
+	});
+
+	test("an app's own Try Again that leaves the same alert up is still pressed again, then ACTION_FAILED", async () => {
+		const { device, driver } = sheet(0, { screens: [withAlert("Try Again", "Cancel")], answerAlertOnTap: false });
+		const error = (await device.alert("accept").catch((e: unknown) => e)) as E2eError;
+		expect(error.code).toBe("ACTION_FAILED");
 		expect(driver.callsOf("tap")).toHaveLength(3);
 	});
 
@@ -885,6 +923,13 @@ describe("device.biometrics", () => {
 			"fail",
 			"unenroll",
 		]);
+	});
+
+	test("reenroll re-enrols the device (a new enrolment) and passes the shim's generation through", async () => {
+		const { device, driver } = setup();
+		await device.biometrics.enroll();
+		expect(await device.biometrics.reenroll()).toEqual({ enrolled: true, modality: "face" });
+		expect(driver.callsOf("biometrics").map((c) => c.op)).toEqual(["enroll", "reenroll"]);
 	});
 
 	test("E_UNSUPPORTED surfaces as an E2eError", async () => {

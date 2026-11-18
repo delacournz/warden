@@ -3,9 +3,11 @@ import {
 	canonicalLink,
 	docsHead,
 	docsJsonLd,
+	docsRootTitle,
 	docsTitle,
 	type HeadMeta,
 	landingJsonLd,
+	landingTitle,
 	markdownHeaders,
 	siteJsonLd,
 	socialImageMeta,
@@ -100,7 +102,7 @@ describe("docsHead", () => {
 	test("a page points at its own card", () => {
 		const { meta } = docsHead({ slugs: ["guides", "agents"], title: "Agents", description: "Hooks." });
 		expect(property(meta, "og:image")).toBe(`${siteUrl}/og/docs/guides/agents.png`);
-		expect(property(meta, "og:image:alt")).toBe("Agents — warden: iOS & Android simulators for AI agents");
+		expect(property(meta, "og:image:alt")).toBe("Agents — warden: AI agent toolkit for React Native");
 	});
 
 	test("og:url is absolute", () => {
@@ -140,7 +142,7 @@ describe("docsHead", () => {
 
 	test("the docs root title says what warden is", () => {
 		const { meta } = docsHead({ slugs: [], title: "What is warden" });
-		expect(meta).toContainEqual({ title: "warden docs — every agent gets its own simulator" });
+		expect(meta).toContainEqual({ title: "warden docs — AI agent toolkit for React Native E2E" });
 	});
 });
 
@@ -157,12 +159,47 @@ describe("metaDescription", () => {
 
 describe("docsTitle", () => {
 	test("a short page title carries what warden is, within 60 characters", () => {
-		expect(docsTitle("CI")).toBe("CI — warden: iOS & Android simulators for AI agents");
+		expect(docsTitle("CI")).toBe("CI — warden: AI agent toolkit for React Native");
 		expect(docsTitle("CI").length).toBeLessThanOrEqual(60);
 	});
 
 	test("a long page title keeps only the name", () => {
 		expect(docsTitle("Claim & release devices and more words")).toBe("Claim & release devices and more words — warden");
+	});
+
+	test("an e2e page carries the React Native E2E suffix, a simulator page keeps the simulator one", () => {
+		expect(docsTitle("CI", ["e2e", "ci"])).toBe("CI — warden: React Native & Expo E2E testing");
+		expect(docsTitle("CI", ["sims", "ci"])).toBe("CI — warden: AI agent toolkit for React Native");
+		expect(docsTitle("Debugging", ["e2e", "debugging"]).length).toBeLessThanOrEqual(60);
+	});
+
+	test("a long e2e title still falls back to the name", () => {
+		expect(docsTitle("React Native E2E tests in GitHub Actions", ["e2e", "ci"])).toBe(
+			"React Native E2E tests in GitHub Actions — warden"
+		);
+	});
+});
+
+describe("the landing and docs-root titles", () => {
+	test("name the AI agent toolkit for React Native within 60 characters", () => {
+		expect(landingTitle).toBe("warden — AI agent toolkit for React Native simulators & E2E");
+		expect(landingTitle.length).toBeLessThanOrEqual(60);
+		expect(docsRootTitle.startsWith("warden docs — AI agent toolkit for React Native")).toBe(true);
+		expect(docsRootTitle.length).toBeLessThanOrEqual(60);
+	});
+});
+
+describe("landingJsonLd search metadata", () => {
+	const app = landingJsonLd([])["@graph"][0];
+
+	test("the SoftwareApplication names the queries it answers", () => {
+		expect(app.applicationSubCategory).toBe("Testing");
+		expect(app.keywords).toContain("React Native E2E testing");
+		expect(app.keywords).toContain("AI agent toolkit");
+		expect(app.keywords).toContain("Expo E2E testing");
+		expect(app.featureList).toEqual(expect.arrayContaining(["React Native E2E testing", "Expo E2E testing"]));
+		expect(app.featureList?.join(" ")).toMatch(/iOS simulators and Android emulators/);
+		expect(app.featureList?.join(" ")).toMatch(/AI coding agents/);
 	});
 });
 

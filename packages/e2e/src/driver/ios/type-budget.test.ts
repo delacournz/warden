@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
 	DEVICE_TYPE_PER_CHAR_MS,
 	deviceTypeTextBudgetMs,
+	QUICK_KEY_PACING,
 	TYPE_BASE_MS,
 	TYPE_PER_CHAR_MS,
 	TYPE_PER_REPEAT_MS,
@@ -38,5 +39,15 @@ describe("deviceTypeTextBudgetMs", () => {
 		expect(deviceTypeTextBudgetMs("abc")).toBe(TYPE_BASE_MS + 3 * DEVICE_TYPE_PER_CHAR_MS);
 		expect(deviceTypeTextBudgetMs("😀")).toBe(TYPE_BASE_MS + DEVICE_TYPE_PER_CHAR_MS);
 		expect(DEVICE_TYPE_PER_CHAR_MS).toBeGreaterThan(TYPE_PER_CHAR_MS);
+	});
+});
+
+describe("QUICK_KEY_PACING", () => {
+	test("is quicker than the helper's defaults and fits the per-character budget", () => {
+		const { paceMs, holdMs, repeatGapMs, leadMs } = QUICK_KEY_PACING;
+		expect(paceMs + holdMs).toBeLessThan(5 + 20);
+		expect(repeatGapMs).toBeLessThan(50);
+		expect(leadMs).toBe(60);
+		expect(TYPE_PER_CHAR_MS).toBeGreaterThanOrEqual((paceMs + holdMs) * 3.5);
 	});
 });

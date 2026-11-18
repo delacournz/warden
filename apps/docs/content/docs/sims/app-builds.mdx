@@ -42,7 +42,7 @@ When a native build can't be avoided, warden local builds get compiler caches th
 | iOS (Xcode 26+) | compilation caching (`COMPILATION_CACHE_ENABLE_CACHING=YES`) | content-addressed |
 | Android | Gradle build cache (`-Dorg.gradle.caching=true`) | relocatable task outputs in `~/.gradle` |
 
-ccache only runs when the Podfile enables it: set `ios.ccacheEnabled: true` with `expo-build-properties` (written to `ios/Podfile.properties.json` as `apple.ccacheEnabled`) and `brew install ccache`. `warden doctor` checks both, and warns when React Native is built from source (`ios.buildReactNativeFromSource`) instead of using the prebuilt core. `warden builds prune` also runs `ccache --cleanup`.
+ccache needs `brew install ccache` before `pod install`. warden's builds turn it on with `USE_CCACHE=1`, which Expo's and React Native's Podfiles read, and export `CCACHE_BINARY`: React Native's compiler wrapper runs `$CCACHE_BINARY clang`, and the Xcode build setting CocoaPods writes for it never reaches the compiler, so without it every compile skips ccache. A plain `expo run:ios` outside warden needs `ios.ccacheEnabled: true` with `expo-build-properties` (written to `ios/Podfile.properties.json` as `apple.ccacheEnabled`) and `CCACHE_BINARY=$(which ccache)` in its env. `warden doctor` checks the Podfile property, and warns when React Native is built from source (`ios.buildReactNativeFromSource`) instead of using the prebuilt core. `warden builds prune` also runs `ccache --cleanup`.
 
 ### Prebuilt React Native (iOS)
 
@@ -74,7 +74,7 @@ Why not share DerivedData? Its build database and dependency files hold absolute
 | Kind | Native config | JS | Cache key |
 |---|---|---|---|
 | `dev` | Debug | Metro at runtime | native fingerprint |
-| `simulator` | Release for a simulator, no JS embedded (the **base**) | repacked per JS content | base: native fingerprint; repack: native fingerprint + `jsKey` |
+| `simulator` | Release for a simulator, no JS embedded (the **base**; iOS: a plain `xcodebuild` with `SKIP_BUNDLING=1`) | repacked per JS content | base: native fingerprint; repack: native fingerprint + `jsKey` |
 | `release` | Release | embedded at build | native fingerprint + JS content |
 
 A project whose own build is the `dev` kind's build (Debug, the default or the same `build` command, no variant, no `fingerprint.include: "native+js"`, no `kinds.dev.env`) has one dev build per fingerprint: `warden dev`, `warden app ensure` with no `--kind`, `--kind dev`, `warden ui open` and `warden e2e --dev` all find, build and install it under `<fingerprint>:dev`, so `warden app ensure ios --kind dev --no-install` warms the cache `warden dev` reads. A build an older warden cached under the plain `<fingerprint>` (or a legacy cache dir of it) is reused as that build, and a device it was installed on is not reinstalled.
@@ -86,7 +86,7 @@ warden app ensure ios --kind simulator --udid <udid>
 warden builds ls                      # kind, base, jsKey, worktree, branch, size, age
 ```
 
-`jsKey` is a hash of the `jsInputs` files, the bundle env (`kinds.<kind>.env`, `EXPO_PUBLIC_*`, `NODE_ENV`), the bundler flags and the native fingerprint, so a repack is never stale and never keyed by branch; worktree and branch are metadata only. A repack is valid only for the exact base it was cloned from: its `meta.json` records the base's identity (iOS: a hash of the executable with its embedded signature and entitlements, `Info.plist` and `_CodeSignature/CodeResources`; Android: the apk), and replacing the base under the same fingerprint (`warden builds import`, another signer) makes the next `warden repack` / `warden e2e` repack instead of reuse (`reason: "base-changed"`). No `--force` needed. A repack from before this tracking is rebuilt once. A repack is an APFS clone of the base with the new bundle (iOS: `main.jsbundle` and assets, re-signed ad hoc; Android: the apk's `assets/index.android.bundle`, zipaligned and re-signed with the base's key) and ships its source map. Repacks are simulator-only. On Android, new or renamed images cannot be repacked (they live in the compiled resource table): that run builds the `release` kind and says why. `warden repack` exits 1 in that case. `fingerprint.include` / `fingerprint.jsInputs` belong to the kind-less flow and warn when set with `--kind dev|simulator`.
+`jsKey` is a hash of the `jsInputs` files, the bundle env (`kinds.<kind>.env`, `EXPO_PUBLIC_*`, `NODE_ENV`), the bundler flags and the native fingerprint, so a repack is never stale and never keyed by branch; worktree and branch are metadata only. A repack is valid only for the exact base it was cloned from: its `meta.json` records the base's identity (iOS: a hash of the executable with its embedded signature and entitlements, `Info.plist` and `_CodeSignature/CodeResources`; Android: the apk), and replacing the base under the same fingerprint (`warden builds import`, another signer) makes the next `warden repack` / `warden e2e` repack instead of reuse (`reason: "base-changed"`). No `--force` needed. A repack from before this tracking is rebuilt once. A repack is an APFS clone of the base with the new bundle (iOS: `main.jsbundle` and assets, re-signed ad hoc; Android: the apk's `assets/index.android.bundle`, zipaligned and re-signed with the base's key). The bundler keeps Metro's cache between repacks in `$WARDEN_HOME/metro-cache/<project>/<platform>-<hash>` (the hash covers the bundle env, the project's `.env*` files and the bundler flags, because Metro's cache does not see the `EXPO_PUBLIC_*` values it inlines), so a JS change re-transforms only the files that changed. warden points the bundler's `TMPDIR` and Expo's `EXPO_METRO_CACHE_OUTPUT_DIR` at it and passes `--reset-cache` only until Metro has written its store there: a `metro.config.js` with its own `cacheStores` still resets on every bundle. A cache is started afresh once it is 7 days old (Metro never evicts), another env's cache no repack used for 7 days is deleted, and `warden repack --force` empties it first. iOS writes the source maps beside the app: `main.jsbundle.map` for a JS bundle, or for Hermes Metro's `main.jsbundle.packager.map` and hermesc's `main.jsbundle.hbc.map`, uncomposed (`node node_modules/react-native/scripts/compose-source-maps.js main.jsbundle.packager.map main.jsbundle.hbc.map -o main.jsbundle.map` joins them). Repacks are simulator-only. On Android, new or renamed images cannot be repacked (they live in the compiled resource table): that run builds the `release` kind and says why. `warden repack` exits 1 in that case. `fingerprint.include` / `fingerprint.jsInputs` belong to the kind-less flow and warn when set with `--kind dev|simulator`.
 
 ## Release builds and JS changes
 
@@ -116,9 +116,81 @@ Trade-offs:
 
 A build lock stops two agents from downloading or building the same hash twice.
 
+## Share CocoaPods across worktrees
+
+Each worktree has its own `Pods/` sandbox (about 1.4 GB on a React Native app, with absolute paths baked in), so a new worktree repeats `pod install` and, for Expo, `expo prebuild`. `warden pods install` keeps one stored copy per set of pods under `$WARDEN_HOME/pods` and restores it into any checkout with an APFS clone (blocks shared, so extra worktrees cost almost no disk), rewriting the checkout path in the few text files that hold it.
+
+Expo, with a git-ignored `ios/`:
+
+```json
+{ "scripts": { "prebuild": "warden pods install" } }
+```
+
+On a miss it runs `expo prebuild --platform ios --clean --no-install` and `pod install`, then stores the result; on a hit it restores the whole `ios/` and skips both. With a committed `ios/` (or Expo with checked-in native code), keep your own prebuild and add the step after it: `expo prebuild --platform ios --no-install && warden pods install`.
+
+Bare React Native: replace `cd ios && pod install` with `warden pods install` (`--project-directory ios` is the default).
+
+The key covers the `pod` and Xcode versions, host architecture, the project path, `Podfile` and `Podfile.properties.json`, the native dependencies (Expo fingerprint, or the autolinked pods and local podspecs) and the environment variables the Podfile reads (`RCT_*`, `USE_FRAMEWORKS`, `USE_CCACHE`, `NO_FLIPPER`, `EX_DEV_CLIENT_*`, `EXPO_USE_*`). Anything that could change the result is in it, so a hit is the same install you would get from running it.
+
+### `post_install` hooks
+
+A hit does not run `pod install`, so your Podfile's `post_install` hooks do not run again. They don't need to: the stored entry was taken after they ran on the miss, so the restore brings back what they changed:
+
+- everything under `Pods/` (build settings, xcconfigs, the Pods project),
+- the `ios/` files the install wrote, such as the app's `project.pbxproj` and `Info.plist` (with a git-ignored `ios/`, all of it),
+- files written under the project's and the repo root's `node_modules` (patched headers, generated sources),
+- files the install deleted in those places, deleted again.
+
+Edit a hook and the Podfile changes, so the key changes and the next install runs it for real. Two cases need a hand:
+
+- **A hook that reads an environment variable** outside the list above. List it so a different value is a miss, not someone else's result:
+
+  ```ts title="warden.config.ts"
+  projects: [{ name: "app", bundleId: { ios: "com.example.app" }, ios: { pods: { env: ["CI", "SENTRY_*"] } } }]
+  ```
+
+- **A hook that writes elsewhere** (a sibling workspace's `node_modules`, `src/`, your home directory) or does something other than write files. Turn the cache off for that project, so every install is a real `pod install` and the hooks run each time:
+
+  ```ts title="warden.config.ts"
+  projects: [{ name: "app", bundleId: { ios: "com.example.app" }, ios: { pods: { cache: false } } }]
+  ```
+
+  Restoring and then running `pod install` on top would cost the same as a plain install: CocoaPods has no way to run only the hooks. For one run, `warden pods install --no-cache`.
+
+What it saves, measured on a React Native + Expo app (CocoaPods 1.16.2):
+
+| | Time |
+|---|---|
+| `pod install`, first on the machine for this React Native build (downloads, artifact extraction) | 160 s |
+| `pod install`, caches warm, fresh worktree | 31 s |
+| `warden pods install`, miss (`expo prebuild --clean` + `pod install` + store) | 83 s |
+| `warden pods install`, hit in another worktree (key 1.1 s, clone 1.0 s, path rewrite 0.06 s) | 2.9 s |
+| `warden pods install`, already up to date | 1.9 s |
+
+Against a warm install that is about 30 s plus the prebuild per new worktree; against a cold one about 2.5 minutes. The larger win is disk and the number of worktrees: N worktrees cost about one 1.4 GB sandbox, not N. A restored checkout built with `xcodebuild` without ever running its own `pod install`.
+
+`warden dev`, `warden app ensure` and `warden e2e` use the same cache for their own iOS builds, and `warden pods install` installs with the same env they do (`USE_CCACHE=1` and the prebuilt React Native vars), so a build after it finds its pods ready. A plain `pod install` was run without that env: the next warden build installs once more, with ccache wired in. `WARDEN_PODS_CACHE=0` turns the cache off for those builds; `warden pods install --no-cache` skips it for one run. Manage entries with `warden pods ls | rm | prune` (see the [CLI reference](/docs/reference/cli#warden-pods-install--ls--rm--prune)); `warden gc` removes entries unused for 30 days.
+
 ## Project detection
 
 With no config, warden detects a single project from `app.json` / `app.config.*` (pass `--bundle-id` for a dynamic config). For monorepos or custom commands, add a [`warden.config.ts`](/docs/reference/configuration).
+
+## `expo run:ios` build cache
+
+Plain `expo run:ios` in any worktree can reuse the dev build warden already has, and file its own build into the cache after a miss, through Expo's build cache provider. Enable it in the app config:
+
+```ts
+export default {
+  // …
+  buildCacheProvider: { plugin: "@delacour/warden/expo-build-cache" },
+};
+```
+
+On a hit Expo installs the cached `.app` instead of running `xcodebuild`; on a miss it builds as usual and the provider runs `warden builds import --kind dev`, so the next worktree hits. The cache is the same `<fp>:dev` build `warden dev` and `warden app ensure --kind dev` share.
+
+The provider takes part only for an iOS simulator run in the Debug configuration whose native build is warden's default dev build. A project with a [variant](#variants-a-dev-client-next-to-an-e2e-build), a custom `build` command or `fingerprint.include: "native+js"` builds a binary that could differ, so the run is left to Expo (one `warden:` line says why). Release runs, device runs and Android are left to Expo too. Any warden problem is a `warden:` warning, never an error in Expo.
+
+Expo still runs prebuild and `pod install` before it asks the provider, so a cached build saves the compile, not those steps. The provider runs warden through the `@delacour/warden` package that holds it, else `warden` from `PATH`.
 
 ## Managing the cache
 
@@ -128,8 +200,12 @@ warden builds rm cd8e2dbeae5b             # drop one bad build (+ its install re
 warden builds prune --max-size 20G        # LRU; build-locked entries stay
 warden builds import App.app --hash <h>   # file a local build under a fingerprint
 warden builds import App.app --kind simulator-base   # a CI-built Release simulator .app as the repack base
+warden builds import App.app --kind dev              # a Debug simulator .app as this project's dev build
+warden builds path ios --kind dev                    # where the dev build is cached (exit 2 on a miss)
 ```
 
-`--kind simulator-base` takes a Release simulator `.app` built outside warden (another CI job's `xcodebuild … -configuration Release -sdk iphonesimulator`) and files it as the base the `simulator` kind repacks, keyed on warden's own native fingerprint of the project (`warden app fingerprint ios --kind simulator`). It checks the `.app` first (simulator build, a slice for this Mac, the project's bundle id, no Debug or dev-client payload) and leaves an embedded `main.jsbundle` out of the cached copy. See [CI](/docs/e2e/ci#reuse-a-prebuilt-app-and-the-golden).
+`--kind simulator-base` takes a Release simulator `.app` built outside warden (another CI job's `xcodebuild … -configuration Release -sdk iphonesimulator`) and files it as the base the `simulator` kind repacks, keyed on warden's own native fingerprint of the project (`warden app fingerprint ios --kind simulator`). It checks the `.app` first (simulator build, a slice for this Mac, the project's bundle id, no Debug or dev-client payload) and leaves an embedded `main.jsbundle` out of the cached copy. See [CI](/docs/e2e/ci/github-actions#reuse-a-prebuilt-app-and-the-golden).
+
+`--kind dev` files a Debug simulator `.app` as the dev build under `<nativeFp>:dev` (`--hash <nativeFp>` or `<nativeFp>:dev`, default warden's own fingerprint). It refuses another app, a device build, a missing slice for this Mac, and a Release build (an embedded `main.jsbundle`). `warden builds path ios --kind dev` prints the cached path without building anything and exits 2 on a miss.
 
 `--max-size` defaults to `20G` (or `$WARDEN_MAX_CACHE_SIZE`). `warden gc` runs the same prune (`--max-cache-size`), keeping builds used in the last 30 min, so the cache stays bounded without you calling it. The cache lives under `$WARDEN_HOME/builds` (`~/.warden/builds`).

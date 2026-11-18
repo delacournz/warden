@@ -6,6 +6,7 @@ function deps(overrides: Partial<ShimDeps> = {}): ShimDeps {
 		platform: "darwin",
 		arch: "arm64",
 		env: {},
+		scriptDir: "/g/node_modules/@delacour/warden/bin",
 		resolvePackageJson: (name) => `/g/node_modules/${name}/package.json`,
 		...overrides,
 	};
@@ -48,5 +49,24 @@ describe("locateBinary", () => {
 			expect(result.error).toContain("@delacour/warden-darwin-arm64");
 			expect(result.error).toContain("optional");
 		}
+	});
+
+	test("a shim copied out of its package (a cache that flattens symlinks) finds the npm global prefix's install", () => {
+		const tried: (readonly string[] | undefined)[] = [];
+		const result = locateBinary(
+			deps({
+				scriptDir: "/cache/warden-cli/bin",
+				resolvePackageJson: (name, paths) => {
+					tried.push(paths);
+					if (!paths) throw new Error("Cannot find module");
+					return `${paths[0]}/node_modules/${name}/package.json`;
+				},
+			})
+		);
+		expect(tried).toEqual([undefined, ["/cache/warden-cli/lib/node_modules/@delacour/warden"]]);
+		expect(result).toEqual({
+			success: true,
+			data: "/cache/warden-cli/lib/node_modules/@delacour/warden/node_modules/@delacour/warden-darwin-arm64/bin/warden",
+		});
 	});
 });

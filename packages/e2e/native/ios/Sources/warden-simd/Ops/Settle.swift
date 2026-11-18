@@ -1,4 +1,3 @@
-import FBSimulatorAX
 import Foundation
 
 enum SettleOps {
@@ -80,12 +79,12 @@ struct SettleRequest: Equatable {
 /// timing rule is unit-testable without a simulator.
 struct QuietClock: Equatable {
   /// Milliseconds the state has been `.quiet` as of `now`, or nil when it is anything else (or unknown).
-  static func quietFor(state: QuiescenceState?, since: Double, now: Double) -> Double? {
+  static func quietFor(state: AXQuiescenceState?, since: Double, now: Double) -> Double? {
     guard case .quiet = state else { return nil }
     return max(0, now - since) * 1000
   }
 
-  static func isSettled(state: QuiescenceState?, since: Double, now: Double, quietMs: Int) -> Bool {
+  static func isSettled(state: AXQuiescenceState?, since: Double, now: Double, quietMs: Int) -> Bool {
     guard let quiet = quietFor(state: state, since: since, now: now) else { return false }
     return quiet >= Double(quietMs)
   }
@@ -128,12 +127,12 @@ struct SettleJudge: Equatable {
 struct StuckTracker: Equatable {
   private var startedAt: Double?
 
-  static func isStuck(_ state: QuiescenceState?) -> Bool {
+  static func isStuck(_ state: AXQuiescenceState?) -> Bool {
     guard case let .busy(signals) = state else { return false }
-    return QuiescenceSignal.allCases.allSatisfy { signals.contains($0) }
+    return AXQuiescenceSignal.allCases.allSatisfy { signals.contains($0) }
   }
 
-  mutating func observe(_ state: QuiescenceState?, now: Double) -> Int? {
+  mutating func observe(_ state: AXQuiescenceState?, now: Double) -> Int? {
     if Self.isStuck(state) {
       if startedAt == nil { startedAt = now }
     } else if state != nil {
@@ -239,9 +238,9 @@ typealias PidResolver = @Sendable (String) async -> pid_t?
 /// display routing), so `settle` reads the stream's latest state instead of opening one per call. The guest reports
 /// with a short window (50 ms); the caller's `quietMs` is measured here from the moment `quiet` was entered.
 actor QuiescenceMonitor {
-  private let reader: any UIAutomation
+  private let reader: any AXReader
   private var task: Task<Void, Never>?
-  private var state: QuiescenceState?
+  private var state: AXQuiescenceState?
   /// The process the stream last reported on: the frontmost application.
   private var frontmostPid: pid_t?
   private var since: Double = 0
@@ -251,7 +250,7 @@ actor QuiescenceMonitor {
   /// Close the stream after this long without a `settle`; nil keeps it open for the helper's lifetime.
   private let idleCloseSeconds: Double?
 
-  init(reader: any UIAutomation, idleCloseSeconds: Double? = QuiescenceMonitor.configuredIdleCloseSeconds()) {
+  init(reader: any AXReader, idleCloseSeconds: Double? = QuiescenceMonitor.configuredIdleCloseSeconds()) {
     self.reader = reader
     self.idleCloseSeconds = idleCloseSeconds
   }
@@ -283,8 +282,7 @@ actor QuiescenceMonitor {
         do {
           Self.trace("stream opening")
           await self?.markOpening()
-          let events = try await self?.reader.quiescence(
-            .frontmost, parameters: QuiescenceParameters(quietWindow: 0.05))
+          let events = try await self?.reader.quiescence(quietWindow: 0.05)
           guard let events else { return }
           Self.trace("stream open")
           if !Task.isCancelled { await self?.markOpen() }
@@ -338,7 +336,7 @@ actor QuiescenceMonitor {
     stop()
   }
 
-  private func apply(_ event: QuiescenceEvent) {
+  private func apply(_ event: AXQuiescenceEvent) {
     Self.trace("event \(event)")
     switch event {
     case let .state(new, pid):
@@ -354,8 +352,6 @@ actor QuiescenceMonitor {
       frontmostPid = nil
     case let .touchesCompleted(pid):
       frontmostPid = pid
-    @unknown default:
-      break
     }
   }
 
@@ -399,7 +395,7 @@ actor QuiescenceMonitor {
     return false
   }
 
-  private func snapshot() -> (state: QuiescenceState?, since: Double, error: (any Error)?, pid: pid_t?) {
+  private func snapshot() -> (state: AXQuiescenceState?, since: Double, error: (any Error)?, pid: pid_t?) {
     (state, since, lastError, frontmostPid)
   }
 
@@ -514,12 +510,7 @@ actor QuiescenceMonitor {
 
   /// One cheap tree read (the settle fallback's frame): the frontmost document encoded with sorted keys.
   private func readFrame() async throws -> Data {
-    var options = AccessibilityRequestOptions(format: .complete, keys: [])
-    options.filter = .all
-    let document = try await reader.describe(.frontmost, options: options).document
-    let encoder = JSONEncoder()
-    encoder.outputFormatting = [.sortedKeys]
-    return try encoder.encode(document)
+    try await reader.readFrame()
   }
 
   struct Outcome: Equatable {
@@ -839,7 +830,7 @@ final class QuiescenceHolder: @unchecked Sendable {
   let wedge = WedgeWatch()
   private var monitor: QuiescenceMonitor?
 
-  func get(_ make: () throws -> any UIAutomation) rethrows -> QuiescenceMonitor {
+  func get(_ make: () throws -> any AXReader) rethrows -> QuiescenceMonitor {
     try lock.withLock {
       if let monitor { return monitor }
       let created = QuiescenceMonitor(reader: try make())
@@ -872,7 +863,7 @@ extension Session {
     guard axDefault == "axbridge", let reader = axBridgeReader else { return nil }
     return bridgeWarmth.warmUp(
       deadlineMs: bridgeDeadline.coldDeadlineMs, log: { OpLog.shared.log(.info, $0, op: "warmUp") },
-      read: { _ = try await reader.describe(.frontmost, options: AccessibilityRequestOptions()) },
+      read: { _ = try await reader.describe(.frontmost, options: .readerDefaults) },
       answered: { [bridgeHealth, bridgeStall] in
         // a fresh guest that answered (after a recycle) ends the cooldown its stalled predecessor armed
         bridgeHealth.recordSuccess()

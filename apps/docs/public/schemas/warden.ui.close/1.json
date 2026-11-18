@@ -1,0 +1,228 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"anyOf": [
+		{
+			"type": "object",
+			"properties": {
+				"ok": {
+					"type": "boolean",
+					"const": true
+				},
+				"schemaVersion": {
+					"type": "number",
+					"const": 1
+				},
+				"command": {
+					"type": "string",
+					"const": "close"
+				},
+				"device": {
+					"type": "object",
+					"properties": {
+						"udid": {
+							"type": "string"
+						},
+						"platform": {
+							"type": "string",
+							"enum": [
+								"ios",
+								"android"
+							]
+						},
+						"name": {
+							"type": "string"
+						}
+					},
+					"required": [
+						"udid",
+						"platform"
+					],
+					"additionalProperties": false
+				},
+				"generation": {
+					"type": "number"
+				},
+				"durationMs": {
+					"type": "number"
+				},
+				"attachedTo": {
+					"type": "string"
+				},
+				"result": {
+					"type": "object",
+					"properties": {
+						"app": {
+							"type": [
+								"string",
+								"null"
+							]
+						},
+						"helper": {
+							"type": "object",
+							"properties": {
+								"stopped": {
+									"type": "boolean"
+								},
+								"how": {
+									"type": "string"
+								},
+								"warning": {
+									"type": "string"
+								}
+							},
+							"required": [
+								"stopped",
+								"how"
+							],
+							"additionalProperties": false
+						},
+						"released": {
+							"type": "boolean"
+						}
+					},
+					"required": [
+						"app",
+						"helper",
+						"released"
+					],
+					"additionalProperties": false
+				},
+				"warnings": {
+					"type": "array",
+					"items": {
+						"type": "string"
+					}
+				}
+			},
+			"required": [
+				"ok",
+				"schemaVersion",
+				"command",
+				"device",
+				"durationMs",
+				"result"
+			],
+			"additionalProperties": false
+		},
+		{
+			"type": "object",
+			"properties": {
+				"ok": {
+					"type": "boolean",
+					"const": false
+				},
+				"schemaVersion": {
+					"type": "number",
+					"const": 1
+				},
+				"command": {
+					"type": "string"
+				},
+				"device": {
+					"type": "object",
+					"properties": {
+						"udid": {
+							"type": "string"
+						},
+						"platform": {
+							"type": "string",
+							"enum": [
+								"ios",
+								"android"
+							]
+						},
+						"name": {
+							"type": "string"
+						}
+					},
+					"required": [
+						"udid",
+						"platform"
+					],
+					"additionalProperties": false
+				},
+				"error": {
+					"type": "object",
+					"properties": {
+						"code": {
+							"type": "string",
+							"enum": [
+								"usage",
+								"failed",
+								"wait_target_absent",
+								"wait_target_hidden",
+								"wait_target_present",
+								"wait_text_absent",
+								"wait_not_stable",
+								"target_not_found",
+								"no_alert",
+								"device_foreign",
+								"device_busy",
+								"device_unauthorized",
+								"device_offline",
+								"device_locked",
+								"device_not_leased",
+								"no_device_leased",
+								"ambiguous_device",
+								"lease_not_found",
+								"engine_unavailable",
+								"devtools_unavailable",
+								"stale_ref",
+								"no_recording",
+								"recording_active",
+								"target_exists",
+								"empty_recording",
+								"verify_failed",
+								"helper_missing",
+								"use_failed",
+								"verify_unavailable",
+								"interrupted",
+								"device_unknown",
+								"session_active",
+								"session_not_found",
+								"app_not_found",
+								"unsupported",
+								"not_profileable",
+								"tool_missing",
+								"NO_DEVICE",
+								"QUEUE_TIMEOUT",
+								"NO_CAPACITY",
+								"REQUESTER_LIMIT",
+								"RUNTIME_MISSING",
+								"HEALTH_FAILED",
+								"LEASE_LOST"
+							]
+						},
+						"message": {
+							"type": "string"
+						},
+						"hint": {
+							"type": "string"
+						},
+						"details": {
+							"type": "object",
+							"propertyNames": {
+								"type": "string"
+							},
+							"additionalProperties": {}
+						}
+					},
+					"required": [
+						"code",
+						"message"
+					],
+					"additionalProperties": false
+				}
+			},
+			"required": [
+				"ok",
+				"schemaVersion",
+				"command",
+				"error"
+			],
+			"additionalProperties": false
+		}
+	],
+	"$id": "https://warden.co.nz/schemas/warden.ui.close/1.json",
+	"title": "warden.ui.close"
+}

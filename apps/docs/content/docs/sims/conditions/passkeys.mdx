@@ -1,0 +1,44 @@
+---
+title: Passkeys
+description: Answer an app's real passkey create and sign-in calls with warden's virtual authenticator on a leased iOS simulator or Android emulator with warden ui - test keys, no iCloud or Google account, cancel and failure modes.
+icon: KeyRound
+simulatorOnly: true
+---
+
+<DemoClip src="/demos/passkeys/create-sign-in" label="warden ui passkey answering the example app's real passkey create and sign-in calls on a leased simulator, then a cancelled sign-in" />
+
+`warden ui passkey set auto` turns the authenticator on; `warden ui press id=pk-action` creates a passkey in the example app and signs in with it (the app verifies the signature itself), then `warden ui passkey set cancel` makes the next sign-in come back `Cancelled`.
+
+[`warden ui`](/docs/sims/ui) turns on a virtual authenticator on your leased device. The app's own passkey calls go through the platform API as usual, and warden answers them with test keys: no iCloud or Google account, no associated domains, no sheet to tap through. Simulators and emulators only: a physical device fails with `E_UNSUPPORTED`.
+
+```bash
+warden ui passkey set auto                    # answer create and sign-in, no UI
+warden ui passkey set cancel                  # the user dismisses the sheet
+warden ui passkey set auto --uv skip          # succeed without user verification
+warden ui passkey add --rp example.com --user-name seed@example.com --key seed.pem
+warden ui passkey list --rp example.com
+warden ui passkey remove <credentialId>
+warden ui passkey clear
+warden ui passkey status
+warden ui passkey off
+```
+
+The authenticator and its credentials belong to your lease and are removed on release. With `--json` the answer is `result.passkeys`. From a spec or a suite, and what each mode answers: [Passkeys in E2E tests](/docs/e2e/conditions/passkeys).
+
+## iOS
+
+The app is launched with warden's injected library, which answers `ASAuthorizationController` for platform passkey requests: registration, assertion and AutoFill-assisted requests. A request with no platform passkey in it (passwords only, security keys only) goes to the platform as usual.
+
+- Set while an injected app runs, it applies at once. Set before launch, it applies on the next launch (`appliesOnLaunch`).
+- No associated-domains entitlement or `apple-app-site-association` file is needed: nothing leaves the simulator.
+- The origin in `clientDataJSON` is `https://<rpId>`.
+
+## Android
+
+API 34 (Android 14) or later: older emulators fail with `E_PASSKEY_API`. warden installs a small credential-provider app and makes it the device's provider while your lease uses passkeys; release uninstalls it and puts the previous provider settings back.
+
+- Android always shows a sheet to save a passkey, and a chooser when a sign-in has more than one. warden answers them for you whenever it reads the screen (`warden ui snapshot`, `wait`, a spec's assertions), so the authenticator's mode decides the result: `cancel` and `fail` come back as the platform's own exceptions. In `unavailable` it closes the sheet. With the authenticator off it leaves every sheet alone.
+- The sheet is matched on its English text: keep the emulator's language English.
+- The origin is `android:apk-key-hash:<base64url SHA-256 of the app's signing certificate>`.
+
+Errors and fixes are in [Debugging](/docs/e2e/debugging).

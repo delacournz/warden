@@ -1,10 +1,14 @@
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import {
 	type CameraCondition,
 	type CameraFeed,
+	isPasskeyMode,
+	isPasskeyUv,
 	KEYBOARD_MODES,
 	type KeyboardMode,
+	type PasskeyMode,
+	type PasskeyUv,
 } from "@delacour/warden-core/conditions/conditions.types";
 import { injectStatePath as coreInjectStatePath } from "@delacour/warden-core/conditions/inject-state";
 import type { Result } from "@delacour/warden-types/result";
@@ -23,11 +27,27 @@ export const INJECT_DYLIB = "libwarden-inject.dylib";
 export const INJECT_DYLIB_ENV = "WARDEN_INJECT_DYLIB";
 
 /**
+ * The virtual authenticator in the state file (`WARDEN_PASSKEYS=1`): how the app's platform passkey requests are
+ * answered and where the credentials live (the lease's `passkeys/<udid>/store.json`, which the dylib reads on every
+ * request and appends to when the app registers). A state without it means the authenticator is off.
+ */
+export type InjectPasskeys = { mode: PasskeyMode; uv: PasskeyUv; storePath: string };
+
+/**
+ * The Keychain ACL shim in the state file (`WARDEN_KEYCHAIN_ACL=1`): `enabled` switches the read gate live,
+ * `generation` is the biometric enrolment generation (`biometrics reenroll` bumps it; a `.biometryCurrentSet` item
+ * written at an older one is invalidated), `itemsPath` the sidecar where the dylib records the generation each
+ * access-controlled item was written at (the dylib is its only writer).
+ */
+export type InjectKeychainAcl = { enabled: boolean; generation: number; itemsPath: string };
+
+/**
  * The one message of the control channel. `seq` rises with every write (the dylib ignores a state whose `seq` it
  * already applied); a field left out means "off" (`offline` false, `clockOffsetMs` 0), so a message is always the
  * whole state, never a delta. `clockFrozenMs` (ms since the epoch) holds the wall clocks at one instant and wins over
  * `clockOffsetMs`; left out, they run. `camera`: the feeds of an app launched with `WARDEN_CAMERA=1` (a facing left out
- * has no camera); left out, no feeds.
+ * has no camera); left out, no feeds. `passkeys`: the virtual authenticator of an app launched with `WARDEN_PASSKEYS=1`;
+ * left out, it is off and the real OS answers.
  */
 export type InjectState = {
 	seq: number;
@@ -37,6 +57,8 @@ export type InjectState = {
 	/** one-shot request (A11Y-1): walk the accessibility tree and write `<state>.a11y` before acknowledging this `seq` */
 	a11yRead?: boolean;
 	camera?: CameraCondition;
+	passkeys?: InjectPasskeys;
+	keychainAcl?: InjectKeychainAcl;
 	/**
 	 * The on-screen keyboard (KBD-2): `software` keeps it up while warden types, `hardware` lets iOS minimise it. Unlike
 	 * the other fields a message that leaves it out keeps what the file had (see `createInjectChannel`), so a network or
@@ -50,8 +72,17 @@ export type InjectState = {
 	dismissKeyboard?: boolean;
 };
 
-/** What the dylib answers in `<state>.ack` once it applied `seq` (`bundleId`: the app it loaded into; `camera`: launched with `WARDEN_CAMERA=1`). */
-export type InjectAck = { seq: number; pid: number; proxy?: boolean; camera?: boolean; bundleId?: string };
+/** What the dylib answers in `<state>.ack` once it applied `seq` (`bundleId`: the app it loaded into; `camera`: launched with `WARDEN_CAMERA=1`; `passkeys`: launched with `WARDEN_PASSKEYS=1`; `keychainAcl`: launched with `WARDEN_KEYCHAIN_ACL=1`). */
+export type InjectAck = {
+	seq: number;
+	pid: number;
+	proxy?: boolean;
+	camera?: boolean;
+	passkeys?: boolean;
+	/** launched with `WARDEN_KEYCHAIN_ACL=1` */
+	keychainAcl?: boolean;
+	bundleId?: string;
+};
 
 export function encodeInjectState(state: InjectState): string {
 	return JSON.stringify({
@@ -61,6 +92,8 @@ export function encodeInjectState(state: InjectState): string {
 		...(state.clockFrozenMs === undefined ? {} : { clockFrozenMs: Math.trunc(state.clockFrozenMs) }),
 		...(state.a11yRead ? { a11yRead: true } : {}),
 		...(state.camera === undefined ? {} : { camera: state.camera }),
+		...(state.passkeys === undefined ? {} : { passkeys: state.passkeys }),
+		...(state.keychainAcl === undefined ? {} : { keychainAcl: state.keychainAcl }),
 		...(state.keyboard === undefined ? {} : { keyboard: state.keyboard }),
 		...(state.dismissKeyboard ? { dismissKeyboard: true } : {}),
 	});
@@ -89,6 +122,21 @@ function parseCamera(value: unknown): CameraCondition {
 	return { ...(back ? { back } : {}), ...(front ? { front } : {}) };
 }
 
+function parsePasskeys(value: unknown): InjectPasskeys | undefined {
+	if (!isRecord(value)) return undefined;
+	const { mode, uv, storePath } = value;
+	if (typeof mode !== "string" || !isPasskeyMode(mode)) return undefined;
+	if (typeof uv !== "string" || !isPasskeyUv(uv)) return undefined;
+	return typeof storePath === "string" && storePath.length > 0 ? { mode, uv, storePath } : undefined;
+}
+
+function parseKeychainAcl(value: unknown): InjectKeychainAcl | undefined {
+	if (!isRecord(value)) return undefined;
+	const { enabled, generation, itemsPath } = value;
+	if (typeof enabled !== "boolean" || typeof generation !== "number" || !Number.isInteger(generation)) return undefined;
+	return typeof itemsPath === "string" && itemsPath.length > 0 ? { enabled, generation, itemsPath } : undefined;
+}
+
 export function parseInjectState(text: string): InjectState | undefined {
 	try {
 		const data: unknown = JSON.parse(text);
@@ -100,6 +148,8 @@ export function parseInjectState(text: string): InjectState | undefined {
 			...(typeof data.clockFrozenMs === "number" ? { clockFrozenMs: data.clockFrozenMs } : {}),
 			...(data.a11yRead === true ? { a11yRead: true } : {}),
 			...("camera" in data ? { camera: parseCamera(data.camera) } : {}),
+			...(parsePasskeys(data.passkeys) ? { passkeys: parsePasskeys(data.passkeys) } : {}),
+			...(parseKeychainAcl(data.keychainAcl) ? { keychainAcl: parseKeychainAcl(data.keychainAcl) } : {}),
 			...(parseKeyboard(data.keyboard) ? { keyboard: parseKeyboard(data.keyboard) } : {}),
 		};
 	} catch {
@@ -116,6 +166,8 @@ export function parseInjectAck(text: string): InjectAck | undefined {
 			pid: data.pid,
 			proxy: data.proxy === true,
 			...(data.camera === true ? { camera: true } : {}),
+			...(data.passkeys === true ? { passkeys: true } : {}),
+			...(data.keychainAcl === true ? { keychainAcl: true } : {}),
 			...(typeof data.bundle === "string" ? { bundleId: data.bundle } : {}),
 		};
 	} catch {
@@ -146,6 +198,10 @@ export function injectLaunchEnv(input: {
 	clockFrozenMs?: number;
 	/** fake the capture stack from the state file's `camera` feeds (`WARDEN_CAMERA=1`) */
 	camera?: boolean;
+	/** answer platform passkey requests from the state file's `passkeys` (`WARDEN_PASSKEYS=1`) */
+	passkeys?: boolean;
+	/** gate reads of access-controlled Keychain items like a device (`WARDEN_KEYCHAIN_ACL=1`) */
+	keychainAcl?: boolean;
 	/** the keyboard mode the app starts in (`WARDEN_KEYBOARD`); the state file's `keyboard` overrides it live */
 	keyboard?: KeyboardMode;
 	debug?: boolean;
@@ -157,6 +213,8 @@ export function injectLaunchEnv(input: {
 		...(input.clockOffsetMs ? { WARDEN_CLOCK_OFFSET_MS: String(Math.trunc(input.clockOffsetMs)) } : {}),
 		...(input.clockFrozenMs === undefined ? {} : { WARDEN_CLOCK_FROZEN_MS: String(Math.trunc(input.clockFrozenMs)) }),
 		...(input.camera ? { WARDEN_CAMERA: "1" } : {}),
+		...(input.passkeys ? { WARDEN_PASSKEYS: "1" } : {}),
+		...(input.keychainAcl ? { WARDEN_KEYCHAIN_ACL: "1" } : {}),
 		...(input.keyboard ? { WARDEN_KEYBOARD: input.keyboard } : {}),
 		...(input.debug ? { WARDEN_INJECT_DEBUG: "1" } : {}),
 	};
@@ -173,6 +231,10 @@ export function shouldInject(input: {
 	clockActive: boolean;
 	/** the lease has a camera feed: the dylib must be loaded at launch to fake the capture stack */
 	cameraActive?: boolean;
+	/** the virtual authenticator is on: the dylib must be loaded at launch to answer the app's passkey requests */
+	passkeysActive?: boolean;
+	/** the Keychain ACL shim is on: the dylib must be loaded at launch to interpose the app's Keychain reads */
+	keychainAclActive?: boolean;
 	/** the lease's keyboard mode is `software` (the default): the dylib keeps the on-screen keyboard up while warden types */
 	keyboardActive?: boolean;
 	/** the caller asked for injection (`LaunchOptions.inject`, a suite that declares `conditions.network`) */
@@ -182,6 +244,8 @@ export function shouldInject(input: {
 		input.networkActive ||
 		input.clockActive ||
 		input.cameraActive === true ||
+		input.passkeysActive === true ||
+		input.keychainAclActive === true ||
 		input.keyboardActive === true ||
 		input.requested
 	);
@@ -244,6 +308,26 @@ export function locateInjectDylib(input: LocateInjectInput): Result<string, Driv
 		if (input.exists(candidate)) return { success: true, data: candidate };
 	}
 	return missing(`${INJECT_DYLIB} not found (tried ${tried.join(", ")})`);
+}
+
+/**
+ * `locateInjectDylib` from this module's own place in `@delacour/warden-e2e`, for a caller outside the driver that
+ * launches an app itself (`warden dev`'s raw `simctl launch`): the same lookup the iOS driver does.
+ */
+export function locateInjectDylibFor(o: {
+	env: Readonly<Record<string, string | undefined>>;
+	wardenHome: string;
+	version?: string;
+}): Result<string, DriverError> {
+	return locateInjectDylib({
+		env: { [INJECT_DYLIB_ENV]: o.env[INJECT_DYLIB_ENV], WARDEN_HELPER_DIR: o.env.WARDEN_HELPER_DIR },
+		execPath: process.execPath,
+		importDir: import.meta.dir,
+		wardenHome: o.wardenHome,
+		exists: existsSync,
+		realpath: realpathSync,
+		...(o.version ? { version: o.version } : {}),
+	});
 }
 
 /** File operations of the state channel, injected. */

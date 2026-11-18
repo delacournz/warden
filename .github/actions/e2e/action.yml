@@ -57,6 +57,9 @@ inputs:
   xcode-path:
     description: Xcode to use (`/Applications/Xcode_27.2.app`); sets DEVELOPER_DIR for every later step. Empty keeps the runner's default.
     default: ""
+  dyld-cache:
+    description: "`true` builds every installed simulator runtime's dyld shared cache (`xcrun simctl runtime dyld_shared_cache update --all`, at most 10 min) before the first boot, so a sim does not boot against a half-built cache; `false` skips. The step logs how long it took."
+    default: "true"
   report-path:
     description: Where the e2e-report.json goes, relative to the workspace.
     default: warden-e2e-report.json
@@ -76,13 +79,16 @@ inputs:
     description: "`github` restores and saves the build, repack and golden caches with actions/cache. `none` leaves storing them to you: the golden is still imported from `~/warden-goldens` but never exported for the cache (run the golden's `beforeSave` from `cache-groups` when your cache missed it; collecting the `golden` artifact already archives a missing one there), and the `cache-groups` output lists every key and path to restore before this step and save after it."
     default: github
   compiler-cache:
-    description: "On a native build cache miss (`cache: github`), install ccache (Homebrew) and restore warden's compiler cache (`~/.warden/ccache`, the newest older key when this fingerprint has none), so the cold build reuses the C/C++/Objective-C objects an older native fingerprint compiled; saved after the run. `false` skips both."
+    description: "On a native build cache miss (`cache: github`), install ccache (a pinned release binary when none is on PATH) and restore warden's compiler cache (`~/.warden/ccache`: the newest save for this native fingerprint, else the newest for any), so the cold build reuses the C/C++/Objective-C objects an earlier build compiled. Saved after the run under a per-run key, only when the build stored new objects. Skipped when the project sets `build.cache: false`. `false` skips all of it."
     default: "true"
   save-cache:
-    description: Save the build, repack and golden caches after a green run (true on the default branch, false on pull requests).
+    description: Save the build, repack and golden caches after a green run, and the compiler and Metro caches after a build (true on the default branch, false on pull requests).
     default: "true"
+  build-only:
+    description: "`true` builds the app and saves the caches, but runs no spec: `passed` is the build's outcome. A suite with a golden still builds it on a cache miss (booting a simulator) and saves it with the rest. For a push to the default branch whose specs already ran on the pull request: it seeds the caches every pull request restores."
+    default: "false"
   suite-timeout-minutes:
-    description: Minutes the suite may run before the action stops it (SIGINT, then SIGKILL after 60 s), so a hung run still prints its evidence and uploads the artifact. Keep it under the job timeout.
+    description: Minutes the suite may run before the action stops it (SIGINT, then SIGKILL after 60 s), so a hung run still prints its evidence and uploads the artifact. The app build runs before it in its own step (`warden e2e --build-only`) and is not counted. Keep the job timeout above a cold build plus this.
     default: "35"
   artifacts:
     description: "What the run leaves behind to collect: `all`, `none`, or a comma list of `report` (e2e-report.json), `batches` (~/.warden/batches: spec logs, results.jsonl, screen-at-failure.txt, metro.log), `logs` (~/.warden/logs: native build logs, plus the device helpers' ~/.warden/simd/*.log), `app` (app.tar of the .app / .apk builds the run used), `golden` (golden.tar of the golden simulator, exported to ~/warden-goldens first when it was built but not archived; GBs). Tarballs keep the executable bit and symlinks upload-artifact would lose. `all` is every group after a green run (less `golden` when it was restored from the cache: the cache holds it) and `report,batches,logs,golden` after a failed one. `logs` is always collected, whatever this says (even `none`). The `artifact-paths` output lists what was collected."
@@ -105,7 +111,7 @@ outputs:
     description: "`true` when the gate passed, `false` when a required spec failed or the run broke."
     value: ${{ steps.run.outputs.passed }}
   cache-groups:
-    description: "`warden ci cache --json`: `{builds, repack, golden}`, each `{kind, key, paths}` (the golden adds `afterRestore` / `beforeSave`; `null` when the suite does not set `golden: true`). For caching with something other than actions/cache (`cache: none`)."
+    description: "`warden ci cache --json`: `{builds, repack, golden, ccache, metro}`, each `{kind, key, paths}` (the golden adds `afterRestore` / `beforeSave`; `null` when the suite does not set `golden: true`; `ccache` and `metro` add `restoreKeys`). For caching with something other than actions/cache (`cache: none`)."
     value: ${{ steps.keys.outputs.cache-groups }}
   artifact-groups:
     description: Comma list of the groups collected (`report,batches,logs,app,golden`), whether or not they were uploaded.
@@ -123,14 +129,16 @@ runs:
       env:
         XCODE_PATH: ${{ inputs.xcode-path }}
         HEADROOM_GB: ${{ inputs.headroom-gb }}
+        DYLD_CACHE: ${{ inputs.dyld-cache }}
         CACHE: ${{ inputs.cache }}
         ARTIFACTS: ${{ inputs.artifacts }}
         UPLOAD: ${{ inputs.upload-artifacts }}
-      run: |
+      run: |  # zizmor: ignore[github-env] constants, an xcode-path that must be an existing directory, and an integer headroom-gb reach GITHUB_ENV
         set -euo pipefail
         echo "started=$(date +%s)" >> "$GITHUB_OUTPUT"
         case "$CACHE" in github|none) ;; *) echo "cache must be github or none, not \"$CACHE\"" >&2; exit 1 ;; esac
         case "$UPLOAD" in true|false) ;; *) echo "upload-artifacts must be true or false, not \"$UPLOAD\"" >&2; exit 1 ;; esac
+        case "$DYLD_CACHE" in true|false) ;; *) echo "dyld-cache must be true or false, not \"$DYLD_CACHE\"" >&2; exit 1 ;; esac
         case "$ARTIFACTS" in
           all|none) ;;
           *) for group in $(echo "$ARTIFACTS" | tr ',' ' '); do
@@ -156,6 +164,7 @@ runs:
         # warden keeps max(8 GB, 25%) of RAM free of simulators: on a 7 GB hosted runner that budget is
         # zero and every claim queues. A runner this small has nothing else to protect but the build.
         if [ -n "$HEADROOM_GB" ]; then
+          case "$HEADROOM_GB" in *[!0-9]*) echo "headroom-gb must be a whole number of GB, not \"$HEADROOM_GB\"" >&2; exit 1 ;; esac
           echo "WARDEN_CAPACITY_HEADROOM_GB=$HEADROOM_GB" >> "$GITHUB_ENV"
         elif [ "$gb" -le 16 ]; then
           echo "WARDEN_CAPACITY_HEADROOM_GB=1" >> "$GITHUB_ENV"
@@ -165,6 +174,17 @@ runs:
         start=$(date +%s)
         xcrun simctl list devices available -j > /dev/null
         echo "CoreSimulator answered after $(( $(date +%s) - start )) s"
+        # A runtime whose dyld shared cache is still being built boots slowly and its accessibility service can
+        # come up wedged. Build it now, bounded, and say how long it took; a failure only warns (boots build it on demand).
+        if [ "$DYLD_CACHE" = true ]; then
+          start=$(date +%s)
+          if perl -e 'alarm shift; exec @ARGV' 600 xcrun simctl runtime dyld_shared_cache update --all; then
+            echo "runtime dyld shared caches ready after $(( $(date +%s) - start )) s"
+          else
+            status=$?
+            echo "::warning::xcrun simctl runtime dyld_shared_cache update --all exited $status after $(( $(date +%s) - start )) s; simulators build the cache on demand"
+          fi
+        fi
 
     - name: Install bun
       shell: bash
@@ -197,7 +217,7 @@ runs:
         GH_TOKEN: ${{ github.token }}
         WARDEN_VERSION: ${{ inputs.warden-version }}
         WARDEN_REPO: ${{ inputs.warden-repo }}
-      run: |
+      run: |  # zizmor: ignore[github-env] only the constant $HOME/.local/bin reaches GITHUB_PATH
         set -euo pipefail
         case "$(uname -s)-$(uname -m)" in
           Darwin-arm64) target=darwin-arm64 ;;
@@ -213,13 +233,6 @@ runs:
         (cd "$dir" && grep " warden-$target\$" checksums.txt | shasum -a 256 -c -)
         install -m 0755 "$dir/warden-$target" "$HOME/.local/bin/warden"
         echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-
-    - name: Check the host (warden doctor)
-      shell: bash
-      working-directory: ${{ inputs.working-directory }}
-      run: |
-        warden --version
-        warden doctor --fetch-helper
 
     - name: Key the caches
       id: keys
@@ -246,8 +259,18 @@ runs:
           echo "ccache=$(key ccache)"
           echo "ccache-dir=$(node -e 'const g=JSON.parse(process.argv[1]).ccache;process.stdout.write(g?.paths[0] ?? "")' "$groups")"
           echo "ccache-restore<<WARDEN_CCACHE_RESTORE"
+          ccache_key=$(key ccache)
+          if [ -n "$ccache_key" ]; then echo "$ccache_key-"; fi
           node -e 'const g=JSON.parse(process.argv[1]).ccache;for(const k of g?.restoreKeys ?? [])console.log(k)' "$groups"
           echo "WARDEN_CCACHE_RESTORE"
+          # an older warden prints no metro group: an empty key skips the Metro cache steps
+          echo "metro=$(key metro)"
+          echo "metro-dir=$(node -e 'const g=JSON.parse(process.argv[1]).metro;process.stdout.write(g?.paths[0] ?? "")' "$groups")"
+          echo "metro-restore<<WARDEN_METRO_RESTORE"
+          metro_key=$(key metro)
+          if [ -n "$metro_key" ]; then echo "$metro_key-"; fi
+          node -e 'const g=JSON.parse(process.argv[1]).metro;for(const k of g?.restoreKeys ?? [])console.log(k)' "$groups"
+          echo "WARDEN_METRO_RESTORE"
           echo "cache-groups<<WARDEN_CACHE_GROUPS"
           echo "$groups"
           echo "WARDEN_CACHE_GROUPS"
@@ -277,15 +300,16 @@ runs:
       run: |
         echo "::notice title=native build cache miss::no cached app build for $KEY: warden e2e builds it from source before the first spec (~15-20 min on a 3-core runner, less with a warm compiler cache). The key follows the native fingerprint: native dependencies, config plugins, native files."
 
-    # ccache only helps a cold native build, so it is installed and restored on a builds miss alone. Any older key
-    # helps (most pods compile the same after a native change), hence the restore-keys prefix.
+    # ccache only helps a cold native build, so it is installed and restored on a builds miss alone. Each run saves under
+    # its own key (an exact key is immutable, so a cache saved empty or partial would never grow): restore the newest
+    # save for this fingerprint, else the newest for any (most pods compile the same after a native change).
     - name: Restore the compiler cache
       id: ccache-cache
       if: inputs.cache == 'github' && inputs.compiler-cache == 'true' && steps.keys.outputs.ccache != '' && steps.builds-cache.outputs.cache-hit != 'true'
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ steps.keys.outputs.ccache-dir }}
-        key: ${{ steps.keys.outputs.ccache }}
+        key: ${{ steps.keys.outputs.ccache }}-${{ github.run_id }}-${{ github.run_attempt }}
         restore-keys: ${{ steps.keys.outputs.ccache-restore }}
 
     - name: Install ccache
@@ -294,16 +318,42 @@ runs:
       shell: bash
       env:
         CCACHE_DIR: ${{ steps.keys.outputs.ccache-dir }}
-      run: |
+      run: |  # zizmor: ignore[github-env] only the constant $HOME/.local/bin and CCACHE_MAXSIZE from the job env reach the env files
         set -euo pipefail
+        # The release's universal binary needs only system libraries: ~1 s, against ~15 s for Homebrew and its 4 deps.
+        # Homebrew stays the fallback for when GitHub's release download fails.
+        version=4.14.2
+        sha256=cf240009630b605b775c7c5c7b7105a3b196c79f31af322c1557969aa28003fc
         if ! command -v ccache > /dev/null; then
-          HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK=1 brew install ccache
+          dir="$RUNNER_TEMP/ccache-dl"
+          tarball="$dir/ccache-$version-darwin.tar.gz"
+          mkdir -p "$dir" "$HOME/.local/bin"
+          if curl -fsSL --retry 3 -o "$tarball" "https://github.com/ccache/ccache/releases/download/v$version/ccache-$version-darwin.tar.gz" \
+            && echo "$sha256  $tarball" | shasum -a 256 -c - > /dev/null \
+            && tar -xzf "$tarball" -C "$dir"; then
+            install -m 0755 "$dir/ccache-$version-darwin/ccache" "$HOME/.local/bin/ccache"
+            export PATH="$HOME/.local/bin:$PATH"
+            echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          else
+            echo "::warning title=ccache download failed::installing ccache with Homebrew instead"
+            HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK=1 brew install ccache
+          fi
         fi
         ccache --version | head -n 1
         # ccache compresses; 2 GB holds an Expo app's pods and keeps the repo's 10 GB of GitHub cache for the rest
         echo "CCACHE_MAXSIZE=${CCACHE_MAXSIZE:-2G}" >> "$GITHUB_ENV"
         mkdir -p "$CCACHE_DIR"
         ccache --zero-stats > /dev/null
+
+    # After the ccache install: doctor reports ccache from PATH, so before it a cache miss warns about a ccache the
+    # action is about to add. Before the import, golden build and suite, which need the helper it fetches.
+    - name: Check the host (warden doctor)
+      id: doctor
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        warden --version
+        warden doctor --fetch-helper
 
     - name: Restore the JS repack cache
       if: inputs.cache == 'github'
@@ -312,6 +362,18 @@ runs:
       with:
         path: ~/.warden/builds/*/ios/*/simulator/repacks
         key: ${{ steps.keys.outputs.repack }}
+
+    # Metro's transform cache only helps a repack, so it is restored on a repack miss alone: Metro then re-transforms
+    # just the files that changed. Saved per run like ccache (an exact key is immutable): the newest save for these JS
+    # inputs, else the newest for any.
+    - name: Restore the Metro cache
+      id: metro-cache
+      if: inputs.cache == 'github' && steps.keys.outputs.metro != '' && steps.repack-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.keys.outputs.metro-dir }}
+        key: ${{ steps.keys.outputs.metro }}-${{ github.run_id }}-${{ github.run_attempt }}
+        restore-keys: ${{ steps.keys.outputs.metro-restore }}
 
     - name: Restore the golden simulator
       if: inputs.cache == 'github' && steps.keys.outputs.golden-key != ''
@@ -322,6 +384,7 @@ runs:
         key: ${{ steps.keys.outputs.golden-key }}
 
     - name: Import the golden and the prebuilt app
+      id: import
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       env:
@@ -337,6 +400,7 @@ runs:
         fi
 
     - name: Build the golden simulator
+      id: golden-build
       if: steps.keys.outputs.golden-key != '' && steps.golden-cache.outputs.cache-hit != 'true'
       shell: bash
       working-directory: ${{ inputs.working-directory }}
@@ -348,6 +412,45 @@ runs:
         if [ -n "$PROFILE" ]; then profile_args=(--profile "$PROFILE"); fi
         warden golden ensure ${profile_args[@]+"${profile_args[@]}"}
 
+    # The native build (a cold one is 15-35 min on a hosted runner) gets its own step, bounded only by the job timeout, so
+    # `suite-timeout-minutes` times the specs alone. `--build-only` builds what the run would install (same suite, specs,
+    # kind and bundle env), so the run finds it cached. A warden without the flag leaves the build to the run.
+    - name: Build the app
+      id: build
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        SUITE: ${{ inputs.suite }}
+        PROFILE: ${{ inputs.profile }}
+        EXTRA: ${{ inputs.args }}
+      run: |
+        set +e
+        set -uo pipefail
+        # read the help whole: piped into grep -q, an early match SIGPIPEs warden and pipefail reads it as missing
+        help=$(warden e2e --help 2>/dev/null || true)
+        if ! grep -q -- '--build-only' <<< "$help"; then
+          echo "::notice title=app built by the run::this warden has no \`e2e --build-only\`: the suite's timeout includes the build"
+          exit 0
+        fi
+        args=(e2e)
+        if [ -n "$SUITE" ]; then args+=("$SUITE"); fi
+        if [ -n "$PROFILE" ]; then args+=(--profile "$PROFILE"); fi
+        args+=(--build-only)
+        # shellcheck disable=SC2206
+        extra=($EXTRA)
+        started=$(date +%s)
+        echo "started=$started" >> "$GITHUB_OUTPUT"
+        warden "${args[@]}" ${extra[@]+"${extra[@]}"}
+        code=$?
+        ended=$(date +%s)
+        {
+          echo "ended=$ended"
+          echo "exit-code=$code"
+        } >> "$GITHUB_OUTPUT"
+        echo "warden e2e --build-only exited $code after $(( ended - started )) s"
+        if [ "$code" -ne 0 ]; then echo "::error title=app build failed::warden e2e --build-only exited $code; the suite was not run"; fi
+        exit 0
+
     - name: Run the suite
       id: run
       shell: bash
@@ -355,6 +458,8 @@ runs:
       env:
         SUITE: ${{ inputs.suite }}
         PROFILE: ${{ inputs.profile }}
+        BUILD_EXIT: ${{ steps.build.outputs.exit-code }}
+        BUILD_ONLY: ${{ inputs.build-only }}
         COUNT: ${{ inputs.count }}
         RETRY: ${{ inputs.retry }}
         EXTRA: ${{ inputs.args }}
@@ -365,6 +470,36 @@ runs:
         set +e
         set -uo pipefail
         case "$REPORT" in /*) report="$REPORT" ;; *) report="$WORKSPACE/$REPORT" ;; esac
+        if [ -n "${BUILD_EXIT:-}" ] && [ "$BUILD_EXIT" != 0 ]; then
+          now=$(date +%s)
+          {
+            echo "report-path=$report"
+            echo "exit-code=$BUILD_EXIT"
+            echo "passed=false"
+            echo "seconds=0"
+            echo "started=$now"
+            echo "ended=$now"
+          } >> "$GITHUB_OUTPUT"
+          echo "skipped: the app build failed (exit $BUILD_EXIT)"
+          exit 0
+        fi
+        # build-only: the build step's outcome is the run's. No exit code there = a warden without `e2e --build-only`
+        # built nothing, so there is nothing to seed: fail rather than save empty caches.
+        if [ "${BUILD_ONLY:-false}" = true ]; then
+          now=$(date +%s)
+          code=${BUILD_EXIT:-1}
+          if [ -z "${BUILD_EXIT:-}" ]; then echo "::error title=build-only unsupported::this warden has no \`e2e --build-only\`: nothing was built"; fi
+          {
+            echo "report-path=$report"
+            echo "exit-code=$code"
+            echo "passed=$([ "$code" -eq 0 ] && echo true || echo false)"
+            echo "seconds=0"
+            echo "started=$now"
+            echo "ended=$now"
+          } >> "$GITHUB_OUTPUT"
+          echo "skipped: build-only (no spec runs)"
+          exit 0
+        fi
         args=(e2e)
         if [ -n "$SUITE" ]; then args+=("$SUITE"); fi
         if [ -n "$PROFILE" ]; then args+=(--profile "$PROFILE"); fi
@@ -408,6 +543,7 @@ runs:
       env:
         JOB_TIMING_TOKEN: ${{ inputs.github-token }}
         ACTION_STARTED: ${{ steps.prepare.outputs.started }}
+        BUILD_STARTED: ${{ steps.build.outputs.started }}
         SUITE_STARTED: ${{ steps.run.outputs.started }}
         SUITE_ENDED: ${{ steps.run.outputs.ended }}
       run: bash "$GITHUB_ACTION_PATH/job-timing.sh"
@@ -419,7 +555,7 @@ runs:
       if: always()
       shell: bash
       env:
-        STARTED: ${{ steps.run.outputs.started }}
+        STARTED: ${{ steps.build.outputs.started || steps.run.outputs.started }}
         CCACHE_DIR: ${{ steps.keys.outputs.ccache-dir }}
         CCACHE_USED: ${{ steps.ccache-prep.outcome }}
       run: |
@@ -438,6 +574,8 @@ runs:
           echo "::group::ccache stats"
           ccache --show-stats
           echo "::endgroup::"
+          # Objects this run stored (stats were zeroed after the restore): 0 = nothing new to save
+          echo "ccache-writes=$(ccache --print-stats | awk '$1 == "local_storage_write" { print $2 }')" >> "$GITHUB_OUTPUT"
         fi
 
     - name: Print failure evidence
@@ -536,12 +674,22 @@ runs:
         key: ${{ steps.keys.outputs.golden-key }}
 
     # A failed spec after a green build still compiled good objects: ccache is content-addressed, so save it anyway.
+    # A run that stored nothing (every compile a hit, or the build never reached ccache) saves nothing.
     - name: Save the compiler cache
-      if: always() && inputs.cache == 'github' && inputs.save-cache == 'true' && steps.ccache-prep.outcome == 'success' && steps.ccache-cache.outputs.cache-hit != 'true'
+      if: always() && inputs.cache == 'github' && inputs.save-cache == 'true' && steps.ccache-prep.outcome == 'success' && steps.build-log.outputs.ccache-writes != '' && steps.build-log.outputs.ccache-writes != '0'
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ steps.keys.outputs.ccache-dir }}
-        key: ${{ steps.keys.outputs.ccache }}
+        key: ${{ steps.keys.outputs.ccache }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+    # The repack ran (its cache missed) and the app built: Metro's cache is content-addressed, so a failed spec after it
+    # still leaves good entries.
+    - name: Save the Metro cache
+      if: always() && inputs.cache == 'github' && inputs.save-cache == 'true' && steps.metro-cache.outcome == 'success' && (steps.build.outputs.exit-code == '0' || steps.run.outputs.passed == 'true')
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.keys.outputs.metro-dir }}
+        key: ${{ steps.keys.outputs.metro }}-${{ github.run_id }}-${{ github.run_attempt }}
 
     - name: Save the native build cache
       if: inputs.cache == 'github' && steps.run.outputs.passed == 'true' && inputs.save-cache == 'true' && steps.builds-cache.outputs.cache-hit != 'true'
@@ -565,8 +713,9 @@ runs:
       env:
         PASSED: ${{ steps.run.outputs.passed }}
         CODE: ${{ steps.run.outputs.exit-code }}
+        ARTIFACT_NAME: ${{ inputs.artifact-name }}
       run: |
         if [ "$PASSED" != true ]; then
-          echo "::error title=warden e2e failed::exit code ${CODE:-unknown}; see the evidence above and the ${{ inputs.artifact-name }}-batches artifact"
+          echo "::error title=warden e2e failed::exit code ${CODE:-unknown}; see the evidence above and the ${ARTIFACT_NAME}-batches artifact"
           exit "${CODE:-1}"
         fi

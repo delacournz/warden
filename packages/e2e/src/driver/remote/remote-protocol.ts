@@ -70,6 +70,7 @@ export const DRIVER_OPS = [
 	"push",
 	"biometrics",
 	"camera",
+	"passkeys",
 ] as const;
 export type DriverOp = (typeof DRIVER_OPS)[number];
 

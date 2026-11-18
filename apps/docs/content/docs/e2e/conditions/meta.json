@@ -1,0 +1,19 @@
+{
+	"title": "Device conditions",
+	"icon": "Signal",
+	"pages": [
+		"network",
+		"location",
+		"clock",
+		"biometrics",
+		"keychain-acl",
+		"permissions",
+		"camera",
+		"passkeys",
+		"locale",
+		"accessibility",
+		"battery",
+		"keyboard",
+		"events"
+	]
+}

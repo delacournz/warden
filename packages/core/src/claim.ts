@@ -15,6 +15,7 @@ import {
 	totalCost,
 } from "./capacity";
 import { type ClaimErrorKind, claimError, isRuntimeMissing } from "./claim-errors";
+import { injectStatePath, switchOffKeychainAcl } from "./conditions/inject-state";
 import type { OrphanHost } from "./conditions/orphans";
 import { DEFAULT_READY_TIMEOUT_MS } from "./config.defaults";
 import { formatDuration } from "./duration";
@@ -26,7 +27,7 @@ import { countOtherClaims } from "./owner-limit";
 import { isProbeTimeout } from "./providers/health";
 import type { DeviceProvider } from "./providers/provider.types";
 import { admissionQueue, type DeviceWaitReason, PRIORITY, priorityName, queuePosition, type WaitReason } from "./queue";
-import { type DeviceRecord, ownerKey, type Store } from "./store";
+import { type DeviceRecord, ownerKey, type Store, wardenHome } from "./store";
 import {
 	type AllocationStep,
 	type DeviceRequest,
@@ -1159,11 +1160,21 @@ async function quarantineUnhealthy(input: ClaimInput, bad: UnhealthyDevice[]): P
 	}
 }
 
-/** Undo what a deleted lease left set on the claimed devices; only touches the conditions code when a row exists. */
+/**
+ * Undo what a deleted lease left set on the claimed devices; only touches the conditions code when a row exists. The
+ * Keychain ACL shim has no condition record, and a lease that expired or was evicted never went through a release, so
+ * every claimed iOS device has it switched off here (a file read; nothing when it was never on): a new lease never
+ * inherits prompts it did not ask for.
+ */
 async function undoClaimedOrphans(input: ClaimInput, claimed: ClaimedDevice[]): Promise<void> {
 	const host = input.orphans;
 	if (!host) return;
+	const home = wardenHome(host.env);
 	for (const { device } of claimed) {
+		if (device.platform === "ios") {
+			const failed = switchOffKeychainAcl(injectStatePath(home, device.id));
+			if (failed) input.log?.(`${device.name} (${device.id}): ${failed}`);
+		}
 		const rows = input.store.db
 			.query<{ n: number }, [string, string]>(
 				"SELECT COUNT(*) AS n FROM orphan_conditions WHERE platform = ? AND device_id = ?"

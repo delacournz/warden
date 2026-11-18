@@ -1,0 +1,14 @@
+{
+	"schemaVersion": 1,
+	"event": "test",
+	"spec": "chats",
+	"file": "/repo/specs/chats.e2e.ts",
+	"title": ["sends"],
+	"status": "failed",
+	"durationMs": 1250,
+	"error": "snapshot failed: x",
+	"line": 22,
+	"device": {
+		"udid": "A"
+	}
+}

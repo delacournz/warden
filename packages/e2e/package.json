@@ -1,6 +1,6 @@
 {
 	"name": "@delacour/warden-e2e",
-	"version": "0.15.0",
+	"version": "0.19.0",
 	"description": "warden e2e: TypeScript spec API (bun test), simulator/emulator driver, RN devtools facet",
 	"homepage": "https://warden.co.nz/docs/e2e",
 	"type": "module",
@@ -20,10 +20,13 @@
 		"native:build": "bun native/scripts/build.ts && bun native/scripts/inject.ts",
 		"native:inject": "bun native/scripts/inject.ts",
 		"native:smoke": "bun native/scripts/smoke.ts",
+		"native:guest-contract": "bun native/scripts/guest-contract.ts",
 		"android:build": "bun native/android/scripts/build.ts",
 		"android:emit": "bun native/android/scripts/build.ts --emit-ts",
 		"android:atf": "bun native/android/scripts/build-atf.ts",
 		"android:emit-atf": "bun native/android/scripts/build-atf.ts --emit-ts",
+		"android:passkeys": "bun native/android/scripts/build-passkeys.ts",
+		"android:emit-passkeys": "bun native/android/scripts/build-passkeys.ts --emit-ts",
 		"android:smoke": "bun native/android/scripts/smoke.ts"
 	},
 	"dependencies": {

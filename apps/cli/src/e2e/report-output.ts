@@ -1,6 +1,7 @@
 import { basename, isAbsolute, relative } from "node:path";
 import type { TestResult, TestStatus } from "@delacour/warden-e2e/runner/results";
 import type { E2eReport } from "../commands/e2e";
+import { SCHEMA_VERSIONS } from "../contracts/versions";
 import type { SpecVerdict, TestVerdict } from "./verdicts";
 
 /** `(path:line:col)` / `at path:line:col` in one stack frame. */
@@ -142,6 +143,8 @@ export function stepSummary(report: E2eReport): string {
 /** One `--json-lines` event: a test as it finishes, then the whole report once the run is over. */
 export type E2eEvent =
 	| {
+			/** the `warden.e2e.event` contract version */
+			schemaVersion: (typeof SCHEMA_VERSIONS)["warden.e2e.event"];
 			event: "test";
 			spec: string;
 			file: string;
@@ -155,12 +158,13 @@ export type E2eEvent =
 			artifacts?: string;
 			device: { udid: string; name?: string };
 	  }
-	| { event: "report"; report: E2eReport };
+	| { schemaVersion: (typeof SCHEMA_VERSIONS)["warden.e2e.event"]; event: "report"; report: E2eReport };
 
 /** A finished test as a `--json-lines` event. */
 export function testEvent(specId: string, result: TestResult): E2eEvent {
 	const line = specLine(result.error?.stack, result.file);
 	return {
+		schemaVersion: SCHEMA_VERSIONS["warden.e2e.event"],
 		event: "test",
 		spec: specId,
 		file: result.file,

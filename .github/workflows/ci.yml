@@ -11,6 +11,11 @@ name: ci
 #
 #   gh workflow run ci --ref <branch> -f signoff-sha=$(git rev-parse HEAD)
 #
+# Never on `develop` or `main`: every job skips there. A merge into develop is checked by the run
+# version.yml dispatches on the version PR (same tree plus the version bump), and that PR is the only
+# way to release, so a second run on the develop tip would spend a macOS runner on a result nothing
+# reads.
+#
 # Dispatching needs write access, so a maintainer chooses every run. For a fork PR, review the code
 # first: this checks it out and runs it. The status write lives in its own job that never checks
 # anything out, so only that job holds `statuses: write`.
@@ -33,14 +38,19 @@ permissions:
 # The cancelled run's `signoff` job still settles its pending status as failure, so the old SHA
 # never shows "in progress". Keyed on the ref, not the SHA: two dispatches on one branch with
 # different heads must share a group for the newer to cancel the older.
+# Except develop: a dispatch with `--ref develop` and another PR's SHA is valid (develop's workflow
+# file, the PR's code), so several unrelated PRs can be in flight there at once. Keying develop on
+# the SHA too stops one PR's dispatch from cancelling another's.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.ref }}${{ github.ref == 'refs/heads/develop' && format('-{0}', inputs.signoff-sha) || '' }}
   cancel-in-progress: true
 
 jobs:
   # The SHA ends up in API paths and checkout refs; refuse anything but a full hex SHA.
+  # Skipped on develop/main (see the header), which skips every job after it.
   validate:
-    runs-on: ubuntu-latest
+    if: github.ref != 'refs/heads/develop' && github.ref != 'refs/heads/main'
+    runs-on: ubuntu-24.04
     steps:
       - env:
           SHA: ${{ inputs.signoff-sha }}
@@ -55,7 +65,7 @@ jobs:
   # `signoff` job settles it as success or failure. Never checks anything out.
   pending:
     needs: validate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       statuses: write
     steps:
@@ -98,12 +108,13 @@ jobs:
             turbo-ci-${{ runner.os }}-${{ runner.arch }}-
 
       # `@delacournz/cli-telemetry` (GitHub Packages, private) is a hard dependency of apps/cli, so the
-      # install needs a read token. bunfig.toml reads NPM_TOKEN; the job token works because the package
-      # grants this repo Actions read access (package settings > Manage Actions access). apps/docs'
-      # optional OpenTelemetry packages ride on the same token.
+      # install needs a read token. bunfig.toml reads NPM_TOKEN. NPM_READ_TOKEN (classic PAT,
+      # read:packages) also installs the optional `@delacournz/*` design systems, which the apps that
+      # render one need to typecheck and test; without it the job token still covers cli-telemetry
+      # and apps/docs' optional OpenTelemetry packages (Actions read access granted per package).
       - run: bun install --frozen-lockfile
         env:
-          NPM_TOKEN: ${{ github.token }}
+          NPM_TOKEN: ${{ secrets.NPM_READ_TOKEN || github.token }}
       - run: bun run typecheck
       - run: bun run check
       - run: bun run test
@@ -111,7 +122,7 @@ jobs:
   # Paths filter for the native job: does this commit touch packages/e2e/native/** against develop?
   native-changes:
     needs: validate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       native: ${{ steps.paths.outputs.native }}
     steps:
@@ -188,11 +199,12 @@ jobs:
   # Writes the statuses, sub-contexts first and the required `signoff` umbrella last, only when every
   # applicable check passed. Skipped jobs count as passing for `needs`, so results are checked explicitly.
   # A failed or cancelled check settles the pending `signoff` as failure, so the PR never shows a run
-  # that is still "in progress" after it ended.
+  # that is still "in progress" after it ended. Nothing to settle when validate was skipped (develop,
+  # main) or refused the SHA: no pending status was posted.
   signoff:
-    needs: [pending, checks, native-changes, native]
-    if: always()
-    runs-on: ubuntu-latest
+    needs: [validate, pending, checks, native-changes, native]
+    if: always() && needs.validate.result == 'success'
+    runs-on: ubuntu-24.04
     permissions:
       statuses: write
     steps:

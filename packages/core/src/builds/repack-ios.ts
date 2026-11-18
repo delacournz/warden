@@ -2,7 +2,7 @@ import { copyFileSync, cpSync, existsSync, readdirSync, rmSync, statSync, writeF
 import { basename, join } from "node:path";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import type { Exec } from "../exec";
-import type { ApplyRepack } from "./repack.types";
+import type { ApplyRepack, BundleOutput } from "./repack.types";
 
 const BUNDLE = "main.jsbundle";
 const EXPO_PLIST = "Expo.plist";
@@ -55,9 +55,21 @@ async function extractEntitlements(exec: Exec, app: string): Promise<string | un
 	return run.stdout.slice(run.stdout.indexOf("<?xml"));
 }
 
+/** The bundle's source maps beside the app: `main.jsbundle.map`, or Hermes's two uncomposed maps. */
+function writeSourceMaps(bundle: BundleOutput, outDir: string): void {
+	if (!bundle.hermes) {
+		copyFileSync(bundle.sourcemap, join(outDir, `${BUNDLE}.map`));
+		return;
+	}
+	copyFileSync(bundle.sourcemap, join(outDir, `${BUNDLE}.packager.map`));
+	if (bundle.bytecodeSourcemap) copyFileSync(bundle.bytecodeSourcemap, join(outDir, `${BUNDLE}.hbc.map`));
+}
+
 /**
  * The iOS half of a repack: clone the simulator base `.app` into `outDir`, swap in the new bundle and assets, and
- * re-sign it ad-hoc keeping its entitlements. `main.jsbundle.map` is written next to the app, not inside it.
+ * re-sign it ad-hoc keeping its entitlements. The source maps are written next to the app, not inside it:
+ * `main.jsbundle.map` for a JS bundle; `main.jsbundle.packager.map` (Metro's) and `main.jsbundle.hbc.map` (hermesc's),
+ * uncomposed, for Hermes bytecode.
  *
  * Only the outer app is re-signed (no `--deep`): its seal covers `main.jsbundle`, assets and `Info.plist`, which
  * changed, while the nested frameworks are untouched and keep their own signatures, which the seal only references.
@@ -76,7 +88,7 @@ export const applyIosRepack: ApplyRepack = async ({ exec, baseArtifact, outDir, 
 		for (const name of readdirSync(bundle.assetsDir)) {
 			cpSync(join(bundle.assetsDir, name), join(app, name), { recursive: true });
 		}
-		copyFileSync(bundle.sourcemap, join(outDir, `${BUNDLE}.map`));
+		writeSourceMaps(bundle, outDir);
 	} catch (error) {
 		return err(`writing the bundle into ${basename(app)}: ${error instanceof Error ? error.message : String(error)}`);
 	}

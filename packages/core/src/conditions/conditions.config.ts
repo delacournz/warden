@@ -5,18 +5,25 @@ import { parseDuration } from "../duration";
 import {
 	type A11yCondition,
 	type ClockCondition,
+	DEFAULT_PASSKEY_MODE,
+	DEFAULT_PASSKEY_UV,
 	KEYBOARD_MODES,
 	type KeyboardCondition,
 	type KeyboardMode,
 	type LocationCondition,
 	type NetworkCondition,
 	type NetworkPreset,
+	PASSKEY_MODES,
+	PASSKEY_UV,
+	type PasskeyMode,
+	type PasskeyUv,
 	PERMISSION_NAMES,
 	type PermissionName,
 	type PermissionState,
 	TEXT_SIZE_NAMES,
 } from "./conditions.types";
 import { NETWORK_PRESET_NAMES } from "./network.presets";
+import type { PasskeyInput } from "./passkey-store";
 import { resolveTextSize } from "./text-size";
 
 const NETWORK_WORDS = ["online", "offline", ...NETWORK_PRESET_NAMES] as const;
@@ -50,6 +57,34 @@ const a11yConfigSchema = z
 		reduceMotion: z.boolean().optional(),
 	})
 	.strict();
+
+const passkeyModeSchema = z.enum(PASSKEY_MODES as readonly [PasskeyMode, ...PasskeyMode[]]);
+const passkeyUvSchema = z.enum(PASSKEY_UV as readonly [PasskeyUv, ...PasskeyUv[]]);
+
+/** A credential to seed, as `device.passkeys.add` takes it (checked again when it is created on the device). */
+const passkeyInputSchema = z
+	.object({
+		rpId: z.string().min(1),
+		userName: z.string(),
+		displayName: z.string().optional(),
+		userHandle: z.string().optional(),
+		credentialId: z.string().optional(),
+		privateKey: z.string().optional(),
+		signCount: z.number().int().nonnegative().optional(),
+	})
+	.strict() satisfies z.ZodType<PasskeyInput>;
+
+/** `passkeys`: a mode word, or `{ mode, uv, credentials }` (credentials seeded before the app launches). */
+const passkeysConfigSchema = z.union([
+	passkeyModeSchema,
+	z
+		.object({
+			mode: passkeyModeSchema.optional(),
+			uv: passkeyUvSchema.optional(),
+			credentials: z.array(passkeyInputSchema).optional(),
+		})
+		.strict(),
+]);
 
 /**
  * `conditions` (top level, or per `e2e.<suite>`): what every spec of the suite starts from. `network`, `location`
@@ -90,6 +125,8 @@ export const conditionsConfigSchema = z
 		a11y: a11yConfigSchema.optional(),
 		/** `software` (on-screen keyboard shows, the default) or `hardware` (hidden, input as from a keyboard) */
 		keyboard: z.enum(KEYBOARD_MODES as readonly [KeyboardMode, ...KeyboardMode[]]).optional(),
+		/** the virtual authenticator: a mode (`auto`, `cancel`, `fail`, `unavailable`) or `{ mode, uv, credentials }` */
+		passkeys: passkeysConfigSchema.optional(),
 	})
 	.strict();
 
@@ -195,22 +232,42 @@ export type SuiteConditions = {
 	timezone?: string;
 	a11y?: A11yCondition;
 	keyboard?: KeyboardCondition;
+	passkeys?: SuitePasskeys;
 };
+
+/** A suite's virtual authenticator: on from the first `app.open()`, with these credentials seeded. */
+export type SuitePasskeys = { mode: PasskeyMode; uv: PasskeyUv; credentials?: PasskeyInput[] };
+
+function toPasskeys(input: NonNullable<ConditionsConfig["passkeys"]>): SuitePasskeys {
+	if (typeof input === "string") return { mode: input, uv: DEFAULT_PASSKEY_UV };
+	return {
+		mode: input.mode ?? DEFAULT_PASSKEY_MODE,
+		uv: input.uv ?? DEFAULT_PASSKEY_UV,
+		...(input.credentials === undefined ? {} : { credentials: input.credentials }),
+	};
+}
+
+/** The areas that only change shape, never fail: everything but network and a11y. */
+function shapedConditions(config: ConditionsConfig): SuiteConditions {
+	return {
+		...(config.location === undefined ? {} : { location: toLocation(config.location) }),
+		...(config.clock === undefined ? {} : { clock: toClock(config.clock) }),
+		...(config.permissions === undefined ? {} : { permissions: config.permissions }),
+		...(config.locale === undefined ? {} : { locale: config.locale }),
+		...(config.timezone === undefined ? {} : { timezone: config.timezone }),
+		...(config.keyboard === undefined ? {} : { keyboard: { mode: config.keyboard } }),
+		...(config.passkeys === undefined ? {} : { passkeys: toPasskeys(config.passkeys) }),
+	};
+}
 
 /** A config as conditions: shaped values, with a text size resolved. */
 export function normalizeConditions(config: ConditionsConfig): Result<{ conditions: SuiteConditions }> {
-	const conditions: SuiteConditions = {};
+	const conditions: SuiteConditions = shapedConditions(config);
 	if (config.network !== undefined) {
 		const network = toNetworkCondition(config.network);
 		if (!network.success) return network;
 		conditions.network = network.data;
 	}
-	if (config.location !== undefined) conditions.location = toLocation(config.location);
-	if (config.clock !== undefined) conditions.clock = toClock(config.clock);
-	if (config.permissions !== undefined) conditions.permissions = config.permissions;
-	if (config.locale !== undefined) conditions.locale = config.locale;
-	if (config.timezone !== undefined) conditions.timezone = config.timezone;
-	if (config.keyboard !== undefined) conditions.keyboard = { mode: config.keyboard };
 	if (config.a11y !== undefined) {
 		const a11y: A11yCondition = { ...config.a11y };
 		if (config.a11y.textSize !== undefined) {

@@ -8,6 +8,7 @@ import {
 	type FieldReading,
 	FOCUS_POLL_MS,
 	FOCUS_POLLS,
+	fillPace,
 	focusAndClear,
 	focusClearType,
 	STALE_RISK_READS,
@@ -40,6 +41,9 @@ function scripted(readings: FieldReading[]) {
 			}),
 	};
 }
+
+/** Backspaces the counted fallback presses for a secure field still showing `left` (one per dot plus a spare). */
+const SECURE_CLEAR_LEFT = (left: string): number => left.length + 1;
 
 const value = (text: string): FieldReading => ({ kind: "value", value: text });
 
@@ -260,10 +264,42 @@ describe("focusAndClear with select-all", () => {
 		expect(methods(driver)).toEqual(["tap", "elementAtPoint"]);
 	});
 
-	test("a secure field holding dots is backspaced by its dots (it cannot be read back to verify a select-all)", async () => {
+	test("iOS: a secure field holding dots is selected and deleted, then checked to show no dots", async () => {
 		const { driver, state } = fieldFixture({ secure: true, value: "abc", selectAll: true });
 		await focusAndClear(driver, fakeClock().sleep, POINT, entryOfField(driver));
+		expect(methods(driver)).toEqual(["tap", "elementAtPoint", "selectAll", "key", "elementAtPoint"]);
+		expect(state.value).toBe("");
+	});
+
+	test("iOS: a secure field whose dots show late is read again until they are gone", async () => {
+		const { driver, state } = fieldFixture({ secure: true, value: "abc", selectAll: true, lagReads: 2 });
+		const clock = fakeClock();
+		await focusAndClear(driver, clock.sleep, POINT, entryOfField(driver));
+		expect(driver.callsOf("key")).toHaveLength(1);
+		expect(state.value).toBe("");
+		expect(clock.sleeps.filter((ms) => ms === FIELD_POLL_MS).length).toBeGreaterThan(0);
+	});
+
+	test("iOS: a secure field the select-all left dots in is backspaced by the dots it still shows", async () => {
+		const { driver, state } = fieldFixture({ secure: true, value: "abc", selectAllRefused: true });
+		await focusAndClear(driver, fakeClock().sleep, POINT, entryOfField(driver));
+		expect(driver.callsOf("selectAll")).toHaveLength(1);
+		expect(driver.callsOf("key")).toHaveLength(1 + SECURE_CLEAR_LEFT("ab"));
+		expect(state.value).toBe("");
+	});
+
+	test("the counted method backspaces a secure field by its dots", async () => {
+		const { driver, state } = fieldFixture({ secure: true, value: "abc", selectAll: true });
+		await focusAndClear(driver, fakeClock().sleep, POINT, entryOfField(driver), "counted");
 		expect(methods(driver)).toEqual(["tap", "elementAtPoint", "key", "key", "key", "key"]);
+		expect(state.value).toBe("");
+	});
+
+	test("Android: a secure field is backspaced by its dots", async () => {
+		const { driver, state } = fieldFixture({ secure: true, value: "abc", selectAll: true, platform: "android" });
+		await focusAndClear(driver, fakeClock().sleep, POINT, entryOfField(driver));
+		expect(driver.callsOf("selectAll")).toEqual([]);
+		expect(driver.callsOf("key")).toHaveLength(4);
 		expect(state.value).toBe("");
 	});
 
@@ -332,10 +368,10 @@ describe("focusClearType with select-all types over the selection", () => {
 		expect(state.value).toBe("new");
 	});
 
-	test("a secure field holding dots is still backspaced by its dots before typing", async () => {
+	test("iOS: a secure field holding dots is selected, deleted and checked empty before typing", async () => {
 		const { driver, state } = fieldFixture({ secure: true, value: "abc", selectAll: true });
 		await focusClearType(driver, fakeClock().sleep, POINT, entryOfField(driver), "xy");
-		expect(methods(driver)).toEqual(["tap", "elementAtPoint", "key", "key", "key", "key", "typeText"]);
+		expect(methods(driver)).toEqual(["tap", "elementAtPoint", "selectAll", "key", "elementAtPoint", "typeText"]);
 		expect(state.value).toBe("xy");
 	});
 
@@ -402,16 +438,65 @@ describe("focusClearType with paste", () => {
 		expect(methods(driver)).toEqual(["tap", "elementAtPoint", "selectAll", "typeText"]);
 	});
 
-	test("a secure field keeps its Backspace per dot and is then pasted into", async () => {
+	test("a secure field is emptied (select-all, Backspace, checked) and then pasted into", async () => {
 		const { driver } = fieldFixture({ secure: true, value: "abc", pasteText: true, selectAll: true });
 		await focusClearType(driver, fakeClock().sleep, POINT, entryOfField(driver), "xy", ...PASTE);
-		expect(methods(driver)).toEqual(["tap", "elementAtPoint", "key", "key", "key", "key", "pasteText"]);
+		expect(methods(driver)).toEqual(["tap", "elementAtPoint", "selectAll", "key", "elementAtPoint", "pasteText"]);
 	});
 
 	test("empty text only clears and pastes nothing", async () => {
 		const { driver } = fieldFixture(OLD);
 		await focusClearType(driver, fakeClock().sleep, POINT, entryOfField(driver), "", ...PASTE);
 		expect(methods(driver)).toEqual(["tap", "elementAtPoint", "selectAll", "key"]);
+	});
+});
+
+describe("fillPace", () => {
+	test("quick only on the first attempt of a fill that is read back", () => {
+		expect(fillPace(1, true)).toBe("quick");
+		expect(fillPace(2, true)).toBe("paced");
+		expect(fillPace(1, false)).toBe("paced");
+		expect(fillPace(2, false)).toBe("paced");
+	});
+});
+
+describe("focusClearType with quick typing", () => {
+	const OLD = { value: "old text", selectAll: true, typeTextQuick: true } as const;
+
+	test("quick types over the select-all with typeTextQuick", async () => {
+		const { driver, state } = fieldFixture(OLD);
+		const result = await focusClearType(
+			driver,
+			fakeClock().sleep,
+			POINT,
+			entryOfField(driver),
+			"new",
+			"auto",
+			{},
+			"type",
+			"quick"
+		);
+		expect(result.success).toBe(true);
+		expect(methods(driver)).toEqual(["tap", "elementAtPoint", "selectAll", "typeTextQuick"]);
+		expect(state.value).toBe("new");
+	});
+
+	test("paced is the default: typeText even where the driver can type quickly", async () => {
+		const { driver } = fieldFixture(OLD);
+		await focusClearType(driver, fakeClock().sleep, POINT, entryOfField(driver), "new");
+		expect(methods(driver)).toEqual(["tap", "elementAtPoint", "selectAll", "typeText"]);
+	});
+
+	test("a paste that fails falls back to quick typing when quick was asked", async () => {
+		const { driver } = fieldFixture({ ...OLD, pasteText: "refused" });
+		await focusClearType(driver, fakeClock().sleep, POINT, entryOfField(driver), "new", "auto", {}, "paste", "quick");
+		expect(methods(driver)).toEqual(["tap", "elementAtPoint", "selectAll", "pasteText", "typeTextQuick"]);
+	});
+
+	test("a driver without the capability types paced", async () => {
+		const { driver } = fieldFixture({ value: "old text", selectAll: true });
+		await focusClearType(driver, fakeClock().sleep, POINT, entryOfField(driver), "new", "auto", {}, "type", "quick");
+		expect(methods(driver)).toEqual(["tap", "elementAtPoint", "selectAll", "typeText"]);
 	});
 });
 

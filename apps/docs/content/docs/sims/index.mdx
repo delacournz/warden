@@ -99,11 +99,11 @@ Under `warden dev`, `open` attaches to the running dev client. `snapshot -i` pri
 
 ```text
 generation 4 · axbridge · 393×852@3x · 5 of 41 elements
-@e1 [textbox] "Add a todo" id=todo-input value="" enabled hittable (24,118 345×48)
+@e1 [textbox] "Add a todo" id=todo-input placeholder="What needs doing?" enabled hittable (24,118 345×48)
 @e2 [button] "Add" id=todo-add enabled hittable (24,176 345×44)
 ```
 
-Each line is `@eN [role] "name" id=<testID> value="…" <states> (x,y w×h)`. A ref is valid until the next snapshot; a selector such as `id=todo-add` outlives screen changes. Add `testID` and `accessible` in the component for anything the agent must touch.
+Each line is `@eN [role] "name" id=<testID> value="…" placeholder="…" <states> (x,y w×h)`; a text input with no `value=` is empty. A ref is valid until the next snapshot; a selector such as `id=todo-add` outlives screen changes. Add `testID` and `accessible` in the component for anything the agent must touch.
 
 </Step>
 <Step>
@@ -160,7 +160,7 @@ warden ui biometrics enroll --udid $UDID
 warden ui biometrics match --udid $UDID
 ```
 
-Every condition, its platform support and how to set it from a spec, a suite or `warden ui`: [Device conditions](/docs/sims/conditions). One page each: [Network](/docs/sims/conditions/network), [Location](/docs/sims/conditions/location), [Clock](/docs/sims/conditions/clock), [Biometrics](/docs/sims/conditions/biometrics), [Permissions](/docs/sims/conditions/permissions), [Camera](/docs/sims/conditions/camera), [Locale and timezone](/docs/sims/conditions/locale), [Accessibility settings](/docs/sims/conditions/accessibility), [Battery](/docs/sims/conditions/battery), [Keyboard](/docs/sims/conditions/keyboard), [Push and memory warnings](/docs/sims/conditions/events).
+Every condition, its platform support and how to set it with `warden ui`: [Device conditions](/docs/sims/conditions). One page each: [Network](/docs/sims/conditions/network), [Location](/docs/sims/conditions/location), [Clock](/docs/sims/conditions/clock), [Biometrics](/docs/sims/conditions/biometrics), [Permissions](/docs/sims/conditions/permissions), [Camera](/docs/sims/conditions/camera), [Locale and timezone](/docs/sims/conditions/locale), [Accessibility settings](/docs/sims/conditions/accessibility), [Battery](/docs/sims/conditions/battery), [Keyboard](/docs/sims/conditions/keyboard), [Push and memory warnings](/docs/sims/conditions/events). From a spec or a suite: [Device conditions in E2E tests](/docs/e2e/conditions).
 
 Feed a picture or clip into the app's real camera, or check what a screen reader would say:
 

@@ -9,6 +9,7 @@ import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/r
 import { withBuildLock } from "../builds/lock";
 import { type Exec, type ExecOptions, execError } from "../exec";
 import type { PidAlive } from "../liveness";
+import { plistBool } from "../plist";
 import { execWithin, realTimer, type Timer } from "../providers/health";
 import { IOS_TIMEOUTS, lookupCreateTarget, timedOutError } from "../providers/ios";
 import { parseAllSims, type SimctlSim } from "../sims/list";
@@ -201,7 +202,7 @@ const isUnsettled = (deps: GoldenDeps, udid: string): boolean =>
 export async function hasAutomationEnabled(deps: GoldenDeps, udid: string): Promise<boolean> {
 	const plist = join(simDeviceDir(deps.env, udid), "data/Library/Preferences/com.apple.Accessibility.plist");
 	const out = await run(deps, ["plutil", "-extract", "AutomationEnabled", "raw", "-o", "-", plist]);
-	return out.success && out.data.trim() === "true";
+	return out.success && plistBool(out.data) === true;
 }
 
 /** `bootstatus -b` can return mid-migration: wait on the migration's own record. */

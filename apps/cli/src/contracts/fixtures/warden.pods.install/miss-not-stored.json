@@ -1,0 +1,9 @@
+{
+	"schemaVersion": 1,
+	"outcome": "miss",
+	"key": "a1b2c3d4e5f60718293a4b5c6d7e8f90",
+	"mode": "cng",
+	"ms": 31000,
+	"stored": false,
+	"storeError": "disk full"
+}

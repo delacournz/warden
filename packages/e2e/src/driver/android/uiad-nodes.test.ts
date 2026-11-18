@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Element } from "../driver.types";
+import { NOT_SHOWING_HINT_TRAIT, SHOWING_HINT_TRAIT } from "../hint-state";
 import { readSnapshotData, type UiadNode } from "./uiad-protocol";
 import { parseUiadNodes, parseUiautomatorXml } from "./uiautomator";
 
@@ -53,6 +54,14 @@ function toDumpXml(nodes: readonly UiadNode[]): string {
 	return `<?xml version='1.0' ?><hierarchy rotation="0">${nodes.map(render).join("")}</hierarchy>`;
 }
 
+/** The nodes without `showingHint`, which only the server knows (the dump has no such attribute). */
+function withoutHintState(nodes: readonly UiadNode[]): UiadNode[] {
+	return nodes.map(({ showingHint: _showingHint, children, ...rest }) => ({
+		...rest,
+		...(children ? { children: withoutHintState(children) } : {}),
+	}));
+}
+
 /** The elements with `a11y` cut down to `focusable`, the one fact both sources have. */
 function withoutHelperA11y(elements: readonly Element[]): Element[] {
 	return elements.map(({ a11y, children: _children, ...rest }) => ({
@@ -63,8 +72,8 @@ function withoutHelperA11y(elements: readonly Element[]): Element[] {
 }
 
 describe("parseUiadNodes", () => {
-	test("gives the very same elements as parsing the dump of the same nodes", () => {
-		const all = snapshots();
+	test("gives the very same elements as parsing the dump of the same nodes, but for the hint state", () => {
+		const all = snapshots().map(withoutHintState);
 		expect(all.length).toBeGreaterThanOrEqual(3);
 		for (const nodes of all) {
 			const viaXml = parseUiautomatorXml(toDumpXml(nodes), SCREEN);
@@ -131,5 +140,50 @@ describe("parseUiadNodes", () => {
 		const [button, box] = tree.flat;
 		expect(button).toMatchObject({ role: "button", enabled: false, hittable: false });
 		expect(box).toMatchObject({ role: "checkbox", checked: true, hittable: true });
+	});
+});
+
+describe("parseUiadNodes hint state", () => {
+	const field = (text: string, showingHint: boolean | undefined): UiadNode => ({
+		bounds: [0, 0, 100, 100],
+		class: "android.widget.EditText",
+		id: "sign-in-email",
+		text,
+		hint: "ada@example.com",
+		editable: true,
+		...(showingHint === undefined ? {} : { showingHint }),
+	});
+
+	test("a field the server says shows its hint is empty: no value or text, the hint only as placeholder", () => {
+		const [empty] = parseUiadNodes([field("ada@example.com", true)], SCREEN).flat;
+		expect(empty?.value).toBe("");
+		expect(empty?.text).toBeUndefined();
+		expect(empty?.placeholder).toBe("ada@example.com");
+		expect(empty?.traits).toContain(SHOWING_HINT_TRAIT);
+	});
+
+	test("a field the server says holds text keeps it, even when it is the hint's text", () => {
+		const [typed] = parseUiadNodes([field("ada@example.com", false)], SCREEN).flat;
+		expect(typed?.value).toBe("ada@example.com");
+		expect(typed?.text).toBe("ada@example.com");
+		expect(typed?.placeholder).toBe("ada@example.com");
+		expect(typed?.traits).toContain(NOT_SHOWING_HINT_TRAIT);
+		expect(typed?.traits).not.toContain(SHOWING_HINT_TRAIT);
+	});
+
+	test("an unknown hint state (old server, API < 26) adds no trait and keeps the text as reported", () => {
+		const [unknown] = parseUiadNodes([field("ada@example.com", undefined)], SCREEN).flat;
+		expect(unknown?.value).toBe("ada@example.com");
+		expect(unknown?.traits).not.toContain(SHOWING_HINT_TRAIT);
+		expect(unknown?.traits).not.toContain(NOT_SHOWING_HINT_TRAIT);
+	});
+
+	test("the recorded session's empty sign-in email field says it shows its hint", () => {
+		const fields = snapshots()
+			.flatMap((nodes) => parseUiadNodes(nodes, SCREEN).flat)
+			.filter((e) => e.identifier === "sign-in-email");
+		const empty = fields.find((e) => e.traits.includes(SHOWING_HINT_TRAIT));
+		expect(empty?.placeholder).toBe("ada@example.com");
+		expect(empty?.text).toBeUndefined();
 	});
 });

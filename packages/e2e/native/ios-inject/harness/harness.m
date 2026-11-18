@@ -1,10 +1,17 @@
 // Test harness for libwarden-inject (macOS build): a line on stdin -> one JSON line describing what the injected
 // process sees. Commands: `print`, `monitor` (start an NWPathMonitor and report each update), `quit`, and the `cam-*`
-// commands that drive the simulated camera (`#pragma mark - camera` in WardenInject.m) through the real AVFoundation API.
+// `pk-run` command that drives the virtual authenticator through the real AuthenticationServices API, and the `cam-*`
+// commands that drive the simulated camera (`#pragma mark - camera` in WardenInject.m) through the real AVFoundation API,
+// and the `kacl-*` commands that drive the Keychain ACL shim against a fake Keychain and evaluator.
 #import <AVFoundation/AVFoundation.h>
+#import <AuthenticationServices/AuthenticationServices.h>
 #import <CoreImage/CoreImage.h>
 #import <ImageIO/ImageIO.h>
 #import <Foundation/Foundation.h>
+#import <LocalAuthentication/LocalAuthentication.h>
+#import <Security/Security.h>
+#import <dlfcn.h>
+#import <objc/message.h>
 #import <Network/Network.h>
 #import <SystemConfiguration/SystemConfiguration.h>
 #import <sys/time.h>
@@ -364,14 +371,356 @@ static BOOL handle_camera(NSArray<NSString *> *a) {
   return NO;
 }
 
+
+#pragma mark - passkeys
+
+static NSString *b64u(NSData *d) {
+  NSString *s = [d base64EncodedStringWithOptions:0];
+  s = [[s stringByReplacingOccurrencesOfString:@"+" withString:@"-"] stringByReplacingOccurrencesOfString:@"/" withString:@"_"];
+  while ([s hasSuffix:@"="]) s = [s substringToIndex:s.length - 1];
+  return s;
+}
+
+static NSData *unb64u(NSString *s) {
+  NSMutableString *m = [[[s stringByReplacingOccurrencesOfString:@"-" withString:@"+"] stringByReplacingOccurrencesOfString:@"_" withString:@"/"] mutableCopy];
+  while (m.length % 4) [m appendString:@"="];
+  return [[NSData alloc] initWithBase64EncodedString:m options:0];
+}
+
+static NSObject *pk_obj(id o, NSString *key) {
+  SEL s = NSSelectorFromString(key);
+  if (![o respondsToSelector:s]) return nil;
+  return ((id (*)(id, SEL))objc_msgSend)(o, s);
+}
+
+static NSString *pk_b64(id o, NSString *key) {
+  id v = pk_obj(o, key);
+  return [v isKindOfClass:[NSData class]] ? b64u(v) : nil;
+}
+
+@interface PkDelegate : NSObject <ASAuthorizationControllerDelegate>
+@property (nonatomic, strong) NSDictionary *result;
+@property (nonatomic) int calls;
+@end
+
+@implementation PkDelegate
+- (void)authorizationController:(ASAuthorizationController *)c didCompleteWithAuthorization:(ASAuthorization *)auth {
+  self.calls++;
+  id cred = auth.credential;
+  NSMutableDictionary *d = [@{
+    @"kind": @"auth",
+    @"onMain": @(NSThread.isMainThread),
+    @"isRegistration": @([cred isKindOfClass:[ASAuthorizationPlatformPublicKeyCredentialRegistration class]]),
+    @"isAssertion": @([cred isKindOfClass:[ASAuthorizationPlatformPublicKeyCredentialAssertion class]]),
+    @"providerIsPlatform": @([auth.provider isKindOfClass:[ASAuthorizationPlatformPublicKeyCredentialProvider class]]),
+    @"attachment": @([[cred valueForKey:@"attachment"] integerValue]),
+    @"prfNil": @((BOOL)(pk_obj(cred, @"prf") == nil)),
+    @"largeBlobNil": @((BOOL)(pk_obj(cred, @"largeBlob") == nil)),
+  } mutableCopy];
+  for (NSString *k in @[@"credentialID", @"rawClientDataJSON", @"rawAttestationObject", @"rawAuthenticatorData", @"signature", @"userID"]) {
+    NSString *v = pk_b64(cred, k);
+    if (v) d[k] = v;
+  }
+  self.result = d;
+}
+- (void)authorizationController:(ASAuthorizationController *)c didCompleteWithError:(NSError *)error {
+  self.calls++;
+  NSString *reason = error.userInfo[NSLocalizedFailureReasonErrorKey];
+  self.result = @{
+    @"kind": @"error", @"onMain": @(NSThread.isMainThread), @"domain": error.domain, @"code": @(error.code),
+    @"userInfoCount": @(error.userInfo.count), @"reason": reason ?: [NSNull null], @"description": error.localizedDescription ?: @"",
+  };
+}
+@end
+
+static NSMutableArray *g_pk_keep;
+
+/**
+ * `pk-run {json}`: one ASAuthorizationController through the real API. Keys: kind reg|asr, rp, challenge (b64url), name,
+ * userId (b64url), allow / exclude ([b64url ids]), extra (["password","securityKey"] added to the request array), via
+ * perform|options|autofill, options (number), clientData (bool: the `...WithClientData:` request), cancel (bool: call
+ * -cancel right after), wait (seconds to wait for a callback, default 1). Emits {event:"pk", kind:auth|error|none, ...}.
+ */
+static void pk_run(NSString *json) {
+  NSDictionary *a = [NSJSONSerialization JSONObjectWithData:[json dataUsingEncoding:NSUTF8StringEncoding] options:0 error:nil];
+  NSString *rp = a[@"rp"];
+  NSData *challenge = unb64u(a[@"challenge"] ?: @"AAAA");
+  NSMutableArray *requests = [NSMutableArray array];
+  ASAuthorizationPlatformPublicKeyCredentialProvider *prov = [[ASAuthorizationPlatformPublicKeyCredentialProvider alloc] initWithRelyingPartyIdentifier:rp];
+  BOOL clientData = [a[@"clientData"] boolValue];
+  ASPublicKeyCredentialClientData *cd = clientData ? [[ASPublicKeyCredentialClientData alloc] initWithChallenge:challenge origin:[@"https://" stringByAppendingString:rp]] : nil;
+  if (a[@"kind"] && ![a[@"kind"] isEqual:@"none"]) {
+    if ([a[@"kind"] isEqual:@"reg"]) {
+      NSData *uid = unb64u(a[@"userId"] ?: @"AQID");
+      ASAuthorizationPlatformPublicKeyCredentialRegistrationRequest *r = clientData
+        ? [prov createCredentialRegistrationRequestWithClientData:cd name:a[@"name"] ?: @"user" userID:uid]
+        : [prov createCredentialRegistrationRequestWithChallenge:challenge name:a[@"name"] ?: @"user" userID:uid];
+      NSMutableArray *ex = [NSMutableArray array];
+      for (NSString *i in a[@"exclude"] ?: @[]) [ex addObject:[[ASAuthorizationPlatformPublicKeyCredentialDescriptor alloc] initWithCredentialID:unb64u(i)]];
+      if (ex.count) r.excludedCredentials = ex;
+      [requests addObject:r];
+    } else {
+      ASAuthorizationPlatformPublicKeyCredentialAssertionRequest *r = clientData
+        ? [prov createCredentialAssertionRequestWithClientData:cd]
+        : [prov createCredentialAssertionRequestWithChallenge:challenge];
+      NSMutableArray *al = [NSMutableArray array];
+      for (NSString *i in a[@"allow"] ?: @[]) [al addObject:[[ASAuthorizationPlatformPublicKeyCredentialDescriptor alloc] initWithCredentialID:unb64u(i)]];
+      if (al.count) r.allowedCredentials = al;
+      [requests addObject:r];
+    }
+  }
+  for (NSString *e in a[@"extra"] ?: @[]) {
+    if ([e isEqual:@"password"]) [requests addObject:[[[ASAuthorizationPasswordProvider alloc] init] createRequest]];
+    if ([e isEqual:@"securityKey"]) {
+      ASAuthorizationSecurityKeyPublicKeyCredentialProvider *sk = [[ASAuthorizationSecurityKeyPublicKeyCredentialProvider alloc] initWithRelyingPartyIdentifier:rp];
+      [requests addObject:[sk createCredentialAssertionRequestWithChallenge:challenge]];
+    }
+  }
+  ASAuthorizationController *ctl = [[ASAuthorizationController alloc] initWithAuthorizationRequests:requests];
+  PkDelegate *del = [PkDelegate new];
+  ctl.delegate = del;
+  if (!g_pk_keep) g_pk_keep = [NSMutableArray array];
+  [g_pk_keep addObject:ctl];
+  [g_pk_keep addObject:del];
+  NSString *via = a[@"via"] ?: @"perform";
+  if ([via isEqual:@"options"]) [ctl performRequestsWithOptions:(ASAuthorizationControllerRequestOptions)[a[@"options"] unsignedIntegerValue]];
+  else if ([via isEqual:@"autofill"]) {
+    // iOS only: the selector is unavailable to the macOS compiler, and the dylib only swizzles it where it exists
+    SEL autofill = NSSelectorFromString(@"performAutoFillAssistedRequests");
+    if (![ctl respondsToSelector:autofill]) { emit(@{ @"event": @"pk", @"kind": @"unsupported" }); return; }
+    ((void (*)(id, SEL))objc_msgSend)(ctl, autofill);
+  }
+  else [ctl performRequests];
+  BOOL syncCalled = del.calls > 0;
+  if ([a[@"cancel"] boolValue]) [ctl cancel];
+  NSDate *until = [NSDate dateWithTimeIntervalSinceNow:[a[@"wait"] doubleValue] ?: 1.0];
+  while (del.calls == 0 && [until timeIntervalSinceNow] > 0) CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.02, false);
+  NSMutableDictionary *out = [(del.result ?: @{ @"kind": @"none" }) mutableCopy];
+  out[@"event"] = @"pk";
+  out[@"calledSynchronously"] = @(syncCalled);
+  out[@"calls"] = @(del.calls);
+  emit(out);
+}
+
+#pragma mark - keychain acl
+// `kacl-parse` / `kacl-parse-text <desc>` / `kacl-run <json>` / `kacl-add <json>` drive the Keychain ACL shim (`#pragma mark - keychain acl`
+// in WardenInject.m). The Keychain and LocalAuthentication are fakes installed through the host build's test hooks:
+// a Mac cannot hold an access-controlled item without entitlements, and a test must never show a real dialog.
+
+typedef OSStatus (*KaclCopyFn)(CFDictionaryRef, CFTypeRef *);
+typedef OSStatus (*KaclAddFn)(CFDictionaryRef, CFTypeRef *);
+typedef void (*KaclEvalFn)(id ctx, NSInteger policy, NSString *reason, void (^reply)(BOOL, NSError *));
+typedef NSInteger (*KaclCanEvalFn)(id ctx, NSInteger policy);
+typedef void (*KaclHooksFn)(KaclCopyFn, KaclAddFn, KaclEvalFn, KaclCanEvalFn);
+typedef NSString *(*KaclParseFn)(NSString *);
+
+static NSArray *g_k_items;            // of NSString (acl name) | NSNull (plain item)
+static NSDictionary *g_k_query;       // the app's own query: a call with exactly it is the read, anything else a probe
+static NSMutableArray *g_k_probes, *g_k_reads, *g_k_evals;
+static NSInteger g_k_eval_code = 0;
+static NSDictionary *g_k_can;
+static NSString *g_k_who = @"shim";
+static NSObject *g_k_lock;
+
+static NSDictionary *k_flags(void) {
+  return @{
+    @"currentSet": @(kSecAccessControlBiometryCurrentSet),
+    @"any": @(kSecAccessControlBiometryAny),
+    @"passcode": @(kSecAccessControlDevicePasscode),
+    @"presence": @(kSecAccessControlUserPresence),
+    @"currentSet-or-passcode": @(kSecAccessControlBiometryCurrentSet | kSecAccessControlOr | kSecAccessControlDevicePasscode),
+    @"any-or-passcode": @(kSecAccessControlBiometryAny | kSecAccessControlOr | kSecAccessControlDevicePasscode),
+    @"currentSet-and-passcode": @(kSecAccessControlBiometryCurrentSet | kSecAccessControlAnd | kSecAccessControlDevicePasscode),
+    @"appPassword": @(kSecAccessControlApplicationPassword),
+    @"keyUsage": @(kSecAccessControlPrivateKeyUsage),
+    @"none": @0,
+  };
+}
+
+static id k_access_control(NSString *name) {
+  NSNumber *flags = k_flags()[name];
+  if (!flags) return nil;
+  return CFBridgingRelease(SecAccessControlCreateWithFlags(NULL, kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly, (SecAccessControlCreateFlags)flags.unsignedLongValue, NULL));
+}
+
+/** What a Keychain hands back for item `i`: the app's attributes plus the ones the system assigns (`agrp`, `sync`). */
+static NSDictionary *k_attrs(id item, NSUInteger i) {
+  NSMutableDictionary *d = [@{
+    (id)kSecClass: (id)kSecClassGenericPassword,
+    (id)kSecAttrService: @"svc",
+    (id)kSecAttrAccount: [NSString stringWithFormat:@"a%lu", (unsigned long)i],
+    (id)kSecAttrAccessGroup: @"TEAM.example",
+    (id)kSecAttrSynchronizable: @0,
+  } mutableCopy];
+  if ([item isKindOfClass:[NSString class]]) d[(id)kSecAttrAccessControl] = k_access_control(item);
+  return d;
+}
+
+static NSArray *k_keys(NSDictionary *q) {
+  NSMutableArray *keys = [NSMutableArray array];
+  for (id k in q) [keys addObject:[k description]];
+  return [keys sortedArrayUsingSelector:@selector(compare:)];
+}
+
+static OSStatus k_fake_copy(CFDictionaryRef query, CFTypeRef *result) {
+  NSDictionary *q = (__bridge NSDictionary *)query;
+  BOOL all = [q[(id)kSecMatchLimit] isEqual:(id)kSecMatchLimitAll];
+  BOOL data = [q[(id)kSecReturnData] boolValue];
+  BOOL attrs = [q[(id)kSecReturnAttributes] boolValue];
+  BOOL isRead = g_k_query && [q isEqualToDictionary:g_k_query];
+  @synchronized(g_k_lock) {
+    if (isRead) [g_k_reads addObject:@{ @"keys": k_keys(q) }];
+    else [g_k_probes addObject:@{ @"keys": k_keys(q), @"limit": all ? @"all" : @"one", @"returnAttributes": @(attrs) }];
+  }
+  NSMutableArray *out = [NSMutableArray array];
+  for (NSUInteger i = 0; i < g_k_items.count; i++) {
+    NSDictionary *attrs = k_attrs(g_k_items[i], i);
+    // a query naming an account matches only that item (the shim's read-back after an add does)
+    if (q[(id)kSecAttrAccount] && ![q[(id)kSecAttrAccount] isEqual:attrs[(id)kSecAttrAccount]]) continue;
+    [out addObject:data ? (id)[@"secret" dataUsingEncoding:NSUTF8StringEncoding] : attrs];
+  }
+  if (out.count == 0) return errSecItemNotFound;
+  if (result) *result = CFBridgingRetain(all ? out : out.firstObject);
+  return errSecSuccess;
+}
+
+static NSMutableArray *g_k_adds;
+static BOOL g_k_duplicate;
+
+static OSStatus k_fake_add(CFDictionaryRef attributes, CFTypeRef *result) {
+  NSDictionary *a = (__bridge NSDictionary *)attributes;
+  @synchronized(g_k_lock) {
+    [g_k_adds addObject:@{ @"account": a[(id)kSecAttrAccount] ?: @"", @"accessControl": a[(id)kSecAttrAccessControl] ? @YES : @NO }];
+  }
+  if (result) *result = NULL;
+  return g_k_duplicate ? errSecDuplicateItem : errSecSuccess;
+}
+
+static void k_fake_eval(id ctx, NSInteger policy, NSString *reason, void (^reply)(BOOL, NSError *)) {
+  @synchronized(g_k_lock) { [g_k_evals addObject:@{ @"policy": @(policy), @"reason": reason ?: @"", @"context": g_k_who }]; }
+  NSInteger code = g_k_eval_code;
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_DEFAULT, 0), ^{
+    reply(code == 0, code == 0 ? nil : [NSError errorWithDomain:@"com.apple.LocalAuthentication" code:code userInfo:nil]);
+  });
+}
+
+static NSInteger k_fake_can(id ctx, NSInteger policy) {
+  return [g_k_can[[NSString stringWithFormat:@"%ld", (long)policy]] integerValue];
+}
+
+static BOOL k_install_hooks(void) {
+  KaclHooksFn hooks = (KaclHooksFn)dlsym(RTLD_DEFAULT, "warden_inject_kacl_test_hooks");
+  if (!hooks) return NO;
+  hooks(k_fake_copy, k_fake_add, k_fake_eval, k_fake_can);
+  return YES;
+}
+
+static NSDictionary *k_parse(NSString *desc) {
+  KaclParseFn parse = (KaclParseFn)dlsym(RTLD_DEFAULT, "warden_inject_kacl_parse");
+  if (!parse) return @{ @"error": @"no warden_inject_kacl_parse" };
+  return [NSJSONSerialization JSONObjectWithData:[parse(desc) dataUsingEncoding:NSUTF8StringEncoding] options:0 error:nil];
+}
+
+static void kacl_parse_table(void) {
+  NSMutableDictionary *rows = [NSMutableDictionary dictionary];
+  for (NSString *name in k_flags()) {
+    NSString *desc = CFBridgingRelease(CFCopyDescription((__bridge CFTypeRef)k_access_control(name)));
+    rows[name] = @{ @"desc": desc, @"parsed": k_parse(desc) };
+  }
+  emit(@{ @"event": @"kacl-parse", @"rows": rows });
+}
+
+static void kacl_run(NSString *json) {
+  NSDictionary *a = [NSJSONSerialization JSONObjectWithData:[json dataUsingEncoding:NSUTF8StringEncoding] options:0 error:nil];
+  if (!g_k_lock) g_k_lock = [NSObject new];
+  BOOL hooks = k_install_hooks();
+  g_k_items = [a[@"items"] isKindOfClass:[NSArray class]] ? a[@"items"] : @[];
+  g_k_probes = [NSMutableArray array];
+  g_k_reads = [NSMutableArray array];
+  g_k_evals = [NSMutableArray array];
+  g_k_eval_code = [a[@"evalCode"] integerValue];
+  g_k_can = [a[@"canEval"] isKindOfClass:[NSDictionary class]] ? a[@"canEval"] : @{};
+
+  NSMutableDictionary *q = [@{ (id)kSecClass: (id)kSecClassGenericPassword, (id)kSecAttrService: @"svc" } mutableCopy];
+  if ([a[@"returnData"] boolValue]) q[(id)kSecReturnData] = @YES;
+  if ([a[@"returnAttributes"] boolValue]) q[(id)kSecReturnAttributes] = @YES;
+  q[(id)kSecMatchLimit] = [a[@"matchLimit"] isEqual:@"all"] ? (id)kSecMatchLimitAll : (id)kSecMatchLimitOne;
+  NSDictionary *ui = @{ @"allow": (id)kSecUseAuthenticationUIAllow, @"fail": (id)kSecUseAuthenticationUIFail, @"skip": (id)kSecUseAuthenticationUISkip };
+  if (ui[a[@"authUI"]]) q[(id)kSecUseAuthenticationUI] = ui[a[@"authUI"]];
+  if ([a[@"prompt"] isKindOfClass:[NSString class]]) q[(id)kSecUseOperationPrompt] = a[@"prompt"];
+  NSDictionary *c = [a[@"context"] isKindOfClass:[NSDictionary class]] ? a[@"context"] : nil;
+  if (c) {
+    LAContext *ctx = [LAContext new];
+    if ([c[@"evaluate"] integerValue]) {
+      g_k_who = @"app";
+      dispatch_semaphore_t done = dispatch_semaphore_create(0);
+      [ctx evaluatePolicy:(LAPolicy)[c[@"evaluate"] integerValue] localizedReason:@"app" reply:^(BOOL ok, NSError *e) { dispatch_semaphore_signal(done); }];
+      dispatch_semaphore_wait(done, DISPATCH_TIME_FOREVER);
+    }
+    ctx.interactionNotAllowed = [c[@"interactionNotAllowed"] boolValue];
+    q[(id)kSecUseAuthenticationContext] = ctx;
+  }
+  g_k_who = @"shim";
+  g_k_query = [q copy];
+
+  __block OSStatus status = 0;
+  __block CFTypeRef result = NULL;
+  if ([a[@"background"] boolValue]) {
+    dispatch_semaphore_t done = dispatch_semaphore_create(0);
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_DEFAULT, 0), ^{
+      status = SecItemCopyMatching((__bridge CFDictionaryRef)g_k_query, &result);
+      dispatch_semaphore_signal(done);
+    });
+    dispatch_semaphore_wait(done, DISPATCH_TIME_FOREVER);
+  } else {
+    status = SecItemCopyMatching((__bridge CFDictionaryRef)g_k_query, &result);
+  }
+  id value = result ? CFBridgingRelease(result) : nil;
+  if ([value isKindOfClass:[NSArray class]]) value = [value firstObject];
+  NSString *data = [value isKindOfClass:[NSData class]] ? [[NSString alloc] initWithData:value encoding:NSUTF8StringEncoding] : nil;
+  g_k_query = nil;
+  emit(@{
+    @"event": @"kacl", @"status": @(status), @"data": data ?: [NSNull null], @"hooks": @(hooks),
+    @"evals": g_k_evals, @"probes": g_k_probes, @"reads": g_k_reads,
+  });
+}
+
+/** `kacl-add <json>`: the app adds account `a<account>` with `acl` (null = none) through the interposed `SecItemAdd`. */
+static void kacl_add(NSString *json) {
+  NSDictionary *a = [NSJSONSerialization JSONObjectWithData:[json dataUsingEncoding:NSUTF8StringEncoding] options:0 error:nil];
+  if (!g_k_lock) g_k_lock = [NSObject new];
+  k_install_hooks();
+  g_k_items = [a[@"items"] isKindOfClass:[NSArray class]] ? a[@"items"] : @[];
+  g_k_probes = [NSMutableArray array];
+  g_k_reads = [NSMutableArray array];
+  g_k_evals = [NSMutableArray array];
+  g_k_adds = [NSMutableArray array];
+  g_k_duplicate = [a[@"duplicate"] boolValue];
+  g_k_query = nil;
+  NSMutableDictionary *attrs = [@{
+    (id)kSecClass: (id)kSecClassGenericPassword,
+    (id)kSecAttrService: @"svc",
+    (id)kSecAttrAccount: [NSString stringWithFormat:@"a%ld", (long)[a[@"account"] integerValue]],
+    (id)kSecValueData: [@"secret" dataUsingEncoding:NSUTF8StringEncoding],
+  } mutableCopy];
+  if ([a[@"acl"] isKindOfClass:[NSString class]]) attrs[(id)kSecAttrAccessControl] = k_access_control(a[@"acl"]);
+  OSStatus status = SecItemAdd((__bridge CFDictionaryRef)attrs, NULL);
+  emit(@{ @"event": @"kacl-add", @"status": @(status), @"adds": g_k_adds, @"probes": g_k_probes });
+}
+
 static nw_path_monitor_t g_monitor;
 
 int main(void) {
   @autoreleasepool {
-    char buf[256];
+    static char buf[16384];
     while (fgets(buf, sizeof buf, stdin)) {
       NSString *cmd = [[NSString stringWithUTF8String:buf] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
       if ([cmd isEqualToString:@"quit"]) break;
+      if ([cmd hasPrefix:@"pk-run "]) { pk_run([cmd substringFromIndex:7]); continue; }
+      if ([cmd isEqualToString:@"kacl-parse"]) { kacl_parse_table(); continue; }
+      if ([cmd hasPrefix:@"kacl-parse-text "]) { emit(@{ @"event": @"kacl-parse-text", @"parsed": k_parse([cmd substringFromIndex:16]) }); continue; }
+      if ([cmd hasPrefix:@"kacl-run "]) { kacl_run([cmd substringFromIndex:9]); continue; }
+      if ([cmd hasPrefix:@"kacl-add "]) { kacl_add([cmd substringFromIndex:9]); continue; }
       if ([cmd hasPrefix:@"cam-"]) {
         if (!handle_camera([cmd componentsSeparatedByString:@" "])) emit(@{ @"error": @"unknown command" });
         continue;

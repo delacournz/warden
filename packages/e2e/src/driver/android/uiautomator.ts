@@ -1,4 +1,5 @@
 import type { Element, ElementA11y, Rect, Role } from "../driver.types";
+import { NOT_SHOWING_HINT_TRAIT, SHOWING_HINT_TRAIT } from "../hint-state";
 import type { UiadNode } from "./uiad-protocol";
 
 /** Thrown when the text has no `<hierarchy>` (e.g. `ERROR: null root node returned by UiTestAutomationBridge.`). */
@@ -253,6 +254,19 @@ function a11yOf(attrs: Map<string, string>, extra: ElementA11y | undefined): Ele
 	return Object.keys(a11y).length > 0 ? a11y : undefined;
 }
 
+/**
+ * What an input holds and the trait that says so, from the server's hint state (`showing-hint` attribute, see
+ * `UiadNode.showingHint`): known showing = empty (its text is the hint), known not showing = its text, whatever it is.
+ * The dump has no such attribute: the text is kept as reported and `screen/nodes.ts` compares it with the hint.
+ */
+function textContent(attrs: Map<string, string>, isInput: boolean): { text: string; trait: string | undefined } {
+	const text = attrs.get("text") ?? "";
+	const state = isInput ? attrs.get("showing-hint") : undefined;
+	if (state === "true") return { text: "", trait: SHOWING_HINT_TRAIT };
+	if (state === "false") return { text, trait: NOT_SHOWING_HINT_TRAIT };
+	return { text, trait: undefined };
+}
+
 function toElement(raw: RawNode, id: string, depth: number, screen: { width: number; height: number }): Element {
 	const a = raw.attrs;
 	const f = readFlags(a);
@@ -261,9 +275,10 @@ function toElement(raw: RawNode, id: string, depth: number, screen: { width: num
 	const frame = parseBounds(a.get("bounds"));
 	const identifier = (a.get("resource-id") ?? "").replace(/^[^:/]+:id\//, "");
 	const label = a.get("content-desc") ?? "";
-	const text = a.get("text") ?? "";
 	const hint = a.get("hint") ?? "";
 	const isInput = role === "textfield" || role === "securefield";
+	const { text, trait } = textContent(a, isInput);
+	const traits = trait === undefined ? traitsOf(f) : [...traitsOf(f), trait];
 	const a11y = a11yOf(a, raw.a11y);
 	return {
 		id,
@@ -276,7 +291,7 @@ function toElement(raw: RawNode, id: string, depth: number, screen: { width: num
 		...(hint ? { placeholder: hint } : {}),
 		frame,
 		normFrame: normalize(frame, screen),
-		traits: traitsOf(f),
+		traits,
 		enabled: f.enabled,
 		focused: f.focused,
 		selected: f.selected,
@@ -338,6 +353,7 @@ function rawFromUiad(node: UiadNode): RawNode {
 	text("text", node.text);
 	text("content-desc", node.desc);
 	text("hint", node.hint);
+	if (node.showingHint !== undefined) attrs.set("showing-hint", String(node.showingHint));
 	attrs.set("bounds", `[${l},${t}][${r},${b}]`);
 	flag("clickable", node.clickable);
 	flag("long-clickable", node.longClickable);

@@ -1,0 +1,93 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"type": "object",
+	"properties": {
+		"schemaVersion": {
+			"type": "number",
+			"const": 1
+		},
+		"leases": {
+			"type": "array",
+			"items": {
+				"type": "object",
+				"properties": {
+					"leaseId": {
+						"type": "string"
+					},
+					"platform": {
+						"type": "string",
+						"enum": [
+							"ios",
+							"android"
+						]
+					},
+					"udid": {
+						"type": "string"
+					},
+					"name": {
+						"type": "string"
+					},
+					"action": {
+						"type": "string",
+						"enum": [
+							"reuse",
+							"boot",
+							"create"
+						]
+					},
+					"ttlMs": {
+						"type": "number"
+					},
+					"physical": {
+						"type": "object",
+						"properties": {
+							"transport": {
+								"type": "string"
+							},
+							"hwSerial": {
+								"type": "string"
+							}
+						},
+						"required": [
+							"transport"
+						],
+						"additionalProperties": false
+					},
+					"label": {
+						"type": "string"
+					}
+				},
+				"required": [
+					"leaseId",
+					"platform",
+					"udid",
+					"name",
+					"action",
+					"ttlMs"
+				],
+				"additionalProperties": false
+			}
+		},
+		"udids": {
+			"type": "array",
+			"items": {
+				"type": "string"
+			}
+		},
+		"reclaimed": {
+			"type": "array",
+			"items": {
+				"type": "string"
+			}
+		}
+	},
+	"required": [
+		"schemaVersion",
+		"leases",
+		"udids",
+		"reclaimed"
+	],
+	"additionalProperties": false,
+	"$id": "https://warden.co.nz/schemas/warden.claim/1.json",
+	"title": "warden.claim"
+}

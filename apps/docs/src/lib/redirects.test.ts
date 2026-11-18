@@ -18,10 +18,10 @@ describe("redirectSlugs", () => {
 		expect(redirectSlugs(["agents", "ui"])).toEqual(["sims", "ui"]);
 		expect(redirectSlugs(["devices", "leases"])).toEqual(["sims", "leases"]);
 		expect(redirectSlugs(["e2e", "first-test"])).toEqual(["e2e"]);
-		expect(redirectSlugs(["e2e", "conditions"])).toEqual(["sims", "conditions"]);
-		expect(redirectSlugs(["e2e", "biometrics"])).toEqual(["sims", "conditions", "biometrics"]);
-		expect(redirectSlugs(["e2e", "conditions", "network"])).toEqual(["sims", "conditions", "network"]);
-		expect(redirectSlugs(["e2e", "camera"])).toEqual(["sims", "conditions", "camera"]);
+		expect(redirectSlugs(["e2e", "biometrics"])).toEqual(["e2e", "conditions", "biometrics"]);
+		expect(redirectSlugs(["e2e", "camera"])).toEqual(["e2e", "conditions", "camera"]);
+		expect(redirectSlugs(["e2e", "conditions"])).toBeUndefined();
+		expect(redirectSlugs(["e2e", "conditions", "network"])).toBeUndefined();
 		expect(redirectSlugs(["e2e", "accessibility"])).toBeUndefined();
 		expect(redirectSlugs(["bench", "comparison"])).toEqual(["e2e", "bench", "comparison"]);
 		expect(redirectSlugs(["release-notes"])).toEqual(["releases"]);

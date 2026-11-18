@@ -27,7 +27,7 @@ export type RunnerFault =
 	| { kind: "tunnel_down"; message: string }
 	| { kind: "runner_failed"; message: string }
 	| { kind: "ready_timeout"; message: string }
-	| { kind: "xcodebuild_exited"; exitCode: number | null; message: string };
+	| { kind: "xcodebuild_exited"; exitCode: number | null; message: string; resultBundle?: string };
 
 export type RunnerFaultKind = RunnerFault["kind"];
 

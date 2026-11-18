@@ -51,7 +51,7 @@ function contains(rect: Rect, point: Point): boolean {
 	return point.x >= rect.x && point.x <= rect.x + rect.width && point.y >= rect.y && point.y <= rect.y + rect.height;
 }
 
-/** Controls drawn over `entry`'s frame: later in document order, visible, interactive, not its own, not keys. */
+/** Controls whose panel (`coverRegion`) lies over `entry`'s frame: later in document order, visible, interactive, not its own, not keys. */
 export function coversOf(entry: NodeEntry, index: NodeIndex): NodeEntry[] {
 	const frame = entry.element.frame;
 	return index.entries.filter(
@@ -59,9 +59,10 @@ export function coversOf(entry: NodeEntry, index: NodeIndex): NodeEntry[] {
 			other.position > entry.position &&
 			other.visible &&
 			isInteractiveRole(other.role) &&
-			overlaps(other.element.frame, frame) &&
 			!within(other, entry) &&
-			!inKeyboard(other)
+			!inKeyboard(other) &&
+			// by its panel, not its own frame: a row under only a sticky footer's padding is clear of the button
+			overlaps(coverRegion(other, entry), frame)
 	);
 }
 
@@ -244,14 +245,18 @@ export function revealPath(
 	const x = box.x + box.width / 2;
 	// a footer or tab bar sits in the lower half of the container, a header in the upper: that, not the target's own
 	// position (it may be almost wholly inside the cover), says which way to drag
-	const below = over.y + over.height / 2 > box.y + box.height / 2;
-	const top = below ? box.y : Math.max(box.y, over.y + over.height);
-	const bottom = below ? Math.min(box.y + box.height, over.y) : box.y + box.height;
+	const middle = box.y + box.height / 2;
+	const below = over.y + over.height / 2 > middle;
+	// a row cut by the list's edge can also sit under a footer's bar: the drag starts clear of every panel on that side,
+	// and the row has to come out from under the nearest one, not just past the edge
+	const panels = [over, ...coversOf(entry, index).map((cover) => coverRegion(cover, entry))].filter(
+		(rect) => rect.y + rect.height / 2 > middle === below
+	);
+	const top = below ? box.y : Math.max(box.y, ...panels.map((rect) => rect.y + rect.height));
+	const bottom = below ? Math.min(box.y + box.height, ...panels.map((rect) => rect.y)) : box.y + box.height;
 	const room = bottom - top - 2 * REVEAL_INSET;
 	if (room <= 0) return undefined;
-	const shift = below
-		? target.y + target.height + REVEAL_MARGIN - over.y
-		: over.y + over.height + REVEAL_MARGIN - target.y;
+	const shift = below ? target.y + target.height + REVEAL_MARGIN - bottom : top + REVEAL_MARGIN - target.y;
 	const travel = Math.max(1, Math.min(shift, room));
 	if (below) {
 		// start well clear of the cover: a drag started just above a footer's bar scrolled nothing

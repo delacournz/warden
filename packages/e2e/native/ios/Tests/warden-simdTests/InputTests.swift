@@ -6,13 +6,13 @@ import XCTest
 
 private final class Recorder: @unchecked Sendable {
   private let lock = NSLock()
-  private var storage: [SimulatorHIDEvent] = []
+  private var storage: [HIDEvent] = []
   private var ordered: [KeyboardMap.KeyStep] = []
   private var concurrent = 0
   private(set) var maxConcurrent = 0
   private(set) var shakes = 0
 
-  func record(_ event: SimulatorHIDEvent, holdNs: UInt64 = 0) async {
+  func record(_ event: HIDEvent, holdNs: UInt64 = 0) async {
     lock.withLock {
       storage.append(event)
       ordered.append(.event(event))
@@ -28,7 +28,7 @@ private final class Recorder: @unchecked Sendable {
   func shake() { lock.withLock { shakes += 1 } }
   /// Key events and pauses in the order they happened.
   var steps: [KeyboardMap.KeyStep] { lock.withLock { ordered } }
-  var events: [SimulatorHIDEvent] { lock.withLock { storage } }
+  var events: [HIDEvent] { lock.withLock { storage } }
 }
 
 final class InputTests: XCTestCase {
@@ -73,6 +73,97 @@ final class InputTests: XCTestCase {
   func testNormUnitsSwapAxesInLandscape() throws {
     let geometry = ScreenGeometry(width: 390, height: 844, landscape: true)
     XCTAssertEqual(try geometry.points(x: 1, y: 1, unit: .norm), CGPoint(x: 844, y: 390))
+    XCTAssertEqual(try geometry.points(x: 0.25, y: 0.5, unit: .norm), CGPoint(x: 211, y: 195))
+    XCTAssertEqual(try geometry.points(x: 0, y: 0, unit: .norm), CGPoint(x: 0, y: 0))
+  }
+
+  /// HID touches land in the frontmost app's interface space (the AX frame and framebuffer space), whichever way the
+  /// device is turned, so `pt` is never rotated: measured on an iOS 27 sim (DTUHID) in all four combinations below.
+  func testPointUnitsAreNeverRotated() throws {
+    for landscape in [false, true] {
+      let geometry = ScreenGeometry(width: 390, height: 844, landscape: landscape)
+      XCTAssertEqual(try geometry.points(x: 700, y: 30, unit: .pt), CGPoint(x: 700, y: 30))
+    }
+  }
+
+  // MARK: interface orientation
+
+  func testInterfaceFollowsTheFramebufferOverTheDevice() async {
+    let cases: [(CGSize, DeviceOrientation?, Bool)] = [
+      // a portrait-locked app on a turned device: the bug this guards
+      (CGSize(width: 1206, height: 2622), .landscapeLeft, false),
+      (CGSize(width: 1206, height: 2622), .landscapeRight, false),
+      // a rotating app turned with the device
+      (CGSize(width: 2622, height: 1206), .landscapeLeft, true),
+      (CGSize(width: 2622, height: 1206), .landscapeRight, true),
+      // a landscape-only app on an upright device
+      (CGSize(width: 2622, height: 1206), .portrait, true),
+      (CGSize(width: 1206, height: 2622), .portraitUpsideDown, false),
+    ]
+    for (framebuffer, device, expected) in cases {
+      let asked = Recorder()
+      let landscape = await InterfaceOrientation.isLandscape(
+        framebuffer: { framebuffer },
+        device: {
+          await asked.record(.delay(0))
+          return device
+        })
+      XCTAssertEqual(landscape, expected, "\(framebuffer) \(String(describing: device))")
+      XCTAssertEqual(asked.events.count, 0, "a framebuffer answer never reads the device")
+    }
+  }
+
+  func testInterfaceFallsBackToTheDeviceWithoutAFramebuffer() async {
+    let cases: [(CGSize?, DeviceOrientation?, Bool)] = [
+      (nil, .landscapeLeft, true),
+      (nil, .landscapeRight, true),
+      (nil, .portrait, false),
+      (nil, .portraitUpsideDown, false),
+      (nil, .faceUp, false),
+      (nil, nil, false),
+      (CGSize(width: 0, height: 0), .landscapeLeft, true),
+      (CGSize(width: 500, height: 500), .landscapeRight, true),
+    ]
+    for (framebuffer, device, expected) in cases {
+      let landscape = await InterfaceOrientation.isLandscape(framebuffer: { framebuffer }, device: { device })
+      XCTAssertEqual(landscape, expected, "\(String(describing: framebuffer)) \(String(describing: device))")
+    }
+  }
+
+  func testNormTapInEveryInterfaceOrientation() async throws {
+    for landscape in [false, true] {
+      let recorder = Recorder()
+      _ = try await call(engine(recorder, landscape: landscape), "tap", ["x": 0.25, "y": 0.75, "unit": "norm"])
+      let point = landscape ? CGPoint(x: 211, y: 292.5) : CGPoint(x: 97.5, y: 633)
+      XCTAssertEqual(
+        recorder.events,
+        [.composite([.touch(direction: .down, x: point.x, y: point.y), .touch(direction: .up, x: point.x, y: point.y)])],
+        "landscape \(landscape)")
+    }
+  }
+
+  func testPointTapIsNotRotatedInLandscape() async throws {
+    let recorder = Recorder()
+    _ = try await call(engine(recorder, landscape: true), "tap", ["x": 700, "y": 30])
+    XCTAssertEqual(
+      recorder.events, [.composite([.touch(direction: .down, x: 700, y: 30), .touch(direction: .up, x: 700, y: 30)])])
+  }
+
+  func testPointOpsNeverAskForTheOrientation() async throws {
+    let recorder = Recorder()
+    let asked = Recorder()
+    let engine = InputEngine(
+      environment: InputEnvironment(
+        send: { await recorder.record($0) },
+        screen: { (390, 844) },
+        isLandscape: {
+          await asked.record(.delay(0))
+          return true
+        },
+        shake: {}))
+    _ = try await call(engine, "tap", ["x": 10, "y": 20])
+    _ = try await call(engine, "swipe", ["from": ["x": 1, "y": 2], "to": ["x": 3, "y": 4]])
+    XCTAssertEqual(asked.events.count, 0)
   }
 
   func testNormOutsideZeroToOneIsBadRequest() {
@@ -111,7 +202,7 @@ final class InputTests: XCTestCase {
   func testLongPressDefaultsToEightHundredMilliseconds() async throws {
     let recorder = Recorder()
     _ = try await call(engine(recorder), "longPress", ["x": 10, "y": 20])
-    XCTAssertEqual(recorder.events, [.tapAt(x: 10, y: 20, duration: 0.8)])
+    XCTAssertEqual(recorder.events, [.longPress(x: 10, y: 20, duration: 0.8)])
   }
 
   func testTapRejectsMissingCoordinatesAndBadCount() async {
@@ -134,7 +225,7 @@ final class InputTests: XCTestCase {
   func testMomentumFreeSwipeDeceleratesIntoTheEndPoint() {
     let event = HIDPlan.swipe(from: CGPoint(x: 0, y: 1000), to: CGPoint(x: 0, y: 0), duration: 0.3, momentum: false)
     let ys: [Double] = (event.subEvents ?? []).compactMap {
-      if case let .touch(_, _, y, _) = $0 { return y }
+      if case let .touch(_, _, y) = $0 { return y }
       return nil
     }
     XCTAssertEqual(ys.first, 1000)
@@ -144,11 +235,16 @@ final class InputTests: XCTestCase {
     XCTAssertGreaterThan(steps[0], steps[steps.count - 3], "first step larger than the last real step")
   }
 
-  func testMomentumSwipeUsesIdbSwipe() {
+  func testMomentumSwipeIsOneBackendSwipe() {
     let event = HIDPlan.swipe(from: CGPoint(x: 0, y: 500), to: CGPoint(x: 0, y: 100), duration: 0.3, momentum: true)
-    let holds = (event.subEvents ?? []).filter { $0 == .delay(0.15) }
-    XCTAssertTrue(holds.isEmpty)
-    XCTAssertEqual(event.subEvents?.last, .touch(direction: .up, x: 0, y: 100))
+    XCTAssertEqual(
+      event,
+      .swipe(
+        xStart: 0, yStart: 500, xEnd: 0, yEnd: 100, delta: 400 / Double(HIDPlan.sampleCount(duration: 0.3)),
+        duration: 0.3))
+    let lowered = IdbHID.event(event)
+    XCTAssertFalse((lowered.subEvents ?? []).contains(.delay(0.15)))
+    XCTAssertEqual(lowered.subEvents?.last, .touch(direction: .up, x: 0, y: 100))
   }
 
   func testSwipeMomentumFlagComesFromTheRequest() async throws {
@@ -165,7 +261,9 @@ final class InputTests: XCTestCase {
   func testDragStartsWithAFiveHundredMillisecondPress() async throws {
     let recorder = Recorder()
     _ = try await call(engine(recorder), "drag", ["from": ["x": 10, "y": 10], "to": ["x": 10, "y": 200]])
-    let events = recorder.events.first?.subEvents ?? []
+    guard case let .drag(_, _, _, _, _, pressDuration, _, _)? = recorder.events.first else { return XCTFail("no drag") }
+    XCTAssertEqual(pressDuration, 0.5)
+    let events = recorder.events.first.map(IdbHID.event)?.subEvents ?? []
     XCTAssertEqual(events[0], .touch(direction: .down, x: 10, y: 10))
     XCTAssertEqual(events[1], .delay(0.5))
     XCTAssertEqual(events.last, .touch(direction: .up, x: 10, y: 200))
@@ -348,7 +446,7 @@ final class InputTests: XCTestCase {
     _ = try await call(engine, "pressButton", ["button": "volumeUp"])
     _ = try await call(engine, "pressButton", ["button": "side"])
     XCTAssertEqual(
-      recorder.events, [.shortButtonPress(.homeButton), .shortButtonPress(.volumeUp), .shortButtonPress(.sideButton)])
+      recorder.events, [.buttonPress(.home), .buttonPress(.volumeUp), .buttonPress(.side)])
   }
 
   func testShakeUsesTheHardwareCommandNotHID() async throws {

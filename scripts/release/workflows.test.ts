@@ -12,7 +12,10 @@ const ROOT = join(import.meta.dir, "..", "..");
 const WORKFLOWS = join(ROOT, ".github", "workflows");
 
 type Trigger = { branches?: string[]; tags?: string[] } | null;
-type Workflow = { on: Record<string, Trigger> };
+type Workflow = {
+	on: Record<string, Trigger>;
+	concurrency?: { group: string; "cancel-in-progress": boolean };
+};
 
 async function load(file: string): Promise<{ text: string; workflow: Workflow }> {
 	const text = await Bun.file(join(WORKFLOWS, file)).text();
@@ -68,6 +71,15 @@ describe("pipeline wiring", () => {
 		const { text } = await load("ci.yml");
 		expect(text).toContain("compare/develop...$SHA");
 		expect(text).not.toContain("compare/main...");
+	});
+
+	test("ci.yml dispatches on develop for different SHAs never cancel each other", async () => {
+		const { workflow } = await load("ci.yml");
+		expect(workflow.concurrency?.["cancel-in-progress"]).toBe(true);
+		expect(workflow.concurrency?.group).toStartWith("ci-");
+		expect(workflow.concurrency?.group).toContain("github.ref }}");
+		expect(workflow.concurrency?.group).toContain("github.ref == 'refs/heads/develop'");
+		expect(workflow.concurrency?.group).toContain("inputs.signoff-sha");
 	});
 
 	test("release.yml refuses a tag that is not on main", async () => {

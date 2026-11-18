@@ -12,11 +12,19 @@ import { dirname, join, relative, sep } from "node:path";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import { type Exec, type ExecResult, execError } from "../exec";
 import { type GitFactsCache, readGitFacts } from "../git-facts";
+import type { PodsDeps, PodsInstallOptions, PodsOutcome } from "../pods/pods.types";
+import { podsInstall } from "../pods/pods-install";
 import { wardenHome as resolveWardenHome } from "../store";
 import type { Platform } from "../types";
 import { readXcode } from "../xcode";
+import { formatBuildIssues, readBuildIssues } from "../xcresult";
 import type { BuildConfiguration } from "./builds.defaults";
-import { LOCAL_BUILD_TIMEOUT_MS, PROBE_TIMEOUT_MS } from "./builds.defaults";
+import {
+	IOS_BUILD_RESULT_BUNDLE,
+	LOCAL_BUILD_TIMEOUT_MS,
+	PROBE_TIMEOUT_MS,
+	WARDEN_PODS_CACHE_ENV,
+} from "./builds.defaults";
 import { compilerCacheEnv } from "./compiler-cache";
 import type { Project } from "./config";
 import { formatBuildFailure, parseBuildDiagnostics } from "./diagnostics";
@@ -191,6 +199,11 @@ export function derivedDataDir(env: Record<string, string | undefined>): string 
 	return join(env.HOME ?? "~", "Library", "Developer", "Xcode", "DerivedData");
 }
 
+/** What `podsInstall` needs beyond the build's own exec / env / log; `install` is the seam tests replace. */
+export type LocalPodsDeps = Omit<PodsDeps, "exec" | "env" | "log"> & {
+	install?: (deps: PodsDeps, opts: PodsInstallOptions) => AsyncResult<PodsOutcome>;
+};
+
 export type LocalBuildDeps = {
 	exec: Exec;
 	project: Project;
@@ -211,6 +224,8 @@ export type LocalBuildDeps = {
 	git?: GitFactsCache;
 	/** the native fingerprint the git-ignored (CNG) native dir was last prebuilt at; absent = never regenerate it */
 	prebuildStamp?: PrebuildStamp;
+	/** the machine-wide CocoaPods cache (iOS builds whose command runs `pod install`); absent = never used */
+	pods?: LocalPodsDeps;
 	/** log `still building <platform> (<elapsed>): <last output line>` every `everyMs` while the build runs; absent = silent */
 	heartbeat?: BuildHeartbeat;
 };
@@ -226,7 +241,13 @@ export type BuildHeartbeat = {
 /** Where `runLocalBuild` records the native fingerprint a CNG `ios/` / `android/` was generated for. */
 export type PrebuildStamp = { read: () => string | undefined; write: (native: string) => void };
 
-async function probe(deps: LocalBuildDeps, argv: string[], cwd?: string): Promise<string | undefined> {
+/** What the build's caching env reads: a `runLocalBuild` dep set, or a caller that only wants the env (`warden pods install`). */
+export type BuildEnvDeps = Pick<
+	LocalBuildDeps,
+	"exec" | "project" | "platform" | "env" | "compilerCache" | "wardenHome" | "git"
+>;
+
+async function probe(deps: Pick<LocalBuildDeps, "exec">, argv: string[], cwd?: string): Promise<string | undefined> {
 	try {
 		const res = await deps.exec(argv, { cwd, timeoutMs: PROBE_TIMEOUT_MS });
 		return res.exitCode === 0 ? res.stdout.trim() : undefined;
@@ -236,7 +257,7 @@ async function probe(deps: LocalBuildDeps, argv: string[], cwd?: string): Promis
 }
 
 /** The project's git toplevel from the facts the command already read; a failed read is no toplevel, never a failed build. */
-async function gitToplevel(deps: LocalBuildDeps): Promise<string | undefined> {
+async function gitToplevel(deps: Pick<LocalBuildDeps, "exec" | "project" | "git">): Promise<string | undefined> {
 	try {
 		return (await readGitFacts(deps.exec, deps.project.root, deps.git))?.toplevel;
 	} catch {
@@ -245,7 +266,9 @@ async function gitToplevel(deps: LocalBuildDeps): Promise<string | undefined> {
 }
 
 /** Env that opts the iOS build into React Native's precompiled core (RN 0.81-0.83); independent of the compiler-cache switch. */
-async function prebuiltRnEnv(deps: LocalBuildDeps): Promise<Record<string, string>> {
+async function prebuiltRnEnv(
+	deps: Pick<LocalBuildDeps, "platform" | "project" | "env">
+): Promise<Record<string, string>> {
 	const plan = await planPrebuiltRn({
 		platform: deps.platform,
 		projectRoot: deps.project.root,
@@ -256,12 +279,19 @@ async function prebuiltRnEnv(deps: LocalBuildDeps): Promise<Record<string, strin
 	return plan.env;
 }
 
-async function cacheEnv(deps: LocalBuildDeps): Promise<Record<string, string>> {
+/**
+ * The env a local build adds to the caller's: prebuilt React Native vars, then (unless `compilerCache: false`) ccache /
+ * Xcode compilation cache / Gradle caching. Its `pod install` runs with it too, and `USE_CCACHE` / `RCT_*` are pods key
+ * inputs, so `warden pods install` takes it from here: the same project gets the same pods key from either path.
+ */
+export async function localBuildEnv(deps: BuildEnvDeps): Promise<Record<string, string>> {
 	const prebuilt = await prebuiltRnEnv(deps);
 	if (deps.compilerCache === false) return prebuilt;
 	const { platform } = deps;
 	const gitTop = platform === "ios" ? await gitToplevel(deps) : undefined;
 	const xcode = platform === "ios" ? await readXcode(deps.exec, deps.env) : undefined;
+	const ccacheBinary =
+		platform === "ios" ? deps.env.CCACHE_BINARY || (await probe(deps, ["which", "ccache"])) : undefined;
 	return {
 		...prebuilt,
 		...compilerCacheEnv({
@@ -269,6 +299,8 @@ async function cacheEnv(deps: LocalBuildDeps): Promise<Record<string, string>> {
 			wardenHome: deps.wardenHome ?? resolveWardenHome(deps.env),
 			gitTop: gitTop || undefined,
 			xcodeMajor: xcode?.success ? xcode.data.major : undefined,
+			ccacheBinary: ccacheBinary || undefined,
+			...(xcode?.success ? { xcode: { version: xcode.data.version, build: xcode.data.build } } : {}),
 			enabled: true,
 			baseEnv: deps.env,
 		}),
@@ -390,6 +422,59 @@ async function dropStaleNativeDir(deps: LocalBuildDeps, native: string): Promise
 	rmSync(nativeDir, { recursive: true, force: true });
 }
 
+/** a build command that runs `pod install` itself (warden's defaults do, behind a `Manifest.lock` guard) */
+const RUNS_POD_INSTALL = /\bpod\s+install\b/;
+
+function podsLine(outcome: PodsOutcome): string {
+	const secs = `${(outcome.ms / 1000).toFixed(1)}s`;
+	switch (outcome.kind) {
+		case "hit":
+			return `pods: restored ${outcome.key} in ${secs}`;
+		case "miss":
+			return outcome.stored
+				? `pods: installed + cached ${outcome.key} (${secs})`
+				: `pods: installed ${outcome.key} (${secs}), not cached${outcome.storeError ? `: ${outcome.storeError}` : ""}`;
+		case "up-to-date":
+			return "pods: up to date";
+		case "uncached":
+			return `pods: not cached: ${outcome.reason}`;
+	}
+}
+
+/**
+ * iOS: restore (or install and snapshot) the Pods sandbox from the shared cache before the build command, so its own
+ * `pod install` guard finds `Podfile.lock == Pods/Manifest.lock` and does nothing. Never fails the build: an error or
+ * throw is a warning, and the command's guard runs a real `pod install`.
+ *
+ * It runs with the build's compiler-cache env (`caching`): React Native wires `ccache-clang.sh` into the Pods project
+ * only when `pod install` sees `USE_CCACHE=1`, and the command's own `pod install` is skipped once the lockfiles match,
+ * so without it every compile is plain clang. `USE_CCACHE` is a pods key input, so an entry installed without it misses.
+ */
+async function preparePods(deps: LocalBuildDeps, caching: Record<string, string>): Promise<void> {
+	const { pods, project, platform } = deps;
+	if (!pods || platform !== "ios" || deps.env[WARDEN_PODS_CACHE_ENV] === "0") return;
+	if (!RUNS_POD_INSTALL.test(project.build[platform])) return;
+	if (project.podsCache === false) {
+		deps.log("pods: cache off (ios.pods.cache: false); the build installs pods itself");
+		return;
+	}
+	const { install = podsInstall, ...rest } = pods;
+	try {
+		const res = await install(
+			{ ...rest, exec: deps.exec, env: { ...deps.env, ...caching }, log: deps.log },
+			{
+				projectRoot: project.root,
+				framework: project.framework === "expo" ? "expo" : "react-native",
+				...(project.prebuiltReactNative === false ? { prebuiltReactNative: false as const } : {}),
+				...(project.podsEnv !== undefined ? { env: project.podsEnv } : {}),
+			}
+		);
+		deps.log(res.success ? podsLine(res.data) : `pods: cache skipped (${res.error}); the build installs pods itself`);
+	} catch (e) {
+		deps.log(`pods: cache skipped (${e instanceof Error ? e.message : String(e)}); the build installs pods itself`);
+	}
+}
+
 /** `setInterval`, unref'd so a stuck timer never keeps the process alive. */
 function intervalTimer(fn: () => void, ms: number): () => void {
 	const id = setInterval(fn, ms);
@@ -454,13 +539,41 @@ function expoBuildLog(root: string): string {
 	}
 }
 
+/** The result bundle of warden's own xcodebuild (`iosXcodebuild`: device and simulator builds), when this build wrote it: one older than the build is stale. */
+function freshResultBundle(root: string, startedAt: number): string | undefined {
+	const path = join(root, "ios", IOS_BUILD_RESULT_BUNDLE);
+	try {
+		return statSync(path).mtimeMs >= startedAt - 2_000 ? path : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/** `N errors: file:line: msg … — result bundle: path`, from the result bundle this build wrote; undefined without one. */
+async function resultBundleFailure(deps: LocalBuildDeps, startedAt: number): Promise<string | undefined> {
+	const bundle = freshResultBundle(deps.project.root, startedAt);
+	if (bundle === undefined) return undefined;
+	const issues = await readBuildIssues(bundle, deps.exec);
+	const summary = issues === null ? undefined : formatBuildIssues(issues);
+	return summary === undefined ? undefined : `${summary} — result bundle: ${bundle}`;
+}
+
 /**
- * Why the build command failed. iOS: the compiler/linker errors with file:line:col (parsed from the output, or
- * expo's raw `xcodebuild.log`) and where the full log is kept; otherwise the last lines, as before.
+ * Why the build command failed. iOS: the compiler/linker errors with file:line (from the result bundle warden's own xcodebuild
+ * writes, else parsed from the output or expo's raw `xcodebuild.log`) and where the full log is kept; otherwise the
+ * last lines, as before.
  */
-function describeBuildFailure(deps: LocalBuildDeps, argv: string[], res: ExecResult): string {
+async function describeBuildFailure(
+	deps: LocalBuildDeps,
+	argv: string[],
+	res: ExecResult,
+	startedAt: number
+): Promise<string> {
 	const logPath = keepBuildLog(deps, res);
 	if (deps.platform !== "ios") return `${execError(argv, res)}${logPath ? ` — full log: ${logPath}` : ""}`;
+	const fromBundle = await resultBundleFailure(deps, startedAt);
+	if (fromBundle !== undefined)
+		return `exited ${res.exitCode}, ${fromBundle}${logPath ? ` — full log: ${logPath}` : ""}`;
 	const output = `${res.stdout}\n${res.stderr}`;
 	let diagnostics = parseBuildDiagnostics(output);
 	if (diagnostics.length === 0) diagnostics = parseBuildDiagnostics(expoBuildLog(deps.project.root));
@@ -490,12 +603,15 @@ export async function runLocalBuild(deps: LocalBuildDeps): AsyncResult<LocalBuil
 	const derivedData = derivedDataDir(deps.env);
 	const snapshot = snapshotArtifacts(project.root, platform, derivedData, project.buildConfiguration, project.target);
 	await dropStaleNativeDir(deps, deps.native ?? deps.hash);
+	// before the pods restore: a CNG hit creates ios/, which `prebuildMovedKey` must still read as the build's own prebuild
 	const before = await beforeBuild(deps);
+	const caching = await localBuildEnv(deps);
+	await preparePods(deps, caching);
 	deps.log(`building ${platform} locally: ${command} (in ${project.root})`);
 	const argv = ["sh", "-c", command];
-	const caching = await cacheEnv(deps);
 	const progress = startHeartbeat(deps);
 	let res: ExecResult;
+	const startedAt = Date.now();
 	try {
 		res = await deps.exec(argv, {
 			cwd: project.root,
@@ -506,7 +622,7 @@ export async function runLocalBuild(deps: LocalBuildDeps): AsyncResult<LocalBuil
 	} finally {
 		progress.stop();
 	}
-	if (res.exitCode !== 0) return err(`local build failed: ${describeBuildFailure(deps, argv, res)}`);
+	if (res.exitCode !== 0) return err(`local build failed: ${await describeBuildFailure(deps, argv, res, startedAt)}`);
 	keepBuildLog(deps, res);
 	const after = await computeCacheKey(deps.exec, project, platform, undefined, undefined, deps.env);
 	if (!after.success) return after;

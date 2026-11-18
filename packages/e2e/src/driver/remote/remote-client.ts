@@ -278,6 +278,7 @@ export async function connectRemoteDriver(options: ConnectRemoteOptions): Promis
 			push: (payload, opts) => call("push", payload, opts),
 			biometrics: (op) => call("biometrics", op),
 			camera: (op, opts) => call("camera", op, opts),
+			passkeys: (op, opts) => call("passkeys", op, opts),
 			app,
 			close,
 		};

@@ -31,6 +31,40 @@ describe("parseSelector", () => {
 		});
 	});
 
+	test("an unquoted value keeps its spaces up to the next known key", () => {
+		expect(parsed("label=Try Face ID Again")).toEqual({ label: { kind: "text", value: "Try Face ID Again" } });
+		expect(parsed("label=Try Face ID Again role=button")).toEqual({
+			label: { kind: "text", value: "Try Face ID Again" },
+			role: { kind: "text", value: "button" },
+		});
+		expect(parsed("text=Sign in nth=1")).toEqual({ text: { kind: "text", value: "Sign in" }, nth: 1 });
+		expect(parsed("id=my id  ")).toEqual({ id: { kind: "text", value: "my id" } });
+		expect(parsed("role=button label=Sign in")).toEqual({
+			role: { kind: "text", value: "button" },
+			label: { kind: "text", value: "Sign in" },
+		});
+	});
+
+	test("a multi-word value round-trips through the quoted canonical form", () => {
+		const selector = parsed("label=Try Face ID Again role=button");
+		expect(formatSelector(selector)).toBe('label="Try Face ID Again" role=button');
+		expect(parsed(formatSelector(selector))).toEqual(selector);
+	});
+
+	test("a value holding a literal key= needs quotes", () => {
+		expect(parsed('label="a role=b"')).toEqual({ label: { kind: "text", value: "a role=b" } });
+		expect(parsed("label=a role=b")).toEqual({
+			label: { kind: "text", value: "a" },
+			role: { kind: "text", value: "b" },
+		});
+	});
+
+	test("regex values with spaces", () => {
+		expect(parsed("label=/regex with spaces/i")).toEqual({
+			label: { kind: "regex", source: "regex with spaces", flags: "i" },
+		});
+	});
+
 	test("regex values with flags", () => {
 		expect(parsed("text=/^Total: \\d+$/i")).toEqual({ text: { kind: "regex", source: "^Total: \\d+$", flags: "i" } });
 		expect(parsed("id=/a\\/b/")).toEqual({ id: { kind: "regex", source: "a\\/b", flags: "" } });

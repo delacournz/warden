@@ -377,7 +377,8 @@ export type TerminateData = z.infer<typeof terminateDataSchema>;
 
 /**
  * `orientation`: a real read may also say `faceUp` / `faceDown` / `unknown` (flat device); `source` tells
- * whether the value was read from the device, is the last one this helper wrote, or is an assumed portrait.
+ * whether the value was read from the device, is the last one this helper wrote, or is an assumed portrait. A write
+ * answers once the rotation animation is over, since touches sent during it are dropped.
  */
 export const orientationDataSchema = z.object({
 	orientation: z.enum([
@@ -390,6 +391,8 @@ export const orientationDataSchema = z.object({
 		"unknown",
 	]),
 	source: z.enum(["device", "written", "assumed"]).optional(),
+	/** after a write: whether the screen stopped moving (300 ms quiet, 3 s cap); absent on a read or without a stream */
+	settled: z.boolean().optional(),
 });
 export type OrientationData = z.infer<typeof orientationDataSchema>;
 

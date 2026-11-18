@@ -7,7 +7,7 @@ import { githubUrl, siteUrl } from "./shared";
  */
 const HEADER = `# warden
 
-> warden is an end-to-end (E2E) testing framework and simulator manager for Expo (React Native) apps, built for AI coding agents. Agents write \`*.e2e.ts\` specs in TypeScript (npm \`@delacour/warden-e2e\`), and the \`warden\` CLI (npm \`@delacour/warden\`) runs them in parallel on iOS simulators and Android emulators it leases, so every agent and worktree on one Mac gets its own device, port and app build without colliding. \`warden e2e\` needs an Expo app; a bare React Native app can use \`warden dev\` and \`warden ui\` today.
+> An AI agent toolkit to drive, debug, profile and test React Native, Expo and native iOS and Android apps, and an end-to-end (E2E) testing framework for Expo (React Native) apps built for AI coding agents. Agents write \`*.e2e.ts\` specs in TypeScript (npm \`@delacour/warden-e2e\`), and the \`warden\` CLI (npm \`@delacour/warden\`) runs them in parallel on iOS simulators and Android emulators it leases. Every agent gets its own simulator: warden leases iOS simulators, Android emulators, ports and app builds across every worktree on one Mac, so parallel coding agents never collide. \`warden e2e\` needs an Expo app; a bare React Native app can use \`warden dev\` and \`warden ui\` today.
 
 ## Task: add E2E tests to an Expo (React Native) app
 

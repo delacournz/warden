@@ -35,6 +35,7 @@ import { type EnsureKindInput, ensureKindBuild, LOCAL_PROFILE } from "./ensure";
 import { type GitContext, gitContext, readRepackMeta, writeRepackMeta } from "./js-key";
 import { computeKindKey, type KindKeys } from "./kind-key";
 import { type BuildLockDeps, buildLockKey, withBuildLock } from "./lock";
+import { metroCacheDir, prepareMetroCache } from "./metro-cache";
 import type { ApplyRepack, BundleOutput } from "./repack.types";
 import { androidKeepsSigner } from "./repack-android";
 
@@ -120,6 +121,14 @@ function packageMain(root: string): string | undefined {
 /**
  * The bundler flags that shape the bundle and not where it is written: the `bundlerFlags` of `computeKindKey` (so
  * they are in the JS key). The entry is root-relative so two checkouts of one commit share a key.
+ *
+ * `--minify false`: `hermesc -O` optimises the bytecode itself, so minifying first costs ~30% of the bundler's time for
+ * the same bytecode (React Native's own Hermes build does the same, `react-native-xcode.sh` "Hermes doesn't require JS
+ * minification"). A JSC base runs the unminified bundle: same code, bigger file.
+ *
+ * No `--reset-cache` here: Metro keeps its cache between repacks in a dir warden owns per project and bundle env
+ * (`bundleCache`), so a JS edit transforms only the files it changed. `bundleArgv` adds the reset only while that dir
+ * holds no Metro store (`MetroCache.resetCache`). `force` empties the dir.
  */
 export function bundlerFlags(platform: Platform, framework: "expo" | "react-native", entryRel: string): string[] {
 	return [
@@ -129,20 +138,20 @@ export function bundlerFlags(platform: Platform, framework: "expo" | "react-nati
 		"--dev",
 		"false",
 		"--minify",
-		"true",
+		"false",
 		"--entry-file",
 		entryRel,
-		"--reset-cache",
 	];
 }
 
-/** The bundler argv: `bundlerFlags` plus the scratch output paths. */
+/** The bundler argv: `bundlerFlags` plus the scratch output paths, and `--reset-cache` when `resetCache`. */
 export function bundleArgv(
 	bin: string,
 	flags: readonly string[],
 	entry: string,
 	platform: Platform,
-	scratch: string
+	scratch: string,
+	resetCache = false
 ): string[] {
 	const [command = "", ...rest] = flags;
 	const bundle = join(scratch, BUNDLE_FILE[platform]);
@@ -157,6 +166,7 @@ export function bundleArgv(
 		join(scratch, "assets"),
 		"--sourcemap-output",
 		`${bundle}.map`,
+		...(resetCache ? ["--reset-cache"] : []),
 	];
 }
 
@@ -173,15 +183,6 @@ export function findHermesc(
 		]) {
 			if (exists(candidate)) return candidate;
 		}
-		if (dirname(dir) === dir) return undefined;
-	}
-}
-
-/** `node_modules/react-native/scripts/compose-source-maps.js` nearest to `root`. */
-function findComposeScript(root: string, exists: (path: string) => boolean = existsSync): string | undefined {
-	for (let dir = root; ; dir = dirname(dir)) {
-		const script = join(dir, "node_modules", "react-native", "scripts", "compose-source-maps.js");
-		if (exists(script)) return script;
 		if (dirname(dir) === dir) return undefined;
 	}
 }
@@ -223,13 +224,18 @@ type BundleStep = {
 	flags: readonly string[];
 	entry: string;
 	env: Env;
+	/** pass `--reset-cache` (`MetroCache.resetCache`) */
+	resetCache?: boolean;
 	scratch: string;
 	hermes: boolean;
 	log: (line: string) => void;
 	output?: (line: string) => void;
 };
 
-/** Hermes-compile `bundle` (hermesc, then the composed source map) into the scratch dir. */
+/**
+ * Hermes-compile `bundle` into the scratch dir, with hermesc's own source map beside it. The two maps are not composed
+ * (`compose-source-maps.js` cost ~6 s a repack for a file nothing read); `BundleOutput` says how to compose them.
+ */
 async function compileHermes(step: BundleStep, bundle: string, assetsDir: string): AsyncResult<BundleOutput> {
 	const { exec, root, scratch } = step;
 	const hermesc = findHermesc(root);
@@ -240,15 +246,13 @@ async function compileHermes(step: BundleStep, bundle: string, assetsDir: string
 	if (compile.exitCode !== 0)
 		return err(`repack: hermesc failed: ${(compile.stderr || compile.stdout).trim().slice(-2000)}`);
 	if (!hasHbcMagic(hbc)) return err("repack: hermesc output is not Hermes bytecode (bad magic bytes)");
-	let sourcemap = `${bundle}.map`;
-	const compose = findComposeScript(root);
-	if (compose && existsSync(`${hbc}.map`)) {
-		const composed = join(scratch, `${basename(bundle)}.composed.map`);
-		const merged = await exec(["node", compose, `${bundle}.map`, `${hbc}.map`, "-o", composed], { cwd: root });
-		if (merged.exitCode === 0 && existsSync(composed)) sourcemap = composed;
-		else step.log("composing source maps failed: keeping the JS source map");
-	}
-	return ok({ bundle: hbc, assetsDir, sourcemap, hermes: true });
+	return ok({
+		bundle: hbc,
+		assetsDir,
+		sourcemap: `${bundle}.map`,
+		hermes: true,
+		...(existsSync(`${hbc}.map`) ? { bytecodeSourcemap: `${hbc}.map` } : {}),
+	});
 }
 
 /** The bundler's plain JS output in the scratch dir, before any Hermes compile. */
@@ -261,7 +265,7 @@ async function runBundler(step: Omit<BundleStep, "hermes">): AsyncResult<RawBund
 	const bin = findNodeBin(root, binName);
 	if (!bin) return err(`repack: no ${binName} binary under ${root}/node_modules/.bin (install dependencies)`);
 	const bundle = join(scratch, BUNDLE_FILE[platform]);
-	const argv = bundleArgv(bin, step.flags, step.entry, platform, scratch);
+	const argv = bundleArgv(bin, step.flags, step.entry, platform, scratch, step.resetCache);
 	step.log(`bundling ${platform} JS (${binName} ${argv[1]})`);
 	const run = await exec(argv, {
 		cwd: root,
@@ -285,13 +289,14 @@ function finishBundle(step: BundleStep, raw: RawBundle): AsyncResult<BundleOutpu
 
 /**
  * The bundler run while the simulator base builds: it needs only the worktree's JS, so it overlaps the native build
- * instead of following it. Its own scratch dir, quiet (the build's output is what streams); the Hermes compile waits
- * for the base, which says whether Hermes is on.
+ * instead of following it. Its own scratch dir, quiet (the build's output is what streams). When the worktree has a
+ * `hermesc`, the bundle is also Hermes-compiled right away (`hermes`), before the base says whether Hermes is on: the
+ * compile leaves the critical path, and a JSC base just gets the plain bundle.
  */
 type EarlyBundle = {
 	scratch: string;
 	startedAt: number;
-	done: Promise<{ raw: Result<RawBundle, string>; endedAt: number }>;
+	done: Promise<{ raw: Result<RawBundle, string>; hermes?: Result<BundleOutput, string>; endedAt: number }>;
 };
 
 /**
@@ -443,6 +448,38 @@ function lockDeps(input: RepackInput): BuildLockDeps {
 	};
 }
 
+/**
+ * The bundler's env and reset: the run's env, the kind's env, and Metro's store pinned to the project's persistent
+ * cache for this bundle env (`metroCacheDir`), readied now and emptied first on `force`. `TMPDIR` places Metro's
+ * default FileStore and file map; Expo's FileStore follows `EXPO_METRO_CACHE_OUTPUT_DIR` instead when set (EAS sets
+ * it, with a restore dir that would switch store), so both are pinned.
+ */
+function bundleCache(
+	input: RepackInput,
+	kindEnv: Record<string, string>,
+	flags: readonly string[]
+): Pick<BundleStep, "env" | "resetCache"> {
+	const dir = metroCacheDir({
+		env: input.env,
+		kindEnv,
+		root: input.project.root,
+		projectKey: input.projectKey,
+		platform: input.platform,
+		flags,
+	});
+	const cache = prepareMetroCache(dir, { now: input.now(), ...(input.force ? { reset: true } : {}) });
+	return {
+		env: {
+			...input.env,
+			...kindEnv,
+			TMPDIR: cache.tmpdir,
+			EXPO_METRO_CACHE_OUTPUT_DIR: cache.storeDir,
+			EXPO_METRO_CACHE_RESTORE_DIR: "",
+		},
+		resetCache: cache.resetCache,
+	};
+}
+
 /** Start the bundler in its own scratch dir, now; never rejects (`done` carries the result). */
 function startEarlyBundle(input: RepackInput, flags: readonly string[], entry: string, keys: KindKeys): EarlyBundle {
 	const scratchRoot = input.scratchRoot ?? tmpdir();
@@ -450,22 +487,27 @@ function startEarlyBundle(input: RepackInput, flags: readonly string[], entry: s
 	const scratch = mkdtempSync(join(scratchRoot, "warden-repack-"));
 	const startedAt = input.now();
 	input.log(`bundling ${input.platform} JS while the simulator base builds`);
-	const done = runBundler({
+	const step: BundleStep = {
 		exec: input.exec,
 		root: input.project.root,
 		platform: input.platform,
 		framework: input.project.framework,
 		flags,
 		entry,
-		env: { ...input.env, ...keys.settings.env },
+		...bundleCache(input, keys.settings.env, flags),
 		scratch,
+		hermes: true,
 		log: () => {},
-	})
-		.catch(
-			(error: unknown): Result<RawBundle, string> =>
-				err(`repack: ${error instanceof Error ? error.message : String(error)}`)
-		)
-		.then((raw) => ({ raw, endedAt: input.now() }));
+	};
+	const failed = (error: unknown) => err(`repack: ${error instanceof Error ? error.message : String(error)}`);
+	const done = (async () => {
+		const raw = await runBundler(step).catch((error: unknown): Result<RawBundle, string> => failed(error));
+		if (!raw.success || !findHermesc(step.root)) return { raw, endedAt: input.now() };
+		const hermes = await compileHermes(step, raw.data.bundle, raw.data.assetsDir).catch(
+			(error: unknown): Result<BundleOutput, string> => failed(error)
+		);
+		return { raw, hermes, endedAt: input.now() };
+	})();
 	return { scratch, startedAt, done };
 }
 
@@ -577,25 +619,39 @@ function commitRepack(input: RepackInput, made: Made, staged: Staged): string {
 }
 
 /**
- * The repacker's bundle, timed: the `early` bundle's run plus its Hermes compile, or a bundle run now. `bundleMs` is
- * bundler + Hermes time either way, not the wait for the base.
+ * The repacker's bundle, timed: the `early` bundle's run (with the Hermes compile it already made when the base runs
+ * Hermes), or a bundle run now. `bundleMs` is bundler + Hermes time either way, not the wait for the base.
  */
 async function bundleFor(
 	step: BundleStep,
 	early: EarlyBundle | undefined,
 	now: () => number
 ): AsyncResult<{ bundled: BundleOutput; bundleMs: number }> {
-	let started = now();
-	let raw: Result<RawBundle, string>;
-	let earlyMs = 0;
-	if (early) {
-		const result = await early.done;
-		raw = result.raw;
-		earlyMs = Math.max(0, result.endedAt - early.startedAt);
-		started = now();
-	} else raw = await runBundler(step);
+	if (early) return earlyBundleFor(step, early, now);
+	const started = now();
+	const raw = await runBundler(step);
 	if (!raw.success) return raw;
 	const bundled = await finishBundle(step, raw.data);
+	if (!bundled.success) return bundled;
+	return ok({ bundled: bundled.data, bundleMs: Math.max(0, now() - started) });
+}
+
+/** `bundleFor` over the `early` bundle: its Hermes compile when the base runs Hermes and it made one, else finished now. */
+async function earlyBundleFor(
+	step: BundleStep,
+	early: EarlyBundle,
+	now: () => number
+): AsyncResult<{ bundled: BundleOutput; bundleMs: number }> {
+	const result = await early.done;
+	const earlyMs = Math.max(0, result.endedAt - early.startedAt);
+	if (!result.raw.success) return result.raw;
+	if (step.hermes && result.hermes) {
+		if (!result.hermes.success) return result.hermes;
+		step.log("Hermes bytecode compiled while the base built");
+		return ok({ bundled: result.hermes.data, bundleMs: earlyMs });
+	}
+	const started = now();
+	const bundled = await finishBundle(step, result.raw.data);
 	if (!bundled.success) return bundled;
 	return ok({ bundled: bundled.data, bundleMs: earlyMs + Math.max(0, now() - started) });
 }
@@ -628,7 +684,9 @@ async function makeRepack(input: RepackInput, made: Made, early?: EarlyBundle): 
 			framework: project.framework,
 			flags: made.flags,
 			entry: made.entry,
-			env: { ...input.env, ...made.keys.settings.env },
+			...(early
+				? { env: { ...input.env, ...made.keys.settings.env } }
+				: bundleCache(input, made.keys.settings.env, made.flags)),
 			scratch,
 			hermes,
 			log: input.log,

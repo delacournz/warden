@@ -1,0 +1,23 @@
+{
+	"id": "ID-8",
+	"result": {
+		"answers": [
+			{
+				"accessibility": {
+					"answer": {
+						"failure": {
+							"reason": {
+								"error": "Error kAXErrorServerNotFound getting snapshot for element <AXUIElementRef 0x10211f720> {pid=99999} {uid=[ID:1 hash:0x0]}",
+								"error_kind": "application_not_responding",
+								"pid": 99999,
+								"timeout_seconds": 5
+							}
+						}
+					}
+				}
+			}
+		],
+		"exitCode": 1
+	},
+	"version": 6
+}

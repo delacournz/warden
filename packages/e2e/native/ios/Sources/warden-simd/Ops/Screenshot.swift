@@ -1,5 +1,3 @@
-import FBControlCore
-import FBSimulatorControl
 import Foundation
 
 enum ScreenshotOps {
@@ -39,9 +37,7 @@ struct ScreenshotRequest: Equatable {
 extension Session {
   /// A framebuffer capture (not Simulator.app), PNG-encoded.
   func screenshot(_ request: ScreenshotRequest) async throws -> JSON {
-    let configuration = ScreenshotConfiguration(
-      encoding: .png, scale: request.scale < 1 ? .factor(request.scale) : .native)
-    let result = try await simulator.screenshot.take(configuration: configuration)
+    let result = try await screenshots.capture(scale: request.scale)
     var fields: [String: JSON] = [
       "width": .int(Int(result.size.width.rounded())),
       "height": .int(Int(result.size.height.rounded())),

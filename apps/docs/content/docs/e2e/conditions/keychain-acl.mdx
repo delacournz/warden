@@ -1,0 +1,129 @@
+---
+title: Keychain access control
+description: Make Keychain items behind Face ID, Touch ID or the passcode prompt on an iOS simulator, as they do on a phone - match, cancel, no-UI reads and re-enrolment - with the keychainAcl key, --keychain-acl and device.biometrics.reenroll().
+icon: LockKeyhole
+simulatorOnly: true
+---
+
+<DemoClip src="/demos/keychain/acl" label="warden ui reading a Keychain item bound to Face ID on a leased simulator: the read brings up the real Face ID sheet, a match returns the secret, and after warden ui biometrics reenroll the same read is refused with no prompt" />
+
+`warden ui press`, `biometrics match`, `wait text` and `biometrics reenroll` against the example app's Keychain screen on a leased simulator with the shim on: the app only calls `SecItemCopyMatching`.
+
+The iOS Simulator ignores `SecAccessControl`. A `SecItemCopyMatching` of an item saved with `.biometryCurrentSet`, `.userPresence` or `.devicePasscode` returns its data at once, with no Face ID sheet, even with `interactionNotAllowed` set and even after Face ID was unenrolled. So a session token or key the app keeps behind Face ID can never be tested on a simulator: the gate is open.
+
+warden's Keychain ACL shim closes that gap. With it on, a read of an access-controlled item shows the real system Face ID sheet, `device.biometrics.match()` / `fail()` answer it, and the read returns the status a phone is expected to return. The app is unchanged: no flag, no mock, no test build.
+
+```ts
+import { expect, test } from "@delacour/warden-e2e";
+
+test("the saved session opens with Face ID", async ({ app, device, screen }) => {
+	await app.open();
+	await screen.getByTestId("unlock").tap(); // the app reads its Keychain item; nothing else
+	await device.alert("accept"); // "Allow … to use Face ID?" when iOS asks; false otherwise
+	await device.biometrics.match();
+	await expect(screen.getByText("Welcome back")).toBeVisible();
+});
+```
+
+## Turn it on
+
+```ts title="warden.config.ts"
+export default defineConfig({
+	e2e: {
+		vault: {
+			biometrics: true, // an enrolled +bio simulator
+			keychainAcl: true,
+			include: ["vault/**"],
+		},
+	},
+});
+```
+
+| Where | How |
+|---|---|
+| suite / preset / top level | `keychainAcl: true` (or `false`) beside `biometrics`, same precedence: the suite or `batches.<preset>` beats the top level |
+| one run | `warden e2e --keychain-acl` / `--no-keychain-acl`, `warden batch --keychain-acl` |
+| spec env | `WARDEN_KEYCHAIN_ACL=1` / `0` (set by `warden e2e`; by hand with `bun test --preload`) |
+| by hand | `warden ui open <bundle> --keychain-acl`, `warden dev --keychain-acl` ([Biometrics on a simulator](/docs/sims/conditions/biometrics#keychain-items-behind-face-id)) |
+
+`true` switches it on before a spec's first launch, `false` off, unset leaves the device as it is. It applies from the next launch: `app.open()` always relaunches through warden, so a spec needs nothing else. It stays on for the device until it is switched off or the lease ends: a release, or a lease that expired or was taken back, since the next claim of that simulator switches it off before handing it out. Pair it with `biometrics: true`: without an enrolled face a biometry-only item can only fail.
+
+iOS simulators only: a physical iPhone or iPad enforces access control itself, and Android fails `E_UNSUPPORTED` ("the Keychain ACL shim is for iOS simulators; a physical device enforces ACLs itself"). It is part of warden's injected library, so the app has to be launched by warden (`warden e2e`, `warden ui open`, `warden dev`), not by Xcode or `simctl` by hand.
+
+## What a read returns
+
+| The app reads an item with access control | With the shim | Without it (plain simulator) |
+|---|---|---|
+| Face ID sheet → `match()` | `errSecSuccess` (0) and the data | 0 and the data, no sheet |
+| Face ID sheet → `fail()` → Cancel | `errSecUserCanceled` (-128) | 0 and the data |
+| `kSecUseAuthenticationContext` with `interactionNotAllowed = true` | `errSecInteractionNotAllowed` (-25308), no sheet | 0 and the data |
+| `.biometryCurrentSet` / `.biometryAny` only, no face enrolled | `errSecItemNotFound` (-25300), no sheet | 0 and the data |
+| `.biometryCurrentSet` written before `reenroll()` | -25300 with no passcode path; with `.or .devicePasscode` the read falls back to Face ID or passcode: the simulator shows the Face ID sheet first and a match opens it (a phone would take only the passcode); with no face enrolled, the passcode sheet | 0 and the data |
+| `.or .devicePasscode`, no face enrolled | the passcode sheet; any code is accepted | 0 and the data |
+| a context the app already evaluated (`evaluatePolicy` succeeded) | 0 with no second sheet | 0 and the data |
+
+An item with no access control, or a read that asks only for attributes, is never touched.
+
+## The passcode sheet
+
+With no face enrolled, an item whose access control has `.or .devicePasscode` asks for the passcode on LocalAuthentication's own sheet. Its field is in the accessibility tree, so a spec types into it like any field. A simulator accepts any code:
+
+```ts
+await device.biometrics.unenroll();
+await screen.getByTestId("unlock").tap();
+const passcode = screen.getByTestId("Passcode field");
+await passcode.fill("1111");
+await passcode.press("Enter");
+await expect(screen.getByText("Welcome back")).toBeVisible();
+await device.biometrics.enroll();
+```
+
+By hand: `warden ui fill 'id="Passcode field"' 1111 --secure`, then `warden ui key Enter`. The sheet's Cancel (`id=Cancel`) ends the read with -128.
+
+## Re-enrolment: `device.biometrics.reenroll()`
+
+On a phone, adding or removing a face makes every `.biometryCurrentSet` item unreadable through Face ID, the usual "re-login after biometrics changed" path. A simulator keeps the same enrolment state, so warden keeps its own enrolment generation:
+
+```ts
+test("a new face asks for the password again", async ({ device, screen }) => {
+	await screen.getByTestId("enable-face-id").tap(); // the app saves its item now
+	const state = await device.biometrics.reenroll(); // unenroll + enroll, generation + 1
+	expect(state.generation).toBeGreaterThan(0);
+	await screen.getByTestId("unlock").tap();
+	await expect(screen.getByText("Sign in again")).toBeVisible(); // the read was -25300
+});
+```
+
+`reenroll()` returns `{ enrolled, modality, generation }`; `generation` is there only while the shim is on. Items written after it read normally. An item the app wrote while the shim was off counts from the first time the shim reads it: only a re-enrolment after that invalidates it. By hand: `warden ui biometrics reenroll`. Destructive for the items it invalidates, as on a phone: enrol before the app writes them when that is not the point of the test.
+
+## What it emulates, and what only a phone proves
+
+The shim emulates the prompt and the error codes; real enforcement is verified on a physical device. Never treat a green run as security verification.
+
+| Behaviour | Simulator with the shim | Proven only on a phone |
+|---|---|---|
+| A read of an access-controlled item prompts | yes: the real system sheet, answered with `match()` / `fail()` | the Secure Enclave's own decision |
+| `match()` returns the data | yes | |
+| Cancel → -128, no UI allowed → -25308, no usable biometry for a biometry-only item → -25300 | yes: the codes a phone is expected to return, from the SDK headers | the exact codes per iOS version |
+| A face that does not match | the "Face Not Recognized" sheet stays up until Cancel or Try Face ID Again; Cancel → -128 | -25293, or the passcode keypad |
+| `.biometryCurrentSet` invalidated by an enrolment change | yes, through warden's enrolment generation (`reenroll()`) | a real change of the enrolment state |
+| `.or .devicePasscode` still readable after the change | yes, but the simulator shows the Face ID sheet first and a match opens it; the passcode sheet only with no face enrolled, and it accepts any code | only the passcode opens it, and only the right one |
+| Lockout after repeated failures | not reachable on a simulator | yes |
+| Passcode entry after a face that did not match | not reachable: the simulator's sheet never offers it | yes |
+| An `LAContext` forged to report success | not detectable: the shim trusts `evaluatePolicy` | bypass resistance |
+
+## Limits
+
+- Reads only: `SecItemCopyMatching` is gated and `SecItemAdd` records the enrolment generation. `SecItemUpdate`, `SecItemDelete` and `SecKey` operations (signing with a Secure Enclave key) are not covered, and `LAContext.evaluateAccessControl` still fails at once as it does on any simulator.
+- The access control is read from the description iOS prints for a `SecAccessControl`, which is not public API: warden re-checks it on each iOS and Xcode release, and a description it cannot read is left alone (the read behaves as on a plain simulator).
+- The enrolment generation and the record of which item was written under which generation are kept per simulator in warden's home, not in the app's Keychain. They survive a new lease and a reinstall, as the items themselves do.
+- Intel Macs: the library is built for both slices, but warden's iOS stack runs on Apple silicon only.
+
+## Practice
+
+- Write the item after the app is installed and Face ID is enrolled (`biometrics: true` enrols before install). Delete it at the start of a journey: simulator Keychain items survive a reinstall.
+- iOS can ask "Allow … to use Face ID?" before the first sheet of an install: `device.alert("accept")` answers it when it is there and returns `false` when it is not.
+- A presentation sent just as the sheet comes up can be dropped: send it again when nothing changed. After `fail()`, `match()` works straight from the "Face Not Recognized" sheet; after "Try Face ID Again" the sheet stays up on a simulator.
+- Run a negative control: the same spec in a suite with `keychainAcl: false` shows that the prompt comes from the shim, not from the app.
+
+The example app's Keychain screen (`warden-example://keychain`) and its `keychain-acl` and `keychain-acl-off` suites run the table above on a simulator, except the already-evaluated context and the passcode sheet's Cancel. Errors and fixes are in [Debugging](/docs/e2e/debugging); Face ID itself is [Biometrics](/docs/e2e/conditions/biometrics).

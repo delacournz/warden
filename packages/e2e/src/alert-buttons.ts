@@ -18,7 +18,23 @@ export const ACCEPT_BUTTONS = [
 	"Allow Once",
 	"While using the app",
 	"Only this time",
+	"Try Face ID Again",
+	"Try Again",
+	"Retry",
 ];
+
+/**
+ * LocalAuthentication's "Face Not Recognized" sheet stays up on a simulator after its retry button is pressed (no face
+ * is presented), so the same alert after that press is no failure. Only this label: an app's own "Try Again" / "Retry"
+ * keeps the re-press for a press lost while the alert animates in.
+ */
+export const FACE_ID_RETRY_BUTTONS = ["Try Face ID Again"];
+
+/** Whether `button` is LocalAuthentication's retry button (`FACE_ID_RETRY_BUTTONS`). */
+export function isFaceIdRetryButton(button: Element): boolean {
+	const name = nameOf(button);
+	return name !== undefined && FACE_ID_RETRY_BUTTONS.some((retry) => normalise(retry) === normalise(name));
+}
 export const DISMISS_BUTTONS = ["Cancel", "Don't Allow", "Not Now", "Dismiss", "No", "Close"];
 
 function normalise(text: string): string {
@@ -29,6 +45,23 @@ export function nameOf(button: Element): string | undefined {
 	return button.label ?? button.text ?? button.value;
 }
 
+/**
+ * `buttons` with each (label, frame) listed once, first seen first: a sheet whose buttons the reader lists twice (a
+ * wrapper and its button, or both readers) reads as one row per button. Same label at another frame is another button.
+ */
+export function dedupeAlertButtons(buttons: readonly Element[]): Element[] {
+	const seen = new Set<string>();
+	const kept: Element[] = [];
+	for (const button of buttons) {
+		const { x, y, width, height } = button.frame;
+		const key = `${nameOf(button) ?? ""}|${x}|${y}|${width}|${height}`;
+		if (seen.has(key)) continue;
+		seen.add(key);
+		kept.push(button);
+	}
+	return kept;
+}
+
 /** The button called `wanted`, ignoring case and curly apostrophes. */
 export function findButton(buttons: readonly Element[], wanted: string): Element | undefined {
 	const target = normalise(wanted);
@@ -36,6 +69,16 @@ export function findButton(buttons: readonly Element[], wanted: string): Element
 		const name = nameOf(button);
 		return name !== undefined && normalise(name) === target;
 	});
+}
+
+/**
+ * The button `accept` presses when no name in `ACCEPT_BUTTONS` matches: the last one, unless it is a dismiss word
+ * ("Cancel" on a retry sheet), which `accept` never guesses.
+ */
+export function lastUnlessDismiss(buttons: readonly Element[]): Element | undefined {
+	const last = buttons[buttons.length - 1];
+	if (last === undefined) return undefined;
+	return firstOf([last], DISMISS_BUTTONS) === undefined ? last : undefined;
 }
 
 export function firstOf(buttons: readonly Element[], names: readonly string[]): Element | undefined {

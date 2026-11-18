@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { E2eError } from "../errors";
-import { createDevicePerf, type PerfExec, perfStartFor } from "./device-perf";
+import { createDevicePerf, type PerfExec, perfStartFor, spawnWarden } from "./device-perf";
 
 const ok = (result: unknown) => ({
 	code: 0,
@@ -123,5 +123,34 @@ describe("perfStartFor", () => {
 		expect(perfStartFor(["all"])).toEqual({ all: true });
 		expect(perfStartFor(["react", "js", "x"])).toEqual({ js: true, react: true });
 		expect(perfStartFor([])).toEqual({});
+	});
+});
+
+describe("spawnWarden", () => {
+	const printEnv = [
+		process.execPath,
+		"-e",
+		"console.log(JSON.stringify([process.env.BUN_BE_BUN ?? null, process.env.WARDEN_SPAWN_PROBE ?? null]))",
+	];
+
+	test("the child gets the env as it is now, never BUN_BE_BUN (a compiled warden would start as bun)", async () => {
+		const exec = spawnWarden(printEnv.slice(0, 1), () => ({
+			BUN_BE_BUN: "1",
+			WARDEN_SPAWN_PROBE: "now",
+			PATH: process.env.PATH,
+		}));
+		const result = await exec(printEnv.slice(1));
+		expect(result.code).toBe(0);
+		expect(JSON.parse(result.stdout)).toEqual([null, "now"]);
+	});
+
+	test("defaults to process.env read at spawn time, not the env the process started with", async () => {
+		process.env.WARDEN_SPAWN_PROBE = "set-after-start";
+		try {
+			const result = await spawnWarden(printEnv.slice(0, 1))(printEnv.slice(1));
+			expect(JSON.parse(result.stdout)[1]).toBe("set-after-start");
+		} finally {
+			delete process.env.WARDEN_SPAWN_PROBE;
+		}
 	});
 });

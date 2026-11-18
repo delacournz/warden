@@ -24,6 +24,7 @@ export type ConditionsPort = Pick<
 	| "keyboard"
 	| "keyboardState"
 	| "camera"
+	| "passkeys"
 	| "memoryWarning"
 	| "push"
 > & {

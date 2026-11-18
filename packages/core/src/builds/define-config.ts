@@ -141,8 +141,8 @@ export interface WardenVariant {
  * What a cached build is for.
  *
  * - `"dev"`: Debug, JS from Metro at runtime. The default of `warden ui open` / `warden dev`.
- * - `"simulator"`: Release for a simulator / emulator whose JS is swapped by a repack (iOS `SKIP_BUNDLING=1`, Android
- *   plain `assembleRelease`; its embedded bundle is replaced). The app's JS is repacked into a clone of this build, keyed by the content
+ * - `"simulator"`: Release for a simulator / emulator whose JS is swapped by a repack (iOS a plain `xcodebuild` with
+ *   `SKIP_BUNDLING=1`, Android plain `assembleRelease`; its embedded bundle is replaced). The app's JS is repacked into a clone of this build, keyed by the content
  *   of the JS sources, so a JS edit costs seconds, not a native rebuild. The default of `warden e2e`.
  * - `"release"`: Release with the JS bundle embedded at build time; the key also covers the JS sources.
  */
@@ -154,7 +154,8 @@ export interface WardenKind {
 	 * Replaces the kind's built-in build command, per platform. The project's own top-level `build` is not read
 	 * for a kind.
 	 *
-	 * @example { ios: "SKIP_BUNDLING=1 bunx expo run:ios --configuration Release --no-install --no-bundler" }
+	 * @example { ios: 'cd ios && SKIP_BUNDLING=1 xcodebuild -workspace App.xcworkspace -scheme App -configuration Release -sdk iphonesimulator -derivedDataPath build build' }
+	 * (`expo run:ios` drops `SKIP_BUNDLING` from a Release simulator build and bundles the JS anyway.)
 	 */
 	build?: WardenPerPlatform | undefined;
 	/**
@@ -341,6 +342,13 @@ export interface WardenBatchPreset {
 	 */
 	biometrics?: boolean | undefined;
 	/**
+	 * iOS simulators: an app's Keychain items behind `SecAccessControl` (Face ID / Touch ID / passcode) prompt on read
+	 * like on a device, through the Keychain ACL shim in the injected dylib. It emulates the prompt and the error codes;
+	 * real enforcement is verified on a physical device. Pair it with `biometrics: true`. Overrides the top-level
+	 * `keychainAcl`. Default false.
+	 */
+	keychainAcl?: boolean | undefined;
+	/**
 	 * What happens to the state of the devices of this run when they are released: `"erase"` (iOS: shutdown +
 	 * `simctl erase`; Android: uninstalls the third-party apps), `"uninstall"` (removes the user-installed apps) or
 	 * `"none"`. Only warden-created simulators and emulators are reclaimed, never foreign, golden or physical
@@ -514,6 +522,38 @@ export interface WardenConditionsConfig {
 	timezone?: string | undefined;
 	/** Not applied yet. */
 	a11y?: Record<string, unknown> | undefined;
+	/** `software` (the on-screen keyboard shows, the default) or `hardware` (hidden, input as from a keyboard). */
+	keyboard?: "software" | "hardware" | undefined;
+	/**
+	 * warden's virtual authenticator, on from the first `app.open()`: a mode (`auto`, `cancel`, `fail`, `unavailable`)
+	 * or `{ mode, uv, credentials }`; `credentials` are seeded once per lease. iOS launches the app with the injected
+	 * library; Android needs API 34+.
+	 */
+	passkeys?: WardenPasskeyMode | WardenPasskeysConfig | undefined;
+}
+
+/** What the virtual authenticator answers: succeed without UI, the user cancels, the platform fails, no credential. */
+export type WardenPasskeyMode = "auto" | "cancel" | "fail" | "unavailable";
+
+/** `conditions.passkeys` as an object. */
+export interface WardenPasskeysConfig {
+	/** @default "auto" */
+	mode?: WardenPasskeyMode | undefined;
+	/** User verification: `match` (UV flag set), `nomatch` (a failed Face ID / fingerprint), `skip` (no UV). @default "match" */
+	uv?: "match" | "nomatch" | "skip" | undefined;
+	/** Credentials to seed, as `device.passkeys.add` takes them. Test keys only. */
+	credentials?: WardenPasskeyCredential[] | undefined;
+}
+
+/** A credential to seed: rp id and user name; ids (base64url) and the P-256 key (PEM or base64url PKCS#8) are generated when left out. */
+export interface WardenPasskeyCredential {
+	rpId: string;
+	userName: string;
+	displayName?: string | undefined;
+	userHandle?: string | undefined;
+	credentialId?: string | undefined;
+	privateKey?: string | undefined;
+	signCount?: number | undefined;
 }
 
 /** `e2e.<suite>.spec`: how `warden e2e` runs the `*.e2e.ts` specs (`bun test` with `@delacour/warden-e2e`). */
@@ -762,6 +802,13 @@ export interface WardenE2eSuite {
 	 */
 	biometrics?: boolean | undefined;
 	/**
+	 * iOS simulators: an app's Keychain items behind `SecAccessControl` (Face ID / Touch ID / passcode) prompt on read
+	 * like on a device, through the Keychain ACL shim in the injected dylib. It emulates the prompt and the error codes;
+	 * real enforcement is verified on a physical device. Pair it with `biometrics: true`. Overrides the top-level
+	 * `keychainAcl`. Default false.
+	 */
+	keychainAcl?: boolean | undefined;
+	/**
 	 * iOS: simulators the run creates are cloned from a golden image (a first-booted, settled simulator built once
 	 * per profile and runtime). Off: each is a fresh `simctl create` and first boot, and `warden ci cache --suite`
 	 * prints no golden group. Existing pool devices are reused either way; `WARDEN_GOLDEN=0` turns it off everywhere.
@@ -838,6 +885,13 @@ export interface WardenConfig {
 	 */
 	biometrics?: boolean | undefined;
 	/**
+	 * iOS simulators: an app's Keychain items behind `SecAccessControl` (Face ID / Touch ID / passcode) prompt on read
+	 * like on a device, through the Keychain ACL shim in the injected dylib. It emulates the prompt and the error codes;
+	 * real enforcement is verified on a physical device. Pair it with `biometrics: true`. `e2e` suites and `batches`
+	 * presets override it. Default false.
+	 */
+	keychainAcl?: boolean | undefined;
+	/**
 	 * What happens to the state of the devices of this run when they are released: `"erase"` (iOS: shutdown +
 	 * `simctl erase`; Android: uninstalls the third-party apps), `"uninstall"` (removes the user-installed apps) or
 	 * `"none"`. Only warden-created simulators and emulators are reclaimed, never foreign, golden or physical
@@ -874,6 +928,26 @@ export interface WardenPhysicalSettings {
 export interface WardenProjectIos {
 	/** Builds for a physical iPhone (`--physical`, `--udid <iPhone>`). */
 	device?: { bundleIdentifier?: string | undefined } | undefined;
+	/** The machine-wide CocoaPods cache (`warden pods install`, local iOS builds). */
+	pods?: WardenProjectPods | undefined;
+}
+
+/** CocoaPods cache settings of one project (`projects[].ios.pods`). */
+export interface WardenProjectPods {
+	/**
+	 * `false`: never restore or store pods for this project. Every `warden pods install` and every warden iOS build runs a
+	 * real `pod install`, so `post_install` hooks run each time. For hooks with effects a restore cannot bring back (network
+	 * calls, files outside `ios/` and `node_modules`). Costs a full install per worktree. Default `true`.
+	 */
+	cache?: boolean | undefined;
+	/**
+	 * Env names your Podfile or its `post_install` hooks read. Their values join the pods cache key, so a different value
+	 * runs a real `pod install` instead of restoring pods made with the old one. `NAME_*` matches a prefix. Always in the
+	 * key, no need to list: `USE_FRAMEWORKS`, `USE_CCACHE`, `NO_FLIPPER`, `RCT_*`, `EX_DEV_CLIENT_*`, `EXPO_USE_*`.
+	 *
+	 * @example ["CI", "SENTRY_*"]
+	 */
+	env?: string[] | undefined;
 }
 
 /** Physical iPhone settings (`ios`). */

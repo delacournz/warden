@@ -91,7 +91,7 @@ final class BridgeStallReportTests: XCTestCase {
 
   func testAFailedBridgeReadIsAReadStageWithoutADeadlineHit() async throws {
     let outcome = try await read(
-      bridge: { throw AXBridgeError.guestNotAnswering(after: 5) }, host: host, gate: BridgeStallGate())
+      bridge: { throw IdbErrors.map(AXBridgeError.guestNotAnswering(after: 5)) }, host: host, gate: BridgeStallGate())
     let report = try XCTUnwrap(outcome.fallback?.stall)
     XCTAssertEqual(report.stage, .read)
     XCTAssertEqual(report.probes, 1)
@@ -107,7 +107,7 @@ final class BridgeStallReportTests: XCTestCase {
       _ = try await read(requested: .axbridge, bridge: hang, host: host, gate: BridgeStallGate())
       XCTFail("expected a timeout")
     } catch {
-      let wire = WireError.from(error)
+      let wire = wire(error)
       XCTAssertEqual(wire.code, .timeout)
       XCTAssertEqual(wire.detail?["stage"], "axbridge", "the old field keeps its meaning")
       let stall = try XCTUnwrap(wire.detail?["stall"])
@@ -121,10 +121,10 @@ final class BridgeStallReportTests: XCTestCase {
   func testBothReadersFailingKeepsTheReport() async throws {
     do {
       _ = try await read(
-        bridge: hang, host: { throw AXBridgeError.guestNotAnswering(after: 1) }, gate: BridgeStallGate())
+        bridge: hang, host: { throw IdbErrors.map(AXBridgeError.guestNotAnswering(after: 1)) }, gate: BridgeStallGate())
       XCTFail("expected both readers to fail")
     } catch {
-      let wire = WireError.from(error)
+      let wire = wire(error)
       XCTAssertEqual(wire.detail?["stall"]?["stage"], "read")
     }
   }
@@ -165,7 +165,7 @@ final class BridgeStallReportTests: XCTestCase {
         requested: .axbridge, bridge: bridgeOK, host: host, gate: gate, ticks: ticks, recovery: silentProbe())
       XCTFail("expected a stall")
     } catch {
-      let stall = try XCTUnwrap(WireError.from(error).detail?["stall"])
+      let stall = try XCTUnwrap(wire(error).detail?["stall"])
       XCTAssertEqual(stall["stage"], "cooldown")
       XCTAssertEqual(stall["deadlineMs"], .int(50))
       XCTAssertEqual(stall["probes"], .int(2))

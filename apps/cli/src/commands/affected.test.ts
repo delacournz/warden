@@ -32,7 +32,7 @@ describe("warden affected", () => {
 		expect(ctx.stdout).toEqual(["chats"]);
 	});
 
-	test("git is asked for the toplevel once per command: the suite lookup and the diff share the command's git cache", async () => {
+	test("the toplevel is read from the checkout's files: neither the suite lookup nor the diff spawns rev-parse", async () => {
 		write("src/chat/lazy.tsx", "export const x = 2;\n");
 		ctx = testContext([], { exec: bunExec });
 		ctx.cwd = dir;
@@ -43,7 +43,7 @@ describe("warden affected", () => {
 		};
 		expect(await affectedCommand.run(ctx)).toBe(0);
 		const facts = "git rev-parse --show-toplevel --git-common-dir --symbolic-full-name HEAD";
-		expect(spawns.filter((s) => s === facts)).toHaveLength(1);
+		expect(spawns.filter((s) => s === facts)).toEqual([]);
 		expect(spawns.filter((s) => s === "git rev-parse --show-toplevel")).toEqual([]);
 	});
 

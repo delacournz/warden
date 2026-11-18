@@ -4,10 +4,13 @@ import { defineDocs } from "fumadocs-mdx/macro";
 import { DEVICE_CONTROL } from "./landing.data";
 import { demosAsMarkdown } from "./llms";
 import { docsRoute } from "./shared";
+import { docsSchema, sidebarTitlePlugin } from "./sidebar-title";
+import { simulatorOnlyMarkdown } from "./simulator-only";
 
 export const docs = defineDocs({
 	dir: "content/docs",
 	docs: {
+		schema: docsSchema,
 		async: true,
 		postprocess: {
 			includeProcessedMarkdown: true,
@@ -18,7 +21,7 @@ export const docs = defineDocs({
 export const source = loader({
 	source: docs.toFumadocsSource(),
 	baseUrl: docsRoute,
-	plugins: [lucideIconsPlugin()],
+	plugins: [lucideIconsPlugin(), sidebarTitlePlugin()],
 });
 
 export async function getLLMText(page: (typeof source)["$inferPage"]) {
@@ -26,5 +29,5 @@ export async function getLLMText(page: (typeof source)["$inferPage"]) {
 
 	return `# ${page.data.title} (${page.url})
 
-${processed}`;
+${simulatorOnlyMarkdown(page.data)}${processed}`;
 }

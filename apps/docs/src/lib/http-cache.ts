@@ -1,4 +1,4 @@
-import { siteUrl } from "./shared";
+import { siteUrl } from "./shared.ts";
 
 /** Edge-cacheable page policy: browsers revalidate, Railway's edge may serve a shared copy for 5 min then stale for a day. */
 const pageCache = "public, max-age=0, s-maxage=300, stale-while-revalidate=86400";

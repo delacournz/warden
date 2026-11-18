@@ -200,3 +200,19 @@ describe("fatalReason", () => {
 		);
 	});
 });
+
+describe("readNode showingHint", () => {
+	test("keeps a known hint state, true or false, and leaves it out when the server does not say", () => {
+		expect(readNode({ bounds: [0, 0, 1, 1], editable: true, showingHint: true })).toEqual({
+			bounds: [0, 0, 1, 1],
+			editable: true,
+			showingHint: true,
+		});
+		expect(readNode({ bounds: [0, 0, 1, 1], showingHint: false })).toEqual({
+			bounds: [0, 0, 1, 1],
+			showingHint: false,
+		});
+		expect(readNode({ bounds: [0, 0, 1, 1] })).toEqual({ bounds: [0, 0, 1, 1] });
+		expect(readNode({ bounds: [0, 0, 1, 1], showingHint: "yes" })).toBe("elements.showingHint: not a boolean");
+	});
+});

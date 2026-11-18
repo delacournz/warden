@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import {
 	CLAIM_ABORTED,
@@ -1530,13 +1530,34 @@ describe("claimDevices: leftover conditions of a deleted lease", () => {
 		expect(store.db.query("SELECT COUNT(*) AS n FROM orphan_conditions").get()).toEqual({ n: 1 });
 	});
 
+	test("the Keychain ACL shim a stale lease left on is switched off before the simulator is handed out", async () => {
+		const stale = store.insertLease(
+			{ resource: { kind: "device", platform: "ios", id: "1", name: "warden-iphone-17-1" }, owner: other, ttlMs: 1000 },
+			1
+		);
+		const statePath = join(dir, "inject", "1", "state.json");
+		mkdirSync(dirname(statePath), { recursive: true });
+		writeFileSync(statePath, JSON.stringify({ seq: 4, keychainAcl: { enabled: true, generation: 2, itemsPath: "i" } }));
+		const exec: Exec = async () => ({ exitCode: 0, stdout: "", stderr: "" });
+		const result = await claimDevices(
+			input(fakeProvider([sim("1", { state: "booted" })]), { orphans: { exec, env: { WARDEN_HOME: dir } } })
+		);
+		expect(result.success && result.data.reclaimed).toEqual([stale.id]);
+		expect(JSON.parse(readFileSync(statePath, "utf8"))).toEqual({
+			seq: 5,
+			keychainAcl: { enabled: false, generation: 2, itemsPath: "i" },
+		});
+	});
+
 	test("a claim with nothing orphaned runs no condition resets", async () => {
 		const cmds: string[][] = [];
 		const exec: Exec = async (cmd) => {
 			cmds.push([...cmd]);
 			return { exitCode: 0, stdout: "", stderr: "" };
 		};
-		await claimDevices(input(fakeProvider([sim("1", { state: "booted" })]), { orphans: { exec, env: {} } }));
+		await claimDevices(
+			input(fakeProvider([sim("1", { state: "booted" })]), { orphans: { exec, env: { WARDEN_HOME: dir } } })
+		);
 		expect(cmds).toEqual([]);
 	});
 });

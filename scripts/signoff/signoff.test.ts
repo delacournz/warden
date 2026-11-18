@@ -129,7 +129,7 @@ describe("cpu-guard check", () => {
 	function candidate(cpu: number): string {
 		const dir = mkdtempSync(join(tmpdir(), "cpu-guard-"));
 		const file = join(dir, "candidate.json");
-		const frameworks = [{ framework: "warden", cpuSecondsPerRep: cpu, rssPeakBytes: 170_000_000 }];
+		const frameworks = [{ framework: "warden", cpuSecondsPerRep: cpu, rssPeakBytes: 120_000_000 }];
 		writeFileSync(
 			file,
 			JSON.stringify({ baselineVersion: 1, id: "cand", startedAt: "2026-10-26T00:00:00Z", platform: "ios", frameworks })
@@ -151,12 +151,12 @@ describe("cpu-guard check", () => {
 	});
 
 	test("compares the run dir with the baseline when it exists", async () => {
-		const ok = await runGuard({ WARDEN_BENCH_RUN_DIR: candidate(3.0) });
+		const ok = await runGuard({ WARDEN_BENCH_RUN_DIR: candidate(2.7) });
 		expect(ok.code).toBe(0);
-		expect(ok.out).toContain("ok: warden cpu-s/rep 2.97 → 3.00");
+		expect(ok.out).toContain("ok: warden cpu-s/rep 2.66 → 2.70");
 		const slow = await runGuard({ WARDEN_BENCH_RUN_DIR: candidate(12) });
 		expect(slow.code).toBe(1);
-		expect(slow.out).toContain("regression: warden cpu-s/rep 2.97 → 12.00 (+304.0 %) exceeds 10 %");
+		expect(slow.out).toContain("regression: warden cpu-s/rep 2.66 → 12.00 (+351.1 %) exceeds 10 %");
 	});
 });
 
@@ -474,7 +474,7 @@ describe("commandLabel", () => {
 
 type Workflow = {
 	on: Record<string, { inputs?: Record<string, unknown> } | null>;
-	jobs: Record<string, { steps?: { run?: string }[] }>;
+	jobs: Record<string, { if?: string; needs?: string | string[]; steps?: { run?: string }[] }>;
 };
 
 async function ciWorkflow(): Promise<Workflow> {
@@ -492,6 +492,15 @@ describe("drift guard", () => {
 		const workflow = await ciWorkflow();
 		expect(Object.keys(workflow.on)).toEqual(["workflow_dispatch"]);
 		expect(workflow.on.workflow_dispatch?.inputs).toHaveProperty("signoff-sha");
+	});
+
+	test("ci.yml skips a dispatch on develop or main — the version PR run already gates the release", async () => {
+		const { jobs } = await ciWorkflow();
+		expect(jobs.validate?.if).toContain("github.ref != 'refs/heads/develop'");
+		expect(jobs.validate?.if).toContain("github.ref != 'refs/heads/main'");
+		// signoff runs on always(); without this it would post a failure status on the develop tip.
+		expect(jobs.signoff?.needs).toContain("validate");
+		expect(jobs.signoff?.if).toContain("needs.validate.result == 'success'");
 	});
 
 	test("the dispatched run writes every check's context and the umbrella", async () => {

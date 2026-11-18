@@ -26,6 +26,10 @@ export type SessionDeps = {
 	log: (line: string) => void;
 	readyTimeoutMs?: number;
 	tunnelWaitMs?: number;
+	/** a fresh `-resultBundlePath` per launch (none: no bundle is written) */
+	resultBundle?: () => string | undefined;
+	/** the test failures recorded in a finished bundle, as one line; undefined when none or unreadable */
+	readFailures?: (bundle: string) => Promise<string | undefined>;
 };
 
 export type SessionInput = {
@@ -80,7 +84,7 @@ export function readyPort(line: string): number | undefined {
 	}
 }
 
-export function xcodebuildCommand(artifacts: RunnerArtifacts, udid: string): string[] {
+export function xcodebuildCommand(artifacts: RunnerArtifacts, udid: string, resultBundle?: string): string[] {
 	return [
 		"xcodebuild",
 		"test-without-building",
@@ -89,6 +93,7 @@ export function xcodebuildCommand(artifacts: RunnerArtifacts, udid: string): str
 		"-destination",
 		`id=${udid}`,
 		TEST_FILTER,
+		...(resultBundle === undefined ? [] : ["-resultBundlePath", resultBundle]),
 	];
 }
 
@@ -116,6 +121,8 @@ type Watch = {
 	tail: () => string;
 	/** resolves with the exit code once the process is gone and its output is read */
 	finished: Promise<number | null>;
+	/** this launch's `-resultBundlePath`, if any */
+	resultBundle: string | undefined;
 };
 
 async function pump(stream: ReadableStream<Uint8Array>, onLine: (line: string) => void): Promise<void> {
@@ -133,7 +140,7 @@ async function pump(stream: ReadableStream<Uint8Array>, onLine: (line: string) =
 	if (pending.trim() !== "") onLine(pending);
 }
 
-function watch(proc: RunnerProcess, deps: SessionDeps): Watch {
+function watch(proc: RunnerProcess, deps: SessionDeps, resultBundle: string | undefined): Watch {
 	let settle: (outcome: Outcome) => void = () => undefined;
 	const outcome = new Promise<Outcome>((resolve) => {
 		settle = resolve;
@@ -171,7 +178,28 @@ function watch(proc: RunnerProcess, deps: SessionDeps): Watch {
 		settle({ kind: "exit", code });
 		return code;
 	});
-	return { proc, outcome, lateFault: () => late, tail: () => tail.join(" | "), finished };
+	return { proc, outcome, lateFault: () => late, tail: () => tail.join(" | "), finished, resultBundle };
+}
+
+/**
+ * `xcodebuild_exited` once the process is gone: the failure the result bundle recorded (the output tail when it has
+ * none) and where the bundle is, so the whole run can be opened in Xcode.
+ */
+async function exitedFault(
+	w: Watch,
+	deps: SessionDeps,
+	code: number | null,
+	lead: string
+): Promise<RunnerFault & { kind: "xcodebuild_exited" }> {
+	const bundle = w.resultBundle;
+	const failure = bundle === undefined ? undefined : await deps.readFailures?.(bundle);
+	const where = bundle === undefined ? "" : ` (result bundle: ${bundle})`;
+	return {
+		kind: "xcodebuild_exited",
+		exitCode: code,
+		message: `${lead}: ${failure ?? w.tail()}${where}`,
+		...(bundle === undefined ? {} : { resultBundle: bundle }),
+	};
 }
 
 async function terminate(w: Watch, deps: SessionDeps): Promise<void> {
@@ -196,7 +224,8 @@ async function launch(
 	const connected = await waitTunnelConnected(deps.route, input.udid, deps.tunnelWaitMs);
 	if (!connected.success) return { success: false, error: { kind: "tunnel_down", message: connected.error.message } };
 	deps.log(`xcodebuild: starting the runner on ${input.udid} (attempt ${attempt})`);
-	const w = watch(deps.spawn(xcodebuildCommand(input.artifacts, input.udid), runnerEnv(input)), deps);
+	const bundle = deps.resultBundle?.();
+	const w = watch(deps.spawn(xcodebuildCommand(input.artifacts, input.udid, bundle), runnerEnv(input)), deps, bundle);
 	let cancelTimer: () => void = () => undefined;
 	const timeoutMs = deps.readyTimeoutMs ?? READY_TIMEOUT_MS;
 	const timedOut = new Promise<Outcome>((resolve) => {
@@ -233,11 +262,12 @@ async function launch(
 		case "exit":
 			return {
 				success: false,
-				error: {
-					kind: "xcodebuild_exited",
-					exitCode: first.code,
-					message: `xcodebuild exited ${first.code ?? "by signal"} before the runner was ready: ${w.tail()}`,
-				},
+				error: await exitedFault(
+					w,
+					deps,
+					first.code,
+					`xcodebuild exited ${first.code ?? "by signal"} before the runner was ready`
+				),
 			};
 	}
 }
@@ -256,16 +286,12 @@ export async function startSession(deps: SessionDeps, input: SessionInput): Asyn
 		return { success: false, error: { kind: "tunnel_down", message: ip.error.message } };
 	}
 	let stopping = false;
-	const ended = w.finished.then((code): SessionEnd => {
+	const ended = w.finished.then(async (code): Promise<SessionEnd> => {
 		if (stopping || code === 0) return { kind: "clean" };
 		const late = w.lateFault();
 		return {
 			kind: "fault",
-			fault: late ?? {
-				kind: "xcodebuild_exited",
-				exitCode: code,
-				message: `xcodebuild exited ${code ?? "by signal"}: ${w.tail()}`,
-			},
+			fault: late ?? (await exitedFault(w, deps, code, `xcodebuild exited ${code ?? "by signal"}`)),
 		};
 	});
 	return {

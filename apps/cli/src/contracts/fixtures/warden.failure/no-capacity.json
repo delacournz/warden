@@ -1,0 +1,11 @@
+{
+	"ok": false,
+	"schemaVersion": 1,
+	"command": "claim",
+	"error": {
+		"message": "timed out in the boot queue at #1 of 1: no room, max binds: need 2.0 of 1.0 max (units); using 1.0/1.0 cpu units, 4096/49152 MB",
+		"code": "NO_CAPACITY",
+		"capacityReason": "cpu-budget",
+		"hint": "the host has no room to boot another device: release idle leases (warden ls), shut down idle devices (warden gc), or see warden capacity"
+	}
+}

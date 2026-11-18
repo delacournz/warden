@@ -85,6 +85,18 @@ describe("clearTapPoint", () => {
 		if (result.kind === "covered") expect(result.region).toEqual({ x: 0, y: 740, width: 400, height: 100 });
 	});
 
+	test("a target under only the padding of a footer's bar, clear of its button, is covered by that bar", () => {
+		const bar = el("other", {
+			frame: { x: 0, y: 740, width: 400, height: 100 },
+			children: [el("button", { id: "sign-out", label: "Sign out", frame: { x: 20, y: 756, width: 360, height: 52 } })],
+		});
+		const low = el("button", { id: "row", label: "Network", frame: { x: 20, y: 812, width: 360, height: 40 } });
+		const { entry, index } = target([low, bar]);
+		const result = clearTapPoint(entry, index);
+		expect(result.kind).toBe("covered");
+		if (result.kind === "covered") expect(result.region).toEqual({ x: 0, y: 740, width: 400, height: 100 });
+	});
+
 	test("a full-screen overlay holding a floating button is not the cover, the button is", () => {
 		const overlay = el("other", {
 			frame: { x: 0, y: 0, width: 400, height: 900 },
@@ -128,6 +140,27 @@ describe("revealPath", () => {
 		const path = revealPath(entry, result, index);
 		expect(path?.from.y).toBeGreaterThan(100);
 		expect((path?.to.y ?? 0) - (path?.from.y ?? 0)).toBeGreaterThan(0);
+	});
+
+	test("a row cut by the list's bottom edge under a footer's bar is dragged from above the bar", () => {
+		const bar = el("other", {
+			frame: { x: 0, y: 700, width: 390, height: 100 },
+			children: [el("button", { id: "sign-out", label: "Sign out", frame: { x: 20, y: 715, width: 350, height: 50 } })],
+		});
+		const { entry, index } = target([
+			el("scrollview", {
+				frame: { x: 0, y: 100, width: 390, height: 700 },
+				children: [el("button", { id: "row", label: "Network", frame: { x: 20, y: 797, width: 350, height: 3 } })],
+			}),
+			bar,
+		]);
+		const result = clearTapPoint(entry, index);
+		if (result.kind !== "covered") throw new Error("expected covered");
+		expect(result.by).toBe("edge");
+		const path = revealPath(entry, result, index);
+		expect(path?.from.y).toBeLessThan(700);
+		// far enough to bring the row above the bar, not just past the list's edge
+		expect((path?.from.y ?? 0) - (path?.to.y ?? 0)).toBeGreaterThanOrEqual(800 + 24 - 700);
 	});
 
 	test("outside a scroll container there is no path", () => {

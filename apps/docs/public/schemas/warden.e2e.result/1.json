@@ -1,0 +1,196 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"type": "object",
+	"properties": {
+		"file": {
+			"type": "string"
+		},
+		"title": {
+			"type": "array",
+			"items": {
+				"type": "string"
+			}
+		},
+		"status": {
+			"type": "string",
+			"enum": [
+				"passed",
+				"failed",
+				"skipped",
+				"timed-out"
+			]
+		},
+		"durationMs": {
+			"type": "number"
+		},
+		"startedAt": {
+			"type": "number"
+		},
+		"only": {
+			"type": "boolean"
+		},
+		"error": {
+			"type": "object",
+			"properties": {
+				"message": {
+					"type": "string"
+				},
+				"code": {
+					"type": "string"
+				},
+				"stack": {
+					"type": "string"
+				}
+			},
+			"required": [
+				"message"
+			],
+			"additionalProperties": false
+		},
+		"artifacts": {
+			"type": "object",
+			"properties": {
+				"dir": {
+					"type": "string"
+				},
+				"files": {
+					"type": "array",
+					"items": {
+						"type": "string"
+					}
+				}
+			},
+			"required": [
+				"dir",
+				"files"
+			],
+			"additionalProperties": false
+		},
+		"bridge": {
+			"type": "object",
+			"properties": {
+				"fallbacks": {
+					"type": "number"
+				},
+				"first": {
+					"type": "object",
+					"properties": {
+						"reason": {
+							"type": "string"
+						},
+						"code": {
+							"type": "string"
+						},
+						"stage": {
+							"type": "string"
+						},
+						"readMs": {
+							"type": "number"
+						},
+						"deadlineMs": {
+							"type": "number"
+						},
+						"guestAgeMs": {
+							"type": "number"
+						},
+						"cold": {
+							"type": "boolean"
+						},
+						"cooldownRemainingMs": {
+							"type": "number"
+						},
+						"probes": {
+							"type": "number"
+						},
+						"recycles": {
+							"type": "number"
+						},
+						"recyclesExhausted": {
+							"type": "boolean"
+						}
+					},
+					"additionalProperties": false
+				},
+				"last": {
+					"type": "object",
+					"properties": {
+						"reason": {
+							"type": "string"
+						},
+						"code": {
+							"type": "string"
+						},
+						"stage": {
+							"type": "string"
+						},
+						"readMs": {
+							"type": "number"
+						},
+						"deadlineMs": {
+							"type": "number"
+						},
+						"guestAgeMs": {
+							"type": "number"
+						},
+						"cold": {
+							"type": "boolean"
+						},
+						"cooldownRemainingMs": {
+							"type": "number"
+						},
+						"probes": {
+							"type": "number"
+						},
+						"recycles": {
+							"type": "number"
+						},
+						"recyclesExhausted": {
+							"type": "boolean"
+						}
+					},
+					"additionalProperties": false
+				}
+			},
+			"required": [
+				"fallbacks",
+				"first",
+				"last"
+			],
+			"additionalProperties": false
+		},
+		"device": {
+			"type": "object",
+			"properties": {
+				"udid": {
+					"type": "string"
+				},
+				"platform": {
+					"type": "string",
+					"enum": [
+						"ios",
+						"android"
+					]
+				},
+				"name": {
+					"type": "string"
+				}
+			},
+			"required": [
+				"udid",
+				"platform"
+			],
+			"additionalProperties": false
+		}
+	},
+	"required": [
+		"file",
+		"title",
+		"status",
+		"durationMs",
+		"startedAt",
+		"device"
+	],
+	"additionalProperties": false,
+	"$id": "https://warden.co.nz/schemas/warden.e2e.result/1.json",
+	"title": "warden.e2e.result"
+}
