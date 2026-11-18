@@ -4,7 +4,7 @@ import {
 	type CommandUnknownOpts,
 	type HelpConfiguration,
 } from "@commander-js/extra-typings";
-import type { CommandContext, FailureExtra } from "./context";
+import type { CommandContext, FailureCode, FailureExtra } from "./context";
 import { SCHEMA_VERSIONS } from "./contracts/versions";
 import type { Finished } from "./telemetry/tracker";
 import { SYMBOLS, type Ui } from "./ui";
@@ -95,10 +95,12 @@ export type JsonFailure = {
 	error: { code: "usage" | "failed"; message: string } | ({ message: string } & FailureExtra);
 };
 
-/** How a run ended, from its exit code: 130 is an interrupt, anything else non-zero is an error. */
-function outcomeOf(code: number): Finished {
+type Classified = Pick<Finished, "error"> & { errorCode: FailureCode };
+
+/** How a run ended, from its exit code: 130 is an interrupt, anything else non-zero is an error, with why if known. */
+function outcomeOf(code: number, classified: Classified | undefined): Finished {
 	if (code === 0) return { outcome: "success" };
-	return { outcome: code === 130 ? "cancelled" : "error", exitCode: code };
+	return { outcome: code === 130 ? "cancelled" : "error", exitCode: code, ...classified };
 }
 
 /** `ui snapshot` from `["ui", "snapshot", "--json"]`: the command words of `argv`, as registered. */
@@ -133,6 +135,7 @@ export async function runProgram(
 	let json = false;
 	let wrote = false;
 	let failure: JsonFailure["error"] | undefined;
+	let classified: Classified | undefined;
 	const tracked: CommandContext = {
 		...ctx,
 		out: (line) => {
@@ -142,7 +145,12 @@ export async function runProgram(
 		failure: {
 			record: (message, extra) => {
 				failure ??= extra ? { message, ...extra } : { code: "failed", message };
+				if (extra) classified ??= { errorCode: extra.code };
 				ctx.failure?.record(message, extra);
+			},
+			classify: (errorCode, error) => {
+				classified ??= { errorCode, error };
+				ctx.failure?.classify?.(errorCode, error);
 			},
 		},
 	};
@@ -175,7 +183,7 @@ export async function runProgram(
 		const doc: JsonFailure = { ok: false, schemaVersion: SCHEMA_VERSIONS["warden.failure"], command, error };
 		ctx.out(JSON.stringify(doc));
 	}
-	if (acted) await ctx.tracker?.finish(outcomeOf(code));
+	if (acted) await ctx.tracker?.finish(outcomeOf(code, classified));
 	return code;
 }
 

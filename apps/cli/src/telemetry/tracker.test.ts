@@ -100,6 +100,15 @@ describe("tracker", () => {
 		expect(JSON.stringify(f.recorded)).not.toContain("/Users/me");
 	});
 
+	test("an error carries its machine code", async () => {
+		const f = fake();
+		const t = tracker(f);
+		await t.begin(actionCommand(["claim"], []));
+		await t.finish({ outcome: "error", exitCode: 1, errorCode: "target_not_found" });
+
+		expect(f.recorded[0]?.properties).toMatchObject({ errorCode: "target_not_found", exitCode: 1 });
+	});
+
 	test("counts e2e suites, not their names", async () => {
 		const f = fake();
 		const t = tracker(f);

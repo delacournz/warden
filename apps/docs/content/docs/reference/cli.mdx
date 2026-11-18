@@ -824,7 +824,7 @@ One `command` event per run, in one request made as the command ends. Commands t
 
 | | |
 |---|---|
-| The run | The command (`ui press`, `e2e`, `claim`), the **names** of the flags you typed (`--json`, `--platform`), how it ended (success, error or cancelled), how long it took, the exit code, and the **class name** of an error |
+| The run | The command (`ui press`, `e2e`, `claim`), the **names** of the flags you typed (`--json`, `--platform`), how it ended (success, error or cancelled), how long it took, the exit code, the **class name** of an error, and a **fixed code** for why it failed (`target_not_found`, `wait_target_absent`, `negative_answer` for a `ui is` that answered false, `tests_failed`, `NO_DEVICE`), never the message |
 | The device | Whether it was for `ios` or `android`, when you said so |
 | The suite | For `e2e` and `affected`, how many suites you named, never their names |
 | The output | Whether you passed `--json` |

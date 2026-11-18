@@ -465,7 +465,10 @@ function printVerdict(ctx: CommandContext, report: E2eReport): void {
 	const passed = report.specs.filter((f) => f.verdict === "passed").length;
 	const line = `warden e2e: ${passed}/${report.specs.length} spec(s) passed — ${report.ok ? "gate passed" : "gate failed"}`;
 	if (report.ok) success(ctx, line);
-	else reportError(ctx, "e2e", line.replace(/^warden e2e: /, ""));
+	else {
+		ctx.failure?.classify?.("tests_failed");
+		reportError(ctx, "e2e", line.replace(/^warden e2e: /, ""));
+	}
 	if (report.timing) ctx.err(timingLine(report.timing));
 }
 

@@ -176,15 +176,23 @@ export function reportOk(ctx: CommandContext, report: UiReport, success: UiSucce
 			...(success.warnings && success.warnings.length > 0 ? { warnings: success.warnings } : {}),
 		};
 		ctx.out(JSON.stringify(doc));
-		return success.exit ?? UI_EXIT.ok;
+		return okExit(ctx, success);
 	}
 	if (success.text.length > 0) ctx.out(success.text);
 	for (const w of success.warnings ?? []) ctx.err(ctx.ui.color.yellow(`warden ${report.label ?? "ui"}: ${w}`));
-	return success.exit ?? UI_EXIT.ok;
+	return okExit(ctx, success);
+}
+
+/** A success that exits non-zero (`is` false, an audit with errors) answered "no": it did not fail. */
+function okExit(ctx: CommandContext, success: UiSuccess): UiExitCode {
+	const exit = success.exit ?? UI_EXIT.ok;
+	if (exit !== UI_EXIT.ok) ctx.failure?.classify?.("negative_answer");
+	return exit;
 }
 
 /** Print a failure (JSON envelope on stdout, or a red line on stderr) and return its exit code. */
 export function reportError(ctx: CommandContext, report: UiReport, error: UiError, device?: UiDeviceInfo): UiExitCode {
+	ctx.failure?.classify?.(error.code);
 	if (report.json) {
 		const doc: UiFailJson = {
 			ok: false,

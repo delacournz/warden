@@ -45,7 +45,7 @@ const MAIL = `[${CONTACT}](mailto:${CONTACT})`;
 const HISTORY = `https://github.com/${gitConfig.user}/${gitConfig.repo}/commits/${gitConfig.branch}/apps/docs/src/lib/privacy.ts`;
 
 export const PRIVACY = {
-	updated: "2026-11-05",
+	updated: "2026-11-17",
 	controller: "Delacour Limited",
 	contact: CONTACT,
 	title: "Privacy policy",
@@ -123,7 +123,7 @@ export const PRIVACY_SECTIONS: readonly PrivacySection[] = [
 		],
 		disclosures: [
 			{
-				what: "Once per command: its name; the names, never the values, of the flags you typed; whether it ran with --json; whether it was for iOS or Android; how many e2e suites it was asked to run, never their names; whether it succeeded, failed or was cancelled, its exit code, how long it took, and the class name of any error; your operating system, CPU, and Bun or Node version; whether it ran in CI or from a coding agent; how it was started; warden's version; a random machine ID and a random ID for the run; and a one-way hash of your git remote that stands for the project. Never your code, file or suite names, paths, bundle identifiers, simulator UDIDs, app names, URLs, remote URL, environment variable values, error messages or username",
+				what: "Once per command: its name; the names, never the values, of the flags you typed; whether it ran with --json; whether it was for iOS or Android; how many e2e suites it was asked to run, never their names; whether it succeeded, failed or was cancelled, its exit code, how long it took, the class name of any error, and a fixed code for why it failed; your operating system, CPU, and Bun or Node version; whether it ran in CI or from a coding agent; how it was started; warden's version; a random machine ID and a random ID for the run; and a one-way hash of your git remote that stands for the project. Never your code, file or suite names, paths, bundle identifiers, simulator UDIDs, app names, URLs, remote URL, environment variable values, error messages or username",
 				to: "Delacour's own server, `telemetry.delacour.co.nz`, which works out your country from the request, discards your IP address, and passes the event to PostHog",
 				why: "To see which commands are used, on which platforms, from which CI systems and coding agents, and which commands fail. The IP address is used to answer the request and then dropped.",
 			},
