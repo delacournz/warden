@@ -358,13 +358,21 @@ final class AXWedgeTests: XCTestCase {
   private func readAX(
     requested: AXBackend? = nil,
     bridge: @escaping @Sendable () async throws -> String, host: @escaping @Sendable () async throws -> String,
-    wedge: AXWedgeRecovery
+    wedge: AXWedgeRecovery, warmth: BridgeWarmth = .warmed()
   ) async throws -> AXOutcome<String> {
     try await Session.readAX(
       requested: requested, bridge: bridge, host: host, recover: { _ in },
       policy: BridgeDeadline(readMs: 50, coldReadMs: 50, cooldownSeconds: 20), gate: BridgeStallGate(),
-      warmth: .warmed(), health: BridgeHealth(), now: { 1000 }, log: { _ in }, bridgeName: "available",
+      warmth: warmth, health: BridgeHealth(), now: { 1000 }, log: { _ in }, bridgeName: "available",
       wedge: wedge)
+  }
+
+  /// How many times a reader was asked (reads run off the test's task).
+  private final class Asked: @unchecked Sendable {
+    private let lock = NSLock()
+    private var n = 0
+    var count: Int { lock.withLock { n } }
+    func note() { lock.withLock { n += 1 } }
   }
 
   func testBothReadersSilentStartsACheckAndTheFailedReadSaysSo() async throws {
@@ -444,6 +452,40 @@ final class AXWedgeTests: XCTestCase {
     XCTAssertNotNil(outcome.fallback)
     _ = await wedge.current?.value
     XCTAssertEqual(wedge.silentReads, 0)
+  }
+
+  // MARK: a cold guest (no answer yet since start, recycle or launch) reports the service silent
+
+  func testAColdGuestReportingTheServiceSilentKeepsItsErrorAndDoesNotAskAx() async throws {
+    let wedge = recovery(Script(marker: .success(false)))
+    let silent = silentHost
+    let asked = Asked()
+    do {
+      _ = try await readAX(
+        bridge: { throw silent },
+        host: {
+          asked.note()
+          return "ax"
+        }, wedge: wedge, warmth: BridgeWarmth())
+      XCTFail("a cold guest's silent service is the read's answer")
+    } catch {
+      XCTAssertFalse(error is AXReadersFailed, "no ax fallback was read")
+      XCTAssertTrue(AXWedgeRecovery.isServiceSilent(error), "the guest's own retryable error")
+    }
+    XCTAssertEqual(asked.count, 0, "the warming service is not read a second time through ax")
+    _ = await wedge.current?.value
+    XCTAssertEqual(wedge.silentReads, 1, "still counted towards the wedge check")
+  }
+
+  func testAColdGuestOnASilentServiceCountsEveryReadSoAWedgeIsStillFound() async throws {
+    let wedge = recovery(Script(marker: .success(false)))
+    let silent = silentHost
+    let warmth = BridgeWarmth()
+    for _ in 0..<AXWedgeRecovery.silentReads {
+      _ = try? await readAX(bridge: { throw silent }, host: { "ax" }, wedge: wedge, warmth: warmth)
+      _ = await wedge.current?.value
+    }
+    XCTAssertEqual(wedge.silentReads, AXWedgeRecovery.silentReads)
   }
 
   func testAnExplicitAxReadThatIsSilentCountsTheSilence() async throws {
