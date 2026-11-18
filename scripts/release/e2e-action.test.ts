@@ -396,3 +396,108 @@ describe("action.yml artifacts", () => {
 		expect(JSON.stringify(steps[exportIndex])).toContain("steps.artifacts.outputs.golden-archived");
 	});
 });
+
+/**
+ * `build-only: true`: the app is built and the caches saved, no spec runs. A push to the default branch seeds the
+ * caches every pull request restores without running flows the merged pull request already ran.
+ */
+describe("action.yml build-only", () => {
+	type Step = { id?: string; run?: string; env?: Record<string, string> };
+	type Action = { inputs: Record<string, { default?: string }>; runs: { steps: Step[] } };
+	const action = Bun.YAML.parse(readFileSync(join(ACTION_DIR, "action.yml"), "utf8")) as Action;
+	const runStep = action.runs.steps.find((s) => s.id === "run");
+
+	/** Run the "Run the suite" step's script against a stub warden that records any call; returns its outputs. */
+	function runSuiteStep(env: { BUILD_ONLY: string; BUILD_EXIT: string }): {
+		outputs: Record<string, string>;
+		wardenCalled: boolean;
+	} {
+		const marker = join(home, "warden-called");
+		writeFileSync(join(home, "bin", "warden"), `#!/bin/sh\ntouch "${marker}"\nexit 0\n`);
+		const script = join(home, "run.sh");
+		writeFileSync(script, runStep?.run ?? "");
+		const output = join(home, "github-output");
+		writeFileSync(output, "");
+		const proc = Bun.spawnSync([BASH, script], {
+			cwd: home,
+			env: {
+				PATH: `${join(home, "bin")}:/usr/bin:/bin`,
+				HOME: home,
+				GITHUB_OUTPUT: output,
+				SUITE: "example",
+				PROFILE: "",
+				COUNT: "1",
+				RETRY: "1",
+				EXTRA: "",
+				REPORT: "report.json",
+				SUITE_TIMEOUT: "1",
+				WORKSPACE: home,
+				...env,
+			},
+		});
+		expect(proc.exitCode).toBe(0);
+		const outputs = Object.fromEntries(
+			readFileSync(output, "utf8")
+				.split("\n")
+				.filter(Boolean)
+				.map((line) => {
+					const at = line.indexOf("=");
+					return [line.slice(0, at), line.slice(at + 1)];
+				})
+		);
+		return { outputs, wardenCalled: existsSync(marker) };
+	}
+
+	test("defaults to running the suite", () => {
+		expect(action.inputs["build-only"]?.default).toBe("false");
+		expect(runStep?.env?.BUILD_ONLY).toBe(`\${{ inputs.build-only }}`);
+	});
+
+	test("a green build passes without running a spec, so the caches are saved", () => {
+		const { outputs, wardenCalled } = runSuiteStep({ BUILD_ONLY: "true", BUILD_EXIT: "0" });
+		expect(wardenCalled).toBe(false);
+		expect(outputs.passed).toBe("true");
+		expect(outputs["exit-code"]).toBe("0");
+	});
+
+	test("a failed build fails without running a spec", () => {
+		const { outputs, wardenCalled } = runSuiteStep({ BUILD_ONLY: "true", BUILD_EXIT: "65" });
+		expect(wardenCalled).toBe(false);
+		expect(outputs.passed).toBe("false");
+		expect(outputs["exit-code"]).toBe("65");
+	});
+
+	test("a warden without `e2e --build-only` built nothing: fails rather than seeding nothing", () => {
+		const { outputs, wardenCalled } = runSuiteStep({ BUILD_ONLY: "true", BUILD_EXIT: "" });
+		expect(wardenCalled).toBe(false);
+		expect(outputs.passed).toBe("false");
+		expect(outputs["exit-code"]).toBe("1");
+	});
+
+	test("off, the suite runs", () => {
+		const { outputs, wardenCalled } = runSuiteStep({ BUILD_ONLY: "false", BUILD_EXIT: "0" });
+		expect(wardenCalled).toBe(true);
+		expect(outputs.passed).toBe("true");
+	});
+});
+
+/** The repo's own e2e workflow: a push to develop seeds the caches; the pull requests (and the version PR) run the flows. */
+describe("e2e.yml", () => {
+	type Workflow = {
+		on: Record<string, unknown>;
+		jobs: Record<string, { name?: string; steps: { id?: string; with?: Record<string, string> }[] }>;
+	};
+	const workflow = Bun.YAML.parse(readFileSync(join(ROOT, ".github", "workflows", "e2e.yml"), "utf8")) as Workflow;
+	const e2e = workflow.jobs.example?.steps.find((s) => s.id === "e2e");
+
+	test("a push to develop builds and saves the caches without running a spec", () => {
+		expect(workflow.on.push).toBeDefined();
+		expect(e2e?.with?.["build-only"]).toContain("github.event_name == 'push'");
+		expect(e2e?.with?.artifacts).toContain("github.event_name == 'push'");
+	});
+
+	test("pull requests run the flows", () => {
+		expect(workflow.on.pull_request).toBeDefined();
+		expect(e2e?.with?.["build-only"]).not.toContain("pull_request");
+	});
+});

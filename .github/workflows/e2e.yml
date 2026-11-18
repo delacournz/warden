@@ -4,11 +4,12 @@ name: e2e
 # in .github/actions/e2e. Separate from `ci` (the signoff escape hatch) so it never slows a PR that
 # touches nothing it covers: pull requests only run it for the paths below.
 #
-# Runs on pull requests into develop and on a push to develop (same paths; never main). Caches: a pull request
-# saves its own (scoped to the PR, so its next push starts warm) and can restore develop's, but never another
-# PR's. The push to develop is what saves the shared entries every PR restores: without it each new PR built
-# the app from source on a cold compiler cache (~33 min instead of ~13). `workflow_dispatch` on develop seeds
-# them by hand.
+# Pull requests into develop run the flows (the version PR, "chore(release)", runs them again before a release).
+# A push to develop (same paths; never main) runs no spec: the merged PR already ran them, so it only builds the
+# app and saves the caches (`build-only`). Caches: a pull request saves its own (scoped to the PR, so its next push
+# starts warm) and can restore develop's, but never another PR's. The push to develop is what saves the shared
+# entries every PR restores: without it each new PR built the app from source on a cold compiler cache (~33 min
+# instead of ~13). `workflow_dispatch` on develop seeds them by hand (`build-only` to skip the flows).
 #
 # Runner: the `runner` input (e.g. a self-hosted Mac label), else the repo variable WARDEN_E2E_RUNNER, else
 # `xcode-27` (GitHub's macOS 27 image, public preview; `macos-26` stops at Xcode 26.6, which can't build
@@ -62,6 +63,10 @@ on:
         description: Save the caches after a green run
         type: boolean
         default: true
+      build-only:
+        description: Build the app and save the caches, no spec (what a push to develop runs)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -78,6 +83,7 @@ concurrency:
 
 jobs:
   example:
+    name: ${{ (github.event_name == 'push' || inputs.build-only) && 'example (build + caches, no specs)' || 'example' }}
     runs-on: ${{ inputs.runner || vars.WARDEN_E2E_RUNNER || 'xcode-27' }}
     # A cold native build (~70 min with no ccache hits, warden stops it at 90) + the suite's 35 min + prep. The suite's
     # own timeout (`suite-timeout-minutes`) times the specs only: the action builds the app in a step before it.
@@ -177,3 +183,6 @@ jobs:
           args: ${{ github.event_name == 'workflow_dispatch' && inputs.args || '--specs app/onboarding,app/settings,app/auth' }}
           warden-version: ${{ (inputs.warden-version || 'source') == 'source' && 'none' || inputs.warden-version }}
           save-cache: ${{ github.event_name != 'workflow_dispatch' && 'true' || (inputs.save-cache && 'true') || 'false' }}
+          # A push to develop: the merged PR ran the flows (and the version PR runs them again), so only seed the caches.
+          build-only: ${{ (github.event_name == 'push' || inputs.build-only) && 'true' || 'false' }}
+          artifacts: ${{ (github.event_name == 'push' || inputs.build-only) && 'logs' || 'all' }}

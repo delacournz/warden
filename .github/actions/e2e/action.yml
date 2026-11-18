@@ -84,6 +84,9 @@ inputs:
   save-cache:
     description: Save the build, repack and golden caches after a green run, and the compiler and Metro caches after a build (true on the default branch, false on pull requests).
     default: "true"
+  build-only:
+    description: "`true` builds the app and saves the caches with no device and no spec: `passed` is the build's outcome. For a push to the default branch whose specs already ran on the pull request: it seeds the caches every pull request restores."
+    default: "false"
   suite-timeout-minutes:
     description: Minutes the suite may run before the action stops it (SIGINT, then SIGKILL after 60 s), so a hung run still prints its evidence and uploads the artifact. The app build runs before it in its own step (`warden e2e --build-only`) and is not counted. Keep the job timeout above a cold build plus this.
     default: "35"
@@ -456,6 +459,7 @@ runs:
         SUITE: ${{ inputs.suite }}
         PROFILE: ${{ inputs.profile }}
         BUILD_EXIT: ${{ steps.build.outputs.exit-code }}
+        BUILD_ONLY: ${{ inputs.build-only }}
         COUNT: ${{ inputs.count }}
         RETRY: ${{ inputs.retry }}
         EXTRA: ${{ inputs.args }}
@@ -477,6 +481,23 @@ runs:
             echo "ended=$now"
           } >> "$GITHUB_OUTPUT"
           echo "skipped: the app build failed (exit $BUILD_EXIT)"
+          exit 0
+        fi
+        # build-only: the build step's outcome is the run's. No exit code there = a warden without `e2e --build-only`
+        # built nothing, so there is nothing to seed: fail rather than save empty caches.
+        if [ "${BUILD_ONLY:-false}" = true ]; then
+          now=$(date +%s)
+          code=${BUILD_EXIT:-1}
+          if [ -z "${BUILD_EXIT:-}" ]; then echo "::error title=build-only unsupported::this warden has no \`e2e --build-only\`: nothing was built"; fi
+          {
+            echo "report-path=$report"
+            echo "exit-code=$code"
+            echo "passed=$([ "$code" -eq 0 ] && echo true || echo false)"
+            echo "seconds=0"
+            echo "started=$now"
+            echo "ended=$now"
+          } >> "$GITHUB_OUTPUT"
+          echo "skipped: build-only (no spec runs)"
           exit 0
         fi
         args=(e2e)
