@@ -937,6 +937,65 @@ describe("warmDrivers: silent for a minute, no wedge in the sim log (log unreada
 		expect(reboots).toBe(0);
 	});
 
+	test("a read the helper refused under its frontmost backoff neither counts nor breaks the silence: rebooted", async () => {
+		const c = clocked();
+		const { run, log } = logged(c);
+		const BACKOFF =
+			"E_AX_UNAVAILABLE: the frontmost app could not be resolved and no app pid is known (the frontmost lookup failed recently (asked again after a backoff from 20 s))";
+		// the CI warm log: timeout, timeout, backoff refusal, timeout, ... (the refusal used to reset the count)
+		const replies = [TIMEOUT, TIMEOUT, BACKOFF, TIMEOUT, BACKOFF, TIMEOUT];
+		let reads = 0;
+		let reboots = 0;
+		const stuck: WarmHelper = {
+			socketPath: "/s/U0.sock",
+			snapshot: async () => {
+				const reply = replies[Math.min(reads, replies.length - 1)] as string;
+				await c.advance(reads++ === 0 ? 20_000 : reply === BACKOFF ? 500 : 10_000);
+				return err(reply);
+			},
+			close: async () => {},
+			stop: async () => {},
+			recover: async () => {
+				await c.advance(2_000);
+				return { kind: "not-wedged" };
+			},
+			reboot: async () => {
+				reboots++;
+				await c.advance(45_000);
+				return { kind: "rebooted" };
+			},
+		};
+		const out = await warmDrivers(run, { connect: sequence([stuck, answering(c)]) });
+		expect(reboots).toBe(1);
+		expect(out.devices[0]).toMatchObject({ ok: true, axRecovery: { outcome: "rebooted" } });
+		expect(log()).toMatch(/rebooting U0: \d+ snapshots in a row timed out over \d+ s/);
+	});
+
+	test("a backoff refusal that carries the bridge's timeout counts towards the silence", async () => {
+		const c = clocked();
+		const REFUSED_AFTER_BRIDGE =
+			"E_AX_UNAVAILABLE: the frontmost app could not be resolved and no app pid is known (the frontmost lookup failed recently (asked again after a backoff from 20 s)) (axbridge before it: The simulator's accessibility service did not answer within the query's 10.0s timeout, 10.0s into the read; retry the read.)";
+		let reads = 0;
+		let reboots = 0;
+		const stuck: WarmHelper = {
+			socketPath: "/s/U0.sock",
+			snapshot: async () => {
+				await c.advance(reads++ === 0 ? 20_000 : 10_000);
+				return err(reads === 1 ? TIMEOUT : REFUSED_AFTER_BRIDGE);
+			},
+			close: async () => {},
+			stop: async () => {},
+			recover: async () => ({ kind: "not-wedged" }),
+			reboot: async () => {
+				reboots++;
+				return { kind: "rebooted" };
+			},
+		};
+		const out = await warmDrivers(c.run, { connect: sequence([stuck, answering(c)]) });
+		expect(reboots).toBe(1);
+		expect(out.devices[0]).toMatchObject({ ok: true, axRecovery: { outcome: "rebooted" } });
+	});
+
 	test("still silent after the reboot: cold with its last read and the reboot recorded, so the run quarantines it", async () => {
 		const c = clocked();
 		const stuck = silent(c, { reboot: { kind: "rebooted" } });

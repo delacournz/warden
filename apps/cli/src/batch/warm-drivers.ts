@@ -194,6 +194,13 @@ const RECOVER_FROM_TRY = 1;
  */
 const TIMED_OUT = /E_TIMEOUT|did not answer within/;
 
+/**
+ * warden-simd refusing a frontmost lookup under its backoff (`FrontmostRescue.swift`): it did not ask the sim, so the
+ * try is an echo of the earlier silence, neither a timeout nor an answer. A refusal that carries the bridge's own
+ * timeout (`axbridge before it: … did not answer within`) still counts as one: the bridge did ask, and heard nothing.
+ */
+const BACKOFF_REFUSAL = /frontmost lookup failed recently/;
+
 /** Resolves true once `work` settles, false when `stop` aborted first. */
 function settledBefore(work: Promise<unknown>, stop: AbortSignal): Promise<boolean> {
 	return new Promise<boolean>((resolve) => {
@@ -344,7 +351,8 @@ async function climb(l: Ladder, state: Recovering): Promise<string | undefined> 
 
 /**
  * After a failed try: the ladder's next rung, only for a try that timed out (a fast failure is a sim that answers, and
- * resets the count of timeouts since a backboardd restart). Returns the error that ends the loop.
+ * resets the count of timeouts since a backboardd restart). A backoff refusal asked nothing of the sim: it changes no
+ * count. Returns the error that ends the loop.
  */
 function afterFailure(
 	ladder: Ladder,
@@ -354,6 +362,7 @@ function afterFailure(
 	readStarted: number
 ): Promise<string | undefined> {
 	const timedOut = TIMED_OUT.test(lastError);
+	if (!timedOut && BACKOFF_REFUSAL.test(lastError)) return Promise.resolve(undefined);
 	if (state.recovered) state.failsSinceRecovery = timedOut ? state.failsSinceRecovery + 1 : 0;
 	if (!timedOut) state.silence = { tries: 0, since: readStarted };
 	else if (state.silence.tries === 0) state.silence = { tries: 1, since: readStarted };
