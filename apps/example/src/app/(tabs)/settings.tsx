@@ -1,3 +1,4 @@
+import { IconKey1 } from "@central-icons-react-native/round-outlined-radius-1-stroke-1.5";
 import { router } from "expo-router";
 import { useState } from "react";
 import { Uniwind, useUniwind } from "uniwind";
@@ -163,6 +164,20 @@ export default function Settings() {
 						</ListGroup.ItemPrefix>
 						<ListGroup.ItemContent>
 							<ListGroup.ItemTitle>Biometrics</ListGroup.ItemTitle>
+						</ListGroup.ItemContent>
+						<ListGroup.ItemSuffix />
+					</ListGroup.Item>
+					<ListGroup.Item
+						accessibilityLabel="Keychain"
+						accessible
+						onPress={() => router.push("/keychain")}
+						testID="settings-keychain"
+					>
+						<ListGroup.ItemPrefix>
+							<Icon icon={IconKey1} />
+						</ListGroup.ItemPrefix>
+						<ListGroup.ItemContent>
+							<ListGroup.ItemTitle>Keychain</ListGroup.ItemTitle>
 						</ListGroup.ItemContent>
 						<ListGroup.ItemSuffix />
 					</ListGroup.Item>
