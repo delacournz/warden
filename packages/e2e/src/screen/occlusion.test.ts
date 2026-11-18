@@ -142,6 +142,27 @@ describe("revealPath", () => {
 		expect((path?.to.y ?? 0) - (path?.from.y ?? 0)).toBeGreaterThan(0);
 	});
 
+	test("a row cut by the list's bottom edge under a footer's bar is dragged from above the bar", () => {
+		const bar = el("other", {
+			frame: { x: 0, y: 700, width: 390, height: 100 },
+			children: [el("button", { id: "sign-out", label: "Sign out", frame: { x: 20, y: 715, width: 350, height: 50 } })],
+		});
+		const { entry, index } = target([
+			el("scrollview", {
+				frame: { x: 0, y: 100, width: 390, height: 700 },
+				children: [el("button", { id: "row", label: "Network", frame: { x: 20, y: 797, width: 350, height: 3 } })],
+			}),
+			bar,
+		]);
+		const result = clearTapPoint(entry, index);
+		if (result.kind !== "covered") throw new Error("expected covered");
+		expect(result.by).toBe("edge");
+		const path = revealPath(entry, result, index);
+		expect(path?.from.y).toBeLessThan(700);
+		// far enough to bring the row above the bar, not just past the list's edge
+		expect((path?.from.y ?? 0) - (path?.to.y ?? 0)).toBeGreaterThanOrEqual(800 + 24 - 700);
+	});
+
 	test("outside a scroll container there is no path", () => {
 		const { entry, index } = target([
 			el("button", { id: "row", frame: { x: 20, y: 770, width: 350, height: 70 } }),
