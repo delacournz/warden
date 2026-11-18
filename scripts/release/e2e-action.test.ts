@@ -301,6 +301,33 @@ describe("action.yml artifacts", () => {
 		expect(action.inputs["compiler-cache"]?.default).toBe("true");
 	});
 
+	test("a repack cache miss restores Metro's cache by prefix before the build and saves it after one", () => {
+		const steps = action.runs.steps;
+		const at = (id: string) => steps.findIndex((s) => s.id === id);
+		const restore = steps[at("metro-cache")];
+		expect(restore?.uses).toStartWith("actions/cache/restore@");
+		expect(restore?.if).toContain("steps.repack-cache.outputs.cache-hit != 'true'");
+		// an older warden prints no metro group: its empty key skips the steps
+		expect(restore?.if).toContain("steps.keys.outputs.metro != ''");
+		expect(restore?.with?.path).toBe(`\${{ steps.keys.outputs.metro-dir }}`);
+		expect(restore?.with?.key).toBe(
+			`\${{ steps.keys.outputs.metro }}-\${{ github.run_id }}-\${{ github.run_attempt }}`
+		);
+		expect(restore?.with?.["restore-keys"]).toBe(`\${{ steps.keys.outputs.metro-restore }}`);
+		expect(at("repack-cache")).toBeLessThan(at("metro-cache"));
+		expect(at("metro-cache")).toBeLessThan(at("build"));
+		const save = steps.find(
+			(s) => s.uses?.startsWith("actions/cache/save@") && s.with?.key?.includes("outputs.metro ")
+		);
+		expect(save?.with?.key).toBe(restore?.with?.key);
+		expect(save?.if).toContain("inputs.save-cache == 'true'");
+		expect(save?.if).toContain("steps.metro-cache.outcome == 'success'");
+		expect(save?.if).toContain("steps.build.outputs.exit-code == '0'");
+		const keys = steps[at("keys")] as Step & { run?: string };
+		expect(keys.run).toContain('echo "metro=$(key metro)"');
+		expect(keys.run).toContain("metro-restore<<WARDEN_METRO_RESTORE");
+	});
+
 	test("warden doctor checks the host after ccache is installed, before anything uses the helper", () => {
 		const steps = action.runs.steps;
 		const at = (id: string) => steps.findIndex((s) => s.id === id);

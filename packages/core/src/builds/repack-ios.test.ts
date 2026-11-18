@@ -95,6 +95,17 @@ const run = (opts: Opts = {}) => {
 };
 
 describe("applyIosRepack", () => {
+	test("a Hermes bundle ships its Metro and bytecode maps beside the app, never composed", async () => {
+		const scratch = join(dir, "scratch");
+		writeFileSync(join(scratch, "main.jsbundle.hbc.map"), '{"hbc":1}');
+		bundle = { ...bundle, hermes: true, bytecodeSourcemap: join(scratch, "main.jsbundle.hbc.map") };
+		const { res } = await run();
+		expect(res.success).toBe(true);
+		expect(readFileSync(join(outDir, "main.jsbundle.packager.map"), "utf8")).toBe("{}");
+		expect(readFileSync(join(outDir, "main.jsbundle.hbc.map"), "utf8")).toBe('{"hbc":1}');
+		expect(existsSync(join(outDir, "main.jsbundle.map"))).toBe(false);
+	});
+
 	test("clones the base, swaps bundle + assets, keeps the map beside the app, re-signs ad-hoc", async () => {
 		const { res, calls } = await run();
 		const app = join(outDir, "App.app");

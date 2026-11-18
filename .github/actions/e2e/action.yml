@@ -82,7 +82,7 @@ inputs:
     description: "On a native build cache miss (`cache: github`), install ccache (a pinned release binary when none is on PATH) and restore warden's compiler cache (`~/.warden/ccache`: the newest save for this native fingerprint, else the newest for any), so the cold build reuses the C/C++/Objective-C objects an earlier build compiled. Saved after the run under a per-run key, only when the build stored new objects. Skipped when the project sets `build.cache: false`. `false` skips all of it."
     default: "true"
   save-cache:
-    description: Save the build, repack and golden caches after a green run (true on the default branch, false on pull requests).
+    description: Save the build, repack and golden caches after a green run, and the compiler and Metro caches after a build (true on the default branch, false on pull requests).
     default: "true"
   suite-timeout-minutes:
     description: Minutes the suite may run before the action stops it (SIGINT, then SIGKILL after 60 s), so a hung run still prints its evidence and uploads the artifact. The app build runs before it in its own step (`warden e2e --build-only`) and is not counted. Keep the job timeout above a cold build plus this.
@@ -108,7 +108,7 @@ outputs:
     description: "`true` when the gate passed, `false` when a required spec failed or the run broke."
     value: ${{ steps.run.outputs.passed }}
   cache-groups:
-    description: "`warden ci cache --json`: `{builds, repack, golden}`, each `{kind, key, paths}` (the golden adds `afterRestore` / `beforeSave`; `null` when the suite does not set `golden: true`). For caching with something other than actions/cache (`cache: none`)."
+    description: "`warden ci cache --json`: `{builds, repack, golden, ccache, metro}`, each `{kind, key, paths}` (the golden adds `afterRestore` / `beforeSave`; `null` when the suite does not set `golden: true`; `ccache` and `metro` add `restoreKeys`). For caching with something other than actions/cache (`cache: none`)."
     value: ${{ steps.keys.outputs.cache-groups }}
   artifact-groups:
     description: Comma list of the groups collected (`report,batches,logs,app,golden`), whether or not they were uploaded.
@@ -260,6 +260,14 @@ runs:
           if [ -n "$ccache_key" ]; then echo "$ccache_key-"; fi
           node -e 'const g=JSON.parse(process.argv[1]).ccache;for(const k of g?.restoreKeys ?? [])console.log(k)' "$groups"
           echo "WARDEN_CCACHE_RESTORE"
+          # an older warden prints no metro group: an empty key skips the Metro cache steps
+          echo "metro=$(key metro)"
+          echo "metro-dir=$(node -e 'const g=JSON.parse(process.argv[1]).metro;process.stdout.write(g?.paths[0] ?? "")' "$groups")"
+          echo "metro-restore<<WARDEN_METRO_RESTORE"
+          metro_key=$(key metro)
+          if [ -n "$metro_key" ]; then echo "$metro_key-"; fi
+          node -e 'const g=JSON.parse(process.argv[1]).metro;for(const k of g?.restoreKeys ?? [])console.log(k)' "$groups"
+          echo "WARDEN_METRO_RESTORE"
           echo "cache-groups<<WARDEN_CACHE_GROUPS"
           echo "$groups"
           echo "WARDEN_CACHE_GROUPS"
@@ -351,6 +359,18 @@ runs:
       with:
         path: ~/.warden/builds/*/ios/*/simulator/repacks
         key: ${{ steps.keys.outputs.repack }}
+
+    # Metro's transform cache only helps a repack, so it is restored on a repack miss alone: Metro then re-transforms
+    # just the files that changed. Saved per run like ccache (an exact key is immutable): the newest save for these JS
+    # inputs, else the newest for any.
+    - name: Restore the Metro cache
+      id: metro-cache
+      if: inputs.cache == 'github' && steps.keys.outputs.metro != '' && steps.repack-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.keys.outputs.metro-dir }}
+        key: ${{ steps.keys.outputs.metro }}-${{ github.run_id }}-${{ github.run_attempt }}
+        restore-keys: ${{ steps.keys.outputs.metro-restore }}
 
     - name: Restore the golden simulator
       if: inputs.cache == 'github' && steps.keys.outputs.golden-key != ''
@@ -640,6 +660,15 @@ runs:
       with:
         path: ${{ steps.keys.outputs.ccache-dir }}
         key: ${{ steps.keys.outputs.ccache }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+    # The repack ran (its cache missed) and the app built: Metro's cache is content-addressed, so a failed spec after it
+    # still leaves good entries.
+    - name: Save the Metro cache
+      if: always() && inputs.cache == 'github' && inputs.save-cache == 'true' && steps.metro-cache.outcome == 'success' && (steps.build.outputs.exit-code == '0' || steps.run.outputs.passed == 'true')
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.keys.outputs.metro-dir }}
+        key: ${{ steps.keys.outputs.metro }}-${{ github.run_id }}-${{ github.run_attempt }}
 
     - name: Save the native build cache
       if: inputs.cache == 'github' && steps.run.outputs.passed == 'true' && inputs.save-cache == 'true' && steps.builds-cache.outputs.cache-hit != 'true'

@@ -59,6 +59,15 @@ describe("cacheGroups", () => {
 		});
 	});
 
+	test("metro: Metro's transform cache for repacks, keyed by the JS inputs, restorable from any older one", () => {
+		expect(groups.metro).toEqual({
+			kind: "paths",
+			key: "warden-e2e-v1-metro-macOS-ARM64-0647",
+			restoreKeys: ["warden-e2e-v1-metro-macOS-ARM64-"],
+			paths: ["/Users/runner/.warden/metro-cache"],
+		});
+	});
+
 	test("builds: the builds dir minus the repacks, keyed by the native fingerprint", () => {
 		expect(groups.builds).toEqual({
 			kind: "paths",

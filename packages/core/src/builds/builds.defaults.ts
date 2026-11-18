@@ -57,11 +57,36 @@ export function androidGradleCommand(configuration: BuildConfiguration, framewor
 /** What an iOS device build is signed with: the team (always) and, when set, the bundle id that replaces the project's. */
 export type IosDeviceBuild = { team: string; bundleIdentifier?: string | undefined };
 
-/** The `xcodebuild -derivedDataPath` of a device build, relative to `ios/`: products land in `ios/build/Build/Products/<Config>-iphoneos`. */
-export const IOS_DEVICE_DERIVED_DATA = "build";
+/**
+ * The `xcodebuild -derivedDataPath` of warden's own iOS builds (device and simulator), relative to `ios/`: products land
+ * in `ios/build/Build/Products/<Config>-iphoneos|-iphonesimulator`, where `artifactCandidates` looks.
+ */
+export const IOS_BUILD_DERIVED_DATA = "build";
 
-/** The device build's `-resultBundlePath`, relative to `ios/`: replaced each build, read for file:line errors on failure. */
-export const IOS_DEVICE_RESULT_BUNDLE = "build/warden.xcresult";
+/** The `-resultBundlePath` of warden's own iOS builds, relative to `ios/`: replaced each build, read for file:line errors on failure. */
+export const IOS_BUILD_RESULT_BUNDLE = "build/warden.xcresult";
+
+/** `pod install` when the sandbox is out of sync with `Podfile.lock` (a bare React Native app has no CNG prebuild). */
+const RN_PODS =
+	"{ diff -q ios/Podfile.lock ios/Pods/Manifest.lock >/dev/null 2>&1 || pod install --project-directory=ios; }";
+
+/**
+ * A plain `xcodebuild … build` on the prebuilt workspace (the scheme has the workspace's name, as in Expo and the React
+ * Native template), into `IOS_BUILD_DERIVED_DATA` with a fresh `IOS_BUILD_RESULT_BUNDLE`. `env` prefixes the command;
+ * `settings` are `NAME=value` build settings.
+ */
+function iosXcodebuild(prepare: string, env: string, args: readonly string[], settings: readonly string[]): string {
+	const xcodebuild = [
+		`${env} xcodebuild`,
+		'-workspace "$ws"',
+		`-scheme "\${ws%.xcworkspace}"`,
+		...args,
+		`-resultBundlePath ${IOS_BUILD_RESULT_BUNDLE}`,
+		...settings,
+		"build",
+	];
+	return `${prepare} && rm -rf ios/${IOS_BUILD_RESULT_BUNDLE} && cd ios && ws="$(ls -d *.xcworkspace | head -n 1)" && ${xcodebuild.join(" ")}`;
+}
 
 /**
  * Local build command of an iOS build for a physical device. A plain `xcodebuild` on the prebuilt workspace (the scheme
@@ -75,28 +100,21 @@ export function iosDeviceBuildCommand(
 	framework: AppFramework,
 	device: IosDeviceBuild
 ): string {
-	const pods =
-		framework === "react-native"
-			? "{ diff -q ios/Podfile.lock ios/Pods/Manifest.lock >/dev/null 2>&1 || pod install --project-directory=ios; }"
-			: IOS_NATIVE_PREPARE;
-	const settings = [
-		"CODE_SIGN_STYLE=Automatic",
-		`DEVELOPMENT_TEAM=${device.team}`,
-		...(device.bundleIdentifier ? [`PRODUCT_BUNDLE_IDENTIFIER=${device.bundleIdentifier}`] : []),
-	];
-	const xcodebuild = [
-		"RCT_NO_LAUNCH_PACKAGER=1 xcodebuild",
-		'-workspace "$ws"',
-		`-scheme "\${ws%.xcworkspace}"`,
-		`-configuration ${configuration}`,
-		"-destination generic/platform=iOS",
-		`-derivedDataPath ${IOS_DEVICE_DERIVED_DATA}`,
-		"-allowProvisioningUpdates",
-		`-resultBundlePath ${IOS_DEVICE_RESULT_BUNDLE}`,
-		...settings,
-		"build",
-	].join(" ");
-	return `${pods} && rm -rf ios/${IOS_DEVICE_RESULT_BUNDLE} && cd ios && ws="$(ls -d *.xcworkspace | head -n 1)" && ${xcodebuild}`;
+	return iosXcodebuild(
+		framework === "react-native" ? RN_PODS : IOS_NATIVE_PREPARE,
+		"RCT_NO_LAUNCH_PACKAGER=1",
+		[
+			`-configuration ${configuration}`,
+			"-destination generic/platform=iOS",
+			`-derivedDataPath ${IOS_BUILD_DERIVED_DATA}`,
+			"-allowProvisioningUpdates",
+		],
+		[
+			"CODE_SIGN_STYLE=Automatic",
+			`DEVELOPMENT_TEAM=${device.team}`,
+			...(device.bundleIdentifier ? [`PRODUCT_BUNDLE_IDENTIFIER=${device.bundleIdentifier}`] : []),
+		]
+	);
 }
 
 /** Android twin of `IOS_NATIVE_PREPARE`: generate `android/` when a CNG checkout has none. */
@@ -108,7 +126,10 @@ const ANDROID_HOST_ABI = '"$([ "$(uname -m)" = arm64 ] && echo arm64-v8a || echo
 
 /**
  * Local build command of the `simulator` kind: the Release configuration for a simulator / emulator; a repack swaps the
- * JS in. iOS: Xcode's bundling phase is skipped with `SKIP_BUNDLING=1`. Android: plain `assembleRelease`. Excluding
+ * JS in. iOS (Expo): a plain `xcodebuild` for any simulator with Xcode's bundling phase skipped (`SKIP_BUNDLING=1`), one
+ * architecture (the host's), no index store. Never `expo run:ios`: for a Release simulator build it replaces
+ * `SKIP_BUNDLING` with nothing, bundles the JS itself before xcodebuild ("eager bundle") and again in the phase, then
+ * boots a simulator warden never leased and installs the app on it. Android: plain `assembleRelease`. Excluding
  * `createBundleReleaseJsAndAssets` (`-x`) fails on RN 0.86 / AGP 9 ("Querying the mapped value ... before task ... has
  * completed"), and the bundler's `drawable-*` / `raw` images are compiled into the APK's resource table by that task:
  * without them the Android repack finds no image in the base and always falls back to a full build.
@@ -116,11 +137,24 @@ const ANDROID_HOST_ABI = '"$([ "$(uname -m)" = arm64 ] && echo arm64-v8a || echo
 export function simulatorBuildCommand(platform: Platform, framework: AppFramework = "expo"): string {
 	if (platform === "ios") {
 		if (framework === "react-native") {
-			const pods =
-				"{ diff -q ios/Podfile.lock ios/Pods/Manifest.lock >/dev/null 2>&1 || pod install --project-directory=ios; }";
-			return `${pods} && RCT_NO_LAUNCH_PACKAGER=1 SKIP_BUNDLING=1 npx react-native build-ios --mode Release`;
+			return `${RN_PODS} && RCT_NO_LAUNCH_PACKAGER=1 SKIP_BUNDLING=1 npx react-native build-ios --mode Release`;
 		}
-		return `${IOS_NATIVE_PREPARE} && SKIP_BUNDLING=1 bunx expo run:ios --configuration Release --no-install --no-bundler`;
+		return iosXcodebuild(
+			IOS_NATIVE_PREPARE,
+			"RCT_NO_LAUNCH_PACKAGER=1 SKIP_BUNDLING=1",
+			[
+				"-configuration Release",
+				"-sdk iphonesimulator",
+				'-destination "generic/platform=iOS Simulator"',
+				`-derivedDataPath ${IOS_BUILD_DERIVED_DATA}`,
+			],
+			[
+				'ARCHS="$(uname -m)"',
+				"ONLY_ACTIVE_ARCH=NO",
+				"COMPILER_INDEX_STORE_ENABLE=NO",
+				"COCOAPODS_PARALLEL_CODE_SIGN=true",
+			]
+		);
 	}
 	return androidGradleCommand("Release", framework);
 }
@@ -180,6 +214,15 @@ export const CCACHE_SLOPPINESS =
 	"clang_index_store,file_stat_matches,include_file_ctime,include_file_mtime,ivfsoverlay,pch_defines,modules,system_headers,time_macros";
 /** Subdirectory of WARDEN_HOME holding the shared ccache. */
 export const CCACHE_DIR_NAME = "ccache";
+/** Subdirectory of WARDEN_HOME holding the repack bundler's Metro caches (`<safe projectKey>/<platform>-<bundle env>`). */
+export const METRO_CACHE_DIR_NAME = "metro-cache";
+/** A repack's Metro cache no bundle used for this long is deleted the next time that project bundles. */
+export const METRO_CACHE_MAX_IDLE_MS = 7 * 24 * 60 * 60_000;
+/**
+ * A repack's Metro cache this old starts afresh: Metro's FileStore never evicts, so an active cache would otherwise
+ * grow with every changed file (and so would each CI save of it).
+ */
+export const METRO_CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60_000;
 /** First Xcode major with compilation caching (`COMPILATION_CACHE_ENABLE_CACHING`). */
 export const XCODE_COMPILATION_CACHE_MIN_MAJOR = 26;
 /** Timeout for the quick `git` / `xcodebuild -version` probes before a build. */
