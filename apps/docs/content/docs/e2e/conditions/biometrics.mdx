@@ -43,6 +43,8 @@ export default defineConfig({
 
 - Enroll before the app is installed or launched: a new enrollment invalidates keys bound to the current biometry set.
 - The first prompt per iOS app shows "Allow X to use Face ID?": answer it with `device.alert("accept")` before `match()`.
+- On the "Face Not Recognized" sheet `device.alert("accept")` presses "Try Face ID Again" (also "Try Again" and "Retry"), never "Cancel"; `device.alert("dismiss")` presses "Cancel". `accept` throws `ACTION_FAILED` naming the buttons when none is affirmative, rather than guessing.
+- The Face ID glyph shown while a prompt is up is not in the accessibility tree: settle (`wait stable`) before reading the sheet that follows.
 - Never add an app-side bypass; the point is to run the real prompt.
 
 Errors and fixes are in [Debugging](/docs/e2e/debugging). By hand with `warden ui biometrics`: [Biometrics on a simulator](/docs/sims/conditions/biometrics).

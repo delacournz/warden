@@ -739,7 +739,35 @@ const ALERT = snapshotOf([
 	}),
 ]);
 
+const FACE_SHEET = snapshotOf([
+	el("alert", {
+		label: "Face Not Recognized",
+		children: [
+			el("text", { label: "Face Not Recognized" }),
+			el("button", { label: "Try Face ID Again", frame: { x: 50, y: 500, width: 100, height: 40 } }),
+			el("button", { label: "Cancel", frame: { x: 200, y: 500, width: 100, height: 40 } }),
+			el("button", { label: "Try Face ID Again", frame: { x: 50, y: 500, width: 100, height: 40 } }),
+			el("button", { label: "Cancel", frame: { x: 200, y: 500, width: 100, height: 40 } }),
+		],
+	}),
+]);
+
 describe("alert", () => {
+	test("get lists each button once, in text and json", async () => {
+		const h = harness([FACE_SHEET]);
+		expect(await h.run("alert", "get")).toBe(0);
+		expect(h.c.stdout.join("\n")).toBe('alert "Face Not Recognized"\n  [Try Face ID Again]\n  [Cancel]');
+		const json = harness([FACE_SHEET]);
+		expect(await json.run("alert", "get", "--json")).toBe(0);
+		expect(doc(json.c).result.buttons).toEqual(["Try Face ID Again", "Cancel"]);
+	});
+
+	test("accept presses the retry button, not Cancel", async () => {
+		const h = harness([FACE_SHEET], { answerAlertOnTap: true });
+		expect(await h.run("alert", "accept")).toBe(0);
+		expect(h.driver.callsOf("tap").map((call) => call.point)).toEqual([{ x: 100, y: 520 }]);
+	});
+
 	test("accept presses Allow, dismiss presses Don't Allow", async () => {
 		const accept = harness([ALERT], { answerAlertOnTap: true });
 		expect(await accept.run("alert", "accept")).toBe(0);

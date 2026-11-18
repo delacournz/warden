@@ -81,6 +81,28 @@ describe("device.alert", () => {
 		expect(driver.callsOf("tap")[0]?.point).toEqual(rowCentre(2));
 	});
 
+	test("accept presses a retry button, not the Cancel after it", async () => {
+		for (const retry of ["Try Face ID Again", "Try Again", "Retry"]) {
+			const { device, driver } = setup({ screens: [withAlert(retry, "Cancel")] });
+			expect(await device.alert("accept")).toBe(true);
+			expect(driver.callsOf("tap")[0]?.point).toEqual(rowCentre(1));
+		}
+	});
+
+	test("accept never guesses a dismiss button: ACTION_FAILED naming the buttons", async () => {
+		const { device, driver } = setup({ screens: [withAlert("Delete", "Cancel")] });
+		const error = await device.alert("accept").catch((e: unknown) => e);
+		expect((error as E2eError).code).toBe("ACTION_FAILED");
+		expect((error as E2eError).message).toContain("Delete, Cancel");
+		expect(driver.callsOf("tap")).toHaveLength(0);
+	});
+
+	test("dismiss presses Cancel on a retry sheet", async () => {
+		const { device, driver } = setup({ screens: [withAlert("Try Face ID Again", "Cancel")] });
+		await device.alert("dismiss");
+		expect(driver.callsOf("tap")[0]?.point).toEqual(rowCentre(2));
+	});
+
 	test("dismiss presses the first dismiss word", async () => {
 		const { device, driver } = setup({ screens: [withAlert("Save Password", "Not Now")] });
 		expect(await device.alert("dismiss")).toBe(true);

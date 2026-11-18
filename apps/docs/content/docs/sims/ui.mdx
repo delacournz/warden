@@ -88,7 +88,7 @@ Actions take a **target**: an `@eN` ref, a selector, or screen coordinates `x y`
 | `editable=true\|false` | text fields vs everything else |
 | `nth=<i>` | the i-th match (0-based) when several remain |
 
-A value is bare (`id=sign-in`), quoted when it has spaces (`label="Sign in"`), or a regex (`text=/^\d+ left$/i`). Keys combine with AND: `role=button label=add`.
+A value is bare (`id=sign-in`), multi-word and bare (`label=Try Face ID Again`: it runs to the next ` <key>=` token or the end of the selector), quoted (`label="Sign in"`; required when the value itself contains ` role=`, ` nth=` or another key), or a regex (`text=/^\d+ left$/i`). Keys combine with AND: `role=button label=add`.
 
 When a selector matches several elements, an action picks the most specific visible one: visible first, then the most exact text terms, then the smallest frame, then reading order. Pin a different one with `nth=`. `find` lists every match, and `get <selector> count` counts them; `wait`, `is` and `get` use the same most-specific pick as an action.
 

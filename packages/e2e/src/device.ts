@@ -12,6 +12,7 @@ import {
 	findButton,
 	firstOf,
 	isAutofillSaveSheet,
+	lastUnlessDismiss,
 	nameOf,
 } from "./alert-buttons";
 import { createAlertReader } from "./alert-reader";
@@ -288,17 +289,24 @@ function buttonNames(info: AlertInfo): string {
 	return info.buttons.map((b) => nameOf(b) ?? "?").join(", ");
 }
 
+function acceptTarget(buttons: readonly Element[], platform: Platform): Element | undefined {
+	const found =
+		platform !== "android"
+			? (firstOf(buttons, ACCEPT_BUTTONS) ?? lastUnlessDismiss(buttons))
+			: (androidButton(buttons, ANDROID_PERMISSION_ALLOW_IDS) ??
+				firstOf(buttons, ACCEPT_BUTTONS) ??
+				androidButton(buttons, [ANDROID_POSITIVE_ID]) ??
+				lastUnlessDismiss(buttons));
+	if (found === undefined && buttons.length > 0) {
+		const names = buttons.map((b) => nameOf(b) ?? "?").join(", ");
+		throw new E2eError("ACTION_FAILED", `alert has no affirmative button to accept (buttons: ${names})`);
+	}
+	return found;
+}
+
 function alertTarget(info: AlertInfo, action: AlertAction, platform: Platform): Element | undefined {
 	const { buttons } = info;
-	if (action === "accept") {
-		if (platform !== "android") return firstOf(buttons, ACCEPT_BUTTONS) ?? buttons[buttons.length - 1];
-		return (
-			androidButton(buttons, ANDROID_PERMISSION_ALLOW_IDS) ??
-			firstOf(buttons, ACCEPT_BUTTONS) ??
-			androidButton(buttons, [ANDROID_POSITIVE_ID]) ??
-			buttons[buttons.length - 1]
-		);
-	}
+	if (action === "accept") return acceptTarget(buttons, platform);
 	// Cancel on "Open in …?" only throws away a link the test opened: open it
 	if (action === "dismiss" && isOpenInSheet(info)) return findButton(buttons, "Open");
 	if (action === "dismiss") {

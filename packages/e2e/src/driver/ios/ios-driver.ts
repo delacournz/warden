@@ -10,6 +10,7 @@ import { passkeyStorePath } from "@delacour/warden-core/conditions/passkey-paths
 import type { Exec } from "@delacour/warden-core/exec";
 import { wardenHome as resolveWardenHome } from "@delacour/warden-core/store";
 import { ok, type Result } from "@delacour/warden-types/result";
+import { dedupeAlertButtons } from "../../alert-buttons";
 import type { E2eEnv } from "../../env";
 import type { ReadsA11yEvents } from "../a11y-events";
 import type { ReadsA11y } from "../a11y-read";
@@ -873,7 +874,7 @@ export function createIosDriver(
 
 	function toAlertInfo(data: NonNullable<AlertButtonsData>): AlertInfo {
 		const { title, message, buttons } = data;
-		const info: AlertInfo = { buttons: normalizeElements(buttons, client.ready.screen).elements };
+		const info: AlertInfo = { buttons: dedupeAlertButtons(normalizeElements(buttons, client.ready.screen).elements) };
 		if (title !== undefined) info.title = title;
 		if (message !== undefined) info.message = message;
 		return info;

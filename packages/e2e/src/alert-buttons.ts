@@ -18,6 +18,9 @@ export const ACCEPT_BUTTONS = [
 	"Allow Once",
 	"While using the app",
 	"Only this time",
+	"Try Face ID Again",
+	"Try Again",
+	"Retry",
 ];
 export const DISMISS_BUTTONS = ["Cancel", "Don't Allow", "Not Now", "Dismiss", "No", "Close"];
 
@@ -29,6 +32,23 @@ export function nameOf(button: Element): string | undefined {
 	return button.label ?? button.text ?? button.value;
 }
 
+/**
+ * `buttons` with each (label, frame) listed once, first seen first: a sheet whose buttons the reader lists twice (a
+ * wrapper and its button, or both readers) reads as one row per button. Same label at another frame is another button.
+ */
+export function dedupeAlertButtons(buttons: readonly Element[]): Element[] {
+	const seen = new Set<string>();
+	const kept: Element[] = [];
+	for (const button of buttons) {
+		const { x, y, width, height } = button.frame;
+		const key = `${nameOf(button) ?? ""}|${x}|${y}|${width}|${height}`;
+		if (seen.has(key)) continue;
+		seen.add(key);
+		kept.push(button);
+	}
+	return kept;
+}
+
 /** The button called `wanted`, ignoring case and curly apostrophes. */
 export function findButton(buttons: readonly Element[], wanted: string): Element | undefined {
 	const target = normalise(wanted);
@@ -36,6 +56,16 @@ export function findButton(buttons: readonly Element[], wanted: string): Element
 		const name = nameOf(button);
 		return name !== undefined && normalise(name) === target;
 	});
+}
+
+/**
+ * The button `accept` presses when no name in `ACCEPT_BUTTONS` matches: the last one, unless it is a dismiss word
+ * ("Cancel" on a retry sheet), which `accept` never guesses.
+ */
+export function lastUnlessDismiss(buttons: readonly Element[]): Element | undefined {
+	const last = buttons[buttons.length - 1];
+	if (last === undefined) return undefined;
+	return firstOf([last], DISMISS_BUTTONS) === undefined ? last : undefined;
 }
 
 export function firstOf(buttons: readonly Element[], names: readonly string[]): Element | undefined {

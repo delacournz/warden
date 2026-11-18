@@ -1009,6 +1009,31 @@ describe("system alerts through one reader and the frontmost probe", () => {
 		expect(helper.of("alertButtons").map((request) => request.backend)).toEqual(["ax", "axbridge"]);
 	});
 
+	test("a button the helper lists twice is one button; same label at another frame is kept", async () => {
+		const retry = {
+			role: "button",
+			rawType: "Button",
+			label: "Try Face ID Again",
+			frame: { x: 0, y: 0, width: 100, height: 44 },
+		};
+		const cancel = {
+			role: "button",
+			rawType: "Button",
+			label: "Cancel",
+			frame: { x: 0, y: 50, width: 100, height: 44 },
+		};
+		const cancelElsewhere = { ...cancel, frame: { x: 0, y: 200, width: 100, height: 44 } };
+		const { driver } = await open((request) =>
+			request.op === "alertButtons" ? { data: { buttons: [retry, cancel, retry, cancel, cancelElsewhere] } } : undefined
+		);
+		const alert = await unwrapped(driver.alert());
+		expect(alert?.buttons.map((button) => `${button.label}@${button.frame.y}`)).toEqual([
+			"Try Face ID Again@0",
+			"Cancel@50",
+			"Cancel@200",
+		]);
+	});
+
 	test("alert() still reads both readers (no backend on the wire)", async () => {
 		const { driver, helper } = await open((request) => (request.op === "alertButtons" ? { data: null } : undefined));
 		expect(await unwrapped(driver.alert())).toBeNull();

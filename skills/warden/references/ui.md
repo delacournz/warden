@@ -113,7 +113,7 @@ Line: `@eN [role] "name" id=<testID> value="..." placeholder="..." <states> (x,y
 | `type` | `<text> [--submit] [--settle]` | into whatever has focus |
 | `key` | `Enter\|Backspace\|Tab\|Space\|Escape\|Delete\|Up\|Down\|Left\|Right [--settle]` | |
 | `scroll` | `<dir> [amount=0.5] [--until <sel>] [--in <target>] [--max 10] [--settle]` | content direction: `scroll down` reveals what is below; amount 0-1; `--until` prints the fresh ref |
-| `alert` | `accept\|dismiss\|get [--settle]` | `get` with none = empty list; accept/dismiss with none = `no_alert` |
+| `alert` | `accept\|dismiss\|get [--settle]` | `get` with none = empty list; accept/dismiss with none = `no_alert`; `accept` prefers OK/Allow/…/`Try Face ID Again`/`Try Again`/`Retry`, never a Cancel-like button (`ACTION_FAILED` names the buttons); `dismiss` = Cancel |
 | `home` | `[--settle]` | |
 | `back` | `[--settle]` | Android only |
 | `biometrics` | `[status\|enroll\|unenroll\|match\|fail] [--settle]` | simulated Face ID / Touch ID / fingerprint; no op = `status`; answers `result.biometrics: { enrolled, modality: "face"\|"fingerprint" }`; bad op = `usage`; not recorded by `record`. See "Biometrics" below |
@@ -275,7 +275,7 @@ Space-separated `key=value`, each key at most once, AND-combined.
 | `editable=true\|false` | text fields vs rest |
 | `nth=<i>` | i-th match, 0-based |
 
-Values: bare `id=sign-in`, quoted `label="Sign in"`, or regex `text=/^\d+ left$/i`. Several matches: actions pick the most specific visible one; pin with `nth=`. Prefer `id=`. Coordinates `x y` only for canvas content with no accessibility node.
+Values: bare `id=sign-in`, a bare multi-word value `label=Try Face ID Again` (runs to the next ` <key>=` or the end; a value that itself contains ` role=`, ` nth=` etc. needs quotes), quoted `label="Sign in"`, or regex `text=/^\d+ left$/i`. Several matches: actions pick the most specific visible one; pin with `nth=`. Prefer `id=`. Coordinates `x y` only for canvas content with no accessibility node.
 
 ## Verify and failure codes
 

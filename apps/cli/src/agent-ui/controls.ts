@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { dedupeAlertButtons } from "@delacour/warden-e2e/alert-buttons";
 import { createDevice, type Device } from "@delacour/warden-e2e/device";
 import type { BiometricOp, Driver, Orientation } from "@delacour/warden-e2e/driver/driver.types";
 import { driverErr } from "@delacour/warden-e2e/driver/errors";
@@ -93,7 +94,7 @@ function alertText(alert: { title: string | null; message: string | null } | nul
 async function readAlert(device: UiDevice, driver: Driver): Promise<Result<UiSuccess, UiError>> {
 	const info = fromDriver(await driver.alert());
 	if (!info.success) return info;
-	const buttons = (info.data?.buttons ?? []).map(nameOf);
+	const buttons = dedupeAlertButtons(info.data?.buttons ?? []).map(nameOf);
 	const alert = info.data ? { title: info.data.title ?? null, message: info.data.message ?? null, buttons } : null;
 	return ok({
 		device: { udid: device.udid, platform: device.platform, name: device.name },
