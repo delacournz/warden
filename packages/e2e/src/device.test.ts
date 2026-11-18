@@ -193,12 +193,20 @@ describe("device.alert on iOS: a press that does not land", () => {
 		expect(driver.callsOf("tap")).toHaveLength(3);
 	});
 
-	test("a retry button is pressed once: the simulator raises the same alert again, which is no failure", async () => {
-		for (const retry of ["Try Face ID Again", "Try Again", "Retry"]) {
-			const { device, driver } = sheet(0, { screens: [withAlert(retry, "Cancel")], answerAlertOnTap: false });
-			expect(await device.alert("accept")).toBe(true);
-			expect(driver.callsOf("tap")).toHaveLength(1);
-		}
+	test("Try Face ID Again is pressed once: the sheet stays up on a simulator, which is no failure", async () => {
+		const { device, driver } = sheet(0, {
+			screens: [withAlert("Try Face ID Again", "Cancel")],
+			answerAlertOnTap: false,
+		});
+		expect(await device.alert("accept")).toBe(true);
+		expect(driver.callsOf("tap")).toHaveLength(1);
+	});
+
+	test("an app's own Try Again that leaves the same alert up is still pressed again, then ACTION_FAILED", async () => {
+		const { device, driver } = sheet(0, { screens: [withAlert("Try Again", "Cancel")], answerAlertOnTap: false });
+		const error = (await device.alert("accept").catch((e: unknown) => e)) as E2eError;
+		expect(error.code).toBe("ACTION_FAILED");
+		expect(driver.callsOf("tap")).toHaveLength(3);
 	});
 
 	test("a different alert after the press counts as answered", async () => {

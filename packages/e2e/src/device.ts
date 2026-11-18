@@ -12,7 +12,7 @@ import {
 	findButton,
 	firstOf,
 	isAutofillSaveSheet,
-	isRetryButton,
+	isFaceIdRetryButton,
 	lastUnlessDismiss,
 	nameOf,
 } from "./alert-buttons";
@@ -483,8 +483,8 @@ export function createDevice({
 			const target = alertTarget(info, action, driver.platform);
 			if (target === undefined) return false;
 			await pressAlertButton(target, "press alert button");
-			// a retry button brings the same sheet back by design: one press, no "still showing" check
-			if (driver.platform === "ios" && !isRetryButton(target)) await confirmAlertGone(info, target);
+			// the Face ID retry button leaves its sheet up on a simulator: one press, no "still showing" check
+			if (driver.platform === "ios" && !isFaceIdRetryButton(target)) await confirmAlertGone(info, target);
 			return true;
 		},
 
