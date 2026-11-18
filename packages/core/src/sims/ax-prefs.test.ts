@@ -27,9 +27,21 @@ function fake(answer: (joined: string) => Partial<ExecResult>, calls: string[]):
 const prefsDir = (udid: string): string =>
 	join(home, "Library/Developer/CoreSimulator/Devices", udid, "data/Library/Preferences");
 
-/** A device that has booted before: its Preferences dir and Accessibility plist exist on disk. */
+/** What `simctl create` leaves on iOS 27: a Preferences dir already, but no first-boot migration record. */
+function justCreated(udid: string): void {
+	mkdirSync(join(prefsDir(udid), "Logging"), { recursive: true });
+	writeFileSync(join(prefsDir(udid), "com.apple.UIAutomation.plist"), "");
+}
+
+/** A device whose first boot ran Data Migration (its record exists), with no Accessibility plist yet. */
+function migrated(udid: string): void {
+	justCreated(udid);
+	writeFileSync(join(prefsDir(udid), "com.apple.migration.plist"), "");
+}
+
+/** A device that has booted before: its migration record and Accessibility plist exist on disk. */
 function bootedBefore(udid: string): string {
-	mkdirSync(prefsDir(udid), { recursive: true });
+	migrated(udid);
 	const plist = accessibilityPlistPath({ HOME: home }, udid);
 	writeFileSync(plist, "");
 	return plist;
@@ -57,7 +69,7 @@ describe("writePrebootAxPrefs", () => {
 	});
 
 	test("creates the plist only when it is missing on disk, then writes", async () => {
-		mkdirSync(prefsDir("U1"), { recursive: true });
+		migrated("U1");
 		const calls: string[] = [];
 		const plist = accessibilityPlistPath({ HOME: home }, "U1");
 		const out = await writePrebootAxPrefs({ exec: fake(() => ({}), calls), timer: realTimer }, { HOME: home }, "U1");
@@ -86,8 +98,16 @@ describe("writePrebootAxPrefs", () => {
 		expect(calls).toEqual([]);
 	});
 
+	test("a device simctl just created (Preferences dir, no migration record) is left for its first boot", async () => {
+		justCreated("U1");
+		const calls: string[] = [];
+		const out = await writePrebootAxPrefs({ exec: fake(() => ({}), calls), timer: realTimer }, { HOME: home }, "U1");
+		expect(out).toEqual({ success: true, data: "not-booted-yet" });
+		expect(calls).toEqual([]);
+	});
+
 	test("a plist that cannot be created is an error naming the command", async () => {
-		mkdirSync(prefsDir("U1"), { recursive: true });
+		migrated("U1");
 		const calls: string[] = [];
 		const exec = fake(() => ({ exitCode: 1, stderr: "permission denied" }), calls);
 		const out = await writePrebootAxPrefs({ exec, timer: realTimer }, { HOME: home }, "U1");

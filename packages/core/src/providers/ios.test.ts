@@ -1003,8 +1003,10 @@ describe("createIosProvider pre-boot accessibility prefs", () => {
 		store.recordDevice({ platform: "ios", id, name: `warden-iphone-17-${id}`, profile: "iphone-17" }, 1);
 	const plutilCalls = (calls: Call[]): string[] =>
 		calls.map((c) => c.cmd.join(" ")).filter((c) => c.startsWith("plutil"));
+	/** W1 booted before: its first boot's Data Migration record sits beside the plist. */
 	beforeEach(() => {
 		mkdirSync(dirname(plist("W1")), { recursive: true });
+		writeFileSync(join(dirname(plist("W1")), "com.apple.migration.plist"), "");
 		mkdirSync(dirname(plist("F1")), { recursive: true });
 	});
 
@@ -1017,6 +1019,14 @@ describe("createIosProvider pre-boot accessibility prefs", () => {
 			`plutil -replace AutomationEnabled -bool true ${plist("W1")}`,
 			`plutil -replace IgnoreAXServerEntitlements -bool true ${plist("W1")}`,
 		]);
+	});
+
+	test("a warden sim simctl just created (no migration record yet) boots without them", async () => {
+		record("N1");
+		mkdirSync(dirname(plist("N1")), { recursive: true });
+		const calls: Call[] = [];
+		await axProvider(fake([["plutil", {}]], calls), {}, false).prepareBoot?.("N1");
+		expect(plutilCalls(calls)).toEqual([]);
 	});
 
 	test("WARDEN_AX_PREFS=0 writes nothing", async () => {

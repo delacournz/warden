@@ -38,11 +38,19 @@ async function plutil(deps: TimedExec, cmd: string[]): AsyncResult<void> {
 }
 
 /**
+ * The first boot's Data Migration record, beside the Accessibility plist. `simctl create` already makes the
+ * `Preferences` dir (iOS 27), so the dir alone does not say the device has booted; this record does.
+ */
+export function migrationRecordPath(env: Record<string, string | undefined>, udid: string): string {
+	return join(dirname(accessibilityPlistPath(env, udid)), "com.apple.migration.plist");
+}
+
+/**
  * Write every `PREBOOT_AX_KEYS` key as `true` on the host, with the sim shut down (no cfprefsd running, so a file
  * write persists). Existing keys are kept; only a plist missing on disk is created, so a failed write on an existing
- * one is returned, never answered by replacing it with an empty plist. A device that has never booted has no
- * `Preferences` dir yet: it is left alone (`not-booted-yet`), since creating the data dir early can upset its first
- * boot's setup, and the helper still turns automation on live.
+ * one is returned, never answered by replacing it with an empty plist. A device that has never booted (no Data
+ * Migration record yet) is left alone (`not-booted-yet`): an Accessibility plist written before its first boot wedges
+ * backboardd's accessibility service on that boot, and the helper still turns automation on live.
  */
 export async function writePrebootAxPrefs(
 	deps: TimedExec,
@@ -50,7 +58,7 @@ export async function writePrebootAxPrefs(
 	udid: string
 ): AsyncResult<"written" | "not-booted-yet"> {
 	const plist = accessibilityPlistPath(env, udid);
-	if (!existsSync(dirname(plist))) return ok("not-booted-yet");
+	if (!existsSync(migrationRecordPath(env, udid))) return ok("not-booted-yet");
 	if (!existsSync(plist)) {
 		const created = await plutil(deps, ["plutil", "-create", "binary1", plist]);
 		if (!created.success) return created;
