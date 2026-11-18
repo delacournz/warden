@@ -25,6 +25,15 @@ describe("build argv", () => {
 		expect(dylibArgv("macos", "/o/x")).toContain("macosx");
 		expect(harnessArgv("/o/h")).toContain("macosx");
 	});
+
+	test("only the host dylib exports the test hooks; LocalAuthentication is dlopen'ed, never linked", () => {
+		expect(dylibArgv("macos", "/o/x")).toContain("-DWARDEN_INJECT_TEST_HOOKS=1");
+		expect(dylibArgv("ios-simulator", "/o/x").join(" ")).not.toContain("WARDEN_INJECT_TEST_HOOKS");
+		for (const target of ["macos", "ios-simulator"] as const) {
+			expect(dylibArgv(target, "/o/x").join(" ")).not.toContain("LocalAuthentication");
+		}
+		expect(harnessArgv("/o/h").join(" ")).toContain("-framework LocalAuthentication");
+	});
 });
 
 type Seen = {

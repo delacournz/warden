@@ -42,7 +42,8 @@ const FRAMEWORKS = [
 	"QuartzCore",
 	"-framework",
 	"CoreGraphics",
-	// the virtual authenticator's P-256 keys and signatures (`#pragma mark - passkeys`); AuthenticationServices is dlopen'ed
+	// the virtual authenticator's P-256 keys and signatures (`#pragma mark - passkeys`) and the Keychain ACL shim;
+	// AuthenticationServices and LocalAuthentication are dlopen'ed, so an app that never uses them never loads them
 	"-framework",
 	"Security",
 ];
@@ -69,6 +70,8 @@ export function dylibArgv(target: Target, out: string): string[] {
 		"-fobjc-arc",
 		"-O2",
 		...FLAGS,
+		// the Keychain ACL shim's hooks (fake Keychain + evaluator) exist only in the host build the harness loads
+		...(target === "macos" ? ["-DWARDEN_INJECT_TEST_HOOKS=1"] : []),
 		"-install_name",
 		`@rpath/${INJECT_DYLIB}`,
 		...FRAMEWORKS,
@@ -95,6 +98,9 @@ export function harnessArgv(out: string): string[] {
 		// the harness builds real passkey requests; the dylib itself dlopens AuthenticationServices
 		"-framework",
 		"AuthenticationServices",
+		// the harness hands the Keychain ACL shim real LAContexts; the dylib itself dlopens LocalAuthentication
+		"-framework",
+		"LocalAuthentication",
 		HARNESS_SOURCE,
 		"-o",
 		out,
