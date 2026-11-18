@@ -119,6 +119,27 @@ describe.serial("keychain acl", () => {
 		await expectResult(screen, "Invalidated", "-25300");
 	});
 
+	test(
+		"with Face ID unenrolled, the passcode sheet opens an item that allows it",
+		IOS_ONLY,
+		async ({ device, screen }) => {
+			await screen.getByTestId(ids.keychain.save).tap();
+			await expectResult(screen, "Saved", "0");
+			await device.biometrics.unenroll();
+			try {
+				const status = screen.getByTestId(ids.keychain.status);
+				await screen.getByTestId(ids.keychain.read).tap({ until: async () => !(await status.isVisible()) });
+				// LocalAuthentication's own sheet; a simulator accepts any code
+				const passcode = screen.getByTestId("Passcode field");
+				await passcode.fill("1111");
+				await passcode.press("Enter");
+				await expectResult(screen, "Read", "0");
+			} finally {
+				await device.biometrics.enroll();
+			}
+		}
+	);
+
 	test("a bio-only item written after the re-enrolment reads with Face ID", IOS_ONLY, async ({ device, screen }) => {
 		await screen.getByTestId(ids.keychain.saveBio).tap();
 		await expectResult(screen, "Saved", "0");
