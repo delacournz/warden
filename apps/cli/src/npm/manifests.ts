@@ -88,6 +88,13 @@ export const LICENSE_FILE = "LICENSE";
 
 /** npm search terms for `@delacour/warden`: the queries a developer types to find it. */
 export const CLI_KEYWORDS = [
+	"react-native-testing",
+	"expo-testing",
+	"e2e",
+	"end-to-end-testing",
+	"test-automation",
+	"detox-alternative",
+	"maestro-alternative",
 	"ios-simulator",
 	"android-emulator",
 	"ai-agents",
@@ -107,6 +114,12 @@ export const CLI_KEYWORDS = [
 
 /** npm search terms for `@delacour/warden-e2e`. */
 export const E2E_KEYWORDS = [
+	"react-native-testing",
+	"expo-testing",
+	"end-to-end-testing",
+	"test-automation",
+	"detox-alternative",
+	"maestro-alternative",
 	"e2e",
 	"e2e-testing",
 	"react-native",
