@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test";
 import {
 	DEFAULT_JS_INPUTS,
 	defaultBuildCommand,
-	IOS_DEVICE_RESULT_BUNDLE,
+	IOS_BUILD_DERIVED_DATA,
+	IOS_BUILD_RESULT_BUNDLE,
 	iosDeviceBuildCommand,
 	simulatorBuildCommand,
 } from "./builds.defaults";
@@ -28,17 +29,33 @@ describe("constants", () => {
 });
 
 describe("simulatorBuildCommand", () => {
-	test("iOS skips Xcode's bundling phase in a Release build", () => {
+	test("iOS: a plain xcodebuild Release for the simulator with Xcode's bundling phase skipped", () => {
 		const cmd = simulatorBuildCommand("ios");
-		expect(cmd).toContain("SKIP_BUNDLING=1 bunx expo run:ios --configuration Release --no-install --no-bundler");
 		expect(cmd.startsWith("{ [ -f ios/Podfile ]")).toBe(true);
+		// expo run:ios drops SKIP_BUNDLING for a Release simulator build, bundles eagerly and installs on a simulator
+		expect(cmd).not.toContain("expo run:ios");
+		expect(cmd).toContain("RCT_NO_LAUNCH_PACKAGER=1 SKIP_BUNDLING=1 xcodebuild");
+		expect(cmd).toContain('-workspace "$ws" -scheme "${ws%.xcworkspace}" -configuration Release');
+		expect(cmd).toContain('-sdk iphonesimulator -destination "generic/platform=iOS Simulator"');
+		expect(cmd).toContain(`-derivedDataPath ${IOS_BUILD_DERIVED_DATA}`);
+		expect(cmd).toContain('ARCHS="$(uname -m)"');
+		expect(cmd).toContain("COMPILER_INDEX_STORE_ENABLE=NO");
+		expect(cmd).not.toContain("-allowProvisioningUpdates");
+		expect(cmd).not.toContain("DEVELOPMENT_TEAM");
+		expect(cmd.endsWith(" build")).toBe(true);
+	});
+
+	test("iOS: simulator build errors land in a fresh result bundle under ios/build", () => {
+		const cmd = simulatorBuildCommand("ios");
+		expect(cmd).toContain(`&& rm -rf ios/${IOS_BUILD_RESULT_BUNDLE} && cd ios &&`);
+		expect(cmd).toContain(`-resultBundlePath ${IOS_BUILD_RESULT_BUNDLE}`);
 	});
 
 	test("iosDeviceBuildCommand: errors land in a fresh result bundle under ios/build", () => {
 		const cmd = iosDeviceBuildCommand("Release", "expo", { team: "ABCDE12345" });
-		expect(IOS_DEVICE_RESULT_BUNDLE).toBe("build/warden.xcresult");
-		expect(cmd).toContain(`&& rm -rf ios/${IOS_DEVICE_RESULT_BUNDLE} && cd ios &&`);
-		expect(cmd).toContain(`-allowProvisioningUpdates -resultBundlePath ${IOS_DEVICE_RESULT_BUNDLE} CODE_SIGN_STYLE`);
+		expect(IOS_BUILD_RESULT_BUNDLE).toBe("build/warden.xcresult");
+		expect(cmd).toContain(`&& rm -rf ios/${IOS_BUILD_RESULT_BUNDLE} && cd ios &&`);
+		expect(cmd).toContain(`-allowProvisioningUpdates -resultBundlePath ${IOS_BUILD_RESULT_BUNDLE} CODE_SIGN_STYLE`);
 	});
 
 	test("bare React Native iOS", () => {

@@ -20,7 +20,7 @@ import { readXcode } from "../xcode";
 import { formatBuildIssues, readBuildIssues } from "../xcresult";
 import type { BuildConfiguration } from "./builds.defaults";
 import {
-	IOS_DEVICE_RESULT_BUNDLE,
+	IOS_BUILD_RESULT_BUNDLE,
 	LOCAL_BUILD_TIMEOUT_MS,
 	PROBE_TIMEOUT_MS,
 	WARDEN_PODS_CACHE_ENV,
@@ -539,9 +539,9 @@ function expoBuildLog(root: string): string {
 	}
 }
 
-/** The device build's result bundle (`iosDeviceBuildCommand`), when this build wrote it: one older than the build is stale. */
+/** The result bundle of warden's own xcodebuild (`iosXcodebuild`: device and simulator builds), when this build wrote it: one older than the build is stale. */
 function freshResultBundle(root: string, startedAt: number): string | undefined {
-	const path = join(root, "ios", IOS_DEVICE_RESULT_BUNDLE);
+	const path = join(root, "ios", IOS_BUILD_RESULT_BUNDLE);
 	try {
 		return statSync(path).mtimeMs >= startedAt - 2_000 ? path : undefined;
 	} catch {
@@ -559,7 +559,7 @@ async function resultBundleFailure(deps: LocalBuildDeps, startedAt: number): Pro
 }
 
 /**
- * Why the build command failed. iOS: the compiler/linker errors with file:line (from the result bundle a device build
+ * Why the build command failed. iOS: the compiler/linker errors with file:line (from the result bundle warden's own xcodebuild
  * writes, else parsed from the output or expo's raw `xcodebuild.log`) and where the full log is kept; otherwise the
  * last lines, as before.
  */

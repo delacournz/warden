@@ -141,8 +141,8 @@ export interface WardenVariant {
  * What a cached build is for.
  *
  * - `"dev"`: Debug, JS from Metro at runtime. The default of `warden ui open` / `warden dev`.
- * - `"simulator"`: Release for a simulator / emulator whose JS is swapped by a repack (iOS `SKIP_BUNDLING=1`, Android
- *   plain `assembleRelease`; its embedded bundle is replaced). The app's JS is repacked into a clone of this build, keyed by the content
+ * - `"simulator"`: Release for a simulator / emulator whose JS is swapped by a repack (iOS a plain `xcodebuild` with
+ *   `SKIP_BUNDLING=1`, Android plain `assembleRelease`; its embedded bundle is replaced). The app's JS is repacked into a clone of this build, keyed by the content
  *   of the JS sources, so a JS edit costs seconds, not a native rebuild. The default of `warden e2e`.
  * - `"release"`: Release with the JS bundle embedded at build time; the key also covers the JS sources.
  */
@@ -154,7 +154,8 @@ export interface WardenKind {
 	 * Replaces the kind's built-in build command, per platform. The project's own top-level `build` is not read
 	 * for a kind.
 	 *
-	 * @example { ios: "SKIP_BUNDLING=1 bunx expo run:ios --configuration Release --no-install --no-bundler" }
+	 * @example { ios: 'cd ios && SKIP_BUNDLING=1 xcodebuild -workspace App.xcworkspace -scheme App -configuration Release -sdk iphonesimulator -derivedDataPath build build' }
+	 * (`expo run:ios` drops `SKIP_BUNDLING` from a Release simulator build and bundles the JS anyway.)
 	 */
 	build?: WardenPerPlatform | undefined;
 	/**

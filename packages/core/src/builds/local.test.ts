@@ -16,7 +16,7 @@ import { err, ok } from "@delacour/warden-types/result";
 import type { Exec, ExecResult } from "../exec";
 import { createGitFactsCache } from "../git-facts";
 import type { PodsInstallOptions } from "../pods/pods.types";
-import { IOS_DEVICE_RESULT_BUNDLE } from "./builds.defaults";
+import { IOS_BUILD_RESULT_BUNDLE } from "./builds.defaults";
 import { fakeApp, testProject } from "./builds.testing";
 import { releaseKey } from "./fingerprint";
 import { combineKey, jsInputsHash } from "./js-inputs";
@@ -574,7 +574,7 @@ describe("runLocalBuild compiler cache env", () => {
 			join(import.meta.dir, "..", "__fixtures__", "xcresult", "build-results.failed.json"),
 			"utf8"
 		);
-		const bundle = join(s.root, "ios", IOS_DEVICE_RESULT_BUNDLE);
+		const bundle = join(s.root, "ios", IOS_BUILD_RESULT_BUNDLE);
 		const exec: Exec = async (cmd, opts) => {
 			if (cmd[2] === "xb") {
 				mkdirSync(bundle, { recursive: true });
@@ -600,7 +600,7 @@ describe("runLocalBuild compiler cache env", () => {
 
 	test("a result bundle left by an earlier build is not read", async () => {
 		const s = iosSetup();
-		const bundle = join(s.root, "ios", IOS_DEVICE_RESULT_BUNDLE);
+		const bundle = join(s.root, "ios", IOS_BUILD_RESULT_BUNDLE);
 		mkdirSync(bundle, { recursive: true });
 		utimesSync(bundle, new Date(0), new Date(0));
 		const xcrun: string[][] = [];
