@@ -613,7 +613,11 @@ extension Session {
             stall.axWedge = "checking"
           }
           suspected = serviceSilent
-          guard requested == nil, isBridgeFailure(error) || serviceSilent, host != nil else {
+          // a cold guest's query timing out is a warming service on a fresh boot, not a dead bridge: its retryable
+          // error goes back (counted above, so a real wedge still reaches the check) instead of asking the same
+          // warming service again through ax, which kept a fresh sim's service from coming up
+          let fallBackOnSilence = serviceSilent && !coldAtStart
+          guard requested == nil, isBridgeFailure(error) || fallBackOnSilence, host != nil else {
             if var stalled = error as? BridgeStalled {
               stalled.report = stall
               throw stalled
