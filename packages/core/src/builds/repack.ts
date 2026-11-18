@@ -126,8 +126,9 @@ function packageMain(root: string): string | undefined {
  * the same bytecode (React Native's own Hermes build does the same, `react-native-xcode.sh` "Hermes doesn't require JS
  * minification"). A JSC base runs the unminified bundle: same code, bigger file.
  *
- * No `--reset-cache`: Metro keeps its cache between repacks in a dir warden owns per project and bundle env
- * (`bundleEnv`), so a JS edit transforms only the files it changed. `force` empties that dir.
+ * No `--reset-cache` here: Metro keeps its cache between repacks in a dir warden owns per project and bundle env
+ * (`bundleCache`), so a JS edit transforms only the files it changed. `bundleArgv` adds the reset only while that dir
+ * holds no Metro store (`MetroCache.resetCache`). `force` empties the dir.
  */
 export function bundlerFlags(platform: Platform, framework: "expo" | "react-native", entryRel: string): string[] {
 	return [
@@ -143,13 +144,14 @@ export function bundlerFlags(platform: Platform, framework: "expo" | "react-nati
 	];
 }
 
-/** The bundler argv: `bundlerFlags` plus the scratch output paths. */
+/** The bundler argv: `bundlerFlags` plus the scratch output paths, and `--reset-cache` when `resetCache`. */
 export function bundleArgv(
 	bin: string,
 	flags: readonly string[],
 	entry: string,
 	platform: Platform,
-	scratch: string
+	scratch: string,
+	resetCache = false
 ): string[] {
 	const [command = "", ...rest] = flags;
 	const bundle = join(scratch, BUNDLE_FILE[platform]);
@@ -164,6 +166,7 @@ export function bundleArgv(
 		join(scratch, "assets"),
 		"--sourcemap-output",
 		`${bundle}.map`,
+		...(resetCache ? ["--reset-cache"] : []),
 	];
 }
 
@@ -221,6 +224,8 @@ type BundleStep = {
 	flags: readonly string[];
 	entry: string;
 	env: Env;
+	/** pass `--reset-cache` (`MetroCache.resetCache`) */
+	resetCache?: boolean;
 	scratch: string;
 	hermes: boolean;
 	log: (line: string) => void;
@@ -260,7 +265,7 @@ async function runBundler(step: Omit<BundleStep, "hermes">): AsyncResult<RawBund
 	const bin = findNodeBin(root, binName);
 	if (!bin) return err(`repack: no ${binName} binary under ${root}/node_modules/.bin (install dependencies)`);
 	const bundle = join(scratch, BUNDLE_FILE[platform]);
-	const argv = bundleArgv(bin, step.flags, step.entry, platform, scratch);
+	const argv = bundleArgv(bin, step.flags, step.entry, platform, scratch, step.resetCache);
 	step.log(`bundling ${platform} JS (${binName} ${argv[1]})`);
 	const run = await exec(argv, {
 		cwd: root,
@@ -444,13 +449,35 @@ function lockDeps(input: RepackInput): BuildLockDeps {
 }
 
 /**
- * The bundler's env: the run's env, the kind's env, and `TMPDIR` set to the project's persistent Metro cache for this
- * bundle env (`metroCacheDir`), readied now and emptied first on `force`.
+ * The bundler's env and reset: the run's env, the kind's env, and Metro's store pinned to the project's persistent
+ * cache for this bundle env (`metroCacheDir`), readied now and emptied first on `force`. `TMPDIR` places Metro's
+ * default FileStore and file map; Expo's FileStore follows `EXPO_METRO_CACHE_OUTPUT_DIR` instead when set (EAS sets
+ * it, with a restore dir that would switch store), so both are pinned.
  */
-function bundleEnv(input: RepackInput, kindEnv: Record<string, string>, flags: readonly string[]): Env {
-	const dir = metroCacheDir({ env: input.env, kindEnv, projectKey: input.projectKey, platform: input.platform, flags });
-	const tmp = prepareMetroCache(dir, { now: input.now(), ...(input.force ? { reset: true } : {}) });
-	return { ...input.env, ...kindEnv, TMPDIR: tmp };
+function bundleCache(
+	input: RepackInput,
+	kindEnv: Record<string, string>,
+	flags: readonly string[]
+): Pick<BundleStep, "env" | "resetCache"> {
+	const dir = metroCacheDir({
+		env: input.env,
+		kindEnv,
+		root: input.project.root,
+		projectKey: input.projectKey,
+		platform: input.platform,
+		flags,
+	});
+	const cache = prepareMetroCache(dir, { now: input.now(), ...(input.force ? { reset: true } : {}) });
+	return {
+		env: {
+			...input.env,
+			...kindEnv,
+			TMPDIR: cache.tmpdir,
+			EXPO_METRO_CACHE_OUTPUT_DIR: cache.storeDir,
+			EXPO_METRO_CACHE_RESTORE_DIR: "",
+		},
+		resetCache: cache.resetCache,
+	};
 }
 
 /** Start the bundler in its own scratch dir, now; never rejects (`done` carries the result). */
@@ -467,7 +494,7 @@ function startEarlyBundle(input: RepackInput, flags: readonly string[], entry: s
 		framework: input.project.framework,
 		flags,
 		entry,
-		env: bundleEnv(input, keys.settings.env, flags),
+		...bundleCache(input, keys.settings.env, flags),
 		scratch,
 		hermes: true,
 		log: () => {},
@@ -657,7 +684,9 @@ async function makeRepack(input: RepackInput, made: Made, early?: EarlyBundle): 
 			framework: project.framework,
 			flags: made.flags,
 			entry: made.entry,
-			env: early ? { ...input.env, ...made.keys.settings.env } : bundleEnv(input, made.keys.settings.env, made.flags),
+			...(early
+				? { env: { ...input.env, ...made.keys.settings.env } }
+				: bundleCache(input, made.keys.settings.env, made.flags)),
 			scratch,
 			hermes,
 			log: input.log,

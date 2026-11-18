@@ -12,7 +12,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { METRO_CACHE_DIR_NAME, METRO_CACHE_MAX_IDLE_MS } from "./builds.defaults";
+import { METRO_CACHE_DIR_NAME, METRO_CACHE_MAX_AGE_MS, METRO_CACHE_MAX_IDLE_MS } from "./builds.defaults";
 import { metroCacheDir, prepareMetroCache } from "./metro-cache";
 import { safeKey } from "./project-key";
 
@@ -52,6 +52,26 @@ describe("metroCacheDir", () => {
 		expect(dirOf({ env: { EXPO_PUBLIC_API: "a", PATH: "/x", CI: "true" } })).toBe(dir);
 	});
 
+	test("the project's .env* files are bundle env too: Expo inlines their EXPO_PUBLIC_* values", () => {
+		const root = join(home, "app");
+		mkdirSync(root);
+		const withRoot = () =>
+			metroCacheDir({ env: { WARDEN_HOME: home }, root, projectKey: KEY, platform: "ios", flags: [] });
+		writeFileSync(join(root, ".env"), "EXPO_PUBLIC_API=a\n");
+		const a = withRoot();
+		writeFileSync(join(root, ".env"), "EXPO_PUBLIC_API=b\n");
+		expect(withRoot()).not.toBe(a);
+		writeFileSync(join(root, ".env"), "EXPO_PUBLIC_API=a\n");
+		expect(withRoot()).toBe(a);
+		writeFileSync(join(root, ".env.production.local"), "EXPO_PUBLIC_API=c\n");
+		expect(withRoot()).not.toBe(a);
+		// other dotfiles are not env
+		rmSync(join(root, ".env.production.local"));
+		writeFileSync(join(root, ".envrc-not"), "");
+		writeFileSync(join(root, ".gitignore"), "x");
+		expect(withRoot()).toBe(a);
+	});
+
 	test("kind env is bundle env, whatever its name", () => {
 		const plain = metroCacheDir({ env: { WARDEN_HOME: home }, projectKey: KEY, platform: "ios", flags: [] });
 		const kind = metroCacheDir({
@@ -68,8 +88,34 @@ describe("metroCacheDir", () => {
 describe("prepareMetroCache", () => {
 	test("creates the dir and returns it as a TMPDIR value (Metro's cache root is $TMPDIR/metro-cache)", () => {
 		const dir = dirOf();
-		expect(prepareMetroCache(dir, { now: Date.now() })).toBe(`${dir}/`);
+		const ready = prepareMetroCache(dir, { now: Date.now() });
+		expect(ready.tmpdir).toBe(`${dir}/`);
+		expect(ready.storeDir).toBe(join(dir, "metro-cache"));
 		expect(existsSync(dir)).toBe(true);
+	});
+
+	test("resetCache until Metro has written its store here: free on an empty dir, and a project whose own cacheStores live elsewhere keeps the reset", () => {
+		const dir = dirOf();
+		expect(prepareMetroCache(dir, { now: Date.now() }).resetCache).toBe(true);
+		expect(prepareMetroCache(dir, { now: Date.now() }).resetCache).toBe(true);
+		mkdirSync(join(dir, "metro-cache"));
+		expect(prepareMetroCache(dir, { now: Date.now() }).resetCache).toBe(false);
+		expect(prepareMetroCache(dir, { now: Date.now(), reset: true }).resetCache).toBe(true);
+	});
+
+	test("a cache older than the max age starts afresh, so the dir never grows without bound", () => {
+		const now = Date.now();
+		const dir = dirOf();
+		prepareMetroCache(dir, { now: now - METRO_CACHE_MAX_AGE_MS - DAY });
+		writeFileSync(join(dir, "transform"), "x");
+		prepareMetroCache(dir, { now: now - DAY });
+		expect(readdirSync(dir)).toContain("transform");
+		prepareMetroCache(dir, { now });
+		expect(readdirSync(dir)).not.toContain("transform");
+		// and the new one is dated now: it lives another max age
+		writeFileSync(join(dir, "transform"), "x");
+		prepareMetroCache(dir, { now: now + DAY });
+		expect(readdirSync(dir)).toContain("transform");
 	});
 
 	test("keeps what an earlier bundle cached; reset empties it", () => {
@@ -77,9 +123,9 @@ describe("prepareMetroCache", () => {
 		prepareMetroCache(dir, { now: Date.now() });
 		writeFileSync(join(dir, "transform"), "x");
 		prepareMetroCache(dir, { now: Date.now() });
-		expect(readdirSync(dir)).toEqual(["transform"]);
+		expect(readdirSync(dir)).toContain("transform");
 		prepareMetroCache(dir, { now: Date.now(), reset: true });
-		expect(readdirSync(dir)).toEqual([]);
+		expect(readdirSync(dir)).not.toContain("transform");
 	});
 
 	test("touches its own dir and prunes the project's caches idle past the limit", () => {

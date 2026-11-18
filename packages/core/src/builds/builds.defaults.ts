@@ -218,6 +218,11 @@ export const CCACHE_DIR_NAME = "ccache";
 export const METRO_CACHE_DIR_NAME = "metro-cache";
 /** A repack's Metro cache no bundle used for this long is deleted the next time that project bundles. */
 export const METRO_CACHE_MAX_IDLE_MS = 7 * 24 * 60 * 60_000;
+/**
+ * A repack's Metro cache this old starts afresh: Metro's FileStore never evicts, so an active cache would otherwise
+ * grow with every changed file (and so would each CI save of it).
+ */
+export const METRO_CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60_000;
 /** First Xcode major with compilation caching (`COMPILATION_CACHE_ENABLE_CACHING`). */
 export const XCODE_COMPILATION_CACHE_MIN_MAJOR = 26;
 /** Timeout for the quick `git` / `xcodebuild -version` probes before a build. */
