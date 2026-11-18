@@ -1,6 +1,12 @@
 import { describe, expect, test } from "bun:test";
+import { driverErr } from "../errors";
 import { createInjectChannel, type InjectFs } from "./inject";
-import { createIosKeychainAcl, KEYCHAIN_ACL_GENERATION_FILE, KEYCHAIN_ACL_ITEMS_FILE } from "./ios-keychain-acl";
+import {
+	createIosKeychainAcl,
+	KEYCHAIN_ACL_GENERATION_FILE,
+	KEYCHAIN_ACL_ITEMS_FILE,
+	rawLaunchKeychainAcl,
+} from "./ios-keychain-acl";
 
 const DIR = "/w/inject/U1";
 const STATE = `${DIR}/state.json`;
@@ -35,7 +41,7 @@ function rig(app?: { keychainAcl: boolean; silent?: boolean }) {
 	const make = () => createIosKeychainAcl({ channel, fs, ackMs: 100 });
 	const kacl = make();
 	const writeState = () => channel.write({ ...(kacl.state() ? { keychainAcl: kacl.state() } : {}) });
-	return { files, channel, kacl, make, writeState };
+	return { files, fs, channel, kacl, make, writeState };
 }
 
 describe("ios keychain acl", () => {
@@ -103,5 +109,66 @@ describe("ios keychain acl", () => {
 		r.channel.reset();
 		expect(r.kacl.state()?.generation).toBe(5);
 		expect(r.make().state()).toBeUndefined();
+	});
+});
+
+describe("rawLaunchKeychainAcl (a launch that bypasses the driver)", () => {
+	const dylib = () => ({ success: true as const, data: "/opt/libwarden-inject.dylib" });
+
+	test("on: the switch is written into the state (other keys kept) and the SIMCTL_CHILD_ env loads the dylib", () => {
+		const r = rig();
+		r.channel.write({ keyboard: "software" });
+		const got = rawLaunchKeychainAcl({ channel: r.channel, fs: r.fs, enabled: true, dylib });
+		expect(got).toEqual({
+			success: true,
+			data: {
+				enabled: true,
+				env: {
+					SIMCTL_CHILD_DYLD_INSERT_LIBRARIES: "/opt/libwarden-inject.dylib",
+					SIMCTL_CHILD_WARDEN_INJECT_STATE: STATE,
+					SIMCTL_CHILD_WARDEN_KEYCHAIN_ACL: "1",
+				},
+			},
+		});
+		const state = r.channel.current();
+		expect(state.keyboard).toBe("software");
+		expect(state.keychainAcl).toEqual({ enabled: true, generation: 0, itemsPath: `${DIR}/${KEYCHAIN_ACL_ITEMS_FILE}` });
+		expect(r.make().on()).toBe(true);
+	});
+
+	test("unset follows the device's state: on stays on, never switched = a plain launch with nothing written", () => {
+		const r = rig();
+		expect(rawLaunchKeychainAcl({ channel: r.channel, fs: r.fs, enabled: undefined, dylib })).toEqual({
+			success: true,
+			data: { enabled: false, env: {} },
+		});
+		expect(r.files.has(STATE)).toBe(false);
+		rawLaunchKeychainAcl({ channel: r.channel, fs: r.fs, enabled: true, dylib });
+		const again = rawLaunchKeychainAcl({ channel: r.channel, fs: r.fs, enabled: undefined, dylib });
+		expect(again.success && again.data.enabled).toBe(true);
+	});
+
+	test("off is recorded (a later driver launches plain) and launches plain", () => {
+		const r = rig();
+		rawLaunchKeychainAcl({ channel: r.channel, fs: r.fs, enabled: true, dylib });
+		const off = rawLaunchKeychainAcl({ channel: r.channel, fs: r.fs, enabled: false, dylib });
+		expect(off).toEqual({ success: true, data: { enabled: false, env: {} } });
+		expect(r.channel.current().keychainAcl?.enabled).toBe(false);
+		expect(r.make().on()).toBe(false);
+	});
+
+	test("the generation comes from the host file", () => {
+		const r = rig();
+		r.files.set(`${DIR}/${KEYCHAIN_ACL_GENERATION_FILE}`, JSON.stringify({ generation: 3 }));
+		rawLaunchKeychainAcl({ channel: r.channel, fs: r.fs, enabled: true, dylib });
+		expect(r.channel.current().keychainAcl?.generation).toBe(3);
+	});
+
+	test("no dylib: the error, nothing written", () => {
+		const r = rig();
+		const missing = () => driverErr("E_HELPER_MISSING", "no dylib");
+		const got = rawLaunchKeychainAcl({ channel: r.channel, fs: r.fs, enabled: true, dylib: missing });
+		expect(got.success).toBe(false);
+		expect(r.files.has(STATE)).toBe(false);
 	});
 });

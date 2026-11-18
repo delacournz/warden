@@ -52,6 +52,8 @@ export type BatchPreset = {
 	slim?: NonNullable<BatchPresetConfig["slim"]>;
 	/** the preset's `biometrics`, else the top-level one (undefined: neither sets it) */
 	biometrics?: boolean;
+	/** the preset's `keychainAcl`, else the top-level one (undefined: neither sets it) */
+	keychainAcl?: boolean;
 	/** the preset's `reclaim`, else the top-level one (undefined: neither sets it) */
 	reclaim?: BatchPresetConfig["reclaim"];
 	cmd: string[];
@@ -80,7 +82,8 @@ function resolvePreset(
 	defaultHeadless?: boolean,
 	defaultSlim?: BatchPresetConfig["slim"],
 	defaultBiometrics?: boolean,
-	defaultReclaim?: BatchPresetConfig["reclaim"]
+	defaultReclaim?: BatchPresetConfig["reclaim"],
+	defaultKeychainAcl?: boolean
 ): BatchPreset {
 	const {
 		project: _project,
@@ -112,6 +115,7 @@ function resolvePreset(
 			slim: defaultSlim,
 			biometrics: defaultBiometrics,
 			reclaim: defaultReclaim,
+			keychainAcl: defaultKeychainAcl,
 		}),
 	};
 }
@@ -129,7 +133,7 @@ function pathFields(
 	};
 }
 
-/** headless / slim / biometrics / reclaim: the preset's own value, else the default; omitted when both unset. */
+/** headless / slim / biometrics / reclaim / keychainAcl: the preset's own value, else the default; omitted when both unset. */
 function defaultedFields(
 	preset: BatchPresetConfig,
 	defaults: {
@@ -137,17 +141,20 @@ function defaultedFields(
 		slim?: BatchPresetConfig["slim"];
 		biometrics?: boolean;
 		reclaim?: BatchPresetConfig["reclaim"];
+		keychainAcl?: boolean;
 	}
-): Pick<BatchPreset, "headless" | "slim" | "biometrics" | "reclaim"> {
+): Pick<BatchPreset, "headless" | "slim" | "biometrics" | "reclaim" | "keychainAcl"> {
 	const headless = preset.headless ?? defaults.headless;
 	const slim = preset.slim ?? defaults.slim;
 	const biometrics = preset.biometrics ?? defaults.biometrics;
 	const reclaim = preset.reclaim ?? defaults.reclaim;
+	const keychainAcl = preset.keychainAcl ?? defaults.keychainAcl;
 	return {
 		...(headless !== undefined ? { headless } : {}),
 		...(slim !== undefined ? { slim } : {}),
 		...(biometrics !== undefined ? { biometrics } : {}),
 		...(reclaim !== undefined ? { reclaim } : {}),
+		...(keychainAcl !== undefined ? { keychainAcl } : {}),
 	};
 }
 
@@ -184,7 +191,8 @@ export function findBatchPreset(input: FindBatchPresetInput): Result<{ preset?: 
 			config.headless,
 			config.slim,
 			config.biometrics,
-			config.reclaim
+			config.reclaim,
+			config.keychainAcl
 		),
 	});
 }

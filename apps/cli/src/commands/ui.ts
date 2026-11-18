@@ -84,6 +84,11 @@ export function createUiCommand(deps: UiDeps): Command {
 						"--a11y",
 						"iOS: launch with the injected library so a11y audit/order/speak/announcements can read hints, actions and announcements (remembered for the device; relaunches the app the first time)"
 					)
+					.option(
+						"--keychain-acl",
+						"iOS simulator: Keychain items with access control prompt for Face ID / passcode on read, like a phone (kept for the device; relaunches an app started without it)"
+					)
+					.option("--no-keychain-acl", "turn the Keychain ACL shim off for the device")
 					.addOption(kindOption())
 					.option("--project <dir>", "--kind: the app's project directory (default: cwd)")
 					.option("--settle [ms]", SETTLE)

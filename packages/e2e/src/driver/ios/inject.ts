@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import {
 	type CameraCondition,
@@ -311,6 +311,26 @@ export function locateInjectDylib(input: LocateInjectInput): Result<string, Driv
 }
 
 /** File operations of the state channel, injected. */
+/**
+ * `locateInjectDylib` from this module's own place in `@delacour/warden-e2e`, for a caller outside the driver that
+ * launches an app itself (`warden dev`'s raw `simctl launch`): the same lookup the iOS driver does.
+ */
+export function locateInjectDylibFor(o: {
+	env: Readonly<Record<string, string | undefined>>;
+	wardenHome: string;
+	version?: string;
+}): Result<string, DriverError> {
+	return locateInjectDylib({
+		env: { [INJECT_DYLIB_ENV]: o.env[INJECT_DYLIB_ENV], WARDEN_HELPER_DIR: o.env.WARDEN_HELPER_DIR },
+		execPath: process.execPath,
+		importDir: import.meta.dir,
+		wardenHome: o.wardenHome,
+		exists: existsSync,
+		realpath: realpathSync,
+		...(o.version ? { version: o.version } : {}),
+	});
+}
+
 export type InjectFs = {
 	mkdir(path: string): void;
 	/** write `text` to `path` so a reader sees all of it or none (tmp + rename) */

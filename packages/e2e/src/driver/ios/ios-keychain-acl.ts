@@ -1,8 +1,10 @@
 import { dirname, join } from "node:path";
-import type { DriverResult } from "../driver.types";
+import type { Result } from "@delacour/warden-types/result";
+import type { DriverError, DriverResult } from "../driver.types";
 import { driverErr } from "../errors";
 import type { KeychainAclOp, KeychainAclState } from "../keychain-acl";
-import type { InjectChannel, InjectFs, InjectKeychainAcl } from "./inject";
+import { type InjectChannel, type InjectFs, type InjectKeychainAcl, injectLaunchEnv } from "./inject";
+import { launchEnv } from "./simctl";
 
 /** Beside the state file: the enrolment generation, durable (the state file is deleted at every launch). */
 export const KEYCHAIN_ACL_GENERATION_FILE = "keychain-acl.json";
@@ -11,7 +13,7 @@ export const KEYCHAIN_ACL_ITEMS_FILE = "keychain-acl-items.json";
 
 /**
  * The iOS host side of the Keychain ACL shim (WDN-KACL). The switch lives in the inject state file (`keychainAcl`
- * key; sticky for the lease: release's neutral state drops it), so a later driver on the lease (another `warden ui`
+ * key; sticky for the lease: every release of the lease switches it off), so a later driver on the lease (another `warden ui`
  * call, a relaunch) keeps it. The enrolment generation lives in its own host file next to it, with the same lifetime
  * as the dylib's item sidecar: both describe the simulator's Keychain, not one launch.
  */
@@ -74,4 +76,32 @@ export function createIosKeychainAcl(deps: { channel: InjectChannel; fs: InjectF
 			);
 		},
 	};
+}
+
+/**
+ * A launch that bypasses the driver (`warden dev`'s raw `simctl launch`): the shim's switch for the device is
+ * `enabled`, else what its state file already says (`ui open --keychain-acl` earlier); it is written into the state
+ * (the other keys kept), so the next driver on the lease sees it. On = the `SIMCTL_CHILD_*` env that loads the dylib
+ * with the shim (pass it through the exec env, never argv); off or never switched = `{}`, a plain launch.
+ */
+export function rawLaunchKeychainAcl(o: {
+	channel: InjectChannel;
+	fs: InjectFs;
+	enabled: boolean | undefined;
+	dylib: () => Result<string, DriverError>;
+}): Result<{ enabled: boolean; env: Record<string, string> }, DriverError> {
+	const { channel, fs } = o;
+	const { seq: _seq, ...current } = channel.current();
+	if (o.enabled === undefined && current.keychainAcl === undefined)
+		return { success: true, data: { enabled: false, env: {} } };
+	const enabled = o.enabled ?? current.keychainAcl?.enabled === true;
+	const dylib = enabled ? o.dylib() : undefined;
+	if (dylib && !dylib.success) return dylib;
+	const dir = dirname(channel.statePath);
+	const generation =
+		readGeneration(fs, join(dir, KEYCHAIN_ACL_GENERATION_FILE)) ?? current.keychainAcl?.generation ?? 0;
+	channel.write({ ...current, keychainAcl: { enabled, generation, itemsPath: join(dir, KEYCHAIN_ACL_ITEMS_FILE) } });
+	if (!dylib) return { success: true, data: { enabled: false, env: {} } };
+	const env = launchEnv(injectLaunchEnv({ dylib: dylib.data, statePath: channel.statePath, keychainAcl: true }));
+	return { success: true, data: { enabled: true, env } };
 }

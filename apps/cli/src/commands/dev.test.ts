@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ok } from "@delacour/warden-types/result";
 import { allowAutoGc, autoGcConsidered, autoGcOrder } from "../autogc.testing";
@@ -99,6 +99,81 @@ function setup(
 async function waitFor(cond: () => boolean): Promise<void> {
 	for (let i = 0; i < 200 && !cond(); i++) await Bun.sleep(1);
 }
+
+describe("warden dev --keychain-acl", () => {
+	/** Run `warden dev ios <flags>` until the dev client is launched; the launch's argv + exec env. */
+	async function launchWith(flags: string[], prime?: (c: TestContext) => void) {
+		const calls: string[][] = [];
+		const c = setup(["ios", ...flags], calls);
+		const dylib = join(c.cwd, "libwarden-inject.dylib");
+		writeFileSync(dylib, "");
+		c.env = { ...c.env, WARDEN_INJECT_DYLIB: dylib };
+		prime?.(c);
+		const envs: Array<Record<string, string | undefined> | undefined> = [];
+		/** the device's inject state as the launch saw it (the release at the end switches the shim off again) */
+		const states: unknown[] = [];
+		const exec = c.exec;
+		c.exec = async (cmd, opts) => {
+			if (cmd.includes("launch")) {
+				envs.push(opts?.env);
+				const path = join(c.env.WARDEN_HOME ?? "", "inject", cmd[4] ?? "", "state.json");
+				states.push(existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : undefined);
+			}
+			return exec(cmd, opts);
+		};
+		const h = harness();
+		const running = createDevCommand(h.deps).run(c);
+		await waitFor(() => envs.length > 0);
+		h.finish(0);
+		expect(await running).toBe(0);
+		const launch = calls.find((cmd) => cmd.join(" ").startsWith("xcrun simctl launch")) ?? [];
+		const statePath = join(c.env.WARDEN_HOME ?? "", "inject", launch[4] ?? "", "state.json");
+		return {
+			c,
+			dylib,
+			launch,
+			env: envs[0] ?? {},
+			statePath,
+			atLaunch: states[0] as { keychainAcl?: { enabled: boolean } },
+		};
+	}
+
+	test("the dev client launch loads the dylib with the shim through the exec env, never argv; the switch is sticky in the state", async () => {
+		const { dylib, launch, env, statePath, atLaunch } = await launchWith(["--keychain-acl"]);
+		expect(env).toMatchObject({
+			SIMCTL_CHILD_DYLD_INSERT_LIBRARIES: dylib,
+			SIMCTL_CHILD_WARDEN_KEYCHAIN_ACL: "1",
+			SIMCTL_CHILD_WARDEN_INJECT_STATE: statePath,
+		});
+		expect(launch.join(" ")).not.toContain("WARDEN_KEYCHAIN_ACL");
+		expect(launch.join(" ")).not.toContain("DYLD_INSERT_LIBRARIES");
+		expect(atLaunch.keychainAcl?.enabled).toBe(true);
+		// dev ended: its lease's release switched the shim off for whoever claims the simulator next
+		expect(JSON.parse(readFileSync(statePath, "utf8")).keychainAcl.enabled).toBe(false);
+	});
+
+	test("no flag: a plain launch; a device switched on earlier (ui open --keychain-acl) keeps it", async () => {
+		const plain = await launchWith([]);
+		expect(plain.env.SIMCTL_CHILD_WARDEN_KEYCHAIN_ACL).toBeUndefined();
+		expect(plain.env.SIMCTL_CHILD_DYLD_INSERT_LIBRARIES).toBeUndefined();
+		const sticky = await launchWith([], (c) => {
+			const dir = join(c.env.WARDEN_HOME ?? "", "inject", "U1");
+			mkdirSync(dir, { recursive: true });
+			writeFileSync(
+				join(dir, "state.json"),
+				JSON.stringify({ seq: 1, keychainAcl: { enabled: true, generation: 0, itemsPath: join(dir, "items.json") } })
+			);
+		});
+		expect(sticky.launch[4]).toBe("U1");
+		expect(sticky.env.SIMCTL_CHILD_WARDEN_KEYCHAIN_ACL).toBe("1");
+	});
+
+	test("--no-keychain-acl launches plain and records off", async () => {
+		const { env, statePath } = await launchWith(["--no-keychain-acl"]);
+		expect(env.SIMCTL_CHILD_WARDEN_KEYCHAIN_ACL).toBeUndefined();
+		expect(JSON.parse(readFileSync(statePath, "utf8")).keychainAcl.enabled).toBe(false);
+	});
+});
 
 describe("devClientUrl", () => {
 	test("exp+<slug> dev-client link to the local Metro", () => {

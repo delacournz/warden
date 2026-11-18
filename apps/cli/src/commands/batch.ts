@@ -217,6 +217,8 @@ export type BatchOpts = ClaimFlagValues &
 		logs?: string;
 		/** false = `--no-tui` */
 		tui: boolean;
+		/** `--keychain-acl` / `--no-keychain-acl` (over the preset's `keychainAcl`): `WARDEN_KEYCHAIN_ACL` for every job */
+		keychainAcl?: boolean;
 	};
 
 /** `cmd` and `ready` may hold `{port}` / `{metroUrl}`, known only once the run has its leases. */
@@ -2311,6 +2313,16 @@ export function mergePreset(
 	};
 }
 
+/** The preset's or flag's `keychainAcl` as `WARDEN_KEYCHAIN_ACL` in the serve + job env (spec processes read it); unset = untouched. */
+function withKeychainAclEnv(
+	merged: { opts: BatchOpts; base: BatchBase },
+	keychainAcl: boolean | undefined
+): { opts: BatchOpts; base: BatchBase } {
+	if (keychainAcl === undefined) return merged;
+	const env = { ...merged.base.env, WARDEN_KEYCHAIN_ACL: keychainAcl ? "1" : "0" };
+	return { ...merged, base: { ...merged.base, env } };
+}
+
 const clampFlags = (flags: ClaimFlags, jobCount: number): ClaimFlags =>
 	jobCount >= flags.request.count ? flags : { ...flags, request: { ...flags.request, count: Math.max(1, jobCount) } };
 
@@ -2344,7 +2356,11 @@ async function batch(
 	const { platform, preset } = target.data;
 	const cmd = split.data.cmd.length > 0 ? split.data.cmd : (preset?.cmd ?? []);
 	if (cmd.length === 0) return fail("missing command after -- (warden batch ios -- <cmd…>)");
-	const merged = preset ? mergePreset(preset, opts, passed) : { opts, base: {} };
+	const merged = withKeychainAclEnv(
+		preset ? mergePreset(preset, opts, passed) : { opts, base: {} },
+		// the shim is an iOS simulator thing: an Android preset sharing a top-level `keychainAcl` gets nothing
+		platform === "ios" ? (passed.has("keychainAcl") ? opts.keychainAcl : preset?.keychainAcl) : undefined
+	);
 	const explicit = passed.has("headless") ? opts.headless : undefined;
 	// a physical device is never headless-hidden: only an explicit --headless reaches the claim (which refuses it)
 	const headless = isPhysicalClaim(withNamedPhysical(merged.opts))
@@ -2666,6 +2682,11 @@ export function createBatchCommand(deps: BatchDeps): Command {
 			)
 				.option("--jobs <list>", "comma-separated jobs")
 				.option("--jobs-from <file>", "one job per line from a file, or - for stdin")
+				.option(
+					"--keychain-acl",
+					"iOS simulators: Keychain items with access control prompt on read; sets WARDEN_KEYCHAIN_ACL=1 for every job (preset keychainAcl)"
+				)
+				.option("--no-keychain-acl", "WARDEN_KEYCHAIN_ACL=0 for every job, even when the preset sets keychainAcl")
 				.addHelpText(
 					"after",
 					"\nExamples:\n  warden batch ios --count 3 --jobs a,b,c,d -- bun e2e --spec {job} --device {udid}\n  warden batch e2e --count 2    # batches.e2e from warden.config.ts, --count overridden"

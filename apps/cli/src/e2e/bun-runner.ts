@@ -98,6 +98,8 @@ export type SpecEnvOptions = {
 	a11yAudit?: A11yAuditConfig | undefined;
 	/** iOS apps launch with the injected library (`WARDEN_A11Y=1`) */
 	a11y?: boolean | undefined;
+	/** the Keychain ACL shim on (`WARDEN_KEYCHAIN_ACL=1`) or off (`=0`) for every spec; absent = leave it as the device has it */
+	keychainAcl?: boolean | undefined;
 	/** the suite's `camera` with absolute paths (`WARDEN_CAMERA_FEEDS`): fed before each spec's first `app.open()` */
 	cameraFeeds?: CameraSuiteFeeds | undefined;
 };
@@ -132,6 +134,7 @@ export function specEnv(o: SpecEnvOptions): Record<string, string> {
 		...(o.a11yAudit === undefined ? {} : { [ENV_NAMES.a11yAudit]: JSON.stringify(o.a11yAudit) }),
 		...(o.devClientScheme === undefined ? {} : { [ENV_NAMES.devClientScheme]: o.devClientScheme }),
 		...(o.a11y === true ? { [ENV_NAMES.a11y]: "1" } : {}),
+		...(o.keychainAcl === undefined ? {} : { [ENV_NAMES.keychainAcl]: o.keychainAcl ? "1" : "0" }),
 		...(o.cameraFeeds === undefined || Object.keys(o.cameraFeeds).length === 0
 			? {}
 			: { [ENV_NAMES.cameraFeeds]: JSON.stringify(o.cameraFeeds) }),

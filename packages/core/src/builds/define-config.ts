@@ -342,6 +342,13 @@ export interface WardenBatchPreset {
 	 */
 	biometrics?: boolean | undefined;
 	/**
+	 * iOS simulators: an app's Keychain items behind `SecAccessControl` (Face ID / Touch ID / passcode) prompt on read
+	 * like on a device, through the Keychain ACL shim in the injected dylib. It emulates the prompt and the error codes;
+	 * real enforcement is verified on a physical device. Pair it with `biometrics: true`. Overrides the top-level
+	 * `keychainAcl`. Default false.
+	 */
+	keychainAcl?: boolean | undefined;
+	/**
 	 * What happens to the state of the devices of this run when they are released: `"erase"` (iOS: shutdown +
 	 * `simctl erase`; Android: uninstalls the third-party apps), `"uninstall"` (removes the user-installed apps) or
 	 * `"none"`. Only warden-created simulators and emulators are reclaimed, never foreign, golden or physical
@@ -795,6 +802,13 @@ export interface WardenE2eSuite {
 	 */
 	biometrics?: boolean | undefined;
 	/**
+	 * iOS simulators: an app's Keychain items behind `SecAccessControl` (Face ID / Touch ID / passcode) prompt on read
+	 * like on a device, through the Keychain ACL shim in the injected dylib. It emulates the prompt and the error codes;
+	 * real enforcement is verified on a physical device. Pair it with `biometrics: true`. Overrides the top-level
+	 * `keychainAcl`. Default false.
+	 */
+	keychainAcl?: boolean | undefined;
+	/**
 	 * iOS: simulators the run creates are cloned from a golden image (a first-booted, settled simulator built once
 	 * per profile and runtime). Off: each is a fresh `simctl create` and first boot, and `warden ci cache --suite`
 	 * prints no golden group. Existing pool devices are reused either way; `WARDEN_GOLDEN=0` turns it off everywhere.
@@ -870,6 +884,13 @@ export interface WardenConfig {
 	 * override it. Default false.
 	 */
 	biometrics?: boolean | undefined;
+	/**
+	 * iOS simulators: an app's Keychain items behind `SecAccessControl` (Face ID / Touch ID / passcode) prompt on read
+	 * like on a device, through the Keychain ACL shim in the injected dylib. It emulates the prompt and the error codes;
+	 * real enforcement is verified on a physical device. Pair it with `biometrics: true`. `e2e` suites and `batches`
+	 * presets override it. Default false.
+	 */
+	keychainAcl?: boolean | undefined;
 	/**
 	 * What happens to the state of the devices of this run when they are released: `"erase"` (iOS: shutdown +
 	 * `simctl erase`; Android: uninstalls the third-party apps), `"uninstall"` (removes the user-installed apps) or

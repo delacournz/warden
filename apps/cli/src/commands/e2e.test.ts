@@ -703,6 +703,29 @@ describe("warden e2e", () => {
 			expect(g.jobs()[0]?.opts.env.WARDEN_A11Y).toBeUndefined();
 		});
 
+		test("the suite's keychainAcl (over the top-level one) is WARDEN_KEYCHAIN_ACL on iOS; --keychain-acl / --no-keychain-acl win", async () => {
+			await resuite({ keychainAcl: false }, { keychainAcl: true });
+			const suite = setup(["--files", "src/chat/lazy.tsx"]);
+			const h = harness();
+			expect(await createE2eCommand(h.deps).run(suite)).toBe(0);
+			expect(h.jobs()[0]?.opts.env.WARDEN_KEYCHAIN_ACL).toBe("0");
+			const on = setup(["--files", "src/chat/lazy.tsx", "--keychain-acl"]);
+			const g = harness();
+			expect(await createE2eCommand(g.deps).run(on)).toBe(0);
+			expect(g.jobs()[0]?.opts.env.WARDEN_KEYCHAIN_ACL).toBe("1");
+		});
+
+		test("no keychainAcl anywhere, no WARDEN_KEYCHAIN_ACL; --no-keychain-acl sends 0", async () => {
+			const plain = setup(["--files", "src/chat/lazy.tsx"]);
+			const h = harness();
+			expect(await createE2eCommand(h.deps).run(plain)).toBe(0);
+			expect(h.jobs()[0]?.opts.env.WARDEN_KEYCHAIN_ACL).toBeUndefined();
+			const off = setup(["--files", "src/chat/lazy.tsx", "--no-keychain-acl"]);
+			const g = harness();
+			expect(await createE2eCommand(g.deps).run(off)).toBe(0);
+			expect(g.jobs()[0]?.opts.env.WARDEN_KEYCHAIN_ACL).toBe("0");
+		});
+
 		test("no conditions, no WARDEN_CONDITIONS", async () => {
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
 			const h = harness();

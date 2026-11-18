@@ -63,3 +63,35 @@ export function neutralizeInjectState(path: string, area?: ConditionArea): strin
 		return `reset ${path}: ${error instanceof Error ? error.message : String(error)}`;
 	}
 }
+
+/**
+ * The Keychain ACL shim is per lease, and `warden ui open --keychain-acl` / `warden dev --keychain-acl` switch it on
+ * without a condition record, so every release of an iOS device lease calls this (not only `neutralizeInjectState`'s
+ * condition undo): an `enabled: true` switch goes off with a higher `seq` (a still-running app turns its gate off,
+ * the next lease launches plain), everything else in the file kept. Nothing to do: no file, unreadable, never on.
+ * Returns an error message, or undefined.
+ */
+export function switchOffKeychainAcl(path: string): string | undefined {
+	if (!existsSync(path)) return undefined;
+	let data: Record<string, unknown>;
+	try {
+		const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
+		if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return undefined;
+		data = parsed as Record<string, unknown>;
+	} catch {
+		return undefined;
+	}
+	const acl = data.keychainAcl;
+	if (typeof acl !== "object" || acl === null || Array.isArray(acl) || !("enabled" in acl) || acl.enabled !== true) {
+		return undefined;
+	}
+	const seq = typeof data.seq === "number" ? data.seq : 0;
+	try {
+		const tmp = `${path}.${process.pid}.tmp`;
+		writeFileSync(tmp, JSON.stringify({ ...data, seq: seq + 1, keychainAcl: { ...acl, enabled: false } }));
+		renameSync(tmp, path);
+		return undefined;
+	} catch (error) {
+		return `switch the Keychain ACL shim off in ${path}: ${error instanceof Error ? error.message : String(error)}`;
+	}
+}

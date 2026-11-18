@@ -19,6 +19,7 @@ import { PRIORITY } from "@delacour/warden-core/queue";
 import { devKeepsSim } from "@delacour/warden-core/shutdown-policy";
 import { wardenHome } from "@delacour/warden-core/store";
 import type { Lease, Owner, Platform } from "@delacour/warden-core/types";
+import { isPhysicalIosId } from "@delacour/warden-core/types";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { stopHelperAfter } from "../agent-ui/stop-helper-after";
 import { maybeAutoGc } from "../autogc";
@@ -79,6 +80,7 @@ import { providerFor } from "../providers";
 import { revealSimWindow } from "../sim-windows";
 import { withSpinner } from "../spinner-context";
 import type { Spinner } from "../ui";
+import { currentBuild } from "../update/build-info";
 import { defaultAppDeps, type EnsureOptions, ensureAppFor, projectStart } from "./app";
 import { registerDevControl } from "./dev-control";
 import { registerDevLogs } from "./dev-logs";
@@ -153,6 +155,8 @@ type DevOpts = ClaimFlagValues & {
 	hudInterval: string;
 	/** false = `--no-shutdown`: leave the sim dev leased booted when dev ends */
 	shutdown: boolean;
+	/** `--keychain-acl` / `--no-keychain-acl`: the iOS simulator's Keychain ACL shim on / off (undefined: as the device has it) */
+	keychainAcl?: boolean;
 };
 
 /** What `selectDevUi` reads from the options; `hud` is validated (the interval is at least 200 ms). */
@@ -506,6 +510,43 @@ async function openHeldSession(
 }
 
 /**
+ * The Keychain ACL shim for `warden dev`'s raw `simctl launch` (it never goes through the driver): `keychainAcl`, else
+ * what the device's inject state says, read again before every launch so a `warden ui open --keychain-acl` in between
+ * is kept. On a simulator: the `SIMCTL_CHILD_*` env that loads the dylib with the shim; a phone enforces ACLs itself.
+ */
+async function keychainAclLaunchEnv(
+	ctx: CommandContext,
+	udid: string,
+	keychainAcl: boolean | undefined
+): AsyncResult<Record<string, string>> {
+	if (isPhysicalIosId(udid)) {
+		if (keychainAcl === true)
+			warn(ctx, `warden dev: --keychain-acl ignored on ${udid}: a physical device enforces ACLs itself`);
+		return ok({});
+	}
+	const [{ createInjectChannel, injectStatePath, locateInjectDylibFor, nodeInjectFs }, { rawLaunchKeychainAcl }] =
+		await Promise.all([
+			import("@delacour/warden-e2e/driver/ios/inject"),
+			import("@delacour/warden-e2e/driver/ios/ios-keychain-acl"),
+		]);
+	const home = wardenHome(ctx.env);
+	const channel = createInjectChannel({
+		statePath: injectStatePath(home, udid),
+		now: ctx.now,
+		sleep: (ms) => Bun.sleep(ms),
+	});
+	const version = currentBuild().version;
+	const launch = rawLaunchKeychainAcl({
+		channel,
+		fs: nodeInjectFs,
+		enabled: keychainAcl,
+		dylib: () => locateInjectDylibFor({ env: ctx.env, wardenHome: home, version }),
+	});
+	if (!launch.success) return err(`--keychain-acl: ${launch.error.message}`);
+	return ok(launch.data.env);
+}
+
+/**
  * Point the dev client on `deviceId` at Metro. iOS: relaunch it with `--initialUrl` (`simctl openurl`
  * raises an "Open in …?" alert), which needs no scheme; Android: `adb reverse` first, so 127.0.0.1
  * reaches the host, then the dev-client deep link (the only use of `scheme`).
@@ -516,10 +557,14 @@ async function openDevClient(
 	deviceId: string,
 	project: Project,
 	scheme: SchemeOf,
-	port: number
+	port: number,
+	keychainAcl: boolean | undefined
 ): AsyncResult<void> {
+	const launchEnv = platform === "ios" ? await keychainAclLaunchEnv(ctx, deviceId, keychainAcl) : ok({});
+	if (!launchEnv.success) return launchEnv;
+	const env = launchEnv.data;
 	const run = async (argv: string[]): AsyncResult<void> => {
-		const res = await ctx.exec(argv);
+		const res = await ctx.exec(argv, Object.keys(env).length > 0 && argv[1] === "simctl" ? { env } : undefined);
 		return res.exitCode === 0
 			? ok(undefined)
 			: err(`${argv.join(" ")}: ${res.stderr.trim() || `exit ${res.exitCode}`}`);
@@ -674,7 +719,8 @@ function devActions(ui: DevUi, deps: DevDeps, opts: DevOpts, r: Running, swap: M
 	const ctx = ui.ctx;
 	const { deviceId, port } = r.session;
 	return {
-		openClient: (log) => openDevClient(scopedCtx(ctx, log), r.platform, deviceId, r.project, r.scheme, port),
+		openClient: (log) =>
+			openDevClient(scopedCtx(ctx, log), r.platform, deviceId, r.project, r.scheme, port, opts.keychainAcl),
 		reinstall: async (log) => {
 			const ensured = await deps.ensureApp(scopedCtx(ctx, log), r.owner, r.platform, deviceId, {
 				...r.app,
@@ -882,7 +928,7 @@ async function runMetro(ui: DevUi, deps: DevDeps, opts: DevOpts, r: Running): Pr
 		unregister = registerDevSession(ctx, deps, r, metro.data.url);
 		if (opts.open) {
 			const clientTask = ui.task("client", "dev client");
-			const opened = await openDevClient(ctx, r.platform, deviceId, r.project, r.scheme, port);
+			const opened = await openDevClient(ctx, r.platform, deviceId, r.project, r.scheme, port, opts.keychainAcl);
 			if (opened.success) {
 				clientTask.ok(metro.data.url);
 				note(ctx, `warden dev: opened the dev client on ${deviceId} at ${metro.data.url}`);
@@ -1324,6 +1370,11 @@ export function createDevCommand(deps: DevDeps): Command {
 					"--devtools",
 					"start the CDP devtools broker with the session (default off: `warden dev enable devtools`)"
 				)
+				.option(
+					"--keychain-acl",
+					"iOS simulator: Keychain items with access control prompt for Face ID / passcode on read, like a phone (kept for the device)"
+				)
+				.option("--no-keychain-acl", "turn the Keychain ACL shim off for the device")
 				.option("--no-open", "don't open the dev client (Metro + the leases only)")
 				.option(
 					"--no-tui",

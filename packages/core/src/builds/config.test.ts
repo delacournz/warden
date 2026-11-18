@@ -142,6 +142,20 @@ describe("parseWardenConfig", () => {
 		expect(parsed.data.e2e?.s?.biometrics).toBe(false);
 	});
 
+	test("keychainAcl: a boolean at the top level, on an e2e suite and on a batch preset; the suite's own wins", () => {
+		const suite = { specsDir: "specs" };
+		expect(parseWardenConfig({ keychainAcl: true, e2e: { s: suite } }).success).toBe(true);
+		expect(parseWardenConfig({ e2e: { s: { ...suite, keychainAcl: true } } }).success).toBe(true);
+		expect(parseWardenConfig({ batches: { b: { platform: "ios", cmd: ["true"], keychainAcl: true } } }).success).toBe(
+			true
+		);
+		expect(parseWardenConfig({ keychainAcl: "on", e2e: { s: suite } }).success).toBe(false);
+		const parsed = parseWardenConfig({ keychainAcl: true, e2e: { s: { ...suite, keychainAcl: false } } });
+		if (!parsed.success) throw new Error(parsed.error);
+		expect(parsed.data.keychainAcl).toBe(true);
+		expect(parsed.data.e2e?.s?.keychainAcl).toBe(false);
+	});
+
 	test("e2e suite run settings: metro, isolate, jobTimeoutMs and device legs, with defaults", () => {
 		const suite = { specsDir: "specs" };
 		const parse = (extra: Record<string, unknown>) => parseWardenConfig({ e2e: { s: { ...suite, ...extra } } });

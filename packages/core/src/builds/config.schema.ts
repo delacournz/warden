@@ -179,6 +179,8 @@ export const wardenConfigSchema = z
 		slim: topLevelSlimSchema.optional(),
 		/** devices warden creates have a fingerprint / Face ID enrolled (own golden, own pool); `e2e` suites and `batches` presets override it */
 		biometrics: z.boolean().optional(),
+		/** iOS simulators: Keychain reads of access-controlled items prompt like a device (the Keychain ACL shim); `e2e` suites and `batches` presets override it */
+		keychainAcl: z.boolean().optional(),
 		/** what happens to a warden device's state when its lease ends (default `none`); `e2e` suites and `batches` presets override it, `WARDEN_RECLAIM` is the fallback below */
 		reclaim: reclaimSchema.optional(),
 		/** perf budgets every `e2e` suite starts from (a suite's own `perf.budgets` replace them per key) */

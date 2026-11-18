@@ -74,6 +74,7 @@ function physicalIssues(suite: {
 	slim?: unknown;
 	headless?: boolean | undefined;
 	biometrics?: boolean | undefined;
+	keychainAcl?: boolean | undefined;
 	conditions?: unknown;
 	camera?: unknown;
 }): Array<{ message: string; path: string[] }> {
@@ -87,6 +88,11 @@ function physicalIssues(suite: {
 		issues.push({
 			message: "biometrics cannot be used with physical devices (use a simulator or emulator suite)",
 			path: ["biometrics"],
+		});
+	if (suite.keychainAcl === true)
+		issues.push({
+			message: "the Keychain ACL shim is for iOS simulators; a physical device enforces ACLs itself",
+			path: ["keychainAcl"],
 		});
 	if (suite.conditions !== undefined)
 		issues.push({
@@ -253,6 +259,8 @@ export const e2eSuiteSchema = z
 		golden: z.boolean().optional(),
 		/** devices of this suite have a fingerprint / Face ID enrolled (own golden, own pool); overrides the top-level `biometrics` */
 		biometrics: z.boolean().optional(),
+		/** iOS simulators: Keychain reads of access-controlled items prompt like a device (the Keychain ACL shim); overrides the top-level `keychainAcl` */
+		keychainAcl: z.boolean().optional(),
 		/** `erase` | `uninstall` | `none`: reclaim the suite's devices when they are released; overrides the top-level `reclaim` */
 		reclaim: reclaimSchema.optional(),
 		/** removed: renamed `warmDrivers` */
