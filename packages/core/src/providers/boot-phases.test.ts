@@ -48,4 +48,10 @@ describe("bootPhaseClock", () => {
 		clock.advance(500);
 		expect(phases.summary()).toBe("0.5 s (backboard 0.5 s)");
 	});
+
+	test("a boot that took no time at all: the total, no empty list", () => {
+		const phases = bootPhaseClock(() => 42);
+		phases.line("Waiting on BackBoard");
+		expect(phases.summary()).toBe("0.0 s");
+	});
 });

@@ -5,7 +5,7 @@ export type BootPhase = { name: string; ms: number };
 export type BootPhaseClock = {
 	/** one line of bootstatus output; only `Waiting on <phase>` lines move the clock to a new phase */
 	line: (text: string) => void;
-	/** `<total> s (<phase> <s>, …)` up to now: phases that took no time are left out */
+	/** `<total> s (<phase> <s>, …)` up to now: phases that took no time are left out (no list when none took any) */
 	summary: () => string;
 };
 
@@ -34,7 +34,8 @@ export function bootPhaseClock(now: () => number): BootPhaseClock {
 		summary: () => {
 			const at = now();
 			const phases = [...done, { name: current.name, ms: at - current.since }].filter((p) => p.ms > 0);
-			return `${seconds(at - start)} (${phases.map((p) => `${p.name} ${seconds(p.ms)}`).join(", ")})`;
+			const total = seconds(at - start);
+			return phases.length === 0 ? total : `${total} (${phases.map((p) => `${p.name} ${seconds(p.ms)}`).join(", ")})`;
 		},
 	};
 }
