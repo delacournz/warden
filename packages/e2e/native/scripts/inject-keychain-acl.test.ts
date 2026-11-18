@@ -512,20 +512,48 @@ run("keychain acl: enrolment generation", () => {
 		await g.done();
 	});
 
-	test("the record survives a relaunch; no record is generation 0; a fresh inject dir (generation 0, no sidecar) reads normally", async () => {
+	test("the record survives a relaunch; a fresh inject dir (generation 0, no sidecar) reads normally", async () => {
 		const g = await gen(0);
 		await g.h.add({ items: ["currentSet"], acl: "currentSet" });
 		await g.set({ generation: 1 });
 		await g.relaunch();
 		expect((await g.h.run({ items: ["currentSet"], returnData: true })).status).toBe(-25300);
-		// never recorded (added before the dylib was loaded) = written at generation 0
-		rmSync(g.itemsPath);
-		const unknown = await g.h.run({ items: ["currentSet"], returnData: true });
-		expect([unknown.status, unknown.evals]).toEqual([-25300, []]);
 		// the lease dir deleted: generation 0 and no sidecar
+		rmSync(g.itemsPath);
 		await g.set({ generation: 0 });
 		const fresh = await g.h.run({ items: ["currentSet"], returnData: true });
 		expect([fresh.status, fresh.evals.map((e) => e.policy)]).toEqual([0, [BIO]]);
+		await g.done();
+	});
+
+	test("an item the shim never saw added is recorded at its first gated read: only a later re-enrolment invalidates it", async () => {
+		// a simulator re-enrolled in an earlier lease, and an item written while the shim was off (no record)
+		const g = await gen(3);
+		const first = await g.h.run({ items: ["currentSet"], returnData: true });
+		expect([first.status, first.evals.map((e) => e.policy)]).toEqual([0, [BIO]]);
+		expect(Object.values(g.records() ?? {})).toEqual([3]);
+		const again = await g.h.run({ items: ["currentSet"], returnData: true });
+		expect(again.status).toBe(0);
+		await g.set({ generation: 4 });
+		const after = await g.h.run({ items: ["currentSet"], returnData: true });
+		expect([after.status, after.evals]).toEqual([-25300, []]);
+		await g.done();
+	});
+
+	test("an unrecorded item first read at generation 0 is still invalidated by the next re-enrolment", async () => {
+		const g = await gen(0);
+		expect((await g.h.run({ items: ["currentSet"], returnData: true })).status).toBe(0);
+		expect(Object.values(g.records() ?? {})).toEqual([0]);
+		await g.set({ generation: 1 });
+		expect((await g.h.run({ items: ["currentSet"], returnData: true })).status).toBe(-25300);
+		await g.done();
+	});
+
+	test(".biometryAny and passcode items are never recorded by a read", async () => {
+		const g = await gen(2);
+		await g.h.run({ items: ["any"], returnData: true });
+		await g.h.run({ items: ["passcode"], returnData: true });
+		expect(g.records()).toBeUndefined();
 		await g.done();
 	});
 

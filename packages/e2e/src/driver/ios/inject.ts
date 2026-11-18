@@ -310,7 +310,6 @@ export function locateInjectDylib(input: LocateInjectInput): Result<string, Driv
 	return missing(`${INJECT_DYLIB} not found (tried ${tried.join(", ")})`);
 }
 
-/** File operations of the state channel, injected. */
 /**
  * `locateInjectDylib` from this module's own place in `@delacour/warden-e2e`, for a caller outside the driver that
  * launches an app itself (`warden dev`'s raw `simctl launch`): the same lookup the iOS driver does.
@@ -331,6 +330,7 @@ export function locateInjectDylibFor(o: {
 	});
 }
 
+/** File operations of the state channel, injected. */
 export type InjectFs = {
 	mkdir(path: string): void;
 	/** write `text` to `path` so a reader sees all of it or none (tmp + rename) */

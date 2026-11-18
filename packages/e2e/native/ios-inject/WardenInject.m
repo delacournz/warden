@@ -2593,7 +2593,8 @@ static void pk_apply(id passkeys) {
 // `SecItemAdd` of an item with `kSecAttrAccessControl` records `sha256(class|service|account|accessGroup|server|sync)
 // -> generation` in the sidecar at `keychainAcl.itemsPath` (`{"<hex>": n}`, atomic write; the dylib is its only
 // writer). The key comes from the item's attributes as the Keychain hands them back (a read-back after the add, the
-// probe on a read), so system-assigned `agrp` / `sync` match. A duplicate add leaves the record; no record = 0. A
+// probe on a read), so system-assigned `agrp` / `sync` match. A duplicate add leaves the record. An item with no
+// record (written while the shim was off) is recorded at the current generation on its first gated read. A
 // `.biometryCurrentSet` item recorded below the current generation reads like a device whose Face ID set changed:
 //   no passcode path                     -> -25300 errSecItemNotFound, no prompt
 //   a passcode path (`.or .devicePasscode`) -> .deviceOwnerAuthentication (2) only, an evaluated context does not count
@@ -2785,20 +2786,47 @@ static NSMutableDictionary *kacl_read_records(NSString *path) {
   return [json isKindOfClass:[NSDictionary class]] ? [json mutableCopy] : [NSMutableDictionary dictionary];
 }
 
-/** The generation item `attrs` was recorded at; no sidecar or no record = 0. */
-static long kacl_recorded_generation(NSDictionary *attrs) {
+/** Write `key` at `generation` into the sidecar; nothing without an `itemsPath`. */
+static void kacl_write_record(NSString *key, long generation) {
   os_unfair_lock_lock(&g_kacl_lock);
   NSString *path = g_kacl_items_path;
-  id value = path ? kacl_read_records(path)[kacl_item_key(attrs)] : nil;
+  if (path) {
+    NSMutableDictionary *records = kacl_read_records(path);
+    records[key] = @(generation);
+    NSData *json = [NSJSONSerialization dataWithJSONObject:records options:0 error:nil];
+    // atomically: a temp file in the same directory, then rename (a reader never sees half a file)
+    if (![json writeToFile:path atomically:YES]) DLOG("keychain acl: cannot write %s", path.UTF8String);
+  }
   os_unfair_lock_unlock(&g_kacl_lock);
-  return [value respondsToSelector:@selector(longValue)] ? [value longValue] : 0;
 }
 
-/** A `.biometryCurrentSet` item from before the latest re-enrolment. */
+/** Whether item `key` has a record, and its generation in `*generation`; no sidecar or no record = NO. */
+static BOOL kacl_recorded_generation(NSString *key, long *generation) {
+  os_unfair_lock_lock(&g_kacl_lock);
+  NSString *path = g_kacl_items_path;
+  id value = path ? kacl_read_records(path)[key] : nil;
+  os_unfair_lock_unlock(&g_kacl_lock);
+  if (![value respondsToSelector:@selector(longValue)]) return NO;
+  *generation = [value longValue];
+  return YES;
+}
+
+/**
+ * A `.biometryCurrentSet` item from before the latest re-enrolment. An item with no record was written while the shim
+ * was off (or before the dylib loaded): it is recorded now, at the current generation, so only a re-enrolment after
+ * the shim first saw it invalidates it, never one from an earlier lease on the same simulator.
+ */
 static BOOL kacl_invalidated(KaclAcl acl, NSDictionary *attrs) {
   if (acl.biometry != KACL_BIO_CURRENT_SET) return NO;
   long current = atomic_load(&g_kacl_generation);
-  return current > 0 && kacl_recorded_generation(attrs) < current;
+  NSString *key = kacl_item_key(attrs);
+  long recorded = 0;
+  if (!kacl_recorded_generation(key, &recorded)) {
+    kacl_write_record(key, current);
+    DLOG("keychain acl: first saw item %s, recorded at generation %ld", key.UTF8String, current);
+    return NO;
+  }
+  return recorded < current;
 }
 
 /** Record the item the app just added (read back for its stored attributes) at the current generation. */
@@ -2816,16 +2844,7 @@ static void kacl_record_add(NSDictionary *added) {
   NSDictionary *attrs = [stored isKindOfClass:[NSDictionary class]] ? stored : added;
   NSString *key = kacl_item_key(attrs);
   long generation = atomic_load(&g_kacl_generation);
-  os_unfair_lock_lock(&g_kacl_lock);
-  NSString *path = g_kacl_items_path;
-  if (path) {
-    NSMutableDictionary *records = kacl_read_records(path);
-    records[key] = @(generation);
-    NSData *json = [NSJSONSerialization dataWithJSONObject:records options:0 error:nil];
-    // atomically: a temp file in the same directory, then rename (a reader never sees half a file)
-    if (![json writeToFile:path atomically:YES]) DLOG("keychain acl: cannot write %s", path.UTF8String);
-  }
-  os_unfair_lock_unlock(&g_kacl_lock);
+  kacl_write_record(key, generation);
   DLOG("keychain acl: recorded item %s at generation %ld", key.UTF8String, generation);
 }
 

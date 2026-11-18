@@ -31,7 +31,7 @@ afterEach(() => {
 	rmSync(dir, { recursive: true, force: true });
 });
 
-const opts = (claim: boolean) => ({ now, pidAlive: () => alive, claim, label: "warden ui" });
+const opts = (claim: boolean) => ({ now, pidAlive: () => alive, claim, label: "warden ui", home: dir });
 
 describe("ensureCallerLease", () => {
 	test("own lease: heartbeat", () => {
@@ -72,6 +72,44 @@ describe("ensureCallerLease", () => {
 		const res = ensureCallerLease(store, me, "ios", UDID, opts(true));
 		expect(res.success && res.data.action).toBe("reclaimed");
 		expect(store.findLeaseByResource(resource)?.owner).toEqual(me);
+	});
+
+	describe("the Keychain ACL shim a previous holder left on", () => {
+		const shimOn = () => {
+			const path = injectStatePath(dir, UDID);
+			mkdirSync(join(dir, "inject", UDID), { recursive: true });
+			writeFileSync(path, JSON.stringify({ seq: 2, keychainAcl: { enabled: true, generation: 1, itemsPath: "i" } }));
+			return path;
+		};
+		const shim = (path: string) => JSON.parse(readFileSync(path, "utf8"));
+
+		test("a stale lease taken over with claim: switched off, generation kept", () => {
+			const path = shimOn();
+			store.insertLease({ resource, owner: other, ttlMs: 1000 }, now);
+			now += 5000;
+			const res = ensureCallerLease(store, me, "ios", UDID, opts(true));
+			expect(res.success && res.data.action).toBe("reclaimed");
+			expect(shim(path)).toEqual({ seq: 3, keychainAcl: { enabled: false, generation: 1, itemsPath: "i" } });
+		});
+
+		test("no lease, leased with claim: switched off", () => {
+			const path = shimOn();
+			const res = ensureCallerLease(store, me, "ios", UDID, opts(true));
+			expect(res.success && res.data.action).toBe("leased");
+			expect(shim(path).keychainAcl.enabled).toBe(false);
+		});
+
+		test("the caller's own lease keeps it on; a refused takeover touches nothing", () => {
+			const path = shimOn();
+			store.insertLease({ resource, owner: me, ttlMs: DEFAULT_TTL_MS }, now);
+			expect(ensureCallerLease(store, me, "ios", UDID, opts(true)).success).toBe(true);
+			expect(shim(path).keychainAcl.enabled).toBe(true);
+			store.deleteLeases(store.listLeases().map((l) => l.id));
+			store.insertLease({ resource, owner: other, ttlMs: 1000 }, now);
+			now += 5000;
+			expect(ensureCallerLease(store, me, "ios", UDID, opts(false)).success).toBe(false);
+			expect(shim(path)).toEqual({ seq: 2, keychainAcl: { enabled: true, generation: 1, itemsPath: "i" } });
+		});
 	});
 
 	test("foreign lease with a live pid stays foreign", () => {

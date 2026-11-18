@@ -1,4 +1,5 @@
 import { isLeaseAlive, type PidAlive, processAlive } from "@delacour/warden-core/liveness";
+import { wardenHome } from "@delacour/warden-core/store";
 import { describeOwner, type Lease, type Owner, type Platform, sameOwner } from "@delacour/warden-core/types";
 import { ok, type Result } from "@delacour/warden-types/result";
 import type { UiDeviceFlags, UiDeviceSource } from "../agent-ui/device";
@@ -221,6 +222,8 @@ function leaseForMutation(
 		claim: flags.claim === true,
 		label: PERF_LEASE_LABEL,
 		name: device.name,
+		home: wardenHome(ctx.env),
+		onNote: (note) => ctx.err(`warden: ${note}`),
 		...(pid !== undefined ? { pid } : {}),
 		exclusive: flags.force !== true,
 	});
