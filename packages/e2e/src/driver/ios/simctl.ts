@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { nodeResetFs, type ResetFs, resetAppData } from "@delacour/warden-core/builds/install";
 import type { LatLon, LocationCondition } from "@delacour/warden-core/conditions/conditions.types";
 import { type Exec, type ExecResult, execError } from "@delacour/warden-core/exec";
+import { binaryPlistFlags, plistBool } from "@delacour/warden-core/plist";
 import { formatCoord } from "../../conditions/geo";
 import { loadGpxPoints } from "../../conditions/location-plan";
 import { IOS_SCENARIO_NAMES } from "../../conditions/location-scenarios.data";
@@ -154,7 +155,7 @@ export const defaultDevicesRoot = (): string => join(homedir(), "Library", "Deve
 export const automationPlistPath = (devicesRoot: string, udid: string): string =>
 	join(devicesRoot, udid, "data", "Library", "Preferences", "com.apple.Accessibility.plist");
 
-/** `plutil -extract AutomationEnabled raw -o - <plist>` prints `true` once the default is written. */
+/** `plutil -extract AutomationEnabled raw -o - <plist>` prints `true` (or `1`) once the default is written. */
 export const automationReadArgv = (plist: string): string[] => [
 	"plutil",
 	"-extract",
@@ -391,11 +392,26 @@ export type Simctl = {
 const ok = <T>(data: T) => ({ success: true as const, data });
 const fail = (error: DriverError) => ({ success: false as const, error });
 
+/** A plist flag as a boolean: `true` / `1` on, `false` / `0` off, absent or anything else unknown. */
+const flagBool = (value: boolean | number | undefined): boolean | undefined =>
+	value === undefined ? undefined : plistBool(String(value));
+
 export function createSimctl(deps: SimctlDeps): Simctl {
 	const { udid, exec } = deps;
 	const env = deps.env ?? {};
 	const readText = async (path: string): Promise<string> =>
 		new TextDecoder().decode(await (deps.readFile ?? ((p: string) => readFile(p)))(path));
+
+	/** A sim prefs plist's top-level flags read in-process (~0.1 ms); `undefined` (ask plutil) when not a readable binary plist. */
+	const readPlistFlags = async (path: string): Promise<Map<string, boolean | number> | undefined> => {
+		const bytes = await (deps.readFile ?? ((p: string) => readFile(p)))(path).catch(() => undefined);
+		return bytes === undefined ? undefined : binaryPlistFlags(bytes);
+	};
+	/** One key through `plutil -extract … raw` (~10 ms a spawn), for a plist the in-process reader cannot read. */
+	const plutilBool = async (argv: string[]): Promise<boolean | undefined> => {
+		const read = await exec(argv, { timeoutMs: PLIST_READ_MS }).catch(() => undefined);
+		return read?.exitCode === 0 ? plistBool(read.stdout) : undefined;
+	};
 
 	async function run(argv: string[], timeoutMs: number, appCommand = false, envOverride?: Record<string, string>) {
 		const res = await exec(argv, { timeoutMs, ...(envOverride ? { env: envOverride } : {}) });
@@ -554,16 +570,16 @@ export function createSimctl(deps: SimctlDeps): Simctl {
 		enableAutomation: async () => {
 			// the default survives helper and sim restarts, so after the first open it is already there
 			const plist = automationPlistPath(deps.devicesRoot ?? defaultDevicesRoot(), udid);
-			const current = await exec(automationReadArgv(plist), { timeoutMs: PLIST_READ_MS }).catch(() => undefined);
-			if (current?.exitCode === 0 && current.stdout.trim() === "true") return ok(undefined);
+			const flags = await readPlistFlags(plist);
+			const on = flags ? flagBool(flags.get("AutomationEnabled")) : await plutilBool(automationReadArgv(plist));
+			if (on === true) return ok(undefined);
 			return runVoid(automationArgv(udid));
 		},
 		disableTypingAids: async () => {
 			const plist = keyboardPlistPath(deps.devicesRoot ?? defaultDevicesRoot(), udid);
-			const isOff = async (key: TypingAidKey): Promise<boolean> => {
-				const read = await exec(plistBoolReadArgv(plist, key), { timeoutMs: PLIST_READ_MS }).catch(() => undefined);
-				return read?.exitCode === 0 && read.stdout.trim() === "false";
-			};
+			const flags = await readPlistFlags(plist);
+			const isOff = async (key: TypingAidKey): Promise<boolean> =>
+				(flags ? flagBool(flags.get(key)) : await plutilBool(plistBoolReadArgv(plist, key))) === false;
 			const off = await Promise.all(TYPING_AID_KEYS.map(isOff));
 			const on = TYPING_AID_KEYS.filter((_, i) => !off[i]);
 			const writes = await Promise.all(on.map((key) => runVoid(typingAidOffArgv(udid, key))));
