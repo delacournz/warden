@@ -35,7 +35,7 @@ describe("simulatorBuildCommand", () => {
 		// expo run:ios drops SKIP_BUNDLING for a Release simulator build, bundles eagerly and installs on a simulator
 		expect(cmd).not.toContain("expo run:ios");
 		expect(cmd).toContain("RCT_NO_LAUNCH_PACKAGER=1 SKIP_BUNDLING=1 xcodebuild");
-		expect(cmd).toContain('-workspace "$ws" -scheme "${ws%.xcworkspace}" -configuration Release');
+		expect(cmd).toContain(`-workspace "$ws" -scheme "\${ws%.xcworkspace}" -configuration Release`);
 		expect(cmd).toContain('-sdk iphonesimulator -destination "generic/platform=iOS Simulator"');
 		expect(cmd).toContain(`-derivedDataPath ${IOS_BUILD_DERIVED_DATA}`);
 		expect(cmd).toContain('ARCHS="$(uname -m)"');
