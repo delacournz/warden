@@ -149,7 +149,7 @@ Line: `@eN [role] "name" id=<testID> value="..." placeholder="..." <states> (x,y
 `warden ui biometrics enroll` → app prompts → `warden ui biometrics match` (or `fail`). Simulators and emulators only; a physical device or a non-`emulator-*` serial fails `failed`, `details.driver: E_UNSUPPORTED`.
 
 - iOS: `enroll` / `unenroll` / `match` / `fail` all work; modality is Face ID or Touch ID by device model. Enrollment is lost on reboot. Enroll before the app is installed or launched: a new enrollment invalidates keys bound to the current biometry set. The first prompt per app shows "Allow X to use Face ID?": `warden ui alert accept`.
-- `warden ui biometrics reenroll` (iOS): with the Keychain ACL shim on, `.biometryCurrentSet` items written before it read `-25300` (or ask for the passcode when their ACL has `.or .devicePasscode`), like a phone after a face is re-added. Destructive for those items: enrol before the app writes them.
+- `warden ui biometrics reenroll` (iOS): with the Keychain ACL shim on, `.biometryCurrentSet` items written before it read `-25300` (an `.or .devicePasscode` item stays readable: Face ID first on a simulator, a match opens it; a phone takes only the passcode), like a phone after a face is re-added. Destructive for those items: enrol before the app writes them.
 - Android: fingerprint only. `match` / `fail` / `status` work; `enroll` / `unenroll` / `reenroll` fail `E_UNSUPPORTED` (enrollment is baked into the `+bio` golden snapshot: claim with `--biometrics`, see suites.md).
 - Never add an app-side bypass: drive the real `LAContext` / `BiometricPrompt` flow.
 

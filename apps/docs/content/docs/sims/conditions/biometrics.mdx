@@ -48,7 +48,7 @@ warden ui open com.example.app --no-keychain-acl --udid $UDID
 ## Practice
 
 - Enroll before the app is installed or launched: a new enrollment invalidates keys bound to the current biometry set.
-- iOS can show "Allow X to use Face ID?" before the first prompt of an install (an iOS 27.2 simulator did not): answer it with `warden ui alert accept` when `alert get` shows it.
-- After `fail`, `match` works straight from the "Face Not Recognized" sheet; "Try Face ID Again" brings the same sheet back on a simulator. Home while the prompt is up ends it with `system_cancel`. The passcode sheet (no face enrolled, device fallback on) takes any code: `warden ui fill 'id="Passcode field"' 1111 --secure`, `warden ui key Enter`.
+- iOS can show "Allow X to use Face ID?" before the first prompt of an install: answer it with `warden ui alert accept` when `alert get` shows it.
+- After `fail`, `match` works straight from the "Face Not Recognized" sheet; after "Try Face ID Again" the sheet stays up on a simulator. Home while the prompt is up ends it with `system_cancel`. The passcode sheet (no face enrolled, device fallback on) takes any code: `warden ui fill 'id="Passcode field"' 1111 --secure`, `warden ui key Enter`.
 
 Errors and fixes are in [Debugging](/docs/e2e/debugging).

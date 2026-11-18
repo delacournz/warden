@@ -58,7 +58,7 @@ iOS simulators only: a physical iPhone or iPad enforces access control itself, a
 | Face ID sheet → `fail()` → Cancel | `errSecUserCanceled` (-128) | 0 and the data |
 | `kSecUseAuthenticationContext` with `interactionNotAllowed = true` | `errSecInteractionNotAllowed` (-25308), no sheet | 0 and the data |
 | `.biometryCurrentSet` / `.biometryAny` only, no face enrolled | `errSecItemNotFound` (-25300), no sheet | 0 and the data |
-| `.biometryCurrentSet` written before `reenroll()` | -25300 with no passcode path; the passcode sheet with `.or .devicePasscode` | 0 and the data |
+| `.biometryCurrentSet` written before `reenroll()` | -25300 with no passcode path; with `.or .devicePasscode` the read falls back to Face ID or passcode: the simulator shows the Face ID sheet first and a match opens it (a phone would take only the passcode); with no face enrolled, the passcode sheet | 0 and the data |
 | `.or .devicePasscode`, no face enrolled | the passcode sheet; any code is accepted | 0 and the data |
 | a context the app already evaluated (`evaluatePolicy` succeeded) | 0 with no second sheet | 0 and the data |
 
@@ -107,7 +107,7 @@ The shim emulates the prompt and the error codes; real enforcement is verified o
 | Cancel → -128, no UI allowed → -25308, no usable biometry for a biometry-only item → -25300 | yes: the codes a phone is expected to return, from the SDK headers | the exact codes per iOS version |
 | A face that does not match | the "Face Not Recognized" sheet stays up until Cancel or Try Face ID Again; Cancel → -128 | -25293, or the passcode keypad |
 | `.biometryCurrentSet` invalidated by an enrolment change | yes, through warden's enrolment generation (`reenroll()`) | a real change of the enrolment state |
-| `.or .devicePasscode` still readable after the change | the passcode sheet; the simulator accepts any code | the real passcode check |
+| `.or .devicePasscode` still readable after the change | yes, but the simulator shows the Face ID sheet first and a match opens it; the passcode sheet only with no face enrolled, and it accepts any code | only the passcode opens it, and only the right one |
 | Lockout after repeated failures | not reachable on a simulator | yes |
 | Passcode entry after a face that did not match | not reachable: the simulator's sheet never offers it | yes |
 | An `LAContext` forged to report success | not detectable: the shim trusts `evaluatePolicy` | bypass resistance |
@@ -122,8 +122,8 @@ The shim emulates the prompt and the error codes; real enforcement is verified o
 ## Practice
 
 - Write the item after the app is installed and Face ID is enrolled (`biometrics: true` enrols before install). Delete it at the start of a journey: simulator Keychain items survive a reinstall.
-- iOS can ask "Allow … to use Face ID?" before the first sheet of an install (an iOS 27.2 simulator did not): `device.alert("accept")` answers it when it is there and returns `false` when it is not.
-- A presentation sent just as the sheet comes up can be dropped: send it again when nothing changed. After `fail()`, `match()` works straight from the "Face Not Recognized" sheet; pressing "Try Face ID Again" brings the same sheet back on a simulator.
+- iOS can ask "Allow … to use Face ID?" before the first sheet of an install: `device.alert("accept")` answers it when it is there and returns `false` when it is not.
+- A presentation sent just as the sheet comes up can be dropped: send it again when nothing changed. After `fail()`, `match()` works straight from the "Face Not Recognized" sheet; after "Try Face ID Again" the sheet stays up on a simulator.
 - Run a negative control: the same spec in a suite with `keychainAcl: false` shows that the prompt comes from the shim, not from the app.
 
-The example app's Keychain screen (`warden-example://keychain`) and its `keychain-acl` and `keychain-acl-off` suites run every row of the table above. Errors and fixes are in [Debugging](/docs/e2e/debugging); Face ID itself is [Biometrics](/docs/e2e/conditions/biometrics).
+The example app's Keychain screen (`warden-example://keychain`) and its `keychain-acl` and `keychain-acl-off` suites run the table above on a simulator, except the already-evaluated context and the passcode sheet's Cancel. Errors and fixes are in [Debugging](/docs/e2e/debugging); Face ID itself is [Biometrics](/docs/e2e/conditions/biometrics).
