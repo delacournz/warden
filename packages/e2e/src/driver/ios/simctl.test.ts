@@ -5,6 +5,7 @@ import { type ExecCall, fakeExec, joined } from "./exec.testing";
 import {
 	appearanceArgv,
 	automationArgv,
+	biometricArgvs,
 	biometricEnrollArgvs,
 	biometricEventArgv,
 	biometricModalityOf,
@@ -99,6 +100,14 @@ describe("biometric argv and modality", () => {
 		expect(biometricStateArgv(UDID).join(" ")).toBe(
 			`xcrun simctl spawn ${UDID} notifyutil -g com.apple.BiometricKit.enrollmentChanged`
 		);
+	});
+
+	test("reenroll is unenroll then enroll: a new enrolment, like removing and adding a face", () => {
+		const join = (argvs: string[][]) => argvs.map((argv) => argv.join(" "));
+		expect(join(biometricArgvs(UDID, "face", "reenroll"))).toEqual([
+			...join(biometricEnrollArgvs(UDID, false)),
+			...join(biometricEnrollArgvs(UDID, true)),
+		]);
 	});
 
 	test("match and nomatch name the modality's notification", () => {

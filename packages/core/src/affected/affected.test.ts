@@ -171,6 +171,20 @@ describe("computeAffected", () => {
 		// builds two fresh fixture repos (git init + commit each): slow on a loaded CI host
 	}, 20_000);
 
+	test("suite.keychainAcl: the suite's own, else the top-level default", async () => {
+		const top = await makeSuiteRepo({}, { keychainAcl: true });
+		const own = await makeSuiteRepo({ keychainAcl: false }, { keychainAcl: true });
+		const none = await makeSuiteRepo();
+		try {
+			const [a, b, c] = await Promise.all([top, own, none].map((r) => findSuite(bunExec, r.dir)));
+			expect(a?.success && a.data.keychainAcl).toBe(true);
+			expect(b?.success && b.data.keychainAcl).toBe(false);
+			expect(c?.success && c.data.keychainAcl).toBeUndefined();
+		} finally {
+			for (const r of [top, own, none]) rmSync(r.dir, { recursive: true, force: true });
+		}
+	}, 20_000);
+
 	test("suite.perfBudgets: the top-level budgets, each key replaced by the suite's own", async () => {
 		const merged = await makeSuiteRepo(
 			{ perf: { budgets: { jankPct: 2 } } },

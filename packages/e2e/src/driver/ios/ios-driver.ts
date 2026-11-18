@@ -10,6 +10,7 @@ import { passkeyStorePath } from "@delacour/warden-core/conditions/passkey-paths
 import type { Exec } from "@delacour/warden-core/exec";
 import { wardenHome as resolveWardenHome } from "@delacour/warden-core/store";
 import { ok, type Result } from "@delacour/warden-types/result";
+import { dedupeAlertButtons } from "../../alert-buttons";
 import type { E2eEnv } from "../../env";
 import type { ReadsA11yEvents } from "../a11y-events";
 import type { ReadsA11y } from "../a11y-read";
@@ -34,6 +35,7 @@ import type {
 import { driverErr, driverError } from "../errors";
 import { DEFAULT_RADIUS, type GesturePlan, planGesture, rotatePlan } from "../gesture-geometry";
 import { keyboardVisible } from "../keyboard-state";
+import type { ControlsKeychainAcl } from "../keychain-acl";
 import type { AuditsNatively } from "../native-audit";
 import type { NetworkProxyPort } from "../network-proxy";
 import { readDeadlineRemaining } from "../read-deadline";
@@ -81,6 +83,7 @@ export type IosDriver = Driver &
 	ReadsAlertOn &
 	ProbesFrontmost &
 	RecoversAxWedge &
+	ControlsKeychainAcl &
 	ReadsA11y &
 	ReadsA11yEvents &
 	AuditsNatively;
@@ -873,7 +876,7 @@ export function createIosDriver(
 
 	function toAlertInfo(data: NonNullable<AlertButtonsData>): AlertInfo {
 		const { title, message, buttons } = data;
-		const info: AlertInfo = { buttons: normalizeElements(buttons, client.ready.screen).elements };
+		const info: AlertInfo = { buttons: dedupeAlertButtons(normalizeElements(buttons, client.ready.screen).elements) };
 		if (title !== undefined) info.title = title;
 		if (message !== undefined) info.message = message;
 		return info;
@@ -1071,7 +1074,20 @@ export function createIosDriver(
 			if (result.success) opts.clockRecorder?.(op);
 			return result;
 		},
-		biometrics: (op) => simctl.biometrics(op),
+		async biometrics(op) {
+			const state = await simctl.biometrics(op);
+			if (op !== "reenroll" || !state.success || !net) return state;
+			// a new enrolment invalidates `.biometryCurrentSet` items: the shim compares their generation with this one
+			const generation = await net.keychainAclReenrolled();
+			return generation === undefined ? state : { success: true, data: { ...state.data, generation } };
+		},
+		keychainAcl: async (op) =>
+			net
+				? net.keychainAcl(op)
+				: driverErr(
+						"E_UNSUPPORTED",
+						"the Keychain ACL shim on iOS needs a device lease for the injected dylib: run the spec with `warden e2e`, or `warden ui`; a bare `bun test` has no lease"
+					),
 		async clipboard(set) {
 			if (set === undefined) return simctl.pbpaste();
 			const copied = await simctl.pbcopy(set);
@@ -1290,6 +1306,7 @@ function iosNetworkFactory(
 				bundleId: ctx.lastBundle,
 				...(o.injectFs ? { fs: o.injectFs } : {}),
 			}),
+			...(o.injectFs ? { fs: o.injectFs } : {}),
 			passkeyStore: passkeyStorePath(wardenHome, o.udid),
 			dylib: () => injectDylibFor(o),
 			isRunning: (bundleId) => simctl.isRunning(bundleId),

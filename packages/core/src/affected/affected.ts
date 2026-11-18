@@ -36,6 +36,8 @@ export type Suite = {
 	slim?: NonNullable<E2eSuiteConfig["slim"]>;
 	/** the suite's `biometrics`, else the top-level one (undefined: neither sets it) */
 	biometrics?: boolean;
+	/** the suite's `keychainAcl`, else the top-level one (undefined: neither sets it) */
+	keychainAcl?: boolean;
 	/** iOS: the suite's simulators are cloned from a golden (`e2e.<suite>.golden: true`); off by default */
 	golden: boolean;
 	/** the suite's `reclaim`, else the top-level one (undefined: neither sets it) */
@@ -190,6 +192,7 @@ function toSuite(name: string, config: E2eSuiteConfig, found: FoundConfig): Suit
 	const headless = config.headless ?? top.headless;
 	const slim = config.slim ?? top.slim;
 	const biometrics = config.biometrics ?? top.biometrics;
+	const keychainAcl = config.keychainAcl ?? top.keychainAcl;
 	const reclaim = config.reclaim ?? top.reclaim;
 	const budgets = { ...top.perf?.budgets, ...config.perf?.budgets };
 	const conditions = mergeConditionsConfig(top.conditions, config.conditions);
@@ -206,6 +209,7 @@ function toSuite(name: string, config: E2eSuiteConfig, found: FoundConfig): Suit
 		...(headless !== undefined ? { headless } : {}),
 		...(slim !== undefined ? { slim } : {}),
 		...(biometrics !== undefined ? { biometrics } : {}),
+		...(keychainAcl !== undefined ? { keychainAcl } : {}),
 		...(reclaim !== undefined ? { reclaim } : {}),
 		...(Object.keys(budgets).length > 0 ? { perfBudgets: budgets } : {}),
 		...(conditions !== undefined ? { conditions } : {}),

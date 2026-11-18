@@ -3,6 +3,7 @@ import { writeFileSync } from "node:fs";
 import type { KindApp } from "@delacour/warden-core/builds/ensure-kind";
 import { type DriverCall, el, failWith, snapshotOf } from "@delacour/warden-e2e/driver/driver.testing";
 import type { Snapshot } from "@delacour/warden-e2e/driver/driver.types";
+import { ok } from "@delacour/warden-types/result";
 import type { UiDeps } from "../agent-ui/driver";
 import { readState, updateState } from "../agent-ui/state";
 import type { VideoSpec } from "../agent-ui/video";
@@ -739,7 +740,35 @@ const ALERT = snapshotOf([
 	}),
 ]);
 
+const FACE_SHEET = snapshotOf([
+	el("alert", {
+		label: "Face Not Recognized",
+		children: [
+			el("text", { label: "Face Not Recognized" }),
+			el("button", { label: "Try Face ID Again", frame: { x: 50, y: 500, width: 100, height: 40 } }),
+			el("button", { label: "Cancel", frame: { x: 200, y: 500, width: 100, height: 40 } }),
+			el("button", { label: "Try Face ID Again", frame: { x: 50, y: 500, width: 100, height: 40 } }),
+			el("button", { label: "Cancel", frame: { x: 200, y: 500, width: 100, height: 40 } }),
+		],
+	}),
+]);
+
 describe("alert", () => {
+	test("get lists each button once, in text and json", async () => {
+		const h = harness([FACE_SHEET]);
+		expect(await h.run("alert", "get")).toBe(0);
+		expect(h.c.stdout.join("\n")).toBe('alert "Face Not Recognized"\n  [Try Face ID Again]\n  [Cancel]');
+		const json = harness([FACE_SHEET]);
+		expect(await json.run("alert", "get", "--json")).toBe(0);
+		expect(doc(json.c).result.buttons).toEqual(["Try Face ID Again", "Cancel"]);
+	});
+
+	test("accept presses the retry button, not Cancel", async () => {
+		const h = harness([FACE_SHEET], { answerAlertOnTap: true });
+		expect(await h.run("alert", "accept")).toBe(0);
+		expect(h.driver.callsOf("tap").map((call) => call.point)).toEqual([{ x: 100, y: 520 }]);
+	});
+
 	test("accept presses Allow, dismiss presses Don't Allow", async () => {
 		const accept = harness([ALERT], { answerAlertOnTap: true });
 		expect(await accept.run("alert", "accept")).toBe(0);
@@ -991,6 +1020,19 @@ describe("device controls", () => {
 		expect(await h.run("biometrics", "unenroll", "--json")).toBe(0);
 		expect(doc(h.c).result.biometrics.enrolled).toBe(false);
 		expect(h.driver.callsOf("biometrics").map((c) => c.op)).toEqual(["status", "enroll", "match", "fail", "unenroll"]);
+	});
+
+	test("biometrics reenroll: a new enrolment; the shim's generation is in the text and --json", async () => {
+		const h = harness([snapshotOf(LOGIN)], {
+			onCall: (call) =>
+				call.method === "biometrics" && call.op === "reenroll"
+					? ok({ enrolled: true, modality: "face" as const, generation: 2 })
+					: undefined,
+		});
+		expect(await h.run("biometrics", "reenroll")).toBe(0);
+		expect(h.c.stdout.join("\n")).toContain("reenroll: face enrolled (Keychain ACL generation 2)");
+		expect(await h.run("biometrics", "reenroll", "--json")).toBe(0);
+		expect(doc(h.c).result.biometrics).toEqual({ enrolled: true, modality: "face", generation: 2 });
 	});
 
 	for (const platform of ["ios", "android"] as const) {

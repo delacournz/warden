@@ -171,6 +171,13 @@ describe("perf env", () => {
 		expect(readEnv(base)).toMatchObject({ success: true });
 	});
 
+	test("WARDEN_KEYCHAIN_ACL: on, explicitly off, or unset", () => {
+		expect(readEnv({ ...base, WARDEN_KEYCHAIN_ACL: "1" })).toMatchObject({ data: { keychainAcl: true } });
+		expect(readEnv({ ...base, WARDEN_KEYCHAIN_ACL: "0" })).toMatchObject({ data: { keychainAcl: false } });
+		const unset = readEnv(base);
+		expect(unset.success && unset.data && "keychainAcl" in unset.data).toBe(false);
+	});
+
 	test("WARDEN_CAMERA_FEEDS", () => {
 		const feeds = { back: { path: "/fx/qr.png", loop: true } };
 		expect(readEnv({ ...base, WARDEN_CAMERA_FEEDS: JSON.stringify(feeds) })).toMatchObject({

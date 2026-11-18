@@ -325,6 +325,10 @@ Options:
                               "1s")
   --devtools                  start the CDP devtools broker with the session
                               (default off: \`warden dev enable devtools\`)
+  --keychain-acl              iOS simulator: Keychain items with access control
+                              prompt for Face ID / passcode on read, like a
+                              phone (kept for the device)
+  --no-keychain-acl           turn the Keychain ACL shim off for the device
   --no-open                   don't open the dev client (Metro + the leases
                               only)
   --no-tui                    plain output: Metro on this terminal, no dashboard
@@ -514,6 +518,11 @@ Options:
   --no-tui                    plain log lines instead of the live grid
   --jobs <list>               comma-separated jobs
   --jobs-from <file>          one job per line from a file, or - for stdin
+  --keychain-acl              iOS simulators: Keychain items with access control
+                              prompt on read; sets WARDEN_KEYCHAIN_ACL=1 for
+                              every job (preset keychainAcl)
+  --no-keychain-acl           WARDEN_KEYCHAIN_ACL=0 for every job, even when the
+                              preset sets keychainAcl
   -h, --help                  display help for command
 
 Examples:
@@ -671,6 +680,11 @@ Options:
                               specs can read hints, actions, reading order and
                               announcements (a suite with an \`a11y\` key does
                               this already)
+  --keychain-acl              iOS simulators: Keychain items with access control
+                              prompt for Face ID / passcode on read, like a
+                              phone (suite keychainAcl)
+  --no-keychain-acl           leave the Keychain ACL shim off even when the
+                              suite sets keychainAcl
   --no-warm                   skip pre-warming the iOS socket helper per device
                               (default: on; suite warmDrivers)
   -h, --help                  display help for command
@@ -2114,8 +2128,8 @@ Commands:
   home                            press the home button
   back                            press back (Android only)
   biometrics [op]                 simulated Face ID / Touch ID / fingerprint:
-                                  status (default), enroll, unenroll, match,
-                                  fail
+                                  status (default), enroll, unenroll, reenroll
+                                  (a new enrolment), match, fail
   screen                          the device screen: orientation, appearance,
                                   screenshot, video
   gesture                         touch gestures: swipe, longpress, pinch,
@@ -2318,6 +2332,11 @@ Options:
                          audit/order/speak/announcements can read hints, actions
                          and announcements (remembered for the device;
                          relaunches the app the first time)
+  --keychain-acl         iOS simulator: Keychain items with access control
+                         prompt for Face ID / passcode on read, like a phone
+                         (kept for the device; relaunches an app started without
+                         it)
+  --no-keychain-acl      turn the Keychain ACL shim off for the device
   --kind <kind>          install this build kind: dev (Debug, Metro), simulator
                          (Release + this worktree's JS repacked in seconds),
                          release (JS embedded at build) (choices: "dev",
@@ -2628,10 +2647,10 @@ $ warden ui biometrics --help
 Usage: warden ui biometrics [options] [op]
 
 simulated Face ID / Touch ID / fingerprint: status (default), enroll, unenroll,
-match, fail
+reenroll (a new enrolment), match, fail
 
 Arguments:
-  op                     status | enroll | unenroll | match | fail
+  op                     status | enroll | unenroll | reenroll | match | fail
 
 Options:
   --settle [ms]          wait for a quiet screen afterwards (default budget 3000

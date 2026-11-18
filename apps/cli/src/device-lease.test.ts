@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { activeConditions, recordCondition } from "@delacour/warden-core/conditions/conditions";
+import { injectStatePath } from "@delacour/warden-core/conditions/inject-state";
 import { DEFAULT_TTL_MS } from "@delacour/warden-core/config.defaults";
 import { handlePath, writeHandleFile } from "@delacour/warden-core/netproxy/handle-file";
 import { openStore, type Store } from "@delacour/warden-core/store";
@@ -209,6 +210,18 @@ describe("releaseDevices", () => {
 		expect(store.listLeases()).toHaveLength(0);
 		expect(seen).toEqual([UDID]);
 		expect(store.listDevices()[0]?.lastUsedAt).toBe(now);
+	});
+
+	test("an iOS lease's Keychain ACL shim goes off on release even with no condition record (ui open / dev switch it)", async () => {
+		const path = injectStatePath(dir, UDID);
+		mkdirSync(join(dir, "inject", UDID), { recursive: true });
+		writeFileSync(path, JSON.stringify({ seq: 1, keychainAcl: { enabled: true, generation: 0, itemsPath: "/i" } }));
+		const dev = store.insertLease({ resource, owner: me, ttlMs: DEFAULT_TTL_MS }, now);
+		await releaseDevices({ store: () => store, now: () => now, env: { WARDEN_HOME: dir } }, [dev.id]);
+		expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({
+			seq: 2,
+			keychainAcl: { enabled: false, generation: 0, itemsPath: "/i" },
+		});
 	});
 
 	test("deletion is synchronous; touch: false leaves lastUsedAt; `after` errors never throw", async () => {

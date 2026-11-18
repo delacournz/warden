@@ -19,6 +19,7 @@ import {
 	runAfterReboot,
 	stopResidentHelper,
 } from "./driver/ios/hid-recovery";
+import { canControlKeychainAcl, KEYCHAIN_ACL_UNSUPPORTED } from "./driver/keychain-acl";
 import { cacheObservations } from "./driver/observation-cache";
 import { traceDriver } from "./driver/traced-driver";
 import { type E2eEnv, readEnv } from "./env";
@@ -357,6 +358,30 @@ export function createSession(opts: SessionOptions = {}): Session {
 	}
 
 	/**
+	 * `WARDEN_KEYCHAIN_ACL`: switch the Keychain ACL shim before any launch, so the first launch already loads it (or
+	 * not). Explicit either way: a suite never inherits a switch an earlier run left on the lease. A driver without the
+	 * capability (a physical iPhone, Android) is not asked: one note says why. Best effort, noted on failure.
+	 */
+	async function switchKeychainAcl(driver: Driver): Promise<void> {
+		if (resolved.keychainAcl === undefined) return;
+		if (!canControlKeychainAcl(driver) || resolved.deviceKind === "physical") {
+			if (resolved.keychainAcl)
+				note(`keychainAcl ignored on this ${resolved.platform} device: ${KEYCHAIN_ACL_UNSUPPORTED}`);
+			return;
+		}
+		if (resolved.keychainAcl && resolved.biometrics !== true) {
+			note(
+				"keychainAcl is on without biometrics: the device has no Face ID / Touch ID enrolled, so a biometry-only item reads as not found (-25300). Set `biometrics: true` on the suite too"
+			);
+		}
+		const switched = await driver.keychainAcl({ kind: resolved.keychainAcl ? "on" : "off" });
+		if (!switched.success)
+			note(
+				`keychainAcl ${resolved.keychainAcl ? "on" : "off"} failed: ${switched.error.code}: ${switched.error.message}`
+			);
+	}
+
+	/**
 	 * Private data on in a simulator's logd before the app runs, so `native.log` shows `%{private}` values: what
 	 * logd redacts when it writes cannot be recovered when it is read. Simulators only (a physical iPhone's logd
 	 * is not ours to configure); `WARDEN_NATIVE_LOG_PRIVATE=0` opts out. Best effort, noted on failure.
@@ -404,6 +429,7 @@ export function createSession(opts: SessionOptions = {}): Session {
 					}
 					current = cacheObservations(traceDriver(result.data, { trace: () => attempt?.trace }));
 					return reenroll(current).then(async (driver) => {
+						await switchKeychainAcl(driver);
 						await nativePrivateData();
 						return driver;
 					});

@@ -91,6 +91,7 @@ export const biometricEventArgv = (
 /** The notifications one op posts, in order; `status` posts nothing. */
 export function biometricArgvs(udid: string, modality: BiometricState["modality"], op: BiometricOp): string[][] {
 	if (op === "enroll" || op === "unenroll") return biometricEnrollArgvs(udid, op === "enroll");
+	if (op === "reenroll") return [...biometricEnrollArgvs(udid, false), ...biometricEnrollArgvs(udid, true)];
 	if (op === "match" || op === "fail")
 		return [biometricEventArgv(udid, modality, op === "match" ? "match" : "nomatch")];
 	return [];

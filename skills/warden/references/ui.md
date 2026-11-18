@@ -60,6 +60,7 @@ Every call heartbeats your lease. Another live session's lease: `device_foreign`
 - `--metro <url>` launches the dev client on that Metro and remembers it for the devtools commands. iOS adds the same two dev-menu flags as `warden dev`, before your `--args`.
 - `--relaunch` without `--metro` gives no `--initialUrl`: expo-dev-client reopens the sim's most recent Metro, often another worktree's dead port → launcher home. Relaunch with `--metro <metroUrl from warden dev>`.
 - warden's Metro gets `WARDEN_WORKTREE` / `WARDEN_BRANCH`; `app.config.ts` can append them to `name` so the launcher lists each worktree's server by name.
+- Keychain items with access control (iOS simulator): `warden ui open <bundle> --keychain-acl --udid $UDID` turns on the Keychain ACL shim (kept for the device until `--no-keychain-acl` or release; relaunches an app started without it). A read of a `.biometryCurrentSet` / `.userPresence` / `.devicePasscode` item then shows the system Face ID sheet: `warden ui biometrics match|fail`, Cancel → `-128`, no enrolment on a biometry-only item → `-25300`. Warns when the sim has no Face ID enrolled (claim with `--biometrics`). Android / a phone: `unsupported` (a device enforces ACLs itself).
 - No Metro / fastest JS loop for a Release-like app: `warden ui open <bundleId> --kind simulator --udid $UDID` (repack, install, launch). Re-run it after a JS edit; the dev client (`warden dev`) stays the default for feature work.
 - Android: `open <bundleId>` takes `--metro`/`--args` in the CLI but the driver rejects them. `warden dev android` opens the dev client via `adb reverse` + `exp+<slug>://expo-development-client/?url=...`. By hand, `open <url>` with that deep link.
 - `--relaunch`, `--metro`, `--args` apply to a bundle id, not a URL (`usage`).
@@ -113,10 +114,10 @@ Line: `@eN [role] "name" id=<testID> value="..." placeholder="..." <states> (x,y
 | `type` | `<text> [--submit] [--settle]` | into whatever has focus |
 | `key` | `Enter\|Backspace\|Tab\|Space\|Escape\|Delete\|Up\|Down\|Left\|Right [--settle]` | |
 | `scroll` | `<dir> [amount=0.5] [--until <sel>] [--in <target>] [--max 10] [--settle]` | content direction: `scroll down` reveals what is below; amount 0-1; `--until` prints the fresh ref |
-| `alert` | `accept\|dismiss\|get [--settle]` | `get` with none = empty list; accept/dismiss with none = `no_alert` |
+| `alert` | `accept\|dismiss\|get [--settle]` | `get` with none = empty list; accept/dismiss with none = `no_alert`; `accept` prefers OK/Allow/…/`Try Face ID Again`/`Try Again`/`Retry`, never a Cancel-like button (`ACTION_FAILED` names the buttons); `dismiss` = Cancel |
 | `home` | `[--settle]` | |
 | `back` | `[--settle]` | Android only |
-| `biometrics` | `[status\|enroll\|unenroll\|match\|fail] [--settle]` | simulated Face ID / Touch ID / fingerprint; no op = `status`; answers `result.biometrics: { enrolled, modality: "face"\|"fingerprint" }`; bad op = `usage`; not recorded by `record`. See "Biometrics" below |
+| `biometrics` | `[status\|enroll\|unenroll\|reenroll\|match\|fail] [--settle]` | simulated Face ID / Touch ID / fingerprint; no op = `status`; `reenroll` = a new enrolment (unenroll + enroll); answers `result.biometrics: { enrolled, modality: "face"\|"fingerprint", generation? }` (`generation`: after `reenroll` with the Keychain ACL shim on); bad op = `usage`; not recorded by `record`. See "Biometrics" below |
 | `screen rotate` | `[portrait\|portrait-upside-down\|landscape-left\|landscape-right]` | device orientation; no arg reads it |
 | `screen appearance` | `[light\|dark]` | no arg reads it |
 | `screen screenshot` | `[path]` | default `$WARDEN_HOME/ui/<udid>/shots/NNN.png` |
@@ -148,7 +149,8 @@ Line: `@eN [role] "name" id=<testID> value="..." placeholder="..." <states> (x,y
 `warden ui biometrics enroll` → app prompts → `warden ui biometrics match` (or `fail`). Simulators and emulators only; a physical device or a non-`emulator-*` serial fails `failed`, `details.driver: E_UNSUPPORTED`.
 
 - iOS: `enroll` / `unenroll` / `match` / `fail` all work; modality is Face ID or Touch ID by device model. Enrollment is lost on reboot. Enroll before the app is installed or launched: a new enrollment invalidates keys bound to the current biometry set. The first prompt per app shows "Allow X to use Face ID?": `warden ui alert accept`.
-- Android: fingerprint only. `match` / `fail` / `status` work; `enroll` / `unenroll` fail `E_UNSUPPORTED` (enrollment is baked into the `+bio` golden snapshot: claim with `--biometrics`, see suites.md).
+- `warden ui biometrics reenroll` (iOS): with the Keychain ACL shim on, `.biometryCurrentSet` items written before it read `-25300` (an `.or .devicePasscode` item stays readable: Face ID first on a simulator, a match opens it; a phone takes only the passcode), like a phone after a face is re-added. Destructive for those items: enrol before the app writes them.
+- Android: fingerprint only. `match` / `fail` / `status` work; `enroll` / `unenroll` / `reenroll` fail `E_UNSUPPORTED` (enrollment is baked into the `+bio` golden snapshot: claim with `--biometrics`, see suites.md).
 - Never add an app-side bypass: drive the real `LAContext` / `BiometricPrompt` flow.
 
 `screen ...` = the device (orientation, appearance, screenshot, video); `gesture ...` = touch. `screen rotate landscape-left` turns the device, `gesture rotate @e3 45` turns two fingers. After `screen rotate`, snapshot frames, screenshots and `press x y` are in the app's interface space: an app that rotates reads landscape (e.g. 874×402), a portrait-locked one still reads portrait. Take coordinates from a fresh snapshot, never rotate them yourself. `screen rotate` (and `device.orientation(set)`) returns once the rotation animation is over (~0.7 s), so the next tap lands. The old top-level `rotate` `appearance` `screenshot` `video` `swipe` `longpress` are removed (unknown command). Max 2 fingers. Bad scale/degrees/`--path` = `usage` (exit 1); unsupported device = `failed`, `details.driver: E_UNSUPPORTED` (exit 1).
@@ -275,7 +277,7 @@ Space-separated `key=value`, each key at most once, AND-combined.
 | `editable=true\|false` | text fields vs rest |
 | `nth=<i>` | i-th match, 0-based |
 
-Values: bare `id=sign-in`, quoted `label="Sign in"`, or regex `text=/^\d+ left$/i`. Several matches: actions pick the most specific visible one; pin with `nth=`. Prefer `id=`. Coordinates `x y` only for canvas content with no accessibility node.
+Values: bare `id=sign-in`, a bare multi-word value `label=Try Face ID Again` (runs to the next ` <key>=` or the end; a value that itself contains ` role=`, ` nth=` etc. needs quotes), quoted `label="Sign in"`, or regex `text=/^\d+ left$/i`. Several matches: actions pick the most specific visible one; pin with `nth=`. Prefer `id=`. Coordinates `x y` only for canvas content with no accessibility node.
 
 ## Verify and failure codes
 

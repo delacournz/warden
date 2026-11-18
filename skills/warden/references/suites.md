@@ -93,6 +93,7 @@ Paths and globs are relative to `warden.config.ts`. Unknown keys are errors.
 | `physical` | off | `true` = any ready physical device, `{ ids: [...] }` = exactly these (adb serials / CoreDevice UDIDs). Also per `devices` leg (a leg's wins). Not with `slim` / `headless` / `biometrics` / `conditions` (config error). Command-line `--physical` / `--serial` / `--udid` win. See "Physical devices" |
 | `reclaim` | `none` | `erase` \| `uninstall` \| `none`: what happens to the suite's devices when they are released. Top-level `reclaim` and `batches.<preset>.reclaim` work the same (suite / preset wins over top level, which wins over `WARDEN_RECLAIM`). See "Reclaim on release" |
 | `biometrics` | off | devices have a fingerprint (Android) / Face ID (iOS) enrolled before any app install. Own pool and golden: profile `<profile>+bio`. Top-level `biometrics` and `batches.<preset>.biometrics` work the same (suite / preset wins over top level); `--biometrics` on claim/run/batch/e2e turns it on for one run |
+| `keychainAcl` | unset | iOS simulators: Keychain reads of access-controlled items prompt and answer like a phone (the Keychain ACL shim in warden's injected library). `true` switches it on before each spec's first launch, `false` off, unset leaves the device as it is. Top-level, suite and `batches.<preset>` (suite / preset wins); `--keychain-acl` / `--no-keychain-acl` on e2e / batch win over config. Spec env `WARDEN_KEYCHAIN_ACL=1\|0`. Pair with `biometrics: true` (noted otherwise); refused with `physical`; Android ignores it |
 | `golden` | off | iOS: `true` clones the suite's new sims from a golden (first-booted, settled sim built once per profile + runtime). Off: each new sim is a fresh `simctl create` + first boot (its `warden: <udid>: booted in <s> (booting …, backboard …, data migration …)` line shows the first boot's data migration, which a golden clone skips; `not ready after …` on a timeout), and `warden ci cache --suite <name>` prints `golden: null`, so the e2e action restores, builds, saves and collects no golden. Pool sims already there are reused either way; `WARDEN_GOLDEN=0` turns it off for every claim |
 | `warmDrivers` | on | iOS: start every device's driver helper before the specs, one device after the other; each retries its first snapshot (one read per try) with backoff (2 s, then 5 s) for up to 2 min before it goes cold |
 
@@ -275,6 +276,7 @@ Set by warden. Never export these for a suite run.
 | app / log | `WARDEN_APP_PATH WARDEN_APP_HASH` (with `app`) `WARDEN_LOG_TIMESTAMPS` |
 | runner | `BUN_BE_BUN=1` (a compiled warden runs as bun; the preload drops it, so a `warden` a spec spawns stays warden) |
 | a11y | `WARDEN_A11Y_AUDIT` (JSON of the suite's `a11y`) `WARDEN_A11Y=1` (iOS: inject loaded; with an `a11y` key or `--a11y`) |
+| keychain | `WARDEN_KEYCHAIN_ACL=1\|0` (iOS: the suite's / preset's `keychainAcl`, or `--keychain-acl` / `--no-keychain-acl`) |
 | perf | `WARDEN_BIN` (argv `device.perf` shells out to) `WARDEN_PERF` (with `--perf`) `WARDEN_PERF_BUDGETS` (with budgets) |
 
 ## Batch dir

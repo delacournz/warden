@@ -3,6 +3,7 @@ import { canProbeFrontmost, canReadAlertOn } from "../../alerts";
 import { el, snapshotOf } from "../../driver.testing";
 import type { Driver, DriverResult, Snapshot } from "../../driver.types";
 import { driverErr } from "../../errors";
+import { canControlKeychainAcl, KEYCHAIN_ACL_UNSUPPORTED, keychainAcl } from "../../keychain-acl";
 import { HASH_FALLBACK_MIN_QUIET_MS } from "../../settle";
 import { collectSpanDetail, type SpanDetail } from "../../span-detail";
 import { canPasteText, canSelectAll } from "../../typing";
@@ -193,6 +194,15 @@ describe("input", () => {
 			expect(error.message).toContain("physical iPhone");
 		}
 		expect(runner.requests.map((request) => request.op)).toEqual([]);
+	});
+
+	test("the Keychain ACL shim is not offered: a physical device enforces ACLs itself", async () => {
+		const { driver, runner } = await open(ok);
+		expect(canControlKeychainAcl(driver)).toBe(false);
+		const error = await failure(keychainAcl(driver, { kind: "on" }));
+		expect(error.code).toBe("E_UNSUPPORTED");
+		expect(error.message).toBe(KEYCHAIN_ACL_UNSUPPORTED);
+		expect(runner.requests).toEqual([]);
 	});
 
 	test("network, location, clock and the device settings are E_UNSUPPORTED without asking the runner", async () => {

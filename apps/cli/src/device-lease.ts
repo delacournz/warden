@@ -1,8 +1,9 @@
+import { injectStatePath, switchOffKeychainAcl } from "@delacour/warden-core/conditions/inject-state";
 import { DEFAULT_TTL_MS } from "@delacour/warden-core/config.defaults";
 import { bunExec, type Exec } from "@delacour/warden-core/exec";
 import { isLeaseAlive, type PidAlive } from "@delacour/warden-core/liveness";
 import { type ReclaimMode, resolveReclaim } from "@delacour/warden-core/reclaim";
-import { ownerKey, type Store } from "@delacour/warden-core/store";
+import { ownerKey, type Store, wardenHome } from "@delacour/warden-core/store";
 import {
 	type DeviceResource,
 	describeOwner,
@@ -216,6 +217,22 @@ async function runReclaimPhase(
 }
 
 /**
+ * The Keychain ACL shim is the lease's: `ui open` / `dev --keychain-acl` switch it on without a condition record, so
+ * each released iOS device lease switches it off here (a file read per lease; nothing loaded), or the next lease on
+ * the simulator would inherit prompts it never asked for. A failure is a note; the release goes ahead.
+ */
+function switchOffKeychainAclFor(host: ReleaseHost, leaseIds: readonly string[], opts: ReleaseOptions): void {
+	const store = host.store();
+	const home = wardenHome(host.env ?? process.env);
+	for (const lease of leaseIds.flatMap((id) => store.getLease(id) ?? [])) {
+		const target = lease.resource;
+		if (target.kind !== "device" || target.platform !== "ios" || !(opts.only?.(lease) ?? true)) continue;
+		const failed = switchOffKeychainAcl(injectStatePath(home, target.id));
+		if (failed) (opts.onNote ?? ((note: string) => host.err?.(`warden: ${note}`)))(failed);
+	}
+}
+
+/**
  * The single CLI choke point for deleting leases (devices, ports …). A device lease with conditions set
  * (network, location …) has them undone first, while it is still held; without any, the delete happens
  * synchronously, before the first await. `after` then runs per device lease. Unknown ids are skipped.
@@ -235,6 +252,7 @@ export async function releaseDevices(
 		const notes = await Promise.all(conditioned.map((l) => undoLeaseConditions(host, l)));
 		for (const note of notes.flat()) report(note);
 	}
+	switchOffKeychainAclFor(host, leaseIds, opts);
 	const mode = reclaimModeOf(host, opts);
 	const reclaim = mode === "none" ? undefined : await import("./reclaim");
 	let held: import("./reclaim").ReclaimHold[] = [];

@@ -49,6 +49,7 @@ Simulators and emulators only: every condition fails `E_UNSUPPORTED` on a physic
 | [Location](/docs/sims/conditions/location) | points and routes; a route plays once | points and routes, looped or not; the last fix stays |
 | [Clock](/docs/sims/conditions/clock) | the app's clock; can be frozen | the emulator's clock; cannot be frozen |
 | [Biometrics](/docs/sims/conditions/biometrics) | Face ID and Touch ID | fingerprint |
+| [Keychain access control](/docs/sims/conditions/biometrics#keychain-items-behind-face-id) | prompts and error codes, in an app launched by warden | not needed: no shim |
 | [Permissions](/docs/sims/conditions/permissions) | every name but `camera` and `notifications` | the names the manifest declares |
 | [Camera](/docs/sims/conditions/camera) | image or video, swapped live; QR decoded | a `--camera` emulator; a video feed reboots it |
 | [Passkeys](/docs/sims/conditions/passkeys) | live, in an app launched by warden | API 34+; warden's credential provider |

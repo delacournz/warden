@@ -113,6 +113,8 @@ export type E2eOpts = ClaimFlagValues &
 		dev?: true;
 		/** `--a11y`: iOS apps launch with the injected library even when the suite sets no `a11y` */
 		a11y?: true;
+		/** `--keychain-acl` / `--no-keychain-acl`: iOS sims enforce Keychain access control (over the suite's `keychainAcl`) */
+		keychainAcl?: boolean;
 	};
 
 export type E2eReport = {
@@ -980,7 +982,7 @@ export async function specPlan(
 	deps: SpecPlanDeps,
 	suite: Suite,
 	platform: Platform,
-	opts: Pick<E2eOpts, "perf" | "biometrics" | "a11y"> = {},
+	opts: Pick<E2eOpts, "perf" | "biometrics" | "a11y" | "keychainAcl"> = {},
 	/** the run is on phones: an iPhone's app has the device bundle id (`projects[].ios.device.bundleIdentifier`) */
 	physical = false
 ): AsyncResult<SpecPlan> {
@@ -1043,12 +1045,13 @@ function specTimeouts(spec: Suite["config"]["spec"]): Result<SpecPlan["env"]["ti
 	});
 }
 
-/** The spec env fields the suite (and `--biometrics` / `--a11y`) switch on: budgets, conditions, biometrics, a11y, camera feeds. */
+/** The spec env fields the suite (and `--biometrics` / `--a11y` / `--keychain-acl`) switch on: budgets, conditions, biometrics, a11y, Keychain ACL, camera feeds. */
 function suiteSpecEnv(
 	suite: Suite,
 	platform: Platform,
-	opts: Pick<E2eOpts, "biometrics" | "a11y">
+	opts: Pick<E2eOpts, "biometrics" | "a11y" | "keychainAcl">
 ): Partial<SpecPlan["env"]> {
+	const keychainAcl = opts.keychainAcl ?? suite.keychainAcl;
 	return {
 		...(suite.perfBudgets === undefined ? {} : { perfBudgets: suite.perfBudgets }),
 		...(suite.conditions === undefined ? {} : { conditions: suite.conditions }),
@@ -1056,6 +1059,8 @@ function suiteSpecEnv(
 		...(suite.a11y === undefined ? {} : { a11yAudit: suite.a11y }),
 		// the injected library reads hint / actions / order / announcements on iOS: loaded only for a suite that asks (`a11y` key or `--a11y`)
 		...(platform === "ios" && (suite.a11y !== undefined || opts.a11y === true) ? { a11y: true } : {}),
+		// the shim is an iOS simulator thing: an Android suite sharing a top-level `keychainAcl` gets nothing
+		...(platform === "ios" && keychainAcl !== undefined ? { keychainAcl } : {}),
 		...(suite.config.camera === undefined
 			? {}
 			: { cameraFeeds: resolveCameraConfig(suite.config.camera, suite.configDir) }),
@@ -1146,6 +1151,11 @@ export function createE2eCommand(deps: BatchDeps): Command {
 					"--a11y",
 					"iOS: launch apps with the injected library so specs can read hints, actions, reading order and announcements (a suite with an `a11y` key does this already)"
 				)
+				.option(
+					"--keychain-acl",
+					"iOS simulators: Keychain items with access control prompt for Face ID / passcode on read, like a phone (suite keychainAcl)"
+				)
+				.option("--no-keychain-acl", "leave the Keychain ACL shim off even when the suite sets keychainAcl")
 				.option("--no-warm", "skip pre-warming the iOS socket helper per device (default: on; suite warmDrivers)")
 				.addHelpText(
 					"after",

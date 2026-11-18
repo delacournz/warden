@@ -57,6 +57,7 @@ function rig(
 		createIosNetwork({
 			proxy,
 			channel,
+			fs,
 			passkeyStore,
 			dylib: () =>
 				init.dylib === false
@@ -589,5 +590,69 @@ describe("passkeys", () => {
 			const result = await r.net.passkeys(op);
 			expect(!result.success && result.error.code).toBe("E_PASSKEY_STORE");
 		}
+	});
+});
+
+describe("keychain acl", () => {
+	const stateOf = (r: ReturnType<typeof rig>) => JSON.parse(r.files.get(STATE) ?? "{}");
+
+	test("on with nothing running: the next launch loads the dylib with the shim on, no proxy", async () => {
+		const r = rig();
+		const on = await r.net.keychainAcl({ kind: "on" });
+		expect(on).toEqual({ success: true, data: { enabled: true, generation: 0, appliesOnLaunch: true } });
+		const env = await r.net.launchEnv({});
+		expect(env.success && env.data?.WARDEN_KEYCHAIN_ACL).toBe("1");
+		expect(env.success && env.data?.DYLD_INSERT_LIBRARIES).toBe("/d/libwarden-inject.dylib");
+		expect(env.success && env.data).not.toHaveProperty("WARDEN_NET_PROXY");
+		expect(stateOf(r).keychainAcl).toEqual({ enabled: true, generation: 0, itemsPath: "/s/keychain-acl-items.json" });
+	});
+
+	test("a re-enrolment bumps the generation the shim compares items against (only with the shim on)", async () => {
+		const r = rig();
+		expect(await r.net.keychainAclReenrolled()).toBeUndefined();
+		await r.net.keychainAcl({ kind: "on" });
+		expect(await r.net.keychainAclReenrolled()).toBe(1);
+		expect(stateOf(r).keychainAcl.generation).toBe(1);
+	});
+
+	test("off: a plain launch carries no dylib", async () => {
+		const r = rig();
+		await r.net.keychainAcl({ kind: "on" });
+		await r.net.keychainAcl({ kind: "off" });
+		const env = await r.net.launchEnv({});
+		expect(env.success && env.data).toBeUndefined();
+	});
+
+	test("a launch that asked for the shim fails when the app acks without it (an older dylib)", async () => {
+		const r = rig();
+		await r.net.keychainAcl({ kind: "on" });
+		await r.net.launchEnv({});
+		r.attach();
+		const seq = (stateOf(r) as { seq: number }).seq;
+		r.files.set(ACK, JSON.stringify({ seq, pid: 501 }));
+		const result = await r.net.confirmLoaded();
+		expect(!result.success && result.error.code).toBe("E_INTERNAL");
+		expect(!result.success && result.error.message).toContain("Keychain ACL shim");
+		r.files.set(ACK, JSON.stringify({ seq, pid: 501, keychainAcl: true }));
+		await r.net.launchEnv({});
+		const seq2 = (stateOf(r) as { seq: number }).seq;
+		r.files.set(ACK, JSON.stringify({ seq: seq2, pid: 501, keychainAcl: true }));
+		expect((await r.net.confirmLoaded()).success).toBe(true);
+	});
+
+	test("the switch rides along with every other state write", async () => {
+		const r = rig();
+		r.attach();
+		await r.net.keychainAcl({ kind: "on" });
+		await r.net.network({ kind: "offline" });
+		expect(stateOf(r).keychainAcl.enabled).toBe(true);
+	});
+
+	test("a fresh network layer on the same lease keeps the switch", async () => {
+		const r = rig();
+		await r.net.keychainAcl({ kind: "on" });
+		const again = r.fresh();
+		const status = await again.keychainAcl({ kind: "status" });
+		expect(status.success && status.data.enabled).toBe(true);
 	});
 });

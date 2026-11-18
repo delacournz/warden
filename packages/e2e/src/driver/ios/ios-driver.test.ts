@@ -6,12 +6,13 @@ import { canProbeFrontmost, canReadAlertOn } from "../alerts";
 import { canRecoverAxWedge } from "../ax-wedge";
 import { el, snapshotOf } from "../driver.testing";
 import type { Driver, Snapshot } from "../driver.types";
+import { canControlKeychainAcl, keychainAcl } from "../keychain-acl";
 import { fakeProxy } from "../network-proxy.testing";
 import { withReadDeadline } from "../read-deadline";
 import { HASH_FALLBACK_MIN_QUIET_MS, settleDetailOf } from "../settle";
 import { collectSpanDetail, type SpanDetail } from "../span-detail";
 import { canPasteText, canSelectAll, canTypeQuickly } from "../typing";
-import { type ExecCall, fakeExec, joined } from "./exec.testing";
+import { type ExecCall, type FakeExecHandler, fakeExec, joined } from "./exec.testing";
 import type { InjectFs } from "./inject";
 import {
 	BRIDGE_COLD_DEADLINE_MS,
@@ -1009,6 +1010,31 @@ describe("system alerts through one reader and the frontmost probe", () => {
 		expect(helper.of("alertButtons").map((request) => request.backend)).toEqual(["ax", "axbridge"]);
 	});
 
+	test("a button the helper lists twice is one button; same label at another frame is kept", async () => {
+		const retry = {
+			role: "button",
+			rawType: "Button",
+			label: "Try Face ID Again",
+			frame: { x: 0, y: 0, width: 100, height: 44 },
+		};
+		const cancel = {
+			role: "button",
+			rawType: "Button",
+			label: "Cancel",
+			frame: { x: 0, y: 50, width: 100, height: 44 },
+		};
+		const cancelElsewhere = { ...cancel, frame: { x: 0, y: 200, width: 100, height: 44 } };
+		const { driver } = await open((request) =>
+			request.op === "alertButtons" ? { data: { buttons: [retry, cancel, retry, cancel, cancelElsewhere] } } : undefined
+		);
+		const alert = await unwrapped(driver.alert());
+		expect(alert?.buttons.map((button) => `${button.label}@${button.frame.y}`)).toEqual([
+			"Try Face ID Again@0",
+			"Cancel@50",
+			"Cancel@200",
+		]);
+	});
+
 	test("alert() still reads both readers (no backend on the wire)", async () => {
 		const { driver, helper } = await open((request) => (request.op === "alertButtons" ? { data: null } : undefined));
 		expect(await unwrapped(driver.alert())).toBeNull();
@@ -1654,16 +1680,14 @@ describe("network conditions", () => {
 	/** an in-memory state dir whose app "acks" every state write */
 	function stateDir() {
 		const files = new Map<string, string>();
-		const app = { running: true };
+		const app = { running: true, keychainAcl: false };
 		const fs: InjectFs = {
 			mkdir: () => undefined,
 			writeAtomic: (path, text) => {
 				files.set(path, text);
 				if (app.running && path.endsWith("state.json")) {
-					files.set(
-						`${path}.ack`,
-						JSON.stringify({ seq: (JSON.parse(text) as { seq: number }).seq, pid: 4242, proxy: true })
-					);
+					const seq = (JSON.parse(text) as { seq: number }).seq;
+					files.set(`${path}.ack`, JSON.stringify({ seq, pid: 4242, proxy: true, keychainAcl: app.keychainAcl }));
 				}
 			},
 			read: (path) => files.get(path),
@@ -1762,6 +1786,62 @@ describe("network conditions", () => {
 			uv: "match",
 			storePath: "/w/passkeys/UDID-1/store.json",
 		});
+	});
+
+	test("the Keychain ACL shim is a capability of the simulator driver; without a lease it says what is missing", async () => {
+		const { driver } = await open(lifecycle);
+		expect(canControlKeychainAcl(driver)).toBe(true);
+		const result = await keychainAcl(driver, { kind: "on" });
+		expect(!result.success && result.error.code).toBe("E_UNSUPPORTED");
+		expect(!result.success && result.error.message).toContain("injected dylib");
+	});
+
+	test("the Keychain ACL shim switched on before launch loads the dylib with WARDEN_KEYCHAIN_ACL=1, no proxy", async () => {
+		const dir = stateDir();
+		dir.app.running = false;
+		const { driver, helper } = await open(lifecycle, {
+			networkProxy: fakeProxy(19_126),
+			injectFs: dir.fs,
+			exists,
+			env: { helperDir: "/opt" } as OpenIosDriverOptions["env"],
+			wardenHome: "/w",
+		});
+		const set = await keychainAcl(driver, { kind: "on" });
+		expect(set).toEqual({ success: true, data: { enabled: true, generation: 0, appliesOnLaunch: true } });
+		dir.app.running = true;
+		dir.app.keychainAcl = true;
+		await unwrapped(driver.app.launch(BUNDLE));
+		const env = helper.of("launch")[0]?.env;
+		expect(env).toMatchObject({ DYLD_INSERT_LIBRARIES: dylib, WARDEN_KEYCHAIN_ACL: "1" });
+		expect(env).not.toHaveProperty("WARDEN_NET_PROXY");
+		expect(JSON.parse(dir.files.get("/w/inject/UDID-1/state.json") ?? "{}").keychainAcl).toEqual({
+			enabled: true,
+			generation: 0,
+			itemsPath: "/w/inject/UDID-1/keychain-acl-items.json",
+		});
+	});
+
+	test("biometrics reenroll: unenroll then enroll on the sim, and with the shim on the generation goes up once", async () => {
+		const dir = stateDir();
+		const enrolled: FakeExecHandler[] = [
+			["xcrun simctl spawn UDID-1 notifyutil -g", { stdout: "com.apple.BiometricKit.enrollmentChanged 1\n" }],
+			["xcrun simctl spawn UDID-1 notifyutil", {}],
+		];
+		const { driver, calls } = await open(
+			lifecycle,
+			{ networkProxy: fakeProxy(19_127), injectFs: dir.fs, exists, wardenHome: "/w" },
+			enrolled
+		);
+		const plain = await driver.biometrics("reenroll");
+		expect(plain).toEqual({ success: true, data: { enrolled: true, modality: expect.any(String) } });
+		const notify = calls.map((c) => c.cmd.join(" ")).filter((c) => c.includes("notifyutil -s"));
+		expect(notify.map((c) => c.at(-1))).toEqual(["0", "1"]);
+		await keychainAcl(driver, { kind: "on" });
+		const bumped = await driver.biometrics("reenroll");
+		expect(bumped.success && bumped.data.generation).toBe(1);
+		expect(JSON.parse(dir.files.get("/w/inject/UDID-1/keychain-acl.json") ?? "{}")).toEqual({ generation: 1 });
+		const status = await driver.biometrics("status");
+		expect(status.success && "generation" in status.data).toBe(false);
 	});
 
 	test("a plain run launches exactly as before: no injected env at all", async () => {

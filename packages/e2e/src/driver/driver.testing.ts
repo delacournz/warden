@@ -66,6 +66,7 @@ import type { ActsOnElements, ScrollDirection } from "./element-actions";
 import { driverError } from "./errors";
 import { planGesture } from "./gesture-geometry";
 import { keyboardVisible } from "./keyboard-state";
+import type { ControlsKeychainAcl, KeychainAclOp, KeychainAclState } from "./keychain-acl";
 import type { AuditsNatively, NativeAuditOptions, NativeAuditResult } from "./native-audit";
 import { faultNotes } from "./network-proxy";
 import type { DrivesScreenReader, SpokenRead } from "./screen-reader";
@@ -255,6 +256,7 @@ export type DriverCall =
 	| { method: "biometrics"; op: BiometricOp }
 	| { method: "camera"; op: CameraCondition | null; opts?: SettingOptions }
 	| { method: "passkeys"; op: PasskeyOp; opts?: SettingOptions }
+	| { method: "keychainAcl"; op: KeychainAclOp }
 	| { method: "app.launch"; bundleId: string; opts?: LaunchOptions }
 	| { method: "app.terminate"; bundleId: string }
 	| { method: "app.openUrl"; url: string }
@@ -280,6 +282,8 @@ export type FakeDriverOptions = {
 	capabilities?: Partial<DriverCapabilities>;
 	/** offer the optional `SelectsAll` capability (calls are recorded as `selectAll`); a plain driver has none */
 	selectAll?: boolean;
+	/** offer the optional `ControlsKeychainAcl` capability (an iOS simulator with a lease; calls are recorded as `keychainAcl`) */
+	keychainAcl?: boolean;
 	/** offer the optional `SetsText` capability (calls are recorded as `setText`); a plain driver has none */
 	setText?: boolean;
 	/** offer the optional `PastesText` capability (calls are recorded as `pasteText`); a plain driver has none */
@@ -332,6 +336,7 @@ export type FakeDriver = Driver &
 	Partial<PastesText> &
 	Partial<TypesQuickly> &
 	Partial<ActsOnElements> &
+	Partial<ControlsKeychainAcl> &
 	Partial<ReadsAlertOn & ProbesFrontmost & ReadsA11y & ReadsA11yEvents & AuditsNatively & DrivesScreenReader> & {
 		/** every call so far, in order */
 		readonly calls: DriverCall[];
@@ -399,6 +404,14 @@ function attachOptionalOps(
 	visibleAlert: () => AlertInfo | null
 ): void {
 	if (options.selectAll) driver.selectAll = async () => run({ method: "selectAll" }, () => undefined);
+	if (options.keychainAcl) {
+		let enabled = false;
+		driver.keychainAcl = async (op) =>
+			run({ method: "keychainAcl", op }, (): KeychainAclState => {
+				if (op.kind !== "status") enabled = op.kind === "on";
+				return { enabled, generation: 0 };
+			});
+	}
 	if (options.pasteText) driver.pasteText = async (text) => run({ method: "pasteText", text }, () => undefined);
 	if (options.setText) driver.setText = async (text) => run({ method: "setText", text }, () => undefined);
 	if (options.typeTextQuick)
@@ -757,7 +770,7 @@ export function fakeDriver(options: FakeDriverOptions): FakeDriver {
 		},
 		async biometrics(op) {
 			return run({ method: "biometrics", op }, () => {
-				if (op === "enroll") enrolled = true;
+				if (op === "enroll" || op === "reenroll") enrolled = true;
 				if (op === "unenroll") enrolled = false;
 				return { enrolled, modality: "face" as const };
 			});

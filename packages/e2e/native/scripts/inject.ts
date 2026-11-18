@@ -1,6 +1,8 @@
 #!/usr/bin/env bun
 /**
- * `bun native/scripts/inject.ts` — build `libwarden-inject.dylib` (arm64, iOS simulator) into `native/dist/`.
+ * `bun native/scripts/inject.ts` — build `libwarden-inject.dylib` (iOS simulator, universal arm64 + x86_64) into
+ * `native/dist/`. The x86_64 slice is built and checked (`lipo`, `vtool`) but never run: the helper is arm64-only, so an
+ * Intel host cannot run warden's iOS stack today.
  * One Objective-C file, no SwiftPM and no idb libraries, so it builds on its own (`native:inject`) and `native:build`
  * runs it after the helper (which recreates `dist/`). `--macos <out-dir>` builds the same source for the host plus the
  * test harness, which is how `inject.test.ts` exercises it without a simulator.
@@ -42,7 +44,8 @@ const FRAMEWORKS = [
 	"QuartzCore",
 	"-framework",
 	"CoreGraphics",
-	// the virtual authenticator's P-256 keys and signatures (`#pragma mark - passkeys`); AuthenticationServices is dlopen'ed
+	// the virtual authenticator's P-256 keys and signatures (`#pragma mark - passkeys`) and the Keychain ACL shim;
+	// AuthenticationServices and LocalAuthentication are dlopen'ed, so an app that never uses them never loads them
 	"-framework",
 	"Security",
 ];
@@ -53,22 +56,28 @@ const FRAMEWORKS = [
  */
 const IOS_ONLY_FRAMEWORKS = ["-framework", "UIKit"];
 
+/** Slices of the simulator dylib: one fat file, so an Intel simulator runtime loads it too. */
+export const SIMULATOR_ARCHES = ["arm64", "x86_64"] as const;
+
 /** `xcrun clang` argv for the injected dylib on `target`. */
 export function dylibArgv(target: Target, out: string): string[] {
 	const sdk = target === "ios-simulator" ? "iphonesimulator" : "macosx";
 	const min = target === "ios-simulator" ? `-mios-simulator-version-min=${IOS_MIN}` : "-mmacosx-version-min=15.0";
+	// the host build is loaded into the harness on this Mac only
+	const arches = target === "ios-simulator" ? SIMULATOR_ARCHES : (["arm64"] as const);
 	return [
 		"xcrun",
 		"--sdk",
 		sdk,
 		"clang",
-		"-arch",
-		"arm64",
+		...arches.flatMap((arch) => ["-arch", arch]),
 		min,
 		"-dynamiclib",
 		"-fobjc-arc",
 		"-O2",
 		...FLAGS,
+		// the Keychain ACL shim's hooks (fake Keychain + evaluator) exist only in the host build the harness loads
+		...(target === "macos" ? ["-DWARDEN_INJECT_TEST_HOOKS=1"] : []),
 		"-install_name",
 		`@rpath/${INJECT_DYLIB}`,
 		...FRAMEWORKS,
@@ -95,10 +104,24 @@ export function harnessArgv(out: string): string[] {
 		// the harness builds real passkey requests; the dylib itself dlopens AuthenticationServices
 		"-framework",
 		"AuthenticationServices",
+		// the harness hands the Keychain ACL shim real LAContexts; the dylib itself dlopens LocalAuthentication
+		"-framework",
+		"LocalAuthentication",
 		HARNESS_SOURCE,
 		"-o",
 		out,
 	];
+}
+
+export type DylibCheck = { ok: true; arches: string[] } | { ok: false; reason: string };
+
+/** Judge `lipo -info` + `vtool -show-build` output of a built simulator dylib: every slice present, IOSSIMULATOR platform. */
+export function checkSimulatorDylib(lipoInfo: string, vtoolBuild: string): DylibCheck {
+	if (!/platform IOSSIMULATOR/.test(vtoolBuild)) return { ok: false, reason: "not an iOS simulator binary" };
+	const arches = (lipoInfo.trim().split(/:\s*/).pop() ?? "").split(/\s+/).filter(Boolean);
+	const missing = SIMULATOR_ARCHES.filter((arch) => !arches.includes(arch));
+	if (missing.length > 0) return { ok: false, reason: `missing ${missing.join(", ")} slice (has ${arches.join(" ")})` };
+	return { ok: true, arches };
 }
 
 async function run(exec: Exec, cmd: readonly string[]): Promise<string> {
@@ -131,8 +154,9 @@ export async function main(argv: readonly string[]): Promise<number> {
 	await buildDylib(exec, "ios-simulator", out);
 	const info = await run(exec, ["lipo", "-info", out]);
 	const platform = await run(exec, ["vtool", "-show-build", out]);
-	if (!/platform IOSSIMULATOR/.test(platform)) throw new Error(`${out} is not an iOS simulator binary:\n${platform}`);
-	console.log(`inject: dist/${INJECT_DYLIB} (${info.trim().split(": ").pop()}, iOS simulator)`);
+	const checked = checkSimulatorDylib(info, platform);
+	if (!checked.ok) throw new Error(`${out}: ${checked.reason}\n${info}\n${platform}`);
+	console.log(`inject: dist/${INJECT_DYLIB} (${checked.arches.join(" ")}, iOS simulator)`);
 	return 0;
 }
 

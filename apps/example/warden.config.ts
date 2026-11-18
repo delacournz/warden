@@ -38,6 +38,7 @@ const SETTINGS_ROWS = [
 	"a11y",
 	"camera",
 	"biometrics",
+	"keychain",
 	"network",
 	"location",
 	"clock",
@@ -105,6 +106,18 @@ const AFFECTED = {
 		biometrics: {
 			entries: ["src/app/welcome.tsx", "src/app/biometrics.tsx", "src/modules/biometrics", "src/modules/showcase"],
 		},
+		"keychain-acl": {
+			entries: [
+				"src/app/welcome.tsx",
+				"src/app/keychain.tsx",
+				"src/modules/keychain",
+				"src/modules/showcase",
+				"modules/keychain-acl",
+			],
+		},
+		"keychain-acl-off": {
+			entries: ["src/app/welcome.tsx", "src/app/keychain.tsx", "src/modules/keychain", "modules/keychain-acl"],
+		},
 		a11y: { entries: ["src/app/welcome.tsx", "src/app/a11y.tsx", "src/modules/a11y"] },
 		camera: { entries: ["src/app/welcome.tsx", "src/app/camera.tsx", "src/modules/camera"] },
 		passkeys: {
@@ -170,6 +183,8 @@ const EXAMPLE_SUITE = {
  * warden e2e conditions              # network / location / clock specs (iOS app launched with the network dylib)
  * warden e2e a11y                  # the accessibility spec (iOS launched with the a11y library)
  * warden e2e biometrics --all        # the biometrics spec alone, on +bio devices (the example suite excludes it)
+ * warden e2e keychain-acl --all      # Keychain items behind Face ID prompt like a phone (iOS; keychainAcl: true)
+ * warden e2e keychain-acl-off --all  # the negative control: shim off, the same read never prompts
  * warden e2e camera --all            # the camera spec alone: suite feed qr-hello, Android claimed with --camera
  * warden e2e passkeys --all          # the passkeys spec alone: warden's virtual authenticator on (Android API 34+)
  * warden affected example            # which specs this branch needs
@@ -194,7 +209,7 @@ export default {
 	e2e: {
 		example: {
 			...EXAMPLE_SUITE,
-			exclude: [CONDITION_SPECS, "biometrics", "a11y", "camera", "passkeys"],
+			exclude: [CONDITION_SPECS, "biometrics", "keychain-acl", "keychain-acl-off", "a11y", "camera", "passkeys"],
 		},
 		conditions: {
 			...EXAMPLE_SUITE,
@@ -212,6 +227,25 @@ export default {
 			count: 1,
 			biometrics: true,
 			include: ["biometrics"],
+		},
+		/**
+		 * The Keychain ACL shim on Face ID devices: reads of the Keychain screen's access-controlled items prompt like a
+		 * phone (iOS simulators; Android runs nothing).
+		 */
+		"keychain-acl": {
+			...EXAMPLE_SUITE,
+			count: 1,
+			biometrics: true,
+			keychainAcl: true,
+			include: ["keychain-acl"],
+		},
+		/** The negative control: the same screen with the shim off, where a simulator never prompts. */
+		"keychain-acl-off": {
+			...EXAMPLE_SUITE,
+			count: 1,
+			biometrics: true,
+			keychainAcl: false,
+			include: ["keychain-acl-off"],
 		},
 		camera: {
 			...EXAMPLE_SUITE,

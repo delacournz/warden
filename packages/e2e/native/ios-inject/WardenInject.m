@@ -4,17 +4,20 @@
 //
 // Env (set by warden at launch):
 //   WARDEN_NET_PROXY=127.0.0.1:<port>   route NSURLSession HTTP+HTTPS through the lease's shaping proxy
-//   WARDEN_INJECT_STATE=<file>          control file, watched live: {"seq":n,"offline":bool,"clockOffsetMs":n,"clockFrozenMs":n?,"keyboard":"software"|"hardware"?,"camera":{"back"?:{kind,path,loop},"front"?:…},"passkeys"?:{mode,uv,storePath}}
+//   WARDEN_INJECT_STATE=<file>          control file, watched live: {"seq":n,"offline":bool,"clockOffsetMs":n,"clockFrozenMs":n?,"keyboard":"software"|"hardware"?,"camera":{"back"?:{kind,path,loop},"front"?:…},"passkeys"?:{mode,uv,storePath},"keychainAcl"?:{enabled,generation,itemsPath}}
 //   WARDEN_CLOCK_OFFSET_MS=<n>          initial wall-clock offset (the state file overrides it)
 //   WARDEN_CLOCK_FROZEN_MS=<n>          initial frozen wall time, ms since the epoch (the state file overrides it)
 //   WARDEN_CAMERA=1                     fake the AVFoundation capture stack from the state file's `camera` feeds (see "camera")
 //   WARDEN_PASSKEYS=1                   answer platform passkey requests with a virtual authenticator from the state file's `passkeys` (see "passkeys")
+//   WARDEN_KEYCHAIN_ACL=1               make data reads of access-controlled Keychain items prompt like a device (see "keychain acl");
+//                                       `keychainAcl.generation` is the biometric enrolment generation, `itemsPath` the
+//                                       sidecar where the dylib (its only writer) records the generation each ACL item was added at
 //   WARDEN_KEYBOARD=software|hardware   initial keyboard mode (the state file's `keyboard` overrides it live); see "keyboard"
 //   WARDEN_INJECT_DEBUG=1               log to stderr
 //
 // Control channel: the simulator shares the host filesystem, so the channel is a file. The host replaces
 // `WARDEN_INJECT_STATE` atomically (write + rename); a vnode watch on its directory fires, the new state is applied
-// and `<file>.ack` is written with `{"seq":n,"pid":p,"proxy":bool,"camera":bool,"passkeys":bool,"bundle":id}` (`proxy`: launched with WARDEN_NET_PROXY; `camera`: launched with WARDEN_CAMERA=1; `passkeys`: launched with WARDEN_PASSKEYS=1; `bundle`: so the host ignores another injected app). No sockets, no polling, nothing running while idle.
+// and `<file>.ack` is written with `{"seq":n,"pid":p,"proxy":bool,"camera":bool,"passkeys":bool,"keychainAcl":bool,"bundle":id}` (`proxy`: launched with WARDEN_NET_PROXY; `camera`: launched with WARDEN_CAMERA=1; `passkeys`: launched with WARDEN_PASSKEYS=1; `keychainAcl`: launched with WARDEN_KEYCHAIN_ACL=1; `bundle`: so the host ignores another injected app). No sockets, no polling, nothing running while idle.
 //
 // Accessibility read (A11Y-1): a state with `"a11yRead":true` makes the app walk its UIKit accessibility tree on the main
 // thread and write `<file>.a11y` = {"req":seq,"nodes":[{cls,ae,label,hint,value,id,traits:"0x..",frame:[x,y,w,h] (screen
@@ -54,6 +57,7 @@
 #import <Security/Security.h>
 #import <CommonCrypto/CommonDigest.h>
 #import <stdatomic.h>
+#import <os/lock.h>
 #import <fcntl.h>
 #import <sys/time.h>
 #import <time.h>
@@ -2553,12 +2557,398 @@ static void pk_apply(id passkeys) {
   DLOG("passkeys: %s mode=%s uv=%s", g_pk_active ? "on" : "off", mode.UTF8String, uv.UTF8String);
 }
 
+#pragma mark - keychain acl
+// The simulator ignores `SecAccessControl` on Keychain items: a read of an item behind `.biometryCurrentSet` or
+// `.devicePasscode` answers 0 with the data, no prompt, also with `interactionNotAllowed` and after Face ID was
+// unenrolled; `evaluateAccessControl` fails with LAError -1020 ("not supported on iOS Simulator"). With
+// WARDEN_KEYCHAIN_ACL=1 a data read of an access-controlled item runs the item's policy through `-[LAContext
+// evaluatePolicy:localizedReason:reply:]` first (the real Face ID / passcode sheet, driven by `warden ui biometrics`)
+// and answers the OSStatus a device is expected to give. It emulates the prompt and the codes; it proves nothing about
+// real enforcement, which only a device has (WDN-KACL).
+//
+// ACL text (`CFCopyDescription`, private; identical on the iOS 27.2 simulator and macOS 26; re-verify per iOS release):
+//   .biometryCurrentSet                  od(cbio(pbioc()pbioh()))
+//   .biometryAny                         od(cbio(pbioc()))
+//   .devicePasscode                      od(cup(true))
+//   .userPresence                        od(cpo(DeviceOwnerAuthentication))
+//   .biometryCurrentSet .or .passcode    od(pkofn(1)cup(true)cbio(pbioc()pbioh()))
+//   .biometryAny .or .passcode           od(pkofn(1)cup(true)cbio(pbioc()))
+//   .biometryCurrentSet .and .passcode   od(pkofn(2)cup(true)cbio(pbioc()pbioh()))   -> unknown, untouched
+//   .applicationPassword                 prp(true);dacl(true)                         -> unknown, untouched
+//   .privateKeyUsage                     ock(true);osgn(true);…                       -> unknown, untouched
+//   no flags                             dacl(true)                                   -> unknown, untouched
+// Tokens are matched by prefix (`pbioh(`, not `pbioh()`): an item read back may carry its hashes. Anything not in this
+// table leaves the read untouched (never block an app on a parse failure).
+//
+// Read gate (`kacl_copy_matching`, a data read only: `kSecReturnData`): probe the match's attributes (no data, no
+// context, no prompt), and for a known ACL:
+//   kSecUseAuthenticationUIFail or ctx.interactionNotAllowed (and ctx not evaluated)  -> -25308 errSecInteractionNotAllowed
+//   kSecUseAuthenticationUISkip                                                       -> -25300 errSecItemNotFound
+//   biometry only and canEvaluatePolicy(biometrics) fails (-5/-6/-7, -8 lockout too)  -> -25300 errSecItemNotFound
+//   ctx already evaluated (by the app or an earlier read) a policy that covers the item -> the read, no prompt
+//   evaluatePolicy: ok -> the read; -2/-4/-9 cancel -> -128 errSecUserCanceled; anything else -> -25293 errSecAuthFailed
+// Policy: biometry only -> .deviceOwnerAuthenticationWithBiometrics (1); a passcode path, or .userPresence -> .deviceOwnerAuthentication (2).
+//
+// Enrolment generation (`warden ui biometrics reenroll` bumps the state's `keychainAcl.generation`): the interposed
+// `SecItemAdd` of an item with `kSecAttrAccessControl` records `sha256(class|service|account|accessGroup|server|sync)
+// -> generation` in the sidecar at `keychainAcl.itemsPath` (`{"<hex>": n}`, atomic write; the dylib is its only
+// writer). The key comes from the item's attributes as the Keychain hands them back (a read-back after the add, the
+// probe on a read), so system-assigned `agrp` / `sync` match. A duplicate add leaves the record; no record = 0. A
+// `.biometryCurrentSet` item recorded below the current generation reads like a device whose Face ID set changed:
+//   no passcode path                     -> -25300 errSecItemNotFound, no prompt
+//   a passcode path (`.or .devicePasscode`) -> .deviceOwnerAuthentication (2) only, an evaluated context does not count
+// `.biometryAny` and passcode-only items ignore the generation.
+// Not covered: SecItemUpdate / SecItemDelete on ACL items, SecKey operations, evaluateAccessControl.
+#define KACL_POLICY_BIO 1
+#define KACL_POLICY_OWNER 2
+
+static BOOL g_kacl_enabled = NO;   // launched with WARDEN_KEYCHAIN_ACL=1 (interposed, swizzled)
+static _Atomic int g_kacl_active = 1; // the state file's `keychainAcl.enabled` (a state without the key keeps it)
+static IMP g_kacl_orig_eval = NULL;
+static IMP g_kacl_orig_can = NULL;
+static Class g_kacl_context_class = Nil;
+static const void *kKaclEvaluated = &kKaclEvaluated;
+static _Thread_local int g_kacl_depth = 0;
+static _Atomic long g_kacl_generation = 0;     // the state's `keychainAcl.generation`
+static NSString *g_kacl_items_path = nil;      // the state's `keychainAcl.itemsPath` (under g_kacl_lock)
+static os_unfair_lock g_kacl_lock = OS_UNFAIR_LOCK_INIT;  // the path and the sidecar's read-modify-write
+
+typedef OSStatus (*KaclCopyFn)(CFDictionaryRef, CFTypeRef *);
+typedef OSStatus (*KaclAddFn)(CFDictionaryRef, CFTypeRef *);
+typedef void (*KaclEvalFn)(id ctx, NSInteger policy, NSString *reason, void (^reply)(BOOL, NSError *));
+typedef NSInteger (*KaclCanEvalFn)(id ctx, NSInteger policy);
+
+static void kacl_eval_real(id ctx, NSInteger policy, NSString *reason, void (^reply)(BOOL, NSError *)) {
+  ((void (*)(id, SEL, NSInteger, NSString *, void (^)(BOOL, NSError *)))g_kacl_orig_eval)(ctx, NSSelectorFromString(@"evaluatePolicy:localizedReason:reply:"), policy, reason, reply);
+}
+static NSInteger kacl_can_real(id ctx, NSInteger policy) {
+  NSError *error = nil;
+  BOOL ok = ((BOOL (*)(id, SEL, NSInteger, NSError **))g_kacl_orig_can)(ctx, NSSelectorFromString(@"canEvaluatePolicy:error:"), policy, &error);
+  return ok ? 0 : (error ? error.code : -1);
+}
+
+static KaclCopyFn g_kacl_copy = SecItemCopyMatching;
+static KaclAddFn g_kacl_add = SecItemAdd;
+static KaclEvalFn g_kacl_eval = kacl_eval_real;
+static KaclCanEvalFn g_kacl_can = kacl_can_real;
+
+typedef enum { KACL_BIO_NONE = 0, KACL_BIO_ANY = 1, KACL_BIO_CURRENT_SET = 2 } KaclBiometry;
+typedef struct {
+  BOOL known;
+  KaclBiometry biometry;
+  BOOL passcode;
+  BOOL presence;
+} KaclAcl;
+
+/** The balanced `name(…)` argument at `s[*at]` (which must be `(`); advances `*at` past the closing paren. nil when unbalanced. */
+static NSString *kacl_group(NSString *s, NSUInteger *at) {
+  if (*at >= s.length || [s characterAtIndex:*at] != '(') return nil;
+  NSUInteger depth = 0, start = *at + 1;
+  for (NSUInteger i = *at; i < s.length; i++) {
+    unichar c = [s characterAtIndex:i];
+    if (c == '(') depth++;
+    else if (c == ')' && --depth == 0) {
+      *at = i + 1;
+      return [s substringWithRange:NSMakeRange(start, i - start)];
+    }
+  }
+  return nil;
+}
+
+/** Pure: the access control a `CFCopyDescription(SecAccessControlRef)` text describes (table above). */
+static KaclAcl kacl_parse(NSString *desc) {
+  KaclAcl acl = { NO, KACL_BIO_NONE, NO, NO };
+  NSRange od = [desc rangeOfString:@"od("];
+  if (od.location == NSNotFound) return acl;
+  NSUInteger at = od.location + 2;
+  NSString *body = kacl_group(desc, &at);
+  if (!body) return acl;
+  NSUInteger i = 0, constraints = 0;
+  long kofn = 1;
+  while (i < body.length) {
+    NSUInteger open = [body rangeOfString:@"(" options:0 range:NSMakeRange(i, body.length - i)].location;
+    if (open == NSNotFound) return acl;
+    NSString *name = [body substringWithRange:NSMakeRange(i, open - i)];
+    NSUInteger next = open;
+    NSString *arg = kacl_group(body, &next);
+    if (!arg) return acl;
+    if ([name isEqualToString:@"pkofn"]) {
+      kofn = arg.integerValue;
+    } else if ([name isEqualToString:@"cup"]) {
+      acl.passcode = YES; constraints++;
+    } else if ([name isEqualToString:@"cpo"]) {
+      if (![arg isEqualToString:@"DeviceOwnerAuthentication"]) return acl;
+      acl.presence = YES; constraints++;
+    } else if ([name isEqualToString:@"cbio"]) {
+      if (![arg hasPrefix:@"pbioc("]) return acl;
+      acl.biometry = [arg containsString:@"pbioh("] ? KACL_BIO_CURRENT_SET : KACL_BIO_ANY;
+      constraints++;
+    } else {
+      return acl;  // a constraint this table does not know
+    }
+    i = next;
+  }
+  // `.and` (k of n with k > 1) needs every factor at once, which no LAPolicy expresses
+  if (constraints == 0 || (constraints > 1 && kofn != 1)) return acl;
+  acl.known = YES;
+  return acl;
+}
+
+static NSInteger kacl_policy(KaclAcl acl) {
+  return (acl.passcode || acl.presence) ? KACL_POLICY_OWNER : KACL_POLICY_BIO;
+}
+
+/** Whether `evaluated` (the policy a context evaluated successfully) covers an item that needs `policy`. */
+static BOOL kacl_covers(NSNumber *evaluated, NSInteger policy) {
+  if (!evaluated) return NO;
+  return policy == KACL_POLICY_OWNER || evaluated.integerValue == KACL_POLICY_BIO;
+}
+
+static void kacl_eval_swizzled(id self_, SEL _cmd, NSInteger policy, NSString *reason, void (^reply)(BOOL, NSError *)) {
+  g_kacl_eval(self_, policy, reason, ^(BOOL ok, NSError *error) {
+    if (ok) objc_setAssociatedObject(self_, kKaclEvaluated, @(policy), OBJC_ASSOCIATION_RETAIN);
+    if (reply) reply(ok, error);
+  });
+}
+
+/** Run `policy` on `ctx` (through the swizzle, so a success is remembered) and wait: 0 = ok, else the LAError code. */
+static NSInteger kacl_evaluate(id ctx, NSInteger policy, NSString *reason) {
+  __block NSInteger code = -1;
+  dispatch_semaphore_t done = dispatch_semaphore_create(0);
+  ((void (*)(id, SEL, NSInteger, NSString *, void (^)(BOOL, NSError *)))objc_msgSend)(
+    ctx, NSSelectorFromString(@"evaluatePolicy:localizedReason:reply:"), policy, reason, ^(BOOL ok, NSError *error) {
+      code = ok ? 0 : (error ? error.code : -1);
+      dispatch_semaphore_signal(done);
+    });
+  dispatch_semaphore_wait(done, DISPATCH_TIME_FOREVER);
+  return code;
+}
+
+static OSStatus kacl_status_for(NSInteger code) {
+  switch (code) {
+    case 0: return errSecSuccess;
+    case -2: case -4: case -9: return errSecUserCanceled;  // userCancel, systemCancel, appCancel
+    default: return errSecAuthFailed;                      // -1 failed, -3 fallback, -8 lockout, unknown (-1020)
+  }
+}
+
+/** The first access-controlled match the probe found, as a known ACL (its attributes in `*matched`); `known` NO when there is none to gate. */
+static KaclAcl kacl_probe(NSDictionary *query, NSDictionary **matched) {
+  KaclAcl none = { NO, KACL_BIO_NONE, NO, NO };
+  NSMutableDictionary *probe = [query mutableCopy];
+  for (id key in @[ (id)kSecReturnData, (id)kSecReturnRef, (id)kSecReturnPersistentRef, (id)kSecUseAuthenticationContext,
+                    (id)kSecUseOperationPrompt, (id)kSecUseAuthenticationUI ]) {
+    [probe removeObjectForKey:key];
+  }
+  BOOL all = [query[(id)kSecMatchLimit] isEqual:(id)kSecMatchLimitAll];
+  probe[(id)kSecReturnAttributes] = @YES;
+  probe[(id)kSecMatchLimit] = all ? (id)kSecMatchLimitAll : (id)kSecMatchLimitOne;
+  CFTypeRef found = NULL;
+  if (g_kacl_copy((__bridge CFDictionaryRef)probe, &found) != errSecSuccess || !found) return none;
+  id attrs = (__bridge_transfer id)found;
+  NSArray *matches = [attrs isKindOfClass:[NSArray class]] ? attrs : @[ attrs ];
+  for (id match in matches) {
+    if (![match isKindOfClass:[NSDictionary class]]) continue;
+    id ac = match[(id)kSecAttrAccessControl];
+    if (!ac) continue;
+    NSString *desc = (__bridge_transfer NSString *)CFCopyDescription((__bridge CFTypeRef)ac);
+    KaclAcl acl = kacl_parse(desc);
+    DLOG("keychain acl: item acl %s known=%d bio=%d passcode=%d presence=%d", desc.UTF8String, acl.known, acl.biometry, acl.passcode, acl.presence);
+    if (acl.known) {
+      *matched = match;
+      return acl;
+    }
+  }
+  return none;
+}
+
+/** The sidecar key of an item: sha256 over its identifying attributes as the Keychain hands them back. */
+static NSString *kacl_item_key(NSDictionary *attrs) {
+  NSMutableArray *parts = [NSMutableArray array];
+  for (id key in @[ (id)kSecClass, (id)kSecAttrService, (id)kSecAttrAccount, (id)kSecAttrAccessGroup, (id)kSecAttrServer,
+                    (id)kSecAttrSynchronizable ]) {
+    id v = attrs[key];
+    [parts addObject:v ? [v description] : @""];
+  }
+  NSData *bytes = [[parts componentsJoinedByString:@"|"] dataUsingEncoding:NSUTF8StringEncoding];
+  unsigned char digest[CC_SHA256_DIGEST_LENGTH];
+  CC_SHA256(bytes.bytes, (CC_LONG)bytes.length, digest);
+  NSMutableString *hex = [NSMutableString stringWithCapacity:CC_SHA256_DIGEST_LENGTH * 2];
+  for (int i = 0; i < CC_SHA256_DIGEST_LENGTH; i++) [hex appendFormat:@"%02x", digest[i]];
+  return hex;
+}
+
+/** The sidecar at `path` (call under g_kacl_lock); missing or unreadable = empty. */
+static NSMutableDictionary *kacl_read_records(NSString *path) {
+  NSData *data = path ? [NSData dataWithContentsOfFile:path] : nil;
+  id json = data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
+  return [json isKindOfClass:[NSDictionary class]] ? [json mutableCopy] : [NSMutableDictionary dictionary];
+}
+
+/** The generation item `attrs` was recorded at; no sidecar or no record = 0. */
+static long kacl_recorded_generation(NSDictionary *attrs) {
+  os_unfair_lock_lock(&g_kacl_lock);
+  NSString *path = g_kacl_items_path;
+  id value = path ? kacl_read_records(path)[kacl_item_key(attrs)] : nil;
+  os_unfair_lock_unlock(&g_kacl_lock);
+  return [value respondsToSelector:@selector(longValue)] ? [value longValue] : 0;
+}
+
+/** A `.biometryCurrentSet` item from before the latest re-enrolment. */
+static BOOL kacl_invalidated(KaclAcl acl, NSDictionary *attrs) {
+  if (acl.biometry != KACL_BIO_CURRENT_SET) return NO;
+  long current = atomic_load(&g_kacl_generation);
+  return current > 0 && kacl_recorded_generation(attrs) < current;
+}
+
+/** Record the item the app just added (read back for its stored attributes) at the current generation. */
+static void kacl_record_add(NSDictionary *added) {
+  NSMutableDictionary *lookup = [NSMutableDictionary dictionary];
+  for (id key in @[ (id)kSecClass, (id)kSecAttrService, (id)kSecAttrAccount, (id)kSecAttrAccessGroup, (id)kSecAttrServer,
+                    (id)kSecAttrSynchronizable ]) {
+    if (added[key]) lookup[key] = added[key];
+  }
+  if (!lookup[(id)kSecAttrSynchronizable]) lookup[(id)kSecAttrSynchronizable] = (id)kSecAttrSynchronizableAny;
+  lookup[(id)kSecReturnAttributes] = @YES;
+  lookup[(id)kSecMatchLimit] = (id)kSecMatchLimitOne;
+  CFTypeRef found = NULL;
+  id stored = g_kacl_copy((__bridge CFDictionaryRef)lookup, &found) == errSecSuccess && found ? (__bridge_transfer id)found : nil;
+  NSDictionary *attrs = [stored isKindOfClass:[NSDictionary class]] ? stored : added;
+  NSString *key = kacl_item_key(attrs);
+  long generation = atomic_load(&g_kacl_generation);
+  os_unfair_lock_lock(&g_kacl_lock);
+  NSString *path = g_kacl_items_path;
+  if (path) {
+    NSMutableDictionary *records = kacl_read_records(path);
+    records[key] = @(generation);
+    NSData *json = [NSJSONSerialization dataWithJSONObject:records options:0 error:nil];
+    // atomically: a temp file in the same directory, then rename (a reader never sees half a file)
+    if (![json writeToFile:path atomically:YES]) DLOG("keychain acl: cannot write %s", path.UTF8String);
+  }
+  os_unfair_lock_unlock(&g_kacl_lock);
+  DLOG("keychain acl: recorded item %s at generation %ld", key.UTF8String, generation);
+}
+
+static OSStatus kacl_gate(NSDictionary *q, CFDictionaryRef query, CFTypeRef *result) {
+  NSDictionary *matched = nil;
+  KaclAcl acl = kacl_probe(q, &matched);
+  if (!acl.known) return g_kacl_copy(query, result);
+  NSInteger policy = kacl_policy(acl);
+  BOOL invalidated = kacl_invalidated(acl, matched);
+  if (invalidated) {
+    BOOL passcodePath = acl.passcode || acl.presence;
+    DLOG("keychain acl: .biometryCurrentSet item from before a re-enrolment (%s)", passcodePath ? "passcode only" : "gone");
+    if (!passcodePath) return errSecItemNotFound;
+    policy = KACL_POLICY_OWNER;
+  }
+  id ui = q[(id)kSecUseAuthenticationUI];
+  if ([ui isEqual:(id)kSecUseAuthenticationUISkip]) return errSecItemNotFound;
+  id given = q[(id)kSecUseAuthenticationContext];
+  id ctx = [given isKindOfClass:g_kacl_context_class] ? given : [g_kacl_context_class new];
+  if (policy == KACL_POLICY_BIO) {
+    NSInteger can = g_kacl_can(ctx, KACL_POLICY_BIO);
+    if (can != 0) {
+      DLOG("keychain acl: biometry-only item, biometry unusable (%ld)", (long)can);
+      return errSecItemNotFound;
+    }
+  }
+  // an invalidated item wants the passcode now: an evaluation the app made (with the new Face ID) does not unlock it
+  if (!invalidated && kacl_covers(objc_getAssociatedObject(ctx, kKaclEvaluated), policy)) return g_kacl_copy(query, result);
+  BOOL noUI = [ui isEqual:(id)kSecUseAuthenticationUIFail] ||
+              ((BOOL (*)(id, SEL))objc_msgSend)(ctx, NSSelectorFromString(@"interactionNotAllowed"));
+  if (noUI) return errSecInteractionNotAllowed;
+  NSString *reason = [q[(id)kSecUseOperationPrompt] isKindOfClass:[NSString class]] ? q[(id)kSecUseOperationPrompt] : nil;
+  if (!reason.length) {
+    NSString *own = ((NSString * (*)(id, SEL))objc_msgSend)(ctx, NSSelectorFromString(@"localizedReason"));
+    reason = own.length ? own : @"Authenticate to access this item";
+  }
+  NSInteger code = kacl_evaluate(ctx, policy, reason);
+  DLOG("keychain acl: policy %ld -> %ld", (long)policy, (long)code);
+  return code == 0 ? g_kacl_copy(query, result) : kacl_status_for(code);
+}
+
+static OSStatus kacl_copy_matching(CFDictionaryRef query, CFTypeRef *result) {
+  // off (and a Keychain call made from inside the gate) is the real function: no hook, no ObjC, no allocation
+  if (!g_kacl_enabled || !atomic_load(&g_kacl_active) || g_kacl_depth > 0 || !query) return SecItemCopyMatching(query, result);
+  NSDictionary *q = (__bridge NSDictionary *)query;
+  if (![q[(id)kSecReturnData] respondsToSelector:@selector(boolValue)] || ![q[(id)kSecReturnData] boolValue]) {
+    return g_kacl_copy(query, result);
+  }
+  g_kacl_depth++;
+  OSStatus status;
+  @autoreleasepool { status = kacl_gate(q, query, result); }
+  g_kacl_depth--;
+  return status;
+}
+INTERPOSE(kacl_copy_matching, SecItemCopyMatching);
+
+static OSStatus kacl_add(CFDictionaryRef attributes, CFTypeRef *result) {
+  // off (and an add made from inside the shim) is the real function: no hook, no ObjC, no allocation
+  if (!g_kacl_enabled || !atomic_load(&g_kacl_active) || g_kacl_depth > 0 || !attributes) return SecItemAdd(attributes, result);
+  NSDictionary *a = (__bridge NSDictionary *)attributes;
+  OSStatus status = g_kacl_add(attributes, result);
+  if (status != errSecSuccess || !a[(id)kSecAttrAccessControl]) return status;
+  g_kacl_depth++;
+  @autoreleasepool { kacl_record_add(a); }
+  g_kacl_depth--;
+  return status;
+}
+INTERPOSE(kacl_add, SecItemAdd);
+
+static void kacl_install(void) {
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    dlopen("/System/Library/Frameworks/LocalAuthentication.framework/LocalAuthentication", RTLD_NOW);
+    Class c = NSClassFromString(@"LAContext");
+    Method eval = c ? class_getInstanceMethod(c, NSSelectorFromString(@"evaluatePolicy:localizedReason:reply:")) : NULL;
+    Method can = c ? class_getInstanceMethod(c, NSSelectorFromString(@"canEvaluatePolicy:error:")) : NULL;
+    if (!eval || !can) { DLOG("keychain acl: no LAContext, off"); return; }
+    g_kacl_context_class = c;
+    g_kacl_orig_can = method_getImplementation(can);
+    g_kacl_orig_eval = method_setImplementation(eval, (IMP)kacl_eval_swizzled);
+    g_kacl_enabled = YES;
+    DLOG("keychain acl: installed");
+  });
+}
+
+/** Apply the state file's `keychainAcl` (`{enabled, generation, itemsPath}`); absent or malformed keeps what was. */
+static void kacl_apply(id value) {
+  if (!g_kacl_enabled || ![value isKindOfClass:[NSDictionary class]]) return;
+  NSDictionary *d = value;
+  if ([d[@"enabled"] respondsToSelector:@selector(boolValue)]) atomic_store(&g_kacl_active, [d[@"enabled"] boolValue] ? 1 : 0);
+  long generation = [d[@"generation"] respondsToSelector:@selector(longValue)] ? [d[@"generation"] longValue] : 0;
+  atomic_store(&g_kacl_generation, generation > 0 ? generation : 0);
+  NSString *path = [d[@"itemsPath"] isKindOfClass:[NSString class]] && [d[@"itemsPath"] length] ? [d[@"itemsPath"] copy] : nil;
+  os_unfair_lock_lock(&g_kacl_lock);
+  g_kacl_items_path = path;
+  os_unfair_lock_unlock(&g_kacl_lock);
+  DLOG("keychain acl: %s, generation %ld", atomic_load(&g_kacl_active) ? "on" : "off", atomic_load(&g_kacl_generation));
+}
+
+#ifdef WARDEN_INJECT_TEST_HOOKS
+// Host (macOS) build only: the harness swaps the Keychain and the policy evaluation for fakes (a Mac cannot hold an
+// access-controlled item without entitlements, and a test must never show a real dialog). NULL keeps the real one.
+__attribute__((visibility("default"))) void warden_inject_kacl_test_hooks(KaclCopyFn copy, KaclAddFn add, KaclEvalFn eval, KaclCanEvalFn can) {
+  g_kacl_copy = copy ?: SecItemCopyMatching;
+  g_kacl_add = add ?: SecItemAdd;
+  g_kacl_eval = eval ?: kacl_eval_real;
+  g_kacl_can = can ?: kacl_can_real;
+}
+
+/** The parse of `desc` as JSON (`{known,biometry,passcode,presence}`), for the harness's parser table. */
+__attribute__((visibility("default"))) NSString *warden_inject_kacl_parse(NSString *desc) {
+  KaclAcl acl = kacl_parse(desc);
+  NSString *bio = acl.biometry == KACL_BIO_CURRENT_SET ? @"currentSet" : acl.biometry == KACL_BIO_ANY ? @"any" : @"none";
+  return [NSString stringWithFormat:@"{\"known\":%s,\"biometry\":\"%@\",\"passcode\":%s,\"presence\":%s}", acl.known ? "true" : "false", bio, acl.passcode ? "true" : "false", acl.presence ? "true" : "false"];
+}
+#endif
+
 #pragma mark - control channel
 
 static void write_ack(long long seq) {
   NSString *ack = [g_state_path stringByAppendingString:@".ack"];
   NSString *bundle = [[NSBundle mainBundle] bundleIdentifier] ?: @"";  // reverse-DNS: nothing to escape
-  NSString *body = [NSString stringWithFormat:@"{\"seq\":%lld,\"pid\":%d,\"proxy\":%s,\"camera\":%s,\"passkeys\":%s,\"bundle\":\"%@\"}", seq, getpid(), g_proxy_dict ? "true" : "false", g_camera_enabled ? "true" : "false", g_passkeys_enabled ? "true" : "false", bundle];
+  NSString *body = [NSString stringWithFormat:@"{\"seq\":%lld,\"pid\":%d,\"proxy\":%s,\"camera\":%s,\"passkeys\":%s,\"keychainAcl\":%s,\"bundle\":\"%@\"}", seq, getpid(), g_proxy_dict ? "true" : "false", g_camera_enabled ? "true" : "false", g_passkeys_enabled ? "true" : "false", g_kacl_enabled ? "true" : "false", bundle];
   [body writeToFile:ack atomically:YES encoding:NSUTF8StringEncoding error:nil];
 }
 
@@ -2628,6 +3018,7 @@ static void apply_state_file(void) {
 #endif
   if (g_camera_enabled) camera_apply([state[@"camera"] isKindOfClass:[NSDictionary class]] ? state[@"camera"] : @{});
   pk_apply(state[@"passkeys"]);
+  kacl_apply(state[@"keychainAcl"]);
   if ([state[@"a11yRead"] respondsToSelector:@selector(boolValue)] && [state[@"a11yRead"] boolValue]) write_a11y(seq);
   DLOG("state seq=%lld offline=%d clockOffsetMs=%lld frozen=%d", seq, offline, off, frozen);
   if (wasOffline != offline) notify_connectivity_changed();
@@ -2679,10 +3070,11 @@ __attribute__((constructor)) static void warden_inject_init(void) {
       g_passkeys_enabled = YES;
       pk_install();
     }
+    if ([env[@"WARDEN_KEYCHAIN_ACL"] isEqualToString:@"1"]) kacl_install();
     if (state.length) {
       g_state_path = [state copy];
       // the camera must have its feeds, and the authenticator its mode, before the app's first look: apply the staged state now
-      if (g_camera_enabled || g_passkeys_enabled) apply_state_file();
+      if (g_camera_enabled || g_passkeys_enabled || g_kacl_enabled) apply_state_file();
       watch_state();
     }
     DLOG("loaded in pid %d", getpid());
