@@ -206,7 +206,7 @@ Pin the action to a commit SHA or release tag. In order, it:
 | `cache-prefix` | `warden-e2e-v1` | change it to drop every cache |
 | `js-inputs` | `src assets app.config.ts index.ts metro.config.js package.json` | git pathspecs that key the repack cache; mirror `kinds.simulator.jsInputs` |
 | `save-cache` | `true` | `false` on pull requests |
-| `build-only` | `false` | `true` builds the app and saves the caches with no device and no spec (`passed` = the build's outcome): a push to the default branch whose specs already ran on the pull request |
+| `build-only` | `false` | `true` builds the app and saves the caches but runs no spec (`passed` = the build's outcome; a suite with a golden still builds it on a cache miss and saves it): a push to the default branch whose specs already ran on the pull request |
 | `compiler-cache` | `true` | on a native build cache miss, install `ccache` and restore / save the compiler cache (skipped when the project sets `build.cache: false`); `false` skips both |
 | `artifacts` | `all` | groups to collect: `all`, `none`, or a list of `report,batches,logs,app,golden` (see [Artifacts](#artifacts)) |
 | `upload-artifacts` | `true` | `false` collects without uploading: upload from `artifact-paths` yourself |

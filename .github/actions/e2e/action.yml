@@ -85,7 +85,7 @@ inputs:
     description: Save the build, repack and golden caches after a green run, and the compiler and Metro caches after a build (true on the default branch, false on pull requests).
     default: "true"
   build-only:
-    description: "`true` builds the app and saves the caches with no device and no spec: `passed` is the build's outcome. For a push to the default branch whose specs already ran on the pull request: it seeds the caches every pull request restores."
+    description: "`true` builds the app and saves the caches, but runs no spec: `passed` is the build's outcome. A suite with a golden still builds it on a cache miss (booting a simulator) and saves it with the rest. For a push to the default branch whose specs already ran on the pull request: it seeds the caches every pull request restores."
     default: "false"
   suite-timeout-minutes:
     description: Minutes the suite may run before the action stops it (SIGINT, then SIGKILL after 60 s), so a hung run still prints its evidence and uploads the artifact. The app build runs before it in its own step (`warden e2e --build-only`) and is not counted. Keep the job timeout above a cold build plus this.
