@@ -185,6 +185,42 @@ runs:
             echo "::warning::xcrun simctl runtime dyld_shared_cache update --all exited $status after $(( $(date +%s) - start )) s; simulators build the cache on demand"
           fi
         fi
+        # CoreSimulator can list a runtime before it accepts a device on it: on a fresh hosted image the first
+        # `simctl create` failed with "Invalid runtime" and the same call worked seconds later. Create and delete one
+        # iPhone on each available iOS runtime, asking again every 5 s within one 120 s budget, before warden claims.
+        # warden's own create waits for the same refusal; this moves the wait out of the suite's clock. A runtime
+        # still refusing only warns, so warden's claim error stays the reported failure. jq is /usr/bin/jq (macOS 15+).
+        start=$(date +%s)
+        deadline=$(( start + 120 ))
+        probe="runtime-probe-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-$$"
+        if ! probes=$(xcrun simctl list runtimes -j | jq -r '.runtimes[]
+          | select(.isAvailable and .platform == "iOS")
+          | "\(.identifier) \([.supportedDeviceTypes[] | select(.productFamily == "iPhone")][0].identifier // "")"'); then
+          echo "::warning::could not list the iOS runtimes to probe; warden's create still waits for a refusing runtime"
+          probes=""
+        fi
+        while read -r runtime devicetype; do
+          [ -n "$runtime" ] && [ -n "$devicetype" ] || continue
+          out=""
+          while :; do
+            remaining=$(( deadline - $(date +%s) ))
+            if [ "$remaining" -le 0 ]; then
+              echo "::warning::$runtime still refuses a new simulator after $(( $(date +%s) - start )) s: ${out:-simctl create did not return in time}"
+              break
+            fi
+            if out=$(perl -e 'alarm shift; exec @ARGV' "$remaining" xcrun simctl create "$probe" "$devicetype" "$runtime" 2>&1 < /dev/null); then
+              xcrun simctl delete "$out" < /dev/null || echo "::warning::could not delete probe simulator $out"
+              break
+            fi
+            sleep 5
+          done
+        done <<< "$probes"
+        # A create cut off by the alarm can still register its device: delete any left under this run's probe name.
+        { xcrun simctl list devices -j | jq -r --arg name "$probe" '.devices[][] | select(.name == $name) | .udid' \
+          | while read -r udid; do
+              xcrun simctl delete "$udid" < /dev/null || echo "::warning::could not delete probe simulator $udid"
+            done; } || echo "::warning::could not list devices to remove probe simulators named $probe"
+        echo "simulator runtime probe done after $(( $(date +%s) - start )) s"
 
     - name: Install bun
       shell: bash
