@@ -208,8 +208,8 @@ export default {
 	perf: { budgets: { jankPct: 5, maxCommitMs: 100, p95CpuPct: 90, peakMemoryMb: 600 } },
 	e2e: {
 		/**
-		 * `golden: true`: the run's simulators are cloned from a settled golden, so a claim skips the first-boot data
-		 * migration (50-85 s per fresh sim on a 3-vCPU CI runner). The e2e action caches the golden after a green run.
+		 * `golden: true`: the run's simulators are cloned from a golden (first-booted once; unsettled on a 3-vCPU CI runner), so a
+		 * claim skips the first-boot data migration (50-85 s per fresh sim there). The e2e action caches the golden after a green run.
 		 */
 		example: {
 			...EXAMPLE_SUITE,
