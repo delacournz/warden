@@ -266,7 +266,7 @@ export const IOS_TIMEOUTS = {
 	cloneMs: 120_000,
 	bootMs: 120_000,
 	shutdownMs: 60_000,
-	/** a clone's priming boot (`bootstatus -b`): a first boot on a 3-vCPU runner takes 25-40 s */
+	/** a clone's priming boot (`bootstatus -b`): boot + shutdown measured 69.5 s on a 3-vCPU runner */
 	primeMs: 180_000,
 } as const;
 
