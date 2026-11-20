@@ -57,7 +57,7 @@ describe("createAcceptingRuntime", () => {
 		expect(result.success).toBe(false);
 		if (result.success) return;
 		expect(result.error).toBe(
-			`${REFUSED} (iOS-27-2 is listed by \`simctl list runtimes\` but refused new simulators for ${CREATE_RETRY.waitMs / 1000}s)`
+			`${REFUSED} (iOS-27-2 is listed by simctl list runtimes but refused new simulators for ${CREATE_RETRY.waitMs / 1000}s)`
 		);
 		const waited = h.slept.reduce((a, b) => a + b, 0);
 		expect(waited).toBe(CREATE_RETRY.waitMs);
@@ -76,6 +76,20 @@ describe("createAcceptingRuntime", () => {
 		const h = harness([async () => err("`xcrun simctl create …` did not finish within 120s")]);
 		expect((await createAcceptingRuntime(h.attempt, RUNTIME, h.deps)).success).toBe(false);
 		expect(h.calls()).toBe(1);
+	});
+
+	test("a clock that never moves still ends the wait (slept time counts)", async () => {
+		let calls = 0;
+		const result = await createAcceptingRuntime(
+			async () => {
+				calls += 1;
+				return err(REFUSED);
+			},
+			RUNTIME,
+			{ now: () => 42, sleep: async () => {} }
+		);
+		expect(result.success).toBe(false);
+		expect(calls).toBe(CREATE_RETRY.waitMs / CREATE_RETRY.pollMs + 1);
 	});
 
 	test("the last sleep is cut to what is left of the wait", async () => {

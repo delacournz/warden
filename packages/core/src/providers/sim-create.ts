@@ -25,8 +25,9 @@ function shortRuntime(runtimeId: string): string {
 
 /**
  * Run a `simctl create` attempt, asking again every `pollMs` while it fails with `Invalid runtime`, for up to
- * `waitMs`. Any other failure (a timeout, a bad device type) returns at once. Logs when it starts waiting and
- * when the runtime gave in, so a slow runtime shows in CI output; the final error says how long it was refused.
+ * `waitMs` (wall clock, or the time slept when that is more, so a stalled clock still ends it). Any other failure
+ * (a timeout, a bad device type) returns at once. Logs when it starts waiting and when the runtime gave in, so a
+ * slow runtime shows in CI output; the final error says how long it was refused.
  */
 export async function createAcceptingRuntime(
 	attempt: () => AsyncResult<string>,
@@ -36,14 +37,16 @@ export async function createAcceptingRuntime(
 ): AsyncResult<string> {
 	const started = deps.now();
 	const runtime = shortRuntime(runtimeId);
+	let slept = 0;
+	const waitedMs = (): number => Math.max(deps.now() - started, slept);
 	let result = await attempt();
 	let retried = false;
 	while (!result.success && result.error.includes(RUNTIME_REFUSED)) {
-		const waited = deps.now() - started;
+		const waited = waitedMs();
 		const left = retry.waitMs - waited;
 		if (left <= 0) {
 			return err(
-				`${result.error} (${runtime} is listed by \`simctl list runtimes\` but refused new simulators for ${Math.round(waited / 1000)}s)`
+				`${result.error} (${runtime} is listed by simctl list runtimes but refused new simulators for ${Math.round(waited / 1000)}s)`
 			);
 		}
 		if (!retried) {
@@ -52,11 +55,13 @@ export async function createAcceptingRuntime(
 			);
 		}
 		retried = true;
-		await deps.sleep(Math.min(retry.pollMs, left));
+		const pause = Math.min(retry.pollMs, left);
+		await deps.sleep(pause);
+		slept += pause;
 		result = await attempt();
 	}
 	if (retried && result.success) {
-		deps.log?.(`${runtime} accepted the simulator after ${Math.round((deps.now() - started) / 1000)}s`);
+		deps.log?.(`${runtime} accepted the simulator after ${Math.round(waitedMs() / 1000)}s`);
 	}
 	return result;
 }
