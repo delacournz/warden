@@ -266,6 +266,8 @@ export const IOS_TIMEOUTS = {
 	cloneMs: 120_000,
 	bootMs: 120_000,
 	shutdownMs: 60_000,
+	/** a clone's priming boot (`bootstatus -b`): a first boot on a 3-vCPU runner takes 25-40 s */
+	primeMs: 180_000,
 } as const;
 
 /** `exec` bounded by `timer` (real timers by default). */
@@ -373,6 +375,13 @@ export type IosCloneStrategy = (
 export type IosProviderOptions = {
 	/** when set, `create` clones (e.g. from a golden) and falls back to `simctl create` on failure */
 	clone?: IosCloneStrategy;
+	/**
+	 * Boot each clone once and shut it down inside `create`, so the claim's boot is its second. A clone's first
+	 * boot leaves the accessibility service silent on the first read (the driver then restarts backboardd or
+	 * reboots the sim, ~100 s on a 3-vCPU runner); a second boot answers at once. Best effort: a failed prime is a
+	 * note, and the claim boots the clone as before.
+	 */
+	primeClones?: boolean;
 	/** waits between `boot` attempts on a sim still `Shutting Down` (default: real timers) */
 	sleep?: (ms: number) => Promise<void>;
 	/**
@@ -530,6 +539,18 @@ export function createIosProvider(deps: ProviderDeps, options: IosProviderOption
 		await prepareBoot(device.id);
 		return device;
 	};
+	/** `primeClones`: the clone's first boot and shutdown, after `prepareBoot` wrote its overrides and prefs. */
+	const primeClone = async (device: InventoryDevice): Promise<void> => {
+		const started = deps.now();
+		const ready = await waitReady(device.id, IOS_TIMEOUTS.primeMs);
+		const down = await idempotent(runner, ["shutdown", device.id], "Shutdown", IOS_TIMEOUTS.shutdownMs);
+		const failed = !ready.success ? ready.error : !down.success ? `shutdown: ${down.error}` : undefined;
+		if (failed !== undefined) {
+			note(`${device.name}: clone not primed (${failed}); the claim boots it as is`);
+			return;
+		}
+		note(`${device.name}: primed the clone (first boot) in ${((deps.now() - started) / 1000).toFixed(1)} s`);
+	};
 	return {
 		platform: "ios",
 
@@ -556,7 +577,9 @@ export function createIosProvider(deps: ProviderDeps, options: IosProviderOption
 			if (options.clone) {
 				const cloned = await options.clone(name, typeProfile, runtime);
 				if (cloned.success) {
-					return ok(await recordCreated(record(cloned.data.udid, name, profile, cloned.data.runtime)));
+					const device = await recordCreated(record(cloned.data.udid, name, profile, cloned.data.runtime));
+					if (options.primeClones === true) await primeClone(device);
+					return ok(device);
 				}
 				deps.log?.(`clone failed (${cloned.error}) — creating ${name} fresh (slow first boot)`);
 			}
