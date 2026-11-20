@@ -27,10 +27,10 @@ import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/r
 import { z } from "zod";
 import { withBuildLock } from "../builds/lock";
 import type { Exec } from "../exec";
-import { IOS_TIMEOUTS } from "../providers/ios";
-import { GOLDEN_RECIPE, goldenKey, goldenName, migrationDone, olderRecipeNames, planGolden, wipName } from "./golden";
+import { GOLDEN_RECIPE, goldenKey, goldenName, migrationDone, olderRecipeNames, planGolden } from "./golden";
 import {
 	allSims,
+	createWip,
 	deleteSims,
 	discard,
 	ensureLocked,
@@ -271,13 +271,9 @@ async function registerArchive(
 	}
 	const pruned = await deleteSims(deps, plan.stale);
 	if (!pruned.success) return pruned;
-	const created = await simctl(
-		deps,
-		["create", wipName(target.profile, key), target.deviceType, target.runtimeId],
-		IOS_TIMEOUTS.createMs
-	);
+	const created = await createWip(deps, target, key);
 	if (!created.success) return created;
-	const udid = created.data.trim();
+	const udid = created.data;
 	const deviceDir = simDeviceDir(deps.env, udid);
 	const skip = async (reason: string): AsyncResult<ImportedGolden> => {
 		await discard(deps, udid);

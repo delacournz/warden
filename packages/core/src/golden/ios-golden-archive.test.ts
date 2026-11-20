@@ -223,6 +223,16 @@ describe("importGoldens", () => {
 		expect(store.listLeases()).toEqual([]);
 	});
 
+	test("a listed runtime that refuses the new device at first (Invalid runtime) → asked again, imported", async () => {
+		writeManifest(GOLDEN);
+		const host = fakeHost({ migrationPolls: 0, createRefusals: 1 });
+		const result = await importGoldens(deps(host), archive);
+		expect(result.success && result.data).toEqual([
+			{ name: GOLDEN, profile: "iphone-17", imported: true, udid: "NEW-1" },
+		]);
+		expect(host.calls.filter((c) => c[2] === "create")).toHaveLength(2);
+	});
+
 	test("a golden already on the machine → left alone", async () => {
 		writeManifest(GOLDEN);
 		const host = fakeHost({ sims: [{ udid: "G", name: GOLDEN, state: "Shutdown" }], migrationPolls: 0 });

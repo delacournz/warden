@@ -202,6 +202,52 @@ describe("createIosProvider", () => {
 		]);
 	});
 
+	test("create asks again while a listed runtime refuses new simulators (Invalid runtime)", async () => {
+		const calls: Call[] = [];
+		let creates = 0;
+		const base = fake(
+			[
+				["xcrun simctl list devicetypes -j", { stdout: SIMCTL_DEVICETYPES_JSON }],
+				["xcrun simctl list runtimes -j", { stdout: SIMCTL_RUNTIMES_JSON }],
+			],
+			calls
+		);
+		const exec: Exec = async (cmd, opts) => {
+			if (cmd.join(" ").startsWith("xcrun simctl create")) {
+				calls.push({ cmd: [...cmd] });
+				creates += 1;
+				return creates < 3
+					? { exitCode: 145, stdout: "", stderr: "Invalid runtime: com.apple.CoreSimulator.SimRuntime.iOS-26-5" }
+					: { exitCode: 0, stdout: "NEW-UDID-1\n", stderr: "" };
+			}
+			return base(cmd, opts);
+		};
+		let clock = 0;
+		const slept: number[] = [];
+		const logs: string[] = [];
+		const p = createIosProvider(
+			{
+				exec,
+				store,
+				env: { WARDEN_SIM_LAUNCHD_STORE_ROOT: dir },
+				now: () => clock,
+				owner: { kind: "agent", sessionId: "s1", cwd: "/" },
+				log: (line) => void logs.push(line),
+			},
+			{
+				sleep: async (ms) => {
+					slept.push(ms);
+					clock += ms;
+				},
+			}
+		);
+		const result = await p.create("warden-iphone-17-3", "iphone-17");
+		expect(result.success && result.data.id).toBe("NEW-UDID-1");
+		expect(creates).toBe(3);
+		expect(slept).toEqual([3_000, 3_000]);
+		expect(logs).toContain("iOS-26-5 accepted the simulator after 6s");
+	});
+
 	test("create writes the ownership marker with the store's instance id into the sim's device dir", async () => {
 		const written = new Map<string, string>();
 		const devDir = "/h/Library/Developer/CoreSimulator/Devices/NEW-UDID-1";
