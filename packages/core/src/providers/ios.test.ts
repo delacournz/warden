@@ -17,6 +17,7 @@ import {
 	checkIosRuntime,
 	createIosProvider,
 	deleteSim,
+	type IosCloneStrategy,
 	parseSimctlDevices,
 	parseSimctlDeviceTypes,
 	parseSimctlRuntimes,
@@ -200,6 +201,52 @@ describe("createIosProvider", () => {
 				lastUsedAt: 42,
 			},
 		]);
+	});
+
+	test("create asks again while a listed runtime refuses new simulators (Invalid runtime)", async () => {
+		const calls: Call[] = [];
+		let creates = 0;
+		const base = fake(
+			[
+				["xcrun simctl list devicetypes -j", { stdout: SIMCTL_DEVICETYPES_JSON }],
+				["xcrun simctl list runtimes -j", { stdout: SIMCTL_RUNTIMES_JSON }],
+			],
+			calls
+		);
+		const exec: Exec = async (cmd, opts) => {
+			if (cmd.join(" ").startsWith("xcrun simctl create")) {
+				calls.push({ cmd: [...cmd] });
+				creates += 1;
+				return creates < 3
+					? { exitCode: 145, stdout: "", stderr: "Invalid runtime: com.apple.CoreSimulator.SimRuntime.iOS-26-5" }
+					: { exitCode: 0, stdout: "NEW-UDID-1\n", stderr: "" };
+			}
+			return base(cmd, opts);
+		};
+		let clock = 0;
+		const slept: number[] = [];
+		const logs: string[] = [];
+		const p = createIosProvider(
+			{
+				exec,
+				store,
+				env: { WARDEN_SIM_LAUNCHD_STORE_ROOT: dir },
+				now: () => clock,
+				owner: { kind: "agent", sessionId: "s1", cwd: "/" },
+				log: (line) => void logs.push(line),
+			},
+			{
+				sleep: async (ms) => {
+					slept.push(ms);
+					clock += ms;
+				},
+			}
+		);
+		const result = await p.create("warden-iphone-17-3", "iphone-17");
+		expect(result.success && result.data.id).toBe("NEW-UDID-1");
+		expect(creates).toBe(3);
+		expect(slept).toEqual([3_000, 3_000]);
+		expect(logs).toContain("iOS-26-5 accepted the simulator after 6s");
 	});
 
 	test("create writes the ownership marker with the store's instance id into the sim's device dir", async () => {
@@ -933,6 +980,92 @@ describe("createIosProvider slim (SLIM-2)", () => {
 		await p.create("warden-iphone-17+bio-9", "iphone-17+bio");
 		await p.afterReady?.("CLONED");
 		expect(logs.some((l) => l.includes("biometrics enroll failed"))).toBe(true);
+	});
+});
+
+describe("createIosProvider primeClones", () => {
+	const owner = { kind: "agent", sessionId: "s1", cwd: "/" } as const;
+	let logs: string[];
+	beforeEach(() => {
+		logs = [];
+	});
+
+	function primed(exec: Exec, clone: IosCloneStrategy | undefined, primeClones = true): DeviceProvider {
+		return createIosProvider(
+			{
+				exec,
+				store,
+				env: { WARDEN_SIM_LAUNCHD_STORE_ROOT: dir },
+				now: () => 42,
+				owner,
+				log: (line) => logs.push(line),
+			},
+			{ ...(clone ? { clone } : {}), primeClones, sleep: async () => {} }
+		);
+	}
+	const cloned: IosCloneStrategy = async () => ({ success: true, data: { udid: "CLONED", runtime: "iOS-26-5" } });
+	const storeFile = () => join(dir, "com.apple.CoreSimulator.SimDevice.CLONED", "disabled.plist");
+
+	test("a clone boots once and shuts down before create returns, after its overrides are written", async () => {
+		const calls: Call[] = [];
+		let storeBeforeBoot: boolean | undefined;
+		const base = fake(
+			[
+				["xcrun simctl bootstatus CLONED -b", {}],
+				["xcrun simctl shutdown CLONED", {}],
+			],
+			calls
+		);
+		const exec: Exec = async (cmd, opts) => {
+			if (storeBeforeBoot === undefined && cmd.includes("bootstatus")) storeBeforeBoot = existsSync(storeFile());
+			return base(cmd, opts);
+		};
+		const result = await primed(exec, cloned).create("warden-iphone-17-9", "iphone-17");
+		expect(result.success && result.data).toMatchObject({ id: "CLONED", state: "shutdown" });
+		expect(calls.map((c) => c.cmd.join(" "))).toEqual([
+			"xcrun simctl bootstatus CLONED -b",
+			"xcrun simctl shutdown CLONED",
+		]);
+		expect(storeBeforeBoot).toBe(true);
+		expect(logs.join("\n")).toContain("warden-iphone-17-9: primed the clone (first boot) in");
+	});
+
+	test("a failed prime boot is a note: the clone is still returned and shut down", async () => {
+		const calls: Call[] = [];
+		const exec = fake(
+			[
+				["xcrun simctl bootstatus CLONED -b", { exitCode: 1, stderr: "boot failed" }],
+				["xcrun simctl shutdown CLONED", {}],
+			],
+			calls
+		);
+		const result = await primed(exec, cloned).create("warden-iphone-17-9", "iphone-17");
+		expect(result.success && result.data.id).toBe("CLONED");
+		expect(calls.map((c) => c.cmd.join(" "))).toEqual([
+			"xcrun simctl bootstatus CLONED -b",
+			"xcrun simctl shutdown CLONED",
+		]);
+		expect(logs.join("\n")).toContain("warden-iphone-17-9: clone not primed");
+	});
+
+	test("a fresh simctl create (clone failed) is never primed", async () => {
+		const calls: Call[] = [];
+		const exec = fake(
+			[
+				["xcrun simctl list devicetypes -j", { stdout: SIMCTL_DEVICETYPES_JSON }],
+				["xcrun simctl list runtimes -j", { stdout: SIMCTL_RUNTIMES_JSON }],
+				["xcrun simctl create", { stdout: "FRESH\n" }],
+			],
+			calls
+		);
+		await primed(exec, async () => ({ success: false, error: "no golden" })).create("warden-iphone-17-9", "iphone-17");
+		expect(calls.some((c) => c.cmd.includes("bootstatus") || c.cmd.includes("shutdown"))).toBe(false);
+	});
+
+	test("primeClones off: a clone is returned with no simctl call", async () => {
+		const calls: Call[] = [];
+		await primed(fake([], calls), cloned, false).create("warden-iphone-17-9", "iphone-17");
+		expect(calls).toEqual([]);
 	});
 });
 
