@@ -31,16 +31,26 @@ describe("providerFor ios", () => {
 		expect(host.calls.some((c) => c[2] === "clone")).toBe(true);
 	});
 
-	test("a clone boots once and shuts down before the claim boots it (primeClones)", async () => {
+	/** The calls made on the clone's own udid while `create` runs, with `CI` set or not. */
+	async function cloneCalls(ci: boolean): Promise<Array<string | undefined>> {
 		const host = fakeHost({ migrationPolls: 0 });
 		ctx = testContext([], { exec: host.exec });
+		const { CI: _ci, GITHUB_ACTIONS: _gha, ...rest } = ctx.env;
+		ctx.env = ci ? { ...rest, CI: "true" } : rest;
 		const created = await providerFor("ios", ctx, owner, { sleep: async () => {} }).create(
 			"warden-iphone-17-1",
 			"iphone-17"
 		);
 		const id = created.success ? created.data.id : "";
-		const onClone = host.calls.filter((c) => c.includes(id)).map((c) => c[2]);
-		expect(onClone).toEqual(["bootstatus", "shutdown"]);
+		return host.calls.filter((c) => c.includes(id)).map((c) => c[2]);
+	}
+
+	test("on CI a clone boots once and shuts down before the claim boots it (primeClones)", async () => {
+		expect(await cloneCalls(true)).toEqual(["bootstatus", "shutdown"]);
+	});
+
+	test("off CI a clone is not primed: create makes no call on it", async () => {
+		expect(await cloneCalls(false)).toEqual([]);
 	});
 
 	test("WARDEN_GOLDEN=0 → plain simctl create", async () => {
