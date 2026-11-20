@@ -12,6 +12,7 @@ import type { PidAlive } from "../liveness";
 import { plistBool } from "../plist";
 import { execWithin, realTimer, type Timer } from "../providers/health";
 import { IOS_TIMEOUTS, lookupCreateTarget, timedOutError } from "../providers/ios";
+import { createAcceptingRuntime } from "../providers/sim-create";
 import { parseAllSims, type SimctlSim } from "../sims/list";
 import type { Store } from "../store";
 import type { Owner } from "../types";
@@ -102,6 +103,24 @@ function timing(deps: GoldenDeps): GoldenTiming {
 }
 
 export const log = (deps: GoldenDeps, line: string) => deps.log?.(`golden: ${line}`);
+
+/**
+ * `simctl create` the wip device a golden is built or imported into, asking again while a listed runtime
+ * still refuses new devices (`Invalid runtime`, see `createAcceptingRuntime`). Returns its udid.
+ */
+export async function createWip(deps: GoldenDeps, target: GoldenTarget, key: string): AsyncResult<string> {
+	const created = await createAcceptingRuntime(
+		() =>
+			simctl(
+				deps,
+				["create", wipName(target.profile, key), target.deviceType, target.runtimeId],
+				IOS_TIMEOUTS.createMs
+			),
+		target.runtimeId,
+		{ now: deps.now, sleep: deps.sleep, log: (line) => log(deps, line) }
+	);
+	return created.success ? ok(created.data.trim()) : created;
+}
 
 /**
  * The selected Xcode's build (`17F113`): `DEVELOPER_DIR` first, else `xcode-select` (see `readXcode`).
@@ -370,13 +389,9 @@ async function buildGolden(deps: GoldenDeps, target: GoldenTarget, key: string):
 		deps,
 		`building ${name} (${target.deviceType.split(".").pop()}, ${target.runtimeId.split(".").pop()}) — one-time first boot, a few minutes`
 	);
-	const created = await simctl(
-		deps,
-		["create", wipName(target.profile, key), target.deviceType, target.runtimeId],
-		IOS_TIMEOUTS.createMs
-	);
+	const created = await createWip(deps, target, key);
 	if (!created.success) return created;
-	const udid = created.data.trim();
+	const udid = created.data;
 	const built = await buildSteps(deps, target, udid);
 	if (!built.success) {
 		await discard(deps, udid);

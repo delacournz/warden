@@ -15,6 +15,7 @@ import { bootPhaseClock } from "./boot-phases";
 import { listPhysicalIos, probePhysicalIos } from "./devicectl";
 import { execWithin, probeIosHealth, probeIosWarm, realTimer, type TimedExec, type Timer } from "./health";
 import type { BootReady, DeviceProvider, ProviderDeps } from "./provider.types";
+import { createAcceptingRuntime } from "./sim-create";
 
 const RUNTIME_PREFIX = "com.apple.CoreSimulator.SimRuntime.";
 const DEVICE_TYPE_PREFIX = "com.apple.CoreSimulator.SimDeviceType.";
@@ -561,10 +562,11 @@ export function createIosProvider(deps: ProviderDeps, options: IosProviderOption
 			}
 			const target = await lookupCreateTarget(exec, typeProfile, runtime, deps.timer);
 			if (!target.success) return target;
-			const created = await simctl(
-				runner,
-				["create", name, target.data.type.identifier, target.data.runtime.identifier],
-				IOS_TIMEOUTS.createMs
+			const runtimeId = target.data.runtime.identifier;
+			const created = await createAcceptingRuntime(
+				() => simctl(runner, ["create", name, target.data.type.identifier, runtimeId], IOS_TIMEOUTS.createMs),
+				runtimeId,
+				{ now: deps.now, sleep, log: note }
 			);
 			if (!created.success) return created;
 			const id = created.data.trim();

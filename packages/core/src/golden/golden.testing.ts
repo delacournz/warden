@@ -30,6 +30,8 @@ export type FakeHost = {
 	plistMissing: string[];
 	/** args of every `plutil -replace` / `-create` */
 	plistEdits: string[][];
+	/** `simctl create` calls still to refuse with `Invalid runtime` (a listed runtime not taking devices yet) */
+	createRefusals: number;
 	/** clone of a booted source fails like simctl does */
 	exec: Exec;
 };
@@ -68,6 +70,10 @@ function simctlVerbs(host: FakeHost, nextId: () => number): Record<string, Handl
 			return ok(simctlDevicesJson(host));
 		},
 		create: (args) => {
+			if (host.createRefusals > 0) {
+				host.createRefusals -= 1;
+				return { exitCode: 145, stdout: "", stderr: `Invalid runtime: ${args[2] ?? ""}` };
+			}
 			const udid = `NEW-${nextId()}`;
 			host.sims.push({ udid, name: args[0] ?? "", state: "Shutdown" });
 			return ok(`${udid}\n`);
@@ -159,7 +165,14 @@ export function fakeHost(
 	init: Partial<
 		Pick<
 			FakeHost,
-			"sims" | "migrationPolls" | "cpu" | "xcodePlist" | "automationMissing" | "automationAsInteger" | "plistMissing"
+			| "sims"
+			| "migrationPolls"
+			| "cpu"
+			| "xcodePlist"
+			| "automationMissing"
+			| "automationAsInteger"
+			| "plistMissing"
+			| "createRefusals"
 		>
 	> = {}
 ): FakeHost {
@@ -174,6 +187,7 @@ export function fakeHost(
 		automationAsInteger: init.automationAsInteger ?? [],
 		plistMissing: init.plistMissing ?? [],
 		plistEdits: [],
+		createRefusals: init.createRefusals ?? 0,
 		exec: async (cmd) => {
 			host.calls.push([...cmd]);
 			const [bin = "", ...rest] = cmd;

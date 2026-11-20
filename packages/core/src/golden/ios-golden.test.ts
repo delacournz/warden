@@ -67,6 +67,15 @@ describe("ensureGolden", () => {
 		expect(store.listLeases()).toEqual([]);
 	});
 
+	test("a listed runtime that refuses the wip at first (Invalid runtime) → asked again, golden built", async () => {
+		const host = fakeHost({ migrationPolls: 0, createRefusals: 2 });
+		const logs: string[] = [];
+		const result = await ensureGolden(deps(host, logs), "iphone-17");
+		expect(result.success).toBe(true);
+		expect(host.calls.filter((c) => c[2] === "create")).toHaveLength(3);
+		expect(logs).toContain("golden: iOS-26-5 accepted the simulator after 6s");
+	});
+
 	test("finished golden → reused, stale goldens of this profile deleted", async () => {
 		const host = fakeHost({
 			sims: [
