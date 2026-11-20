@@ -1,5 +1,6 @@
 import { androidSnapshotLoaded } from "@delacour/warden-core/golden/android-snapshot-pending";
 import { cloneFromGolden } from "@delacour/warden-core/golden/ios-golden";
+import { isCi } from "@delacour/warden-core/owner";
 import { createAndroidProvider } from "@delacour/warden-core/providers/android";
 import { createIosProvider, shortRuntime } from "@delacour/warden-core/providers/ios";
 import type { DeviceProvider, ProviderDeps } from "@delacour/warden-core/providers/provider.types";
@@ -10,7 +11,9 @@ import { androidSnapshotFailedHook, androidSnapshotHook, goldenDeps, goldenEnabl
 
 /**
  * Device provider for `platform`. iOS pool devices are cloned from a golden image (a first-booted,
- * settled sim) unless `WARDEN_GOLDEN=0` or `opts.golden` is false; a failed clone falls back to `simctl create`. Android emulators
+ * settled sim) unless `WARDEN_GOLDEN=0` or `opts.golden` is false; on CI (`CI` / `GITHUB_ACTIONS`) each clone boots
+ * once before its claim boots it (`primeClones`: a clone's first boot stalled the AX service on a 3-vCPU runner, never
+ * seen on a local Mac, where it would only add a boot per new clone); a failed clone falls back to `simctl create`. Android emulators
  * launch from warden's quick-boot snapshot of the AVD when one exists, unless `WARDEN_ANDROID_SNAPSHOT=0` /
  * `android.snapshot: false`; a failed launch from it falls back to a cold boot. Claims never build it
  * (`warden gc` / `warden golden ensure --platform android` do). `opts.slim` is the iOS daemon-slimming
@@ -52,6 +55,7 @@ export function providerFor(
 	const golden = { ...goldenDeps(ctx, owner, opts.sleep), prewarmHint: true };
 	return createIosProvider(deps, {
 		...base,
+		primeClones: isCi(ctx.env),
 		clone: async (name, profile, runtime) => {
 			const cloned = await cloneFromGolden(golden, profile, runtime, name);
 			return cloned.success
