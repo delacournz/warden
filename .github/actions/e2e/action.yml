@@ -199,15 +199,20 @@ runs:
           echo "::warning::could not list the iOS runtimes to probe; warden's create still waits for a refusing runtime"
           probes=""
         fi
+        unprobed=""
         while read -r runtime devicetype; do
           [ -n "$runtime" ] && [ -n "$devicetype" ] || continue
           out=""
+          tried=0
           while :; do
             remaining=$(( deadline - $(date +%s) ))
             if [ "$remaining" -le 0 ]; then
+              # an earlier runtime spent the budget: this one was never asked, so do not call it refusing
+              if [ "$tried" -eq 0 ]; then unprobed="$unprobed $runtime"; break; fi
               echo "::warning::$runtime still refuses a new simulator after $(( $(date +%s) - start )) s: ${out:-simctl create did not return in time}"
               break
             fi
+            tried=1
             if out=$(perl -e 'alarm shift; exec @ARGV' "$remaining" xcrun simctl create "$probe" "$devicetype" "$runtime" 2>&1 < /dev/null); then
               xcrun simctl delete "$out" < /dev/null || echo "::warning::could not delete probe simulator $out"
               break
@@ -215,6 +220,9 @@ runs:
             sleep 5
           done
         done <<< "$probes"
+        if [ -n "$unprobed" ]; then
+          echo "::warning::not probed, the 120 s budget ran out first:$unprobed"
+        fi
         # A create cut off by the alarm can still register its device: delete any left under this run's probe name.
         { xcrun simctl list devices -j | jq -r --arg name "$probe" '.devices[][] | select(.name == $name) | .udid' \
           | while read -r udid; do
