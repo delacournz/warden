@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { randomUUID } from "node:crypto";
-import { mkdirSync } from "node:fs";
+import { closeSync, openSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import {
 	type EventFilter,
@@ -12,14 +13,15 @@ import {
 	queryLeaseEvents,
 } from "./lease-events";
 import { isLeaseAlive, type PidAlive } from "./liveness";
+import { ensurePrivateDir, restrictFile } from "./private-fs";
 import { isWaitReason, type WaitReason } from "./queue";
 import type { Lease, Owner, Platform, QueueEntry, Resource } from "./types";
 import { resourceKey } from "./types";
 
-/** `$WARDEN_HOME`, else `~/.warden`. */
+/** `$WARDEN_HOME`, else `~/.warden` (the user's home directory when `HOME` is not set). */
 export function wardenHome(env: Record<string, string | undefined> = process.env): string {
 	if (env.WARDEN_HOME) return env.WARDEN_HOME;
-	return join(env.HOME ?? "~", ".warden");
+	return join(env.HOME || homedir(), ".warden");
 }
 
 export function defaultDbPath(env: Record<string, string | undefined> = process.env): string {
@@ -841,9 +843,20 @@ function migrate(db: Database): void {
 	}).immediate();
 }
 
-/** Open (creating + migrating) the store at `path`, default `$WARDEN_HOME/warden.db`. */
+/** The database and its WAL companions. */
+const DB_SUFFIXES = ["", "-wal", "-shm"];
+
+/**
+ * Open (creating + migrating) the store at `path`, default `$WARDEN_HOME/warden.db`. The directory it lives in (the
+ * warden home) is owner-only (`0700`, tightened when it was not) and the database files are `0600`; a home another
+ * user owns throws.
+ */
 export function openStore(path: string = defaultDbPath()): Store {
-	mkdirSync(dirname(path), { recursive: true });
+	const home = ensurePrivateDir(dirname(path));
+	if (!home.success) throw new Error(home.error);
+	// sqlite gives `-wal` / `-shm` the database's mode, so the database is 0600 before it is opened
+	closeSync(openSync(path, "a", 0o600));
+	for (const suffix of DB_SUFFIXES) restrictFile(`${path}${suffix}`);
 	const db = new Database(path, { create: true, strict: true });
 	db.exec("PRAGMA busy_timeout = 15000");
 	db.exec("PRAGMA journal_mode = WAL");

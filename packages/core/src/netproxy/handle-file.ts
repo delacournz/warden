@@ -1,5 +1,6 @@
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { ensurePrivateDir } from "../private-fs";
 import { wardenHome } from "../store";
 import type { ProxyHandle } from "./control";
 
@@ -13,7 +14,8 @@ export type HandleFile = ProxyHandle & { leaseId: string; portLeaseId?: string }
 
 /** Atomic (tmp + rename) and owner-only: the file carries the control token. */
 export function writeHandleFile(path: string, data: HandleFile): void {
-	mkdirSync(join(path, ".."), { recursive: true });
+	const dir = ensurePrivateDir(dirname(path));
+	if (!dir.success) throw new Error(dir.error);
 	const tmp = `${path}.${process.pid}.tmp`;
 	writeFileSync(tmp, JSON.stringify(data), { mode: 0o600 });
 	renameSync(tmp, path);

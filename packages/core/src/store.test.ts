@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, statSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { getInstall, listBuilds, recordInstall } from "./builds/cache";
 import { MIGRATIONS, openStore, QUEUE_TTL_MS, type Store, wardenHome } from "./store";
@@ -25,6 +25,41 @@ describe("wardenHome", () => {
 	test("WARDEN_HOME overrides ~/.warden", () => {
 		expect(wardenHome({ WARDEN_HOME: "/x" })).toBe("/x");
 		expect(wardenHome({ HOME: "/home/me" })).toBe("/home/me/.warden");
+	});
+
+	test("without HOME: the user's home directory, never a path under the working directory", () => {
+		expect(wardenHome({})).toBe(join(homedir(), ".warden"));
+	});
+});
+
+describe("openStore permissions", () => {
+	const mode = (path: string): number => statSync(path).mode & 0o777;
+
+	test("creates the home 0700 and the database files 0600", () => {
+		const home = join(dir, "fresh", "home");
+		const opened = openStore(join(home, "warden.db"));
+		try {
+			opened.insertLease({ resource: { kind: "port", port: 8091 }, owner, ttlMs: 1000 }, 5);
+			expect(mode(home)).toBe(0o700);
+			for (const file of ["warden.db", "warden.db-wal", "warden.db-shm"]) expect(mode(join(home, file))).toBe(0o600);
+		} finally {
+			opened.close();
+		}
+	});
+
+	test("tightens a home and a database that group or others could reach", () => {
+		const home = join(dir, "loose");
+		mkdirSync(home);
+		openStore(join(home, "warden.db")).close();
+		chmodSync(home, 0o755);
+		chmodSync(join(home, "warden.db"), 0o644);
+		const opened = openStore(join(home, "warden.db"));
+		try {
+			expect(mode(home)).toBe(0o700);
+			expect(mode(join(home, "warden.db"))).toBe(0o600);
+		} finally {
+			opened.close();
+		}
 	});
 });
 
