@@ -46,7 +46,7 @@ function put(path: string, data: string): void {
 
 const ok: ExecResult = { exitCode: 0, stdout: "", stderr: "" };
 
-type Call = { cmd: readonly string[]; cwd: string | undefined };
+type Call = { cmd: readonly string[]; cwd: string | undefined; env: Record<string, string | undefined> | undefined };
 
 type FakeOptions = {
 	entries?: string[];
@@ -121,7 +121,7 @@ function fakeAapt2(options: FakeOptions, cmd: readonly string[]): ExecResult {
 function fakeExec(options: FakeOptions = {}): { exec: Exec; calls: Call[] } {
 	const calls: Call[] = [];
 	const exec: Exec = async (cmd, opts) => {
-		calls.push({ cmd, cwd: opts?.cwd });
+		calls.push({ cmd, cwd: opts?.cwd, env: opts?.env });
 		const tool = basename(cmd[0] ?? "");
 		if (options.failTool === tool) return { exitCode: 1, stdout: "", stderr: `${tool} exploded` };
 		if (tool === "unzip") return fakeUnzip(options, cmd);
@@ -169,8 +169,12 @@ describe("androidRepacker", () => {
 		expect(align?.cmd.slice(0, 4)).toEqual([join(sdk, "build-tools", "35.0.0", "zipalign"), "-p", "-f", "4"]);
 		const sign = toolCalls(calls, "apksigner").find((c) => c.cmd[1] === "sign");
 		expect(sign?.cmd).toContain("--ks-key-alias");
-		expect(sign?.cmd).toContain("pass:sp");
-		expect(sign?.cmd).toContain("pass:kp");
+		expect(sign?.cmd).toContain("env:WARDEN_KS_PASS");
+		expect(sign?.cmd).toContain("env:WARDEN_KEY_PASS");
+		expect(sign?.env).toEqual({ WARDEN_KS_PASS: "sp", WARDEN_KEY_PASS: "kp" });
+		expect(
+			calls.flatMap((c) => c.cmd).filter((arg) => arg === "sp" || arg === "kp" || arg.startsWith("pass:"))
+		).toEqual([]);
 		expect(toolCalls(calls, "apksigner").some((c) => c.cmd[1] === "verify")).toBe(true);
 		expect(calls.every((c) => c.cmd[0] !== base)).toBe(true);
 	});
@@ -348,7 +352,7 @@ describe("androidRepacker", () => {
 			expect(res.success && "artifact" in res.data).toBe(true);
 			expect(signedWith(calls)).toEqual([cachedKs]);
 			const sign = toolCalls(calls, "apksigner").find((c) => c.cmd[1] === "sign");
-			expect(sign?.cmd).toContain("pass:cs");
+			expect(sign?.env).toEqual({ WARDEN_KS_PASS: "cs", WARDEN_KEY_PASS: "ck" });
 			expect(sign?.cmd).toContain("ca");
 		});
 
