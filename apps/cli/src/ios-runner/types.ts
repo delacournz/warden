@@ -42,5 +42,8 @@ export type RunnerProcess = {
 /** Starts `cmd` with `env` on top of the host's own. Tests replace it with a fake that emits fixture lines. */
 export type SpawnRunner = (cmd: readonly string[], env: Readonly<Record<string, string>>) => RunnerProcess;
 
-/** Where the runner listens, as the Mac reaches it. */
-export type RunnerAddress = { host: string; port: number };
+/**
+ * Where the runner listens, as the Mac reaches it, and the session token its connections open with. The token stays
+ * in the host process: never logged, printed or written to a file.
+ */
+export type RunnerAddress = { host: string; port: number; token: string };

@@ -32,11 +32,26 @@ async function waitFor<T>(read: () => T | undefined, ms = 3000): Promise<T> {
 	}
 }
 
-/** An in-memory runner on TCP that sends a ready event and echoes lines. */
+/** the first line of every connection the in-memory runner took */
+const firstLines: string[] = [];
+
+/** An in-memory runner on TCP: takes the first line (the auth line), then sends a ready event and echoes lines. */
 async function tcpRunner(): Promise<number> {
+	firstLines.length = 0;
 	const server = net.createServer((socket) => {
-		socket.write('{"event":"ready"}\n');
-		socket.on("data", (chunk) => socket.write(chunk));
+		let authenticated = false;
+		socket.on("data", (chunk) => {
+			if (authenticated) {
+				socket.write(chunk);
+				return;
+			}
+			const text = chunk.toString("utf8");
+			const at = text.indexOf("\n");
+			firstLines.push(text.slice(0, at));
+			authenticated = true;
+			socket.write('{"event":"ready"}\n');
+			if (text.length > at + 1) socket.write(text.slice(at + 1));
+		});
 		socket.on("error", () => undefined);
 	});
 	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -83,6 +98,11 @@ describe("warden __ios-runner-host", () => {
 		client.write("hello\n");
 		await waitFor(() => (lines.length >= 2 ? true : undefined));
 		expect(lines[1]).toBe("hello");
+		const token = procs[0]?.env.TEST_RUNNER_WARDEN_RUNNER_TOKEN ?? "";
+		expect(token).toMatch(/^[0-9a-f]{64}$/);
+		expect(firstLines).toEqual([JSON.stringify({ op: "auth", token })]);
+		expect(procs[0]?.cmd.join(" ")).not.toContain(token);
+		expect([...c.stdout, ...c.stderr].join("\n")).not.toContain(token);
 		client.destroy();
 		procs[0]?.exit(0);
 		expect(await done).toBe(0);

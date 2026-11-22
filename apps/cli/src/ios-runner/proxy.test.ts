@@ -10,19 +10,35 @@ afterEach(async () => {
 	for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
 
-/** An in-memory TCP runner: sends a ready line on connect, echoes every line back prefixed `echo:`. */
+const TOKEN = "c".repeat(64);
+
+/**
+ * An in-memory TCP runner, as the real one behaves: silent until the first line is the auth line with `TOKEN` (any
+ * other first line hangs up), then a ready line, then every line echoed back prefixed `echo:`.
+ */
 async function fakeRunner() {
 	const received: string[] = [];
+	const firstLines: string[] = [];
 	const sockets = new Set<net.Socket>();
 	const server = net.createServer((socket) => {
 		sockets.add(socket);
-		socket.write('{"event":"ready"}\n');
+		let authenticated = false;
 		let buffer = "";
 		socket.on("data", (chunk) => {
 			buffer += chunk.toString("utf8");
 			for (let at = buffer.indexOf("\n"); at >= 0; at = buffer.indexOf("\n")) {
 				const line = buffer.slice(0, at);
 				buffer = buffer.slice(at + 1);
+				if (!authenticated) {
+					firstLines.push(line);
+					if (line !== JSON.stringify({ op: "auth", token: TOKEN })) {
+						socket.destroy();
+						return;
+					}
+					authenticated = true;
+					socket.write('{"event":"ready"}\n');
+					continue;
+				}
 				received.push(line);
 				socket.write(`echo:${line}\n`);
 			}
@@ -36,15 +52,15 @@ async function fakeRunner() {
 		server.close();
 	});
 	const { port } = server.address() as net.AddressInfo;
-	return { port, received, sockets };
+	return { port, received, sockets, firstLines };
 }
 
-async function proxyTo(port: number | undefined): Promise<RunnerProxy> {
+async function proxyTo(port: number | undefined, token = TOKEN): Promise<RunnerProxy> {
 	const dir = mkdtempSync(join(tmpdir(), "wdn-proxy-"));
 	cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
 	const started = await startProxy({
 		socketPath: join(dir, "r.sock"),
-		target: () => (port === undefined ? undefined : { host: "127.0.0.1", port }),
+		target: () => (port === undefined ? undefined : { host: "127.0.0.1", port, token }),
 		now: Date.now,
 	});
 	if (!started.success) throw new Error(started.error);
@@ -91,6 +107,28 @@ describe("proxy", () => {
 		await until(() => client.lines.length === 2);
 		expect(client.lines[1]).toBe('echo:{"id":"1","op":"ping"}');
 		expect(proxy.connections()).toBe(1);
+	});
+
+	test("each runner connection opens with the session's auth line, which the client never sends or sees", async () => {
+		const runner = await fakeRunner();
+		const proxy = await proxyTo(runner.port);
+		const a = lineClient(proxy.socketPath);
+		const b = lineClient(proxy.socketPath);
+		await until(() => a.lines.length === 1 && b.lines.length === 1);
+		const auth = JSON.stringify({ op: "auth", token: TOKEN });
+		expect(runner.firstLines).toEqual([auth, auth]);
+		a.socket.write('{"id":"1","op":"ping"}\n');
+		await until(() => a.lines.length === 2);
+		expect(runner.received).toEqual(['{"id":"1","op":"ping"}']);
+		expect(a.lines.join("\n")).not.toContain(TOKEN);
+	});
+
+	test("a runner that does not take the token hangs up, and so does the client's connection", async () => {
+		const runner = await fakeRunner();
+		const proxy = await proxyTo(runner.port, "d".repeat(64));
+		const client = lineClient(proxy.socketPath);
+		await until(() => client.isClosed());
+		expect(client.lines).toEqual([]);
 	});
 
 	test("a request written in pieces arrives whole", async () => {
@@ -155,7 +193,7 @@ describe("proxy", () => {
 		cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
 		const started = await startProxy({
 			socketPath: join(dir, "r.sock"),
-			target: () => ({ host: "127.0.0.1", port }),
+			target: () => ({ host: "127.0.0.1", port, token: TOKEN }),
 			now: Date.now,
 			log: (line) => logs.push(line),
 		});
@@ -185,7 +223,7 @@ describe("proxy", () => {
 		cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
 		const started = await startProxy({
 			socketPath: join(dir, "r.sock"),
-			target: () => ({ host: "127.0.0.1", port: runner.port }),
+			target: () => ({ host: "127.0.0.1", port: runner.port, token: TOKEN }),
 			now: () => t,
 		});
 		if (!started.success) throw new Error(started.error);
