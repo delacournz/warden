@@ -261,6 +261,7 @@ export function wardenTools(deps: ToolDeps = { now: () => Date.now() }): ToolDef
 			name: "profile_stop",
 			description:
 				"Stop a recording and get its summary (cpu: top self-time functions; heap: top allocation sites; react: slowest commits/components) plus the artifact path.",
+			keep: "first",
 			input: { udid, kind: profileKind },
 			run: async (env, { udid: id, kind }) => stopProfile(env, { kind, ...defined({ udid: id }) }),
 		}),

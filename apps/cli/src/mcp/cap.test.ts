@@ -9,12 +9,24 @@ describe("capValue", () => {
 		expect(capValue(value, { keep: "last" })).toEqual({ fits: true, value, notes: [] });
 	});
 
-	test("a long string is cut in place and says how much is missing", () => {
-		const capped = capValue({ lines: [{ text: "x".repeat(MAX_STRING_CHARS + 500) }] }, { keep: "last" });
+	test("a long string in a reply within the limit is left whole", () => {
+		const value = { value: "x".repeat(MAX_STRING_CHARS + 500) };
+		expect(capValue(value, { keep: "last" })).toEqual({ fits: true, value, notes: [] });
+	});
+
+	test("over the limit, a long string is cut in place and says how much is missing", () => {
+		const extra = MAX_RESPONSE_CHARS;
+		const capped = capValue({ lines: [{ text: "x".repeat(MAX_STRING_CHARS + extra) }] }, { keep: "last" });
 		const [line] = (capped.value as { lines: { text: string }[] }).lines;
-		expect(line?.text).toBe(`${"x".repeat(MAX_STRING_CHARS)}… [truncated 500 chars]`);
+		expect(line?.text).toBe(`${"x".repeat(MAX_STRING_CHARS)}… [truncated ${extra} chars]`);
 		expect(capped.fits).toBe(true);
 		expect(capped.notes).toEqual([`1 string cut at ${MAX_STRING_CHARS} chars`]);
+	});
+
+	test("a result's own truncated flag turns true when one of its lists is shortened", () => {
+		const components = Array.from({ length: 400 }, (_, i) => ({ id: i, name: "z".repeat(500) }));
+		const capped = capValue({ components, truncated: false }, { keep: "first" });
+		expect((capped.value as { truncated: boolean }).truncated).toBe(true);
 	});
 
 	test("too many entries: the oldest are dropped until it fits, the shape is kept", () => {
@@ -65,6 +77,7 @@ describe("capValue", () => {
 
 	test("the limits can be set per call", () => {
 		const capped = capValue({ lines: ["aaaaaaaaaa", "bbbbbbbbbb", "cccccccccc"] }, { keep: "last", maxChars: 30 });
+		expect(capValue({ lines: ["aaaaaaaaaa"] }, { keep: "last", maxChars: 30 }).notes).toEqual([]);
 		expect(capped.value).toEqual({ lines: ["cccccccccc"] });
 	});
 });

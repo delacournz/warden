@@ -81,14 +81,22 @@ function shorten(ref: ListRef, excess: number, keep: Keep, lengths: Map<unknown[
 	else notes.push(note);
 }
 
+/** A result that reports its own `truncated` flag (the component tree) says so once a list of it was shortened. */
+function markTruncated(value: unknown): void {
+	if (value === null || typeof value !== "object" || Array.isArray(value)) return;
+	const record = value as Record<string, unknown>;
+	if (record.truncated === false) record.truncated = true;
+}
+
 /**
- * Bound a tool's data without changing its shape: long strings are cut in place, then the largest lists lose elements
- * from the end `keep` does not name until the JSON fits. Keys, scalars and the nesting stay, so the reply still parses
+ * Bound a tool's data without changing its shape. Data within the limit is returned untouched. Over it, long strings
+ * are cut in place, then the largest lists lose elements from the end `keep` does not name until the JSON fits. Keys, scalars and the nesting stay, so the reply still parses
  * as the tool's result.
  */
 export function capValue(value: unknown, options: CapOptions): Capped {
 	const maxChars = options.maxChars ?? MAX_RESPONSE_CHARS;
 	const maxString = options.maxString ?? MAX_STRING_CHARS;
+	if (jsonLength(value) <= maxChars) return { fits: true, value, notes: [] };
 	const cut: Cut = { strings: 0 };
 	const root: { value: unknown } = { value: cutStrings(value, maxString, cut) };
 	const notes: string[] = [];
@@ -104,5 +112,6 @@ export function capValue(value: unknown, options: CapOptions): Capped {
 		if (largest === undefined) return { fits: false, value: root.value, notes };
 		shorten(largest, excess, options.keep, lengths, notes);
 	}
+	if (lengths.size > 0) markTruncated(root.value);
 	return { fits: true, value: root.value, notes };
 }

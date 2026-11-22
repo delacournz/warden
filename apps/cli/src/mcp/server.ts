@@ -22,6 +22,22 @@ export const MCP_INSTRUCTIONS =
 const narrowHint = (cap: ResponseCap): string =>
 	cap.narrow === undefined ? "Narrow the call to read the rest." : `Narrow with ${cap.narrow}.`;
 
+/** The file a result says holds everything (`file`: the console / network jsonl; `path`: a profile artifact). */
+function wholeDataPath(data: unknown): string | undefined {
+	if (data === null || typeof data !== "object") return undefined;
+	const { file, path } = data as { file?: unknown; path?: unknown };
+	if (typeof file === "string") return file;
+	return typeof path === "string" ? path : undefined;
+}
+
+/** What follows the cuts in a notice: how to narrow the call and, when the result names one, where everything is. */
+function restHint(cap: ResponseCap, data: unknown): string {
+	const whole = wholeDataPath(data);
+	if (whole === undefined) return narrowHint(cap);
+	const where = `The whole data is in ${whole}.`;
+	return cap.narrow === undefined ? where : `${narrowHint(cap)} ${where}`;
+}
+
 const errorResponse = (error: ToolError): ToolResponse => ({
 	content: [{ type: "text", text: JSON.stringify({ error: capValue(error, { keep: "last" }).value }) }],
 	isError: true,
@@ -44,7 +60,7 @@ export function toResponse(result: ToolResult, cap: ResponseCap = {}): ToolRespo
 	}
 	const data: ToolResponse["content"][number] = { type: "text", text: JSON.stringify(capped.value) };
 	if (capped.notes.length === 0) return { content: [data] };
-	const notice = `[warden: output truncated. ${capped.notes.join("; ")}. ${narrowHint(cap)}]`;
+	const notice = `[warden: output truncated. ${capped.notes.join("; ")}. ${restHint(cap, capped.value)}]`;
 	return { content: [data, { type: "text", text: notice }] };
 }
 
