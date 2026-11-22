@@ -8,6 +8,8 @@ import {
 	mkdtempSync,
 	readdirSync,
 	readFileSync,
+	readlinkSync,
+	realpathSync,
 	rmSync,
 	statSync,
 	symlinkSync,
@@ -367,7 +369,36 @@ describe("tarExtractHelper", () => {
 		expect(mode("Resources/SimulatorFrameworkBridge-iOS")).toBe(0o644);
 	});
 
-	test("a tarball holding a symlink or a hard link is refused before anything is unpacked", async () => {
+	/** The layout `native:build` stages for a stub framework: the real files under `Versions/A`, links above them. */
+	function frameworkShaped(dist: string): void {
+		fakeHelperDist(dist, { frameworks: [] });
+		const framework = join(dist, "CoreSimulatorStub.framework");
+		mkdirSync(join(framework, "Versions", "A", "Resources"), { recursive: true });
+		writeFileSync(join(framework, "Versions", "A", "CoreSimulatorStub"), "macho", { mode: 0o755 });
+		writeFileSync(join(framework, "Versions", "A", "Resources", "Info.plist"), "plist");
+		symlinkSync("A", join(framework, "Versions", "Current"));
+		symlinkSync("Versions/Current/CoreSimulatorStub", join(framework, "CoreSimulatorStub"));
+		symlinkSync("Versions/Current/Resources", join(framework, "Resources"));
+	}
+
+	test("a framework's own links (Versions/Current, the binary, Resources) are unpacked as links", async () => {
+		frameworkShaped(join(root, "dist"));
+		const packed = await packHelper({ distDir: join(root, "dist"), outDir: join(root, "out"), exec: bunExec });
+		if (!packed.success) throw new Error(packed.error);
+		const dest = join(root, "home", "simd", "0.3.0");
+		const extracted = await tarExtractHelper(bunExec)(readFileSync(packed.data.tgz), dest);
+		expect(extracted).toEqual({ success: true, data: undefined });
+		const framework = join(dest, "CoreSimulatorStub.framework");
+		expect(readlinkSync(join(framework, "Versions", "Current"))).toBe("A");
+		expect(readlinkSync(join(framework, "CoreSimulatorStub"))).toBe("Versions/Current/CoreSimulatorStub");
+		expect(readlinkSync(join(framework, "Resources"))).toBe("Versions/Current/Resources");
+		expect(readFileSync(join(framework, "CoreSimulatorStub"), "utf8")).toBe("macho");
+		expect(readFileSync(join(framework, "Resources", "Info.plist"), "utf8")).toBe("plist");
+		expect(statSync(join(framework, "Versions", "A", "CoreSimulatorStub")).mode & 0o7777).toBe(0o755);
+		expect(statSync(join(framework, "Versions", "A", "Resources", "Info.plist")).mode & 0o7777).toBe(0o644);
+	});
+
+	test("a tarball holding a link out of the archive or a hard link is refused before anything is unpacked", async () => {
 		const dest = join(root, "simd", "0.3.0");
 		mkdirSync(dest, { recursive: true });
 		writeFileSync(join(dest, "keep"), "x");
@@ -378,6 +409,7 @@ describe("tarExtractHelper", () => {
 		};
 		for (const plant of [
 			(dist: string) => symlinkSync("/etc", join(dist, "Resources", "etc")),
+			(dist: string) => symlinkSync("../../outside", join(dist, "Resources", "out")),
 			(dist: string) => linkSync(join(dist, "warden-simd"), join(dist, "warden-simd-2")),
 		]) {
 			const dist = mkdtempSync(join(root, "dist-"));
@@ -387,7 +419,7 @@ describe("tarExtractHelper", () => {
 			await bunExec(["tar", "-czf", tgz, "-C", dist, "."]);
 			const result = await tarExtractHelper(exec)(readFileSync(tgz), dest);
 			if (result.success) throw new Error("expected failure");
-			expect(result.error).toContain("only regular files and directories");
+			expect(result.error).toMatch(/links outside the archive|only files, directories and links inside the archive/);
 		}
 		expect(ran).toEqual([]);
 		expect(existsSync(join(dest, "keep"))).toBe(true);
@@ -416,14 +448,58 @@ describe("sealExtracted", () => {
 	});
 	afterEach(() => rmSync(root, { recursive: true, force: true }));
 
-	test("a symlink, a hard link or a special file anywhere in the tree is an error naming it", async () => {
-		mkdirSync(join(root, "link", "sub"), { recursive: true });
-		symlinkSync("/etc/hosts", join(root, "link", "sub", "hosts"));
-		expect(sealExtracted(join(root, "link"))).toEqual({
-			success: false,
-			error: "sub/hosts is a symbolic link: the helper holds only regular files and directories",
-		});
+	test("links that stay inside the tree pass, and are not followed to change a mode", () => {
+		const tree = join(root, "ok");
+		mkdirSync(join(tree, "a", "b"), { recursive: true });
+		writeFileSync(join(tree, "a", "target"), "x", { mode: 0o600 });
+		symlinkSync("../target", join(tree, "a", "b", "file-link"));
+		symlinkSync("b", join(tree, "a", "dir-link"));
+		symlinkSync("dir-link/file-link", join(tree, "a", "chained"));
+		expect(sealExtracted(tree)).toEqual({ success: true, data: undefined });
+		expect(readlinkSync(join(tree, "a", "b", "file-link"))).toBe("../target");
+		expect(statSync(join(tree, "a", "target")).mode & 0o7777).toBe(0o644);
+		expect(realpathSync(join(tree, "a", "chained"))).toBe(realpathSync(join(tree, "a", "target")));
+	});
 
+	test("an absolute link, one that leaves the tree, one that leaves it through another link, or a dangling one is an error", () => {
+		const cases: Array<{ plant: (tree: string) => void; shown: string; target: string }> = [
+			{
+				plant: (tree) => symlinkSync("/etc/hosts", join(tree, "sub", "hosts")),
+				shown: "sub/hosts",
+				target: "/etc/hosts",
+			},
+			{
+				plant: (tree) => symlinkSync("../../outside", join(tree, "sub", "out")),
+				shown: "sub/out",
+				target: "../../outside",
+			},
+			{
+				plant: (tree) => {
+					symlinkSync("..", join(tree, "sub", "up"));
+					symlinkSync("up/..", join(tree, "sub", "zz-through"));
+				},
+				shown: "sub/zz-through",
+				target: "up/..",
+			},
+			{
+				plant: (tree) => symlinkSync("nothing-here", join(tree, "sub", "dangling")),
+				shown: "sub/dangling",
+				target: "nothing-here",
+			},
+		];
+		writeFileSync(join(root, "outside"), "x");
+		for (const [index, { plant, shown, target }] of cases.entries()) {
+			const tree = join(root, `link-${index}`);
+			mkdirSync(join(tree, "sub"), { recursive: true });
+			plant(tree);
+			expect(sealExtracted(tree)).toEqual({
+				success: false,
+				error: `${shown} links outside the helper (${target})`,
+			});
+		}
+	});
+
+	test("a hard link or a special file anywhere in the tree is an error naming it", async () => {
 		mkdirSync(join(root, "hard"));
 		writeFileSync(join(root, "hard", "a"), "x");
 		linkSync(join(root, "hard", "a"), join(root, "hard", "b"));

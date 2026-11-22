@@ -6,11 +6,13 @@ import {
 	mkdirSync,
 	mkdtempSync,
 	readdirSync,
+	readlinkSync,
+	realpathSync,
 	renameSync,
 	rmSync,
 	writeFileSync,
 } from "node:fs";
-import { dirname, join, relative } from "node:path";
+import { dirname, join, relative, sep } from "node:path";
 import { type Exec, execError } from "@delacour/warden-core/exec";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { HELPER_ASSET, HELPER_BINARY, HELPER_SUMS_ASSET, HELPER_TARGET } from "../npm/helper";
@@ -162,18 +164,35 @@ export async function fetchHelper(input: FetchHelperInput): AsyncResult<FetchedH
 	return ok({ dir, url, sha256: actual, release, checksum });
 }
 
-const PLAIN = "the helper holds only regular files and directories";
+const PLAIN = "the helper holds only files, directories and links inside it";
+
+/** Where a symlink really leads (every link on the way followed); `undefined` when it leads nowhere. */
+function resolved(path: string): string | undefined {
+	try {
+		return realpathSync(path);
+	} catch {
+		return undefined;
+	}
+}
 
 /**
- * Walk an extracted helper tree: anything that is not a regular file or a directory (a symlink, a device, a FIFO)
- * and any file with a second hard link is an error. Directories and executables become `0755`, other files `0644`,
- * whatever modes the archive carried.
+ * Walk an extracted helper tree. A symbolic link is kept only when its target is relative and, with every link on the
+ * way followed, ends inside the tree (the stub frameworks' `Versions/Current` layout); it is never followed to change
+ * a mode. A device, a FIFO or a file with a second hard link is an error. Directories and executables become `0755`,
+ * other files `0644`, whatever modes the archive carried.
  */
 export function sealExtracted(root: string): Result<void> {
+	const top = realpathSync(root);
+	const sealLink = (path: string, shown: string): Result<void> => {
+		const target = readlinkSync(path);
+		const end = target.startsWith("/") ? undefined : resolved(path);
+		const inside = end !== undefined && (end === top || end.startsWith(`${top}${sep}`));
+		return inside ? ok(undefined) : err(`${shown} links outside the helper (${target})`);
+	};
 	const seal = (path: string): Result<void> => {
 		const shown = relative(root, path);
 		const stat = lstatSync(path);
-		if (stat.isSymbolicLink()) return err(`${shown} is a symbolic link: ${PLAIN}`);
+		if (stat.isSymbolicLink()) return sealLink(path, shown);
 		if (stat.isDirectory()) {
 			chmodSync(path, 0o755);
 			return walk(path);
@@ -196,7 +215,7 @@ export function sealExtracted(root: string): Result<void> {
 /**
  * `tar -xzf` into a sibling temp dir, check `warden-simd` is there, then swap it in for `destDir`, so a failed
  * or partial extract never leaves a half helper behind. The archive is read first (`checkPlainTarball`: `tar` only
- * runs on one holding plain files and directories under its own root), and the extracted tree is walked again
+ * runs on one holding files, directories and links that stay under its own root), and the extracted tree is walked again
  * (`sealExtracted`) before it is moved into place.
  */
 export function tarExtractHelper(exec: Exec): ExtractHelper {

@@ -37,6 +37,12 @@ describe("extractFile", () => {
 });
 
 describe("checkPlainTarball", () => {
+	const fail = (tgz: Uint8Array): string => {
+		const result = checkPlainTarball(tgz);
+		if (result.success) throw new Error("expected a refusal");
+		return result.error;
+	};
+
 	test("files and directories at relative paths pass, pax and GNU long names included", () => {
 		const tgz = makeTgz([
 			{ name: "./", content: "", type: "5" },
@@ -51,18 +57,72 @@ describe("checkPlainTarball", () => {
 		expect(checkPlainTarball(tgz)).toEqual({ success: true, data: undefined });
 	});
 
-	test("links and devices are refused by name", () => {
+	test("a macOS framework's links pass: relative targets that stay inside the archive", () => {
+		const tgz = makeTgz([
+			{ name: "./", content: "", type: "5" },
+			{ name: "./X.framework/", content: "", type: "5" },
+			{ name: "./X.framework/X", content: "", type: "2", link: "Versions/Current/X" },
+			{ name: "./X.framework/Resources", content: "", type: "2", link: "Versions/Current/Resources" },
+			{ name: "./X.framework/Versions/", content: "", type: "5" },
+			{ name: "./X.framework/Versions/Current", content: "", type: "2", link: "A" },
+			{ name: "./X.framework/Versions/A/", content: "", type: "5" },
+			{ name: "./X.framework/Versions/A/X", content: "binary" },
+			{ name: "./X.framework/Versions/A/Resources/", content: "", type: "5" },
+			{ name: "./X.framework/Versions/A/Resources/Info.plist", content: "plist" },
+			{ name: "./X.framework/Versions/up", content: "", type: "2", link: "../../manifest.json" },
+			{ name: "./manifest.json", content: "{}" },
+		]);
+		expect(checkPlainTarball(tgz)).toEqual({ success: true, data: undefined });
+	});
+
+	test("a link with an absolute target, or one that leaves the archive, is refused", () => {
+		for (const link of ["/etc/hosts", "..", "../outside", "../../../etc/hosts", "a/../../../x", "sub/../x"]) {
+			const error = fail(makeTgz([{ name: "./link", content: "", type: "2", link }]));
+			expect(error).toBe(`tarball entry ./link links outside the archive (${link})`);
+		}
+		// one level down, `..` is the archive root itself: still inside
+		expect(checkPlainTarball(makeTgz([{ name: "dir/link", content: "", type: "2", link: ".." }])).success).toBe(true);
+		expect(fail(makeTgz([{ name: "dir/link", content: "", type: "2", link: "../.." }]))).toContain("links outside");
+		expect(fail(makeTgz([{ name: "link", content: "", type: "2", link: "" }]))).toContain("links outside the archive");
+	});
+
+	test("a link target carried by a pax or GNU long-link header is the one checked", () => {
+		const pax = makeTgz([
+			{ name: "PaxHeader", content: paxPath("/etc/hosts", "linkpath"), type: "x" },
+			{ name: "link", content: "", type: "2", link: "innocent" },
+		]);
+		expect(fail(pax)).toBe("tarball entry link links outside the archive (/etc/hosts)");
+		const gnu = makeTgz([
+			{ name: "././@LongLink", content: "../../x\0", type: "K" },
+			{ name: "link", content: "", type: "2", link: "innocent" },
+		]);
+		expect(fail(gnu)).toBe("tarball entry link links outside the archive (../../x)");
+	});
+
+	test("no entry may sit below a link, whichever comes first in the archive", () => {
+		for (const tgz of [
+			makeTgz([
+				{ name: "./a/link", content: "", type: "2", link: "." },
+				{ name: "./a/link/file", content: "x" },
+			]),
+			makeTgz([
+				{ name: "a/link/deeper/file", content: "x" },
+				{ name: "a/link/", content: "", type: "2", link: "b" },
+			]),
+		]) {
+			expect(fail(tgz)).toContain("is below the link a/link");
+		}
+	});
+
+	test("hard links and devices are refused by name", () => {
 		for (const [type, kind] of [
 			["1", "a hard link"],
-			["2", "a symbolic link"],
 			["3", "a character device"],
 			["6", "a FIFO"],
 		] as const) {
-			const result = checkPlainTarball(makeTgz([{ name: "a/b", content: "", type }]));
-			expect(result).toEqual({
-				success: false,
-				error: `tarball entry a/b is ${kind}: only regular files and directories are unpacked`,
-			});
+			expect(fail(makeTgz([{ name: "a/b", content: "", type, link: "a/c" }]))).toBe(
+				`tarball entry a/b is ${kind}: only files, directories and links inside the archive are unpacked`
+			);
 		}
 	});
 
@@ -79,10 +139,7 @@ describe("checkPlainTarball", () => {
 					{ name: "innocent", content: "x" },
 				]),
 			]) {
-				expect(checkPlainTarball(tgz)).toEqual({
-					success: false,
-					error: `tarball entry ${name} is outside the archive root`,
-				});
+				expect(fail(tgz)).toBe(`tarball entry ${name} is outside the archive root`);
 			}
 		}
 	});
