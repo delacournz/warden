@@ -105,8 +105,11 @@ function registryFetch(opts: RegistryOpts = {}, calls: string[] = []): Fetch {
 	const routes: Record<string, () => Response> = {
 		[`${REGISTRY}/@delacour/warden/latest`]: () => Response.json({ version: latest }),
 		[`${REGISTRY}/@delacour/warden-darwin-arm64/${latest}`]: () =>
-			Response.json({ version: latest, dist: { tarball: "https://tarballs/warden-darwin-arm64.tgz", integrity } }),
-		"https://tarballs/warden-darwin-arm64.tgz": () => new Response(tgz),
+			Response.json({
+				version: latest,
+				dist: { tarball: `${REGISTRY}/@delacour/warden-darwin-arm64/-/warden-darwin-arm64.tgz`, integrity },
+			}),
+		[`${REGISTRY}/@delacour/warden-darwin-arm64/-/warden-darwin-arm64.tgz`]: () => new Response(tgz),
 	};
 	return async (url) => {
 		calls.push(url);
@@ -187,6 +190,37 @@ describe("warden update (release binary)", () => {
 		expect(readFileSync(execPath, "utf8")).toBe("OLD-BINARY");
 	});
 
+	test("an older latest release is never installed over a newer binary, --force included", async () => {
+		const plain = setup([], release("0.4.0"));
+		expect(await createUpdateCommand(plain.deps).run(plain.c)).toBe(0);
+		expect(plain.c.stdout.join("\n")).toContain("up to date");
+
+		const forced = setup(["--force"], release("0.4.0"));
+		expect(await createUpdateCommand(forced.deps).run(forced.c)).toBe(1);
+		expect(forced.c.stderr.join("\n")).toContain("latest is 0.3.0, which is older than the running 0.4.0");
+		expect(forced.c.stderr.join("\n")).toContain("--allow-downgrade");
+		expect(forced.calls.some((cmd) => cmd.includes("download"))).toBe(false);
+		expect(readFileSync(forced.execPath, "utf8")).toBe("OLD-BINARY");
+
+		const check = setup(["--force", "--check", "--json"], release("0.4.0"));
+		expect(await createUpdateCommand(check.deps).run(check.c)).toBe(0);
+		expect(JSON.parse(check.c.stdout.join("\n"))).toMatchObject({ status: "up-to-date", latest: "0.3.0" });
+	});
+
+	test("--allow-downgrade installs the older latest release", async () => {
+		const { c, calls, deps, execPath } = setup(["--allow-downgrade"], release("0.4.0"));
+		expect(await createUpdateCommand(deps).run(c)).toBe(0);
+		expect(readFileSync(execPath, "utf8")).toBe("NEW-BINARY");
+		expect(calls.find((cmd) => cmd[0] === "gh" && cmd[2] === "download")).toContain("v0.3.0");
+		expect(c.stdout.join("\n")).toContain("0.4.0 → 0.3.0");
+	});
+
+	test("--force still reinstalls the same version", async () => {
+		const { c, deps, execPath } = setup(["--force"], release("0.3.0"));
+		expect(await createUpdateCommand(deps).run(c)).toBe(0);
+		expect(readFileSync(execPath, "utf8")).toBe("NEW-BINARY");
+	});
+
 	test("warns when the shell resolves warden somewhere else", async () => {
 		const { c, deps } = setup([], release());
 		deps.which = () => "/opt/homebrew/bin/warden";
@@ -249,7 +283,7 @@ describe("warden update (npm registry)", () => {
 		expect(fetches).toEqual([
 			`${REGISTRY}/@delacour/warden/latest`,
 			`${REGISTRY}/@delacour/warden-darwin-arm64/0.3.0`,
-			"https://tarballs/warden-darwin-arm64.tgz",
+			`${REGISTRY}/@delacour/warden-darwin-arm64/-/warden-darwin-arm64.tgz`,
 		]);
 		expect(calls.some((cmd) => cmd[0] === "gh")).toBe(false);
 		expect(c.stdout.join("\n")).toContain("warden updated 0.2.0 → 0.3.0: 0.3.0 (npm @delacour/warden@0.3.0)");
@@ -275,6 +309,29 @@ describe("warden update (npm registry)", () => {
 		expect(await createUpdateCommand(deps).run(c)).toBe(0);
 		expect(JSON.parse(c.stdout.join("\n"))).toMatchObject({ status: "updated", latest: "0.3.0" });
 		expect(readFileSync(execPath, "utf8")).toBe("NPM-BINARY");
+	});
+
+	test("an older npm latest needs --allow-downgrade, --force alone is refused", async () => {
+		const forced = npmSetup(["--force"], release("0.4.0"));
+		recordInstallOrigin(forced.c.env, forced.execPath, "npm");
+		expect(await createUpdateCommand(forced.deps).run(forced.c)).toBe(1);
+		expect(forced.c.stderr.join("\n")).toContain("--allow-downgrade");
+		expect(forced.fetches).toHaveLength(1);
+		expect(readFileSync(forced.execPath, "utf8")).toBe("OLD-BINARY");
+
+		const allowed = npmSetup(["--allow-downgrade"], release("0.4.0"));
+		recordInstallOrigin(allowed.c.env, allowed.execPath, "npm");
+		expect(await createUpdateCommand(allowed.deps).run(allowed.c)).toBe(0);
+		expect(readFileSync(allowed.execPath, "utf8")).toBe("NPM-BINARY");
+	});
+
+	test("WARDEN_NPM_REGISTRY that is not https (or on this machine) → exit 1, nothing fetched", async () => {
+		const { c, deps, execPath, fetches } = npmSetup([]);
+		recordInstallOrigin(c.env, execPath, "npm");
+		c.env = { ...c.env, WARDEN_NPM_REGISTRY: "http://npm.example.com" };
+		expect(await createUpdateCommand(deps).run(c)).toBe(1);
+		expect(c.stderr.join("\n")).toContain("WARDEN_NPM_REGISTRY must be an https: URL");
+		expect(fetches).toEqual([]);
 	});
 
 	test("GitHub releases unreachable → falls back to npm and remembers it", async () => {
@@ -377,6 +434,18 @@ describe("warden update (from source)", () => {
 		const { c, deps, execPath } = setup(["--release"], { channel: "local", version: "0.2.0", sourceDir: "/repo" });
 		expect(await createUpdateCommand(deps).run(c)).toBe(0);
 		expect(readFileSync(execPath, "utf8")).toBe("NEW-BINARY");
+	});
+
+	test("a checkout build ahead of the latest release: --release needs --allow-downgrade", async () => {
+		const local: BuildInfo = { channel: "local", version: "0.4.0", sourceDir: "/repo" };
+		const refused = setup(["--release"], local);
+		expect(await createUpdateCommand(refused.deps).run(refused.c)).toBe(1);
+		expect(refused.c.stderr.join("\n")).toContain("latest is 0.3.0, which is older than the running 0.4.0");
+		expect(readFileSync(refused.execPath, "utf8")).toBe("OLD-BINARY");
+
+		const allowed = setup(["--release", "--allow-downgrade"], local);
+		expect(await createUpdateCommand(allowed.deps).run(allowed.c)).toBe(0);
+		expect(readFileSync(allowed.execPath, "utf8")).toBe("NEW-BINARY");
 	});
 
 	test("--to installs somewhere else", async () => {

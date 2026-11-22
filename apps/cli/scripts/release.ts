@@ -167,7 +167,8 @@ async function buildPackages(root: string): Promise<void> {
 	const cli = join(root, "apps", "cli");
 	await $`bun run --cwd ${e2e} native:deps`.cwd(root);
 	await $`bun run --cwd ${e2e} native:build`.cwd(root);
-	await $`bun run --cwd ${cli} build:release`.cwd(root);
+	await $`bun run --cwd ${cli} build:helper-asset`.cwd(root);
+	await $`bun run --cwd ${cli} build:release -- --require-helper-asset`.cwd(root);
 	process.env.WARDEN_NPM_REPO_LINKS = await repoLinks(root);
 	await $`bun run --cwd ${cli} build:npm -- --require-helper`.cwd(root);
 }

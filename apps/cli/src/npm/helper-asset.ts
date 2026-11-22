@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type Exec, execError } from "@delacour/warden-core/exec";
-import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
+import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { HELPER_ASSET, HELPER_BINARY, HELPER_GUEST, HELPER_MANIFEST, HELPER_SUMS_ASSET } from "./helper";
 
 export type PackedHelper = { tgz: string; sums: string; sha256: string };
@@ -27,4 +27,21 @@ export async function packHelper(input: { distDir: string; outDir: string; exec:
 	const sums = join(outDir, HELPER_SUMS_ASSET);
 	writeFileSync(sums, `${sha256}  ${HELPER_ASSET}\n`);
 	return ok({ tgz, sums, sha256 });
+}
+
+/**
+ * The sha256 of `<outDir>/warden-simd-darwin-arm64.tgz` as `packHelper` left it, for a release binary to carry
+ * (`BuildInfo.helperSha256`); `undefined` when no tarball was packed. The tarball and `SHA256SUMS` are uploaded
+ * together, so one that the other does not describe is an error, never a value to embed.
+ */
+export function packedHelperSha256(outDir: string): Result<string | undefined> {
+	const tgz = join(outDir, HELPER_ASSET);
+	if (!existsSync(tgz)) return ok(undefined);
+	const sha256 = createHash("sha256").update(readFileSync(tgz)).digest("hex");
+	const sums = join(outDir, HELPER_SUMS_ASSET);
+	const listed = existsSync(sums) ? readFileSync(sums, "utf8") : "";
+	if (listed !== `${sha256}  ${HELPER_ASSET}\n`) {
+		return err(`${sums} does not describe ${tgz} (sha256 ${sha256}): run build:helper-asset again`);
+	}
+	return ok(sha256);
 }

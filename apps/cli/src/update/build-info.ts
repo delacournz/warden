@@ -5,12 +5,14 @@ import cliPackage from "../../package.json" with { type: "json" };
  * Where this warden came from:
  * - `dev`: running from source (`bun apps/cli/src/cli.ts`)
  * - `local`: compiled from a checkout (`sourceDir`), updated by rebuilding it
- * - `release`: a GitHub release binary, updated by downloading the latest release
+ * - `release`: a GitHub release binary, updated by downloading the latest release. `helperSha256` is the sha256 of
+ *   this version's `warden-simd` tarball, packed before the binary was compiled: what `warden doctor --fetch-helper`
+ *   holds the download to.
  */
 export type BuildInfo =
 	| { channel: "dev"; version: string; sourceDir: string }
 	| { channel: "local"; version: string; sourceDir?: string; commit?: string; builtAt?: string }
-	| { channel: "release"; version: string; commit?: string; builtAt?: string };
+	| { channel: "release"; version: string; commit?: string; builtAt?: string; helperSha256?: string };
 
 /** Embedded at compile time via `--define __WARDEN_BUILD__=<json>` (see `update/source-build.ts`). */
 declare const __WARDEN_BUILD__: BuildInfo | undefined;

@@ -12,6 +12,7 @@ import { fakeHelperDist } from "../npm/helper.testing";
 import { packHelper } from "../npm/helper-asset";
 import { RULE_MD, SKILL_FILES, SKILL_PATHS } from "../skill";
 import { fakeExec, scriptedUi, type TestContext, testContext } from "../testing";
+import { makeTgz } from "../update/tar.testing";
 import { createDoctorCommand, type DoctorCheck, doctorCommand, installProbe } from "./doctor";
 import type { HelperDeps } from "./doctor-helper";
 
@@ -278,7 +279,7 @@ describe("installProbe", () => {
 });
 
 describe("warden doctor --fetch-helper", () => {
-	const TGZ = new TextEncoder().encode("tarball");
+	const TGZ = makeTgz([{ name: "warden-simd", content: "bin" }]);
 	const sha = createHash("sha256").update(TGZ).digest("hex");
 	const BASE = "https://example.test/h";
 	const helperDeps = (overrides: Partial<HelperDeps> = {}): HelperDeps => ({
@@ -359,10 +360,63 @@ describe("warden doctor --fetch-helper", () => {
 				dir,
 				url: `${BASE}/warden-simd-darwin-arm64.tgz`,
 				release: "version",
+				checksum: "published",
 			});
+			expect(c.stderr.join("\n")).toContain(
+				"this build carries no warden-simd checksum: the download was checked against the SHA256SUMS served with it"
+			);
 			expect(byName(c)["sim-helper"]).toMatchObject({ status: "ok" });
 			expect(byName(c)["sim-helper"]?.detail).toContain(join(dir, "warden-simd"));
 			expect(byName(c)["sim-helper"]?.detail).toContain("warden-simd 0.1.0, idb 1.1.8");
+		} finally {
+			rmSync(dist, { recursive: true, force: true });
+			rmSync(out, { recursive: true, force: true });
+		}
+	});
+
+	test("a release build holds the tarball to the sha256 it carries: no SHA256SUMS request, no notice", async () => {
+		const dist = join(tmpdir(), `warden-doctor-pinned-dist-${process.pid}`);
+		const out = join(tmpdir(), `warden-doctor-pinned-out-${process.pid}`);
+		try {
+			fakeHelperDist(dist);
+			const packed = await packHelper({ distDir: dist, outDir: out, exec: bunExec });
+			if (!packed.success) throw new Error(packed.error);
+			const bytes = readFileSync(packed.data.tgz);
+			const asked: string[] = [];
+			const run = async (pinnedHelperSha256: string) => {
+				const c = setup(["--fetch-helper", "--json"], async (cmd, opts) =>
+					cmd[0] === "tar" ? bunExec(cmd, opts) : { exitCode: 127, stdout: "", stderr: "" }
+				);
+				const command = createDoctorCommand({
+					helper: helperDeps({
+						exists: existsSync,
+						readFile: (path) => (existsSync(path) ? readFileSync(path, "utf8") : undefined),
+					}),
+					fetch: async (url) => {
+						asked.push(url);
+						return new Response(bytes);
+					},
+					pinnedHelperSha256,
+				});
+				return { code: await command.run(c), c };
+			};
+
+			const good = await run(packed.data.sha256);
+			expect(good.code).toBe(0);
+			expect(asked).toEqual([
+				"https://github.com/delacournz/warden/releases/download/v0.3.0/warden-simd-darwin-arm64.tgz",
+			]);
+			expect(JSON.parse(good.c.stdout.join("\n")).helperFetch).toMatchObject({
+				status: "fetched",
+				sha256: packed.data.sha256,
+				checksum: "embedded",
+			});
+			expect(good.c.stderr.join("\n")).not.toContain("SHA256SUMS");
+
+			const bad = await run("0".repeat(64));
+			expect(bad.code).toBe(1);
+			expect(bad.c.stderr.join("\n")).toContain("checksum mismatch");
+			expect(bad.c.stderr.join("\n")).toContain("this binary expects");
 		} finally {
 			rmSync(dist, { recursive: true, force: true });
 			rmSync(out, { recursive: true, force: true });

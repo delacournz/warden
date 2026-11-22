@@ -3,6 +3,8 @@
  * Compile warden with embedded build info.
  *   bun scripts/build.ts                     → dist/warden (channel local, knows this checkout → `warden update` rebuilds it)
  *   bun scripts/build.ts --channel release   → dist/warden-<os>-<arch> for every release target + dist/checksums.txt
+ * A release binary carries the sha256 of `dist/warden-simd-darwin-arm64.tgz` when `build:helper-asset` ran first;
+ * `--require-helper-asset` (the release pipeline) fails without it.
  */
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -12,6 +14,8 @@ import { bunExec } from "@delacour/warden-core/exec";
 import { RUNNER_BLOB } from "@delacour/warden-core/ios-runner/pack";
 import cliPackage from "../package.json" with { type: "json" };
 import { RUNTIME_BLOB } from "../src/e2e/e2e-runtime";
+import { HELPER_ASSET } from "../src/npm/helper";
+import { packedHelperSha256 } from "../src/npm/helper-asset";
 import { RELEASE_TARGETS } from "../src/npm/platforms";
 import {
 	buildFromSource,
@@ -25,7 +29,13 @@ import {
 const cliRoot = resolve(import.meta.dir, "..");
 const sourceDir = resolve(cliRoot, "..", "..");
 const dist = join(cliRoot, "dist");
-const { values } = parseArgs({ options: { channel: { type: "string", default: "local" } }, strict: true });
+const { values } = parseArgs({
+	options: {
+		channel: { type: "string", default: "local" },
+		"require-helper-asset": { type: "boolean", default: false },
+	},
+	strict: true,
+});
 
 async function run(cmd: string[]): Promise<void> {
 	const result = await bunExec(cmd, { cwd: cliRoot });
@@ -43,11 +53,17 @@ if (values.channel === "local") {
 	console.log(`built dist/warden ${built.data.version} (local ${built.data.commit ?? "?"})`);
 } else if (values.channel === "release") {
 	const commit = process.env.GITHUB_SHA?.slice(0, 7) ?? (await sourceCommit(bunExec, sourceDir));
+	const helper = packedHelperSha256(dist);
+	if (!helper.success) throw new Error(helper.error);
+	if (helper.data === undefined && values["require-helper-asset"]) {
+		throw new Error(`no dist/${HELPER_ASSET} — run \`bun run build:helper-asset\` first`);
+	}
 	const info = {
 		channel: "release" as const,
 		version: cliPackage.version,
 		...(commit ? { commit } : {}),
 		builtAt: new Date().toISOString(),
+		...(helper.data !== undefined ? { helperSha256: helper.data } : {}),
 	};
 	const sums: string[] = [];
 	const blob = join(dist, RUNTIME_BLOB);
@@ -73,7 +89,8 @@ if (values.channel === "local") {
 	rmSync(blob, { force: true });
 	rmSync(runnerBlob, { force: true });
 	writeFileSync(join(dist, "checksums.txt"), `${sums.join("\n")}\n`);
-	console.log(`release ${info.version}: ${RELEASE_TARGETS.length} binaries + checksums.txt`);
+	const pinned = helper.data === undefined ? "no helper checksum embedded" : `helper sha256 ${helper.data}`;
+	console.log(`release ${info.version}: ${RELEASE_TARGETS.length} binaries + checksums.txt (${pinned})`);
 } else {
 	throw new Error(`--channel must be local or release, got ${values.channel}`);
 }

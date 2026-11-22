@@ -23,7 +23,11 @@ function padded(content: Uint8Array): Uint8Array {
 	return out;
 }
 
-export type TarEntry = { name: string; content: string | Uint8Array; type?: "0" | "5" | "x" };
+export type TarEntry = {
+	name: string;
+	content: string | Uint8Array;
+	type?: "0" | "1" | "2" | "3" | "5" | "6" | "g" | "x" | "L";
+};
 
 /** A gzipped ustar archive, like `npm pack` output, for tar/registry tests. */
 export function makeTgz(entries: TarEntry[]): Uint8Array {

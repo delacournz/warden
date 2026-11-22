@@ -52,7 +52,7 @@ warden's environment is the one its caller passes: the shell's, the CI job's or 
 | `DELACOUR_TELEMETRY_DEBUG=1` | print the telemetry request body to stderr instead of sending it |
 | `CODEX_HOME` | Codex config directory (default `~/.codex`) |
 | `WARDEN_BINARY` | npm package only: run this binary instead of the platform package's |
-| `WARDEN_NPM_REGISTRY` | npm registry `warden update` uses for npm installs (default `https://registry.npmjs.org`) |
+| `WARDEN_NPM_REGISTRY` | npm registry `warden update` uses for npm installs (default `https://registry.npmjs.org`). `https:`, or `http://localhost` / `127.0.0.1`; the tarball it lists must be on the same host |
 
 ## Set by `warden run`
 

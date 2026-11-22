@@ -37,7 +37,7 @@ export type UpdateDeps = {
 	readSourceVersion?: (sourceDir: string) => string;
 };
 
-type Flags = { check?: true; release?: true; force?: true; to?: string; json?: true };
+type Flags = { check?: true; release?: true; force?: true; allowDowngrade?: true; to?: string; json?: true };
 
 type UpdateReport =
 	| { status: "up-to-date"; current: string; latest: string; channel: BuildInfo["channel"] }
@@ -85,14 +85,25 @@ function defaultTarget(ctx: CommandContext, deps: UpdateDeps): string {
 	return deps.build.channel === "dev" ? join(ctx.env.HOME ?? "~", ".local", "bin", "warden") : deps.execPath;
 }
 
-/** `up-to-date` / `available` when there's nothing to install (or `--check`); `undefined` = go ahead. */
-function skipInstall(deps: UpdateDeps, flags: Flags, latest: string): UpdateReport | undefined {
+/**
+ * `up-to-date` / `available` when there's nothing to install (or `--check`); `undefined` = go ahead. A `latest`
+ * older than the running version is installed only with `--allow-downgrade`: `--force` and a switch to the release
+ * channel reinstall the same version or a newer one, and are refused for an older one.
+ */
+function skipInstall(deps: UpdateDeps, flags: Flags, latest: string): Result<UpdateReport | undefined> {
 	const base = { current: deps.build.version, latest, channel: deps.build.channel };
-	const newer = compareVersions(latest, deps.build.version) > 0;
+	const order = compareVersions(latest, deps.build.version);
+	const newer = order > 0;
+	const downgrade = order < 0 && flags.allowDowngrade === true;
 	const switching = deps.build.channel !== "release";
-	if (!newer && !switching && !flags.force) return { status: "up-to-date", ...base };
-	if (flags.check) return { status: newer ? "available" : "up-to-date", ...base };
-	return undefined;
+	if (!newer && !downgrade && !switching && !flags.force) return ok({ status: "up-to-date", ...base });
+	if (flags.check) return ok({ status: newer ? "available" : "up-to-date", ...base });
+	if (order < 0 && !downgrade) {
+		return err(
+			`latest is ${latest}, which is older than the running ${deps.build.version}: pass --allow-downgrade to install it`
+		);
+	}
+	return ok(undefined);
 }
 
 /**
@@ -124,7 +135,9 @@ async function updateFromNpm(
 ): AsyncResult<UpdateReport> {
 	const platform = releaseTarget(deps.platform, deps.arch);
 	if (!platform.success) return platform;
-	const registry = npmRegistry(ctx.env);
+	const checked = npmRegistry(ctx.env);
+	if (!checked.success) return checked;
+	const registry = checked.data;
 	const latest = await step(
 		ctx,
 		`checking the latest ${NPM_PACKAGE} on npm…`,
@@ -134,7 +147,8 @@ async function updateFromNpm(
 	if (!latest.success) return latest;
 	const version = latest.data;
 	const skipped = skipInstall(deps, flags, version);
-	if (skipped) return ok(skipped);
+	if (!skipped.success) return skipped;
+	if (skipped.data) return ok(skipped.data);
 	const name = `${platformPackageName(platform.data)}@${version}`;
 
 	const dir = mkdtempSync(join(tmpdir(), "warden-update-"));
@@ -197,7 +211,8 @@ async function updateFromRelease(
 	if (!latest.success) return releaseError("unreachable", latest.error);
 	const base = { current: deps.build.version, latest: latest.data.version, channel: deps.build.channel };
 	const skipped = skipInstall(deps, flags, latest.data.version);
-	if (skipped) return ok(skipped);
+	if (!skipped.success) return failed(skipped.error);
+	if (skipped.data) return ok(skipped.data);
 	const picked = pickAsset(latest.data, asset.data);
 	if (!picked.success) return failed(picked.error);
 	const name = picked.data;
@@ -332,6 +347,7 @@ async function update(ctx: CommandContext, deps: UpdateDeps, flags: Flags): Prom
  * - release binary (or `--release`) → download the latest GitHub release (sha256-verified), in place;
  *   a copy installed via npx / bunx, or no reachable GitHub releases → the latest npm package (sha512-verified)
  * - npm package install (`node_modules/@delacour/warden-<target>/`) → print the package manager's upgrade command
+ * A latest release older than the running version is left alone unless `--allow-downgrade` is given.
  * The binary is swapped atomically at the same path, so the current shell's next `warden` runs it.
  */
 export function createUpdateCommand(deps: UpdateDeps): Command {
@@ -344,6 +360,7 @@ export function createUpdateCommand(deps: UpdateDeps): Command {
 				.option("--check", "only report whether an update is available")
 				.option("--release", "install the latest GitHub release (also switches a dev/local build to it)")
 				.option("--force", "reinstall even when up to date")
+				.option("--allow-downgrade", "install the latest release even when it is older than this warden")
 				.option("--to <path>", "install the binary here instead")
 				.option("--json", "machine-readable output")
 				.action(async (opts) => done(await update(ctx, deps, opts)));

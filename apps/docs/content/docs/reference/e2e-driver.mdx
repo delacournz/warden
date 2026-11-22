@@ -59,7 +59,7 @@ A standalone `warden` binary (from GitHub releases, or replaced by `warden updat
 | `WARDEN_SIMD_STREAM_IDLE_S` | seconds of no `settle` after which the helper closes its quiescence stream. Unset or `0` (the default) keeps it open for the helper's life. See "After an app relaunch" below. |
 | `WARDEN_SIMD_TRACE` | `1`: the helper logs one debug event per quiescence sample (same as `warden-simd --trace`) |
 | `WARDEN_E2E_DEBUG` | `1`: log every helper operation and `simctl` call with its duration to stderr |
-| `WARDEN_HELPER_URL` | `--fetch-helper` only: directory URL holding `warden-simd-darwin-arm64.tgz` and `SHA256SUMS`, instead of the GitHub release for this version |
+| `WARDEN_HELPER_URL` | `--fetch-helper` only: directory URL holding `warden-simd-darwin-arm64.tgz` (and `SHA256SUMS`, for a build from a checkout), instead of the GitHub release for this version. `https:`, `http://localhost` / `127.0.0.1`, or `file:`; anything else is refused. A release binary still accepts only the tarball it was built with |
 | `WARDEN_RELEASE_REPO` | GitHub repo `--fetch-helper` downloads from (default `delacournz/warden`) |
 
 ## `warden doctor`
@@ -95,7 +95,7 @@ The guest only reads a freshly launched app once a quiescence stream (the one `s
 warden doctor --fetch-helper
 ```
 
-Downloads `warden-simd-darwin-arm64.tgz` and `SHA256SUMS` from the GitHub release `v<version>` (or `WARDEN_HELPER_URL`), checks the tarball against the sum, and unpacks it into `$WARDEN_HOME/simd/<version>/`. Nothing is unpacked when the checksum does not match. Then it runs the usual checks, so the `sim-helper` rows show the result. It exits 1 if the download fails or the machine is not macOS arm64.
+Downloads `warden-simd-darwin-arm64.tgz` from the GitHub release `v<version>` (or `WARDEN_HELPER_URL`) and unpacks it into `$WARDEN_HOME/simd/<version>/`. A release binary carries the sha256 of its version's tarball, compiled in when the release was built, and accepts no other (`--json`: `helperFetch.checksum` `embedded`). A build from a checkout carries none: it downloads `SHA256SUMS` from the same place, checks the tarball against it, and says so on stderr (`checksum` `published`). Nothing is unpacked when the checksum does not match, or when the tarball holds anything but regular files and directories under its own root; unpacked files are `0755` when executable and `0644` otherwise. Then it runs the usual checks, so the `sim-helper` rows show the result. It exits 1 if the download fails or the machine is not macOS arm64.
 
 It downloads nothing when a helper the driver would pick first is already there (`WARDEN_SIMD`, `WARDEN_HELPER_DIR`, one next to the binary, a source build in `packages/e2e/native/dist`), and says where (`--json`: `helperFetch.status` `present`, else `fetched`). Running from a checkout (not a release binary), a version with no release yet (a version-bump branch) takes the latest release's helper, with a warning (`helperFetch.release` `latest`); `WARDEN_HELPER_URL` turns that off.
 

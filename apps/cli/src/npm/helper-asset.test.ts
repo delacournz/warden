@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { bunExec } from "@delacour/warden-core/exec";
 import { fakeHelperDist } from "./helper.testing";
-import { packHelper } from "./helper-asset";
+import { packedHelperSha256, packHelper } from "./helper-asset";
 
 let root: string;
 beforeEach(() => {
@@ -51,5 +51,32 @@ describe("packHelper", () => {
 		});
 		expect(packed.success).toBe(false);
 		if (!packed.success) expect(packed.error).toContain("tar: boom");
+	});
+});
+
+describe("packedHelperSha256", () => {
+	test("the sha256 of the packed tarball in a dist dir", async () => {
+		fakeHelperDist(join(root, "dist"));
+		const out = join(root, "out");
+		const packed = await packHelper({ distDir: join(root, "dist"), outDir: out, exec: bunExec });
+		if (!packed.success) throw new Error(packed.error);
+		expect(packedHelperSha256(out)).toEqual({ success: true, data: packed.data.sha256 });
+	});
+
+	test("no tarball there: nothing to carry", () => {
+		expect(packedHelperSha256(join(root, "nowhere"))).toEqual({ success: true, data: undefined });
+	});
+
+	test("a tarball that SHA256SUMS does not describe (a stale one of the two) is an error", async () => {
+		fakeHelperDist(join(root, "dist"));
+		const out = join(root, "out");
+		const packed = await packHelper({ distDir: join(root, "dist"), outDir: out, exec: bunExec });
+		if (!packed.success) throw new Error(packed.error);
+		writeFileSync(packed.data.sums, `${"0".repeat(64)}  warden-simd-darwin-arm64.tgz\n`);
+		const stale = packedHelperSha256(out);
+		if (stale.success) throw new Error("expected failure");
+		expect(stale.error).toContain("SHA256SUMS");
+		rmSync(packed.data.sums);
+		expect(packedHelperSha256(out).success).toBe(false);
 	});
 });

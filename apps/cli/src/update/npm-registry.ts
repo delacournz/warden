@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { NPM_PACKAGE, platformPackageName, type ReleaseTarget } from "../npm/platforms";
+import { checkDownloadUrl, sameOrigin } from "./download-url";
 import { extractFile } from "./tar";
 
 /** `fetch`, narrowed to what the registry client uses (injectable for tests). */
@@ -11,8 +12,12 @@ export const DEFAULT_NPM_REGISTRY = "https://registry.npmjs.org";
 /** A platform package version's tarball on the registry. */
 export type NpmDist = { name: string; tarball: string; integrity: string };
 
-export function npmRegistry(env: Record<string, string | undefined>): string {
-	return (env.WARDEN_NPM_REGISTRY || DEFAULT_NPM_REGISTRY).replace(/\/+$/, "");
+/** The registry `warden update` reads: `WARDEN_NPM_REGISTRY` (https, or http on this machine) or npmjs.org. */
+export function npmRegistry(env: Record<string, string | undefined>): Result<string> {
+	const override = env.WARDEN_NPM_REGISTRY;
+	if (!override) return ok(DEFAULT_NPM_REGISTRY);
+	const checked = checkDownloadUrl(override, "WARDEN_NPM_REGISTRY");
+	return checked.success ? ok(checked.data.replace(/\/+$/, "")) : checked;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -43,7 +48,7 @@ export async function latestNpmVersion(fetch: Fetch, registry: string): AsyncRes
 	return typeof body.data.version === "string" ? ok(body.data.version) : err(`no version in ${url}`);
 }
 
-/** Tarball URL + integrity of `@delacour/warden-<target>@<version>`. */
+/** Tarball URL + integrity of `@delacour/warden-<target>@<version>`. The tarball must be served by `registry` itself. */
 export async function platformDist(
 	fetch: Fetch,
 	registry: string,
@@ -58,6 +63,8 @@ export async function platformDist(
 	if (!isRecord(dist) || typeof dist.tarball !== "string" || typeof dist.integrity !== "string") {
 		return err(`no dist.tarball / dist.integrity in ${url}`);
 	}
+	if (!sameOrigin(dist.tarball, registry))
+		return err(`${name}@${version}: tarball ${dist.tarball} is not on ${registry}`);
 	return ok({ name, tarball: dist.tarball, integrity: dist.integrity });
 }
 

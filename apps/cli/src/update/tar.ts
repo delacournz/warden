@@ -42,6 +42,13 @@ function* entries(tar: Uint8Array): Generator<Entry> {
 			paxName = paxPath(body);
 			continue;
 		}
+		// pax global header: applies to no entry in particular
+		if (type === "g") continue;
+		// GNU long name: the body is the next entry's path
+		if (type === "L") {
+			paxName = field(body, 0, body.length);
+			continue;
+		}
 		yield { name: paxName ?? entryName(header), type, body };
 		paxName = undefined;
 	}
@@ -63,4 +70,32 @@ export function extractFile(tgz: Uint8Array, path: string): Result<Uint8Array> {
 		if ((entry.type === "0" || entry.type === "") && entry.name === path) return ok(entry.body.slice());
 	}
 	return err(`${path} not found in tarball`);
+}
+
+const TYPE_NAMES: Record<string, string> = {
+	"1": "a hard link",
+	"2": "a symbolic link",
+	"3": "a character device",
+	"4": "a block device",
+	"6": "a FIFO",
+};
+
+function escapes(name: string): boolean {
+	return name.startsWith("/") || name.split("/").includes("..");
+}
+
+/**
+ * Ok when a gzipped tarball holds only regular files and directories, each at a relative path with no `..` segment:
+ * what `tar -x` may then unpack without creating a link or writing outside its target directory.
+ */
+export function checkPlainTarball(tgz: Uint8Array): Result<void> {
+	const tar = gunzip(tgz);
+	if (!tar.success) return tar;
+	for (const entry of entries(tar.data)) {
+		if (escapes(entry.name)) return err(`tarball entry ${entry.name} is outside the archive root`);
+		if (entry.type === "0" || entry.type === "" || entry.type === "5") continue;
+		const kind = TYPE_NAMES[entry.type] ?? `of type ${JSON.stringify(entry.type)}`;
+		return err(`tarball entry ${entry.name} is ${kind}: only regular files and directories are unpacked`);
+	}
+	return ok(undefined);
 }

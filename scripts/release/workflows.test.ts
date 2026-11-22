@@ -113,3 +113,24 @@ describe("release.yml publish order", () => {
 		expect(wait?.run).toContain("dist/npm/warden-e2e/");
 	});
 });
+
+describe("release.yml build order", () => {
+	type Step = { name?: string; run?: string };
+	async function buildSteps(): Promise<Step[]> {
+		const text = await Bun.file(join(WORKFLOWS, "release.yml")).text();
+		const parsed = Bun.YAML.parse(text) as { jobs: { build: { steps: Step[] } } };
+		return parsed.jobs.build.steps;
+	}
+
+	test("the helper tarball is packed before the binaries, which must carry its sha256", async () => {
+		const steps = await buildSteps();
+		const names = steps.map((step) => step.name ?? "");
+		const helper = names.indexOf("Build warden-simd");
+		const pack = names.indexOf("Pack warden-simd release asset");
+		const binaries = names.indexOf("Build release binaries");
+		expect(helper).toBeGreaterThanOrEqual(0);
+		expect(pack).toBeGreaterThan(helper);
+		expect(binaries).toBeGreaterThan(pack);
+		expect(steps[binaries]?.run).toContain("--require-helper-asset");
+	});
+});

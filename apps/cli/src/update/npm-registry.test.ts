@@ -24,8 +24,21 @@ function fakeFetch(routes: Record<string, () => Response>, calls: string[] = [])
 const R = DEFAULT_NPM_REGISTRY;
 
 test("npmRegistry: WARDEN_NPM_REGISTRY overrides, trailing slash dropped", () => {
-	expect(npmRegistry({})).toBe("https://registry.npmjs.org");
-	expect(npmRegistry({ WARDEN_NPM_REGISTRY: "https://npm.example.com/" })).toBe("https://npm.example.com");
+	expect(npmRegistry({})).toEqual({ success: true, data: "https://registry.npmjs.org" });
+	expect(npmRegistry({ WARDEN_NPM_REGISTRY: "https://npm.example.com/" })).toEqual({
+		success: true,
+		data: "https://npm.example.com",
+	});
+	expect(npmRegistry({ WARDEN_NPM_REGISTRY: "http://127.0.0.1:4873/" })).toEqual({
+		success: true,
+		data: "http://127.0.0.1:4873",
+	});
+});
+
+test("npmRegistry: a registry that is neither https nor on this machine is refused", () => {
+	const result = npmRegistry({ WARDEN_NPM_REGISTRY: "http://npm.example.com" });
+	expect(result.success).toBe(false);
+	if (!result.success) expect(result.error).toContain("WARDEN_NPM_REGISTRY must be an https: URL");
 });
 
 describe("latestNpmVersion", () => {
@@ -59,12 +72,24 @@ describe("platformDist", () => {
 	test("tarball + integrity of one platform package version", async () => {
 		const fetch = fakeFetch({
 			[`${R}/@delacour/warden-darwin-arm64/0.3.0`]: () =>
-				Response.json({ version: "0.3.0", dist: { tarball: "https://t/x.tgz", integrity: "sha512-abc" } }),
+				Response.json({ version: "0.3.0", dist: { tarball: `${R}/w/-/x.tgz`, integrity: "sha512-abc" } }),
 		});
 		expect(await platformDist(fetch, R, "darwin-arm64", "0.3.0")).toEqual({
 			success: true,
-			data: { name: "@delacour/warden-darwin-arm64", tarball: "https://t/x.tgz", integrity: "sha512-abc" },
+			data: { name: "@delacour/warden-darwin-arm64", tarball: `${R}/w/-/x.tgz`, integrity: "sha512-abc" },
 		});
+	});
+
+	test("a tarball that is not on the registry's own host is refused", async () => {
+		for (const tarball of ["https://t/x.tgz", "http://registry.npmjs.org/w/-/x.tgz", "file:///tmp/x.tgz"]) {
+			const fetch = fakeFetch({
+				[`${R}/@delacour/warden-darwin-arm64/0.3.0`]: () =>
+					Response.json({ version: "0.3.0", dist: { tarball, integrity: "sha512-abc" } }),
+			});
+			const result = await platformDist(fetch, R, "darwin-arm64", "0.3.0");
+			expect(result.success).toBe(false);
+			if (!result.success) expect(result.error).toContain(`is not on ${R}`);
+		}
 	});
 });
 
