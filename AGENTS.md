@@ -6,7 +6,7 @@
 
 - Bun (package manager, runtime, test runner)
 - Turborepo (task orchestration)
-- TypeScript (strict) via `@delacour/warden-tsconfig`
+- TypeScript (strict) via `@delacour/warden-tsconfig`. `typecheck` runs TypeScript 7 (`tsc7`, the native compiler, pinned in that package); TypeScript 5/6 stays installed for its JavaScript API (npm declarations, `warden affected`) and editors
 - Biome (lint + format) via `@delacour/warden-biome-config`
 - prek (git hooks: biome check on commit, typecheck on push)
 
