@@ -229,10 +229,6 @@ static void cam_open(BOOL front, BOOL yuv) {
   BOOL runningBefore = g_session.isRunning;
   [g_session startRunning];
   spin(0.8);
-  // Frames start asynchronously: a video feed decodes its first frame after startRunning, and on a 3-vCPU CI runner
-  // that can land after the fixed 0.8 s above, which then reported 0 frames for a working feed. Wait for the first
-  // frame itself; the bound only stops a feed that never delivers from hanging the harness (it still reports 0).
-  for (int i = 0; i < 100 && g_collector.frames == 0; i++) spin(0.05);
   Collector *c = g_collector;
   emit(@{
     @"event": @"open",
