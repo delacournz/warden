@@ -784,6 +784,23 @@ describe("ensureApp", () => {
 });
 
 describe("projectContext", () => {
+	test("outside a git checkout: a project root below the command's directory finds that directory's config; without one only the start is read", async () => {
+		const top = join(dir, "plain");
+		mkdirSync(join(top, "apps", "a"), { recursive: true });
+		writeFileSync(
+			join(top, JSON_CONFIG_FILE),
+			JSON.stringify({ projects: [{ name: "a", root: "apps/a", bundleId: { ios: "com.a" } }] })
+		);
+		const exec: Exec = async () => ({ exitCode: 1, stdout: "", stderr: "" });
+		const start = join(top, "apps", "a");
+		const git = () => createGitFactsCache();
+		const below = await projectContext({ exec, env, start, cwd: top, git: git() });
+		if (!below.success) throw new Error(below.error);
+		expect(below.data.project.name).toBe("a");
+		expect((await projectContext({ exec, env, start, git: git() })).success).toBe(false);
+		expect((await projectContext({ exec, env, start, cwd: join(top, "apps", "b"), git: git() })).success).toBe(false);
+	});
+
 	test("loads the config bounded by the git toplevel and keys by remote", async () => {
 		const repo = join(dir, "repo");
 		mkdirSync(join(repo, "apps", "a"), { recursive: true });

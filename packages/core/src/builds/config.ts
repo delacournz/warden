@@ -404,6 +404,16 @@ function configuredProject(
 	return ok(project);
 }
 
+/** A `--bundle-id` override must be an app id for the platform it is given for. */
+function checkOverride(override: Project["bundleId"]): Result<undefined> {
+	for (const platform of ["ios", "android"] as const) {
+		const id = override[platform];
+		const checked = id === undefined ? undefined : checkAppId(id, platform, "--bundle-id");
+		if (checked && !checked.success) return checked;
+	}
+	return ok(undefined);
+}
+
 /**
  * Find the project for `start`: nearest warden config walking up (to `stopAt`), else the
  * `overlayDir` config, else the nearest Expo app (`app.json` / `app.config.*`). `--bundle-id` overrides the configured id.
@@ -411,11 +421,8 @@ function configuredProject(
 export function loadProject(input: LoadProjectInput): Result<Project> {
 	const start = resolve(input.start);
 	const override = input.bundleId ?? {};
-	for (const platform of ["ios", "android"] as const) {
-		const id = override[platform];
-		const checked = id === undefined ? undefined : checkAppId(id, platform, "--bundle-id");
-		if (checked && !checked.success) return checked;
-	}
+	const checked = checkOverride(override);
+	if (!checked.success) return checked;
 	const dirs = ancestors(start, input.stopAt ? resolve(input.stopAt) : undefined);
 	const found = findWardenConfig(start, input.stopAt, input.env, input.overlayDir);
 	if (!found.success) return found;

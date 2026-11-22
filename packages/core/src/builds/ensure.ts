@@ -1,5 +1,5 @@
 import { realpathSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import type { Exec } from "../exec";
 import { type GitFactsCache, readGitFacts } from "../git-facts";
@@ -76,7 +76,20 @@ export type ProjectContextInput = {
 	variantOptional?: boolean;
 	/** per-command memo of the git facts (default: a short-lived shared one) */
 	git?: GitFactsCache;
+	/**
+	 * The directory the command was run in. Outside a git checkout the lookup from a `start` below it (a configured
+	 * project's root, an app picked under it) goes up to this directory and no further; without it, or for a `start`
+	 * elsewhere, only `start` is read.
+	 */
+	cwd?: string;
 };
+
+/** Where the upward search ends: the checkout's root, else the command's directory when `start` is inside it. */
+function searchTop(input: ProjectContextInput, toplevel: string | undefined): string | undefined {
+	if (toplevel !== undefined || input.cwd === undefined) return toplevel;
+	const rel = relative(resolve(input.cwd), resolve(input.start));
+	return rel.startsWith("..") || isAbsolute(rel) ? undefined : resolve(input.cwd);
+}
 
 /** The `loadProject` options for a `projectContext` call. */
 function loadOptions(
@@ -128,7 +141,7 @@ async function loadWithExpoFallback(
 /** Load the project for `start` (bounded by its git toplevel) and compute its project key. */
 export async function projectContext(input: ProjectContextInput): AsyncResult<ProjectContext> {
 	const facts = await readGitFacts(input.exec, input.start, input.git);
-	const stopAt = facts?.toplevel;
+	const stopAt = searchTop(input, facts?.toplevel);
 	const overlay = await overlayDirUnlessRepoConfig(input.exec, input.start, stopAt, input.env, input.git);
 	// a monorepo root with one app below it: look the project up from that app
 	const start = appStart(input.start, stopAt, overlay);
