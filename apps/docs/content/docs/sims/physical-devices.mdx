@@ -108,6 +108,7 @@ The iPhone has no simulator driver: warden builds its own XCUITest runner and in
 - Keep the phone unlocked and awake while a run starts (`device_locked`).
 - One UI-test session per phone: Xcode or Appium on the same phone ends warden's runner. warden reports `device_busy` and never kills another tool's xcodebuild.
 - Speed: expect about 0.8 s per tap (XCUITest waits for the app to go idle, roughly ten times slower than a simulator), about 0.15 to 0.3 s for a snapshot and about 2.5 s to launch an app.
+- The runner on the phone serves only warden: every connection opens with a token made for that runner session, which never leaves the warden process on your Mac. Your tools reach the runner through warden's owner-only unix socket.
 - `screen appearance` is read-only on an iPhone, and `screen rotate` goes through `devicectl`.
 
 ## Privacy
