@@ -1,0 +1,57 @@
+{
+	"ok": true,
+	"schemaVersion": 1,
+	"command": "snapshot",
+	"device": {
+		"udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+		"platform": "ios",
+		"name": "sim"
+	},
+	"generation": 1,
+	"durationMs": 0,
+	"result": {
+		"backend": "axbridge",
+		"screen": {
+			"width": 390,
+			"height": 844,
+			"scale": 3
+		},
+		"truncated": false,
+		"hash": "30e9d3fxxam2e",
+		"generation": 1,
+		"elements": [
+			{
+				"ref": "@e2",
+				"role": "textbox",
+				"name": "Email",
+				"id": "email",
+				"enabled": true,
+				"hittable": true,
+				"frame": {
+					"x": 0,
+					"y": 50,
+					"width": 390,
+					"height": 44
+				}
+			},
+			{
+				"ref": "@e5",
+				"role": "keyboard",
+				"name": "go",
+				"enabled": true,
+				"frame": {
+					"x": 0,
+					"y": 573,
+					"width": 390,
+					"height": 271
+				},
+				"keys": 2
+			}
+		],
+		"total": 5,
+		"shown": 2,
+		"omitted": 0,
+		"settle": null,
+		"diff": null
+	}
+}

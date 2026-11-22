@@ -62,7 +62,7 @@ final class KeyboardTests: XCTestCase {
 
   func testPlanReleasesShiftAtTheEndAndKeepsItAcrossConsecutiveCaps() {
     let plan = KeyboardMap.plan(typing: "AB")
-    let events = plan.steps.compactMap { step -> SimulatorHIDEvent? in
+    let events = plan.steps.compactMap { step -> HIDEvent? in
       if case .event(let event) = step { return event }
       return nil
     }

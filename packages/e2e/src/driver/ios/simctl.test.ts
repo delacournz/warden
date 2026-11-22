@@ -1,9 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import type { ResetFs } from "@delacour/warden-core/builds/install";
+import { flagsPlist, noFlagsPlist } from "@delacour/warden-core/plist.testing";
 import { type ExecCall, fakeExec, joined } from "./exec.testing";
 import {
 	appearanceArgv,
 	automationArgv,
+	biometricArgvs,
 	biometricEnrollArgvs,
 	biometricEventArgv,
 	biometricModalityOf,
@@ -18,11 +20,13 @@ import {
 	screenshotArgv,
 	simctlFailure,
 	statusBarOverrideArgv,
+	TYPING_AID_KEYS,
 } from "./simctl";
 
 const UDID = "UDID-1";
 const BUNDLE = "nz.co.delacour.warden.example";
 const automationPlist = "/devices/UDID-1/data/Library/Preferences/com.apple.Accessibility.plist";
+const keyboardPlist = "/devices/UDID-1/data/Library/Preferences/com.apple.keyboard.preferences.plist";
 
 function harness(handlers: Parameters<typeof fakeExec>[0]) {
 	const calls: ExecCall[] = [];
@@ -96,6 +100,14 @@ describe("biometric argv and modality", () => {
 		expect(biometricStateArgv(UDID).join(" ")).toBe(
 			`xcrun simctl spawn ${UDID} notifyutil -g com.apple.BiometricKit.enrollmentChanged`
 		);
+	});
+
+	test("reenroll is unenroll then enroll: a new enrolment, like removing and adding a face", () => {
+		const join = (argvs: string[][]) => argvs.map((argv) => argv.join(" "));
+		expect(join(biometricArgvs(UDID, "face", "reenroll"))).toEqual([
+			...join(biometricEnrollArgvs(UDID, false)),
+			...join(biometricEnrollArgvs(UDID, true)),
+		]);
 	});
 
 	test("match and nomatch name the modality's notification", () => {
@@ -379,6 +391,21 @@ describe("createSimctl", () => {
 		expect(joined(h.calls).some((line) => line.includes("xcrun"))).toBe(false);
 	});
 
+	test("enableAutomation spawns nothing when the plist holds the integer 1 (how the sim stores it)", async () => {
+		const h = harness([["plutil", { stdout: "1\n" }]]);
+		expect((await h.simctl.enableAutomation()).success).toBe(true);
+		expect(joined(h.calls).some((line) => line.includes("xcrun"))).toBe(false);
+	});
+
+	test("a plist that holds the integer 0 still gets the write", async () => {
+		const h = harness([
+			["plutil", { stdout: "0\n" }],
+			["xcrun simctl spawn", {}],
+		]);
+		await h.simctl.enableAutomation();
+		expect(joined(h.calls).some((line) => line.includes("AutomationEnabled -bool true"))).toBe(true);
+	});
+
 	test("a plist that says false still gets the write", async () => {
 		const h = harness([
 			["plutil", { stdout: "false\n" }],
@@ -386,6 +413,98 @@ describe("createSimctl", () => {
 		]);
 		await h.simctl.enableAutomation();
 		expect(joined(h.calls).some((line) => line.includes("AutomationEnabled -bool true"))).toBe(true);
+	});
+
+	test("disableTypingAids turns autocorrect, prediction and spell check off on a sim that has them on", async () => {
+		const h = harness([["xcrun simctl spawn", {}]]);
+		expect((await h.simctl.disableTypingAids()).success).toBe(true);
+		expect(h.calls.slice(0, 3).map((call) => call.cmd)).toEqual(
+			TYPING_AID_KEYS.map((key) => ["plutil", "-extract", key, "raw", "-o", "-", keyboardPlist])
+		);
+		expect(joined(h.calls).slice(3).sort()).toEqual(
+			TYPING_AID_KEYS.map(
+				(key) => `xcrun simctl spawn ${UDID} defaults write com.apple.keyboard.preferences ${key} -bool NO`
+			).sort()
+		);
+	});
+
+	test("disableTypingAids writes only the keys the plist does not already have off", async () => {
+		const h = harness([
+			["plutil -extract KeyboardAutocorrection", { stdout: "false\n" }],
+			["plutil -extract KeyboardPrediction", { stdout: "true\n" }],
+			["xcrun simctl spawn", {}],
+		]);
+		await h.simctl.disableTypingAids();
+		const writes = joined(h.calls).filter((line) => line.startsWith("xcrun"));
+		expect(writes.some((line) => line.includes("KeyboardAutocorrection"))).toBe(false);
+		expect(writes.some((line) => line.includes("KeyboardPrediction -bool NO"))).toBe(true);
+		expect(writes.some((line) => line.includes("KeyboardCheckSpelling -bool NO"))).toBe(true);
+	});
+
+	test("disableTypingAids counts a key stored as the integer 0 as off", async () => {
+		const h = harness([["plutil", { stdout: "0\n" }]]);
+		await h.simctl.disableTypingAids();
+		expect(joined(h.calls).some((line) => line.startsWith("xcrun"))).toBe(false);
+	});
+
+	test("disableTypingAids spawns nothing in the sim when every key is already off", async () => {
+		const h = harness([["plutil", { stdout: "false\n" }]]);
+		expect((await h.simctl.disableTypingAids()).success).toBe(true);
+		expect(joined(h.calls).filter((line) => line.startsWith("xcrun"))).toEqual([]);
+	});
+
+	describe("binary plists read in-process", () => {
+		/** A harness whose sim prefs plists are the given bytes (anything else: no such file). */
+		function onDisk(files: Record<string, Uint8Array>, handlers: Parameters<typeof fakeExec>[0] = []) {
+			const calls: ExecCall[] = [];
+			const readFile = async (path: string): Promise<Uint8Array> => {
+				const bytes = files[path];
+				if (bytes === undefined) throw new Error(`ENOENT ${path}`);
+				return bytes;
+			};
+			const simctl = createSimctl({
+				udid: UDID,
+				exec: fakeExec(handlers, calls),
+				env: {},
+				devicesRoot: "/devices",
+				readFile,
+			});
+			return { simctl, calls };
+		}
+
+		test("AutomationEnabled 1 in the binary plist: no plutil, no write", async () => {
+			const h = onDisk({ [automationPlist]: flagsPlist() });
+			expect((await h.simctl.enableAutomation()).success).toBe(true);
+			expect(h.calls).toEqual([]);
+		});
+
+		test("a binary plist without AutomationEnabled gets the write, without asking plutil", async () => {
+			const h = onDisk({ [automationPlist]: noFlagsPlist() }, [["xcrun simctl spawn", {}]]);
+			expect((await h.simctl.enableAutomation()).success).toBe(true);
+			expect(joined(h.calls)).toEqual([
+				`xcrun simctl spawn ${UDID} defaults write com.apple.Accessibility AutomationEnabled -bool true`,
+			]);
+		});
+
+		test("typing aids: only the key the binary plist has on is written, and plutil is never asked", async () => {
+			const h = onDisk({ [keyboardPlist]: flagsPlist() }, [["xcrun simctl spawn", {}]]);
+			expect((await h.simctl.disableTypingAids()).success).toBe(true);
+			expect(joined(h.calls)).toEqual([
+				`xcrun simctl spawn ${UDID} defaults write com.apple.keyboard.preferences KeyboardPrediction -bool NO`,
+			]);
+		});
+
+		test("a plist that is not binary falls back to plutil", async () => {
+			const xml = new TextEncoder().encode('<?xml version="1.0"?><plist><dict/></plist>');
+			const h = onDisk({ [automationPlist]: xml }, [["plutil", { stdout: "1\n" }]]);
+			expect((await h.simctl.enableAutomation()).success).toBe(true);
+			expect(h.calls.map((call) => call.cmd[0])).toEqual(["plutil"]);
+		});
+	});
+
+	test("disableTypingAids fails when a write fails", async () => {
+		const h = harness([["xcrun simctl spawn", { exitCode: 1, stderr: "Could not write domain" }]]);
+		expect((await h.simctl.disableTypingAids()).success).toBe(false);
 	});
 
 	test("screenshot with a path writes it; without one reads back PNG bytes and cleans up", async () => {

@@ -1,0 +1,83 @@
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
+import { execError } from "../exec";
+import { migrationSucceeded } from "../golden/golden";
+import { execWithin, type TimedExec } from "../providers/health";
+
+/**
+ * Accessibility preferences written into a shut-down sim before it boots, so the accessibility server reads them
+ * at its first start instead of the driver flipping them live:
+ * - `AutomationEnabled`: the automation the AX readers ride on (otherwise the helper's first open writes it in-sim).
+ * - `IgnoreAXServerEntitlements`: the AX server stops checking the client's entitlement, so a read from a process
+ *   without it is not refused. Older runtimes read it; on runtimes that never look the key up it is inert.
+ */
+export const PREBOOT_AX_KEYS = ["AutomationEnabled", "IgnoreAXServerEntitlements"] as const;
+
+/** One `plutil` on a local file: quick, but bounded so a stuck call never holds the boot. */
+export const AX_PREFS_WRITE_TIMEOUT_MS = 10_000;
+
+/** `WARDEN_AX_PREFS=0` turns the pre-boot write off (an A/B run, or a runtime that misreads it). */
+export function axPrefsEnabled(env: Record<string, string | undefined>): boolean {
+	return env.WARDEN_AX_PREFS !== "0";
+}
+
+/** The device's Accessibility preferences, in the default device set. */
+export function accessibilityPlistPath(env: Record<string, string | undefined>, udid: string): string {
+	return join(
+		env.HOME ?? "~",
+		"Library/Developer/CoreSimulator/Devices",
+		udid,
+		"data/Library/Preferences/com.apple.Accessibility.plist"
+	);
+}
+
+async function plutil(deps: TimedExec, cmd: string[]): AsyncResult<void> {
+	const out = await execWithin(deps, cmd, AX_PREFS_WRITE_TIMEOUT_MS);
+	if (out === undefined) return err(`\`${cmd.join(" ")}\` did not finish within ${AX_PREFS_WRITE_TIMEOUT_MS / 1000}s`);
+	return out.exitCode === 0 ? ok(undefined) : err(execError(cmd, out));
+}
+
+/**
+ * The first boot's Data Migration record, beside the Accessibility plist. `simctl create` already makes the
+ * `Preferences` dir (iOS 27), so the dir alone does not say the device has booted; this record does.
+ */
+export function migrationRecordPath(env: Record<string, string | undefined>, udid: string): string {
+	return join(dirname(accessibilityPlistPath(env, udid)), "com.apple.migration.plist");
+}
+
+/**
+ * The device's first boot finished its Data Migration (the record says so, read with `plutil`). A record missing,
+ * unreadable or without a successful result (a sim shut down mid-migration migrates again) counts as never booted.
+ */
+async function bootedBefore(deps: TimedExec, env: Record<string, string | undefined>, udid: string): Promise<boolean> {
+	const record = migrationRecordPath(env, udid);
+	if (!existsSync(record)) return false;
+	const read = await execWithin(deps, ["plutil", "-convert", "json", "-o", "-", record], AX_PREFS_WRITE_TIMEOUT_MS);
+	return read !== undefined && read.exitCode === 0 && migrationSucceeded(read.stdout);
+}
+
+/**
+ * Write every `PREBOOT_AX_KEYS` key as `true` on the host, with the sim shut down (no cfprefsd running, so a file
+ * write persists). Existing keys are kept; only a plist missing on disk is created, so a failed write on an existing
+ * one is returned, never answered by replacing it with an empty plist. A device that has never booted (no Data
+ * Migration record yet) is left alone (`not-booted-yet`): an Accessibility plist written before its first boot wedges
+ * backboardd's accessibility service on that boot, and the helper still turns automation on live.
+ */
+export async function writePrebootAxPrefs(
+	deps: TimedExec,
+	env: Record<string, string | undefined>,
+	udid: string
+): AsyncResult<"written" | "not-booted-yet"> {
+	const plist = accessibilityPlistPath(env, udid);
+	if (!(await bootedBefore(deps, env, udid))) return ok("not-booted-yet");
+	if (!existsSync(plist)) {
+		const created = await plutil(deps, ["plutil", "-create", "binary1", plist]);
+		if (!created.success) return created;
+	}
+	for (const key of PREBOOT_AX_KEYS) {
+		const written = await plutil(deps, ["plutil", "-replace", key, "-bool", "true", plist]);
+		if (!written.success) return written;
+	}
+	return ok("written");
+}

@@ -1,5 +1,4 @@
 import CoreGraphics
-import FBSimulatorControl
 import XCTest
 
 @testable import warden_simd
@@ -7,10 +6,10 @@ import XCTest
 /// A fake HID sink: records every event the live touch ops send.
 private final class Sink: @unchecked Sendable {
   private let lock = NSLock()
-  private var storage: [SimulatorHIDEvent] = []
+  private var storage: [HIDEvent] = []
 
-  func record(_ event: SimulatorHIDEvent) { lock.withLock { storage.append(event) } }
-  var events: [SimulatorHIDEvent] { lock.withLock { storage } }
+  func record(_ event: HIDEvent) { lock.withLock { storage.append(event) } }
+  var events: [HIDEvent] { lock.withLock { storage } }
   func reset() { lock.withLock { storage = [] } }
 }
 

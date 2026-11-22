@@ -2,13 +2,17 @@ import {
 	type CameraCondition,
 	type ClockCondition,
 	DEFAULT_KEYBOARD_MODE,
+	DEFAULT_PASSKEY_MODE,
+	DEFAULT_PASSKEY_UV,
 	type HostFault,
 	type KeyboardMode,
 	type LocationCondition,
 	type NetworkCondition,
+	type PasskeyCredential,
 	type PermissionName,
 	type PermissionState,
 } from "@delacour/warden-core/conditions/conditions.types";
+import { filterPasskeys, publicPasskey, upsertPasskey } from "@delacour/warden-core/conditions/passkey-store";
 import type { Result } from "@delacour/warden-types/result";
 import type { ScreenReaderState } from "../a11y/a11y.types";
 import type { A11yEventsRead, ReadsA11yEvents } from "./a11y-events";
@@ -41,6 +45,8 @@ import type {
 	Modifier,
 	NetworkState,
 	Orientation,
+	PasskeyOp,
+	PasskeyState,
 	PermissionGrants,
 	PermissionsState,
 	Platform,
@@ -60,10 +66,11 @@ import type { ActsOnElements, ScrollDirection } from "./element-actions";
 import { driverError } from "./errors";
 import { planGesture } from "./gesture-geometry";
 import { keyboardVisible } from "./keyboard-state";
+import type { ControlsKeychainAcl, KeychainAclOp, KeychainAclState } from "./keychain-acl";
 import type { AuditsNatively, NativeAuditOptions, NativeAuditResult } from "./native-audit";
 import { faultNotes } from "./network-proxy";
 import type { DrivesScreenReader, SpokenRead } from "./screen-reader";
-import type { PastesText, SelectsAll, SetsText } from "./typing";
+import type { PastesText, SelectsAll, SetsText, TypesQuickly } from "./typing";
 
 /**
  * Test doubles for `Driver`: `fakeDriver` (scripted screens, records every call) and the element-tree
@@ -211,6 +218,7 @@ export type DriverCall =
 	| { method: "selectAll" }
 	| { method: "setText"; text: string }
 	| { method: "pasteText"; text: string }
+	| { method: "typeTextQuick"; text: string }
 	| { method: "pressElement"; element: Element }
 	| { method: "scrollElement"; direction: ScrollDirection; within?: Element }
 	| { method: "pressButton"; button: HardwareButton }
@@ -247,6 +255,8 @@ export type DriverCall =
 	| { method: "push"; payload: PushPayload; opts?: SettingOptions }
 	| { method: "biometrics"; op: BiometricOp }
 	| { method: "camera"; op: CameraCondition | null; opts?: SettingOptions }
+	| { method: "passkeys"; op: PasskeyOp; opts?: SettingOptions }
+	| { method: "keychainAcl"; op: KeychainAclOp }
 	| { method: "app.launch"; bundleId: string; opts?: LaunchOptions }
 	| { method: "app.terminate"; bundleId: string }
 	| { method: "app.openUrl"; url: string }
@@ -272,10 +282,14 @@ export type FakeDriverOptions = {
 	capabilities?: Partial<DriverCapabilities>;
 	/** offer the optional `SelectsAll` capability (calls are recorded as `selectAll`); a plain driver has none */
 	selectAll?: boolean;
+	/** offer the optional `ControlsKeychainAcl` capability (an iOS simulator with a lease; calls are recorded as `keychainAcl`) */
+	keychainAcl?: boolean;
 	/** offer the optional `SetsText` capability (calls are recorded as `setText`); a plain driver has none */
 	setText?: boolean;
 	/** offer the optional `PastesText` capability (calls are recorded as `pasteText`); a plain driver has none */
 	pasteText?: boolean;
+	/** offer the optional `TypesQuickly` capability (calls are recorded as `typeTextQuick`); a plain driver has none */
+	typeTextQuick?: boolean;
 	/**
 	 * Offer the optional `ActsOnElements` capability (calls are recorded as `pressElement` / `scrollElement`) and
 	 * answer whether the driver handled the action (default false: the caller sends the touch). A plain driver has none.
@@ -320,7 +334,9 @@ export type FakeDriver = Driver &
 	Partial<SelectsAll> &
 	Partial<SetsText> &
 	Partial<PastesText> &
+	Partial<TypesQuickly> &
 	Partial<ActsOnElements> &
+	Partial<ControlsKeychainAcl> &
 	Partial<ReadsAlertOn & ProbesFrontmost & ReadsA11y & ReadsA11yEvents & AuditsNatively & DrivesScreenReader> & {
 		/** every call so far, in order */
 		readonly calls: DriverCall[];
@@ -388,8 +404,18 @@ function attachOptionalOps(
 	visibleAlert: () => AlertInfo | null
 ): void {
 	if (options.selectAll) driver.selectAll = async () => run({ method: "selectAll" }, () => undefined);
+	if (options.keychainAcl) {
+		let enabled = false;
+		driver.keychainAcl = async (op) =>
+			run({ method: "keychainAcl", op }, (): KeychainAclState => {
+				if (op.kind !== "status") enabled = op.kind === "on";
+				return { enabled, generation: 0 };
+			});
+	}
 	if (options.pasteText) driver.pasteText = async (text) => run({ method: "pasteText", text }, () => undefined);
 	if (options.setText) driver.setText = async (text) => run({ method: "setText", text }, () => undefined);
+	if (options.typeTextQuick)
+		driver.typeTextQuick = async (text) => run({ method: "typeTextQuick", text }, () => undefined);
 	const actions = options.elementActions;
 	if (actions !== undefined) {
 		driver.pressElement = async (element) => run({ method: "pressElement", element }, () => actions.handled);
@@ -454,6 +480,8 @@ export function fakeDriver(options: FakeDriverOptions): FakeDriver {
 	const wallNow = options.wallNow ?? Date.now;
 	let net: NetworkState = { online: true, condition: { kind: "online" }, needsProxy: [] };
 	let enrolled = false;
+	let passkeys: PasskeyState = { enabled: false, mode: DEFAULT_PASSKEY_MODE, uv: DEFAULT_PASSKEY_UV, credentials: [] };
+	let passkeyKeys: PasskeyCredential[] = [];
 	let keyboardMode: KeyboardMode = DEFAULT_KEYBOARD_MODE;
 	const running = new Set<string>();
 	const installed = new Set<string>();
@@ -727,6 +755,13 @@ export function fakeDriver(options: FakeDriverOptions): FakeDriver {
 		async camera(op, opts) {
 			return run({ method: "camera", op, ...(opts ? { opts } : {}) }, (): CameraState => ({ feeds: op ?? {} }));
 		},
+		async passkeys(op, opts) {
+			return run({ method: "passkeys", op, ...(opts ? { opts } : {}) }, (): PasskeyState => {
+				passkeyKeys = fakePasskeyStore(passkeyKeys, op);
+				passkeys = fakePasskeyState(passkeys, op, passkeyKeys);
+				return passkeys;
+			});
+		},
 		async memoryWarning(opts) {
 			return run({ method: "memoryWarning", ...(opts ? { opts } : {}) }, () => undefined);
 		},
@@ -735,7 +770,7 @@ export function fakeDriver(options: FakeDriverOptions): FakeDriver {
 		},
 		async biometrics(op) {
 			return run({ method: "biometrics", op }, () => {
-				if (op === "enroll") enrolled = true;
+				if (op === "enroll" || op === "reenroll") enrolled = true;
 				if (op === "unenroll") enrolled = false;
 				return { enrolled, modality: "face" as const };
 			});
@@ -748,6 +783,29 @@ export function fakeDriver(options: FakeDriverOptions): FakeDriver {
 	};
 	attachOptionalOps(driver, options, calls, run, visibleAlert);
 	return driver;
+}
+
+/** The fake authenticator's credentials after `op` (same rules as the real store: an id that exists is replaced). */
+function fakePasskeyStore(credentials: PasskeyCredential[], op: PasskeyOp): PasskeyCredential[] {
+	switch (op.kind) {
+		case "add":
+			return upsertPasskey(credentials, op.credential);
+		case "remove":
+			return credentials.filter((c) => c.credentialId !== op.credentialId);
+		case "clear":
+			return [];
+		default:
+			return credentials;
+	}
+}
+
+function fakePasskeyState(prev: PasskeyState, op: PasskeyOp, credentials: PasskeyCredential[]): PasskeyState {
+	const enabled = op.kind === "set" ? true : op.kind === "off" ? false : prev.enabled;
+	const mode = op.kind === "set" && op.mode ? op.mode : prev.mode;
+	const uv = op.kind === "set" && op.uv ? op.uv : prev.uv;
+	const listed = op.kind === "list" ? filterPasskeys(credentials, op.rpId) : filterPasskeys(credentials, undefined);
+	const withKeys = op.kind === "list" && op.withKeys === true;
+	return { enabled, mode, uv, credentials: listed.map((c) => publicPasskey(c, withKeys)) };
 }
 
 /** Convenience: a failed `DriverResult` payload for `onCall` overrides. */

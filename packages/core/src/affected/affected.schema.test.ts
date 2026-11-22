@@ -93,6 +93,13 @@ describe("physical", () => {
 		expect(issues({ physical: true, slim: false, headless: false })).toEqual([]);
 	});
 
+	test("keychainAcl contradicts physical: a physical device enforces ACLs itself", () => {
+		expect(issues({ physical: true, keychainAcl: true })).toEqual([
+			"keychainAcl: the Keychain ACL shim is for iOS simulators; a physical device enforces ACLs itself",
+		]);
+		expect(issues({ physical: true, keychainAcl: false })).toEqual([]);
+	});
+
 	test("biometrics contradict physical: a real sensor cannot be enrolled or matched", () => {
 		expect(issues({ physical: true, biometrics: true })).toEqual([
 			"biometrics: biometrics cannot be used with physical devices (use a simulator or emulator suite)",

@@ -1,7 +1,4 @@
 import CoreGraphics
-import FBControlCore
-import FBSimulatorAX
-import FBSimulatorControl
 import Foundation
 
 /// `snapshot`, `elementAtPoint`, `alertButtons`, `frontmost`: the read ops (plan WDN-E2E, `warden-simd` protocol v1).
@@ -42,24 +39,15 @@ final class OpLog: @unchecked Sendable {
 enum AXBackend: String, Sendable {
   case axbridge
   case ax
-
-  /// The `UIAutomationBackendName` idb reports -> ours.
-  init(_ name: UIAutomationBackendName?) {
-    self = name == .ax ? .ax : .axbridge
-  }
 }
 
-/// Exactly the keys the TS `Element` is built from. idb's default set also fetches title / help / role description /
-/// subrole / custom actions / content-required, each an extra attribute read per node that nothing here uses.
-let wireKeys: Set<AXKeys> = [.label, .value, .uniqueID, .type, .frameDict, .enabled, .pid, .traits, .placeholder, .hidden, .focused]
-
 /// `reachability` / `interactable` ask the guest for per-node hit-testing (the costly part of a read).
-private func parseKeys(_ value: JSON?, reachability: Bool) -> Set<AXKeys> {
+private func parseKeys(_ value: JSON?, reachability: Bool) -> Set<AXKey> {
   var keys = wireKeys
   for name in value?.arrayValue?.compactMap(\.stringValue) ?? [] {
     switch name {
     case "reachability", "hittable": keys.insert(.interactable)
-    default: keys.formUnion(AXKeys.requested([name]))
+    default: keys.formUnion(AXKey.requested([name]))
     }
   }
   if reachability { keys.insert(.interactable) }
@@ -77,7 +65,7 @@ private func parseBackend(_ value: JSON?) throws -> AXBackend? {
 struct SnapshotRequest: Sendable {
   var interactiveOnly = false
   var backend: AXBackend?
-  var keys: Set<AXKeys> = wireKeys
+  var keys: Set<AXKey> = wireKeys
   var maxDepth: Int?
   var maxNodes: Int?
   /// Debug: also return idb's own serialized document as `raw` (used to capture test fixtures).
@@ -103,7 +91,7 @@ struct SnapshotRequest: Sendable {
 struct PointRequest: Sendable {
   var point: CGPoint
   var backend: AXBackend?
-  var keys: Set<AXKeys>
+  var keys: Set<AXKey>
 
   init(_ params: JSON, session: Session) throws {
     guard let x = params["x"]?.doubleValue, let y = params["y"]?.doubleValue else {
@@ -138,40 +126,21 @@ struct AXOutcome<Value: Sendable>: Sendable {
 
 extension Session {
   /// Failures that mean "the in-guest bridge cannot answer right now", where the host `ax` reader still may.
-  /// A guest that stalls (`BridgeStalled`) or that idb reports as not answering is one of them.
+  /// A guest that stalls (`BridgeStalled`) or that the backend reports as not answering is one of them.
   static func isBridgeFailure(_ error: any Error) -> Bool {
     if error is BridgeStalled { return true }
-    if let error = error as? AXBridgeError {
-      switch error {
-      case .bridgeUnavailable, .readerUnavailable, .frontmostUnresolved, .applicationUnavailable,
-        .applicationNotResponding, .guestDiedBeforeBinding, .guestFailure, .guestNotAnswering:
-        return true
-      default:
-        return false
-      }
-    }
-    if let error = error as? UIAutomationError {
-      switch error {
-      case .applicationUnavailable, .applicationNotResponding: return true
-      default: return false
-      }
-    }
-    return false
+    return (error as? GuestError)?.isBridgeFailure ?? false
   }
 
   /// The app answered nothing in time (as opposed to being gone): what an app relaunched while no quiescence
   /// stream was open looks like to the bridge.
   static func isNotResponding(_ error: any Error) -> Bool {
-    if let error = error as? AXBridgeError, case .applicationNotResponding = error { return true }
-    if let error = error as? UIAutomationError, case .applicationNotResponding = error { return true }
-    return false
+    (error as? GuestError)?.isNotResponding ?? false
   }
 
   /// The pid of the process that did not respond, when the error names one.
   static func notRespondingPid(_ error: any Error) -> pid_t? {
-    if let error = error as? AXBridgeError, case let .applicationNotResponding(pid) = error { return pid }
-    if let error = error as? UIAutomationError, case let .applicationNotResponding(_, pid, _) = error { return pid }
-    return nil
+    (error as? GuestError)?.notRespondingPid
   }
 
   /// Runs `read`; when the app did not respond, runs `recover` with the pid that did not (a stream bound to it, see
@@ -206,7 +175,7 @@ extension Session {
   /// `bridgeDeadline.cooldownSeconds` (`Session.readAX`).
   func withAX<Value: Sendable>(
     backend requested: AXBackend?, op: String,
-    _ body: @escaping @Sendable (any UIAutomation) async throws -> Value
+    _ body: @escaping @Sendable (any AXReader) async throws -> Value
   ) async throws -> AXOutcome<Value> {
     let primary = requested ?? AXBackend(rawValue: axDefault) ?? .axbridge
     let bridge = axBridgeReader.map { reader in { @Sendable in try await body(reader) } }
@@ -228,7 +197,7 @@ extension Session {
     let point = CGPoint(x: max(1, screen.width / 2), y: max(1, screen.height / 2))
     return BridgeRecovery(
       probe: bridgeProbe,
-      check: { _ = try await reader.hitTest(at: point, options: AccessibilityRequestOptions()) })
+      check: { _ = try await reader.hitTest(at: point, options: .readerDefaults) })
   }
 
   /// Starts a recovery probe in the background (no-op inside its back-off or without a bridge).
@@ -239,7 +208,7 @@ extension Session {
       now: { ProcessInfo.processInfo.systemUptime }, log: { OpLog.shared.log(.info, $0, op: "probe") })
   }
 
-  func buildOptions(interactiveOnly: Bool = false, maxDepth: Int? = nil, maxNodes: Int? = nil, document: AccessibilityScreenInfo?)
+  func buildOptions(interactiveOnly: Bool = false, maxDepth: Int? = nil, maxNodes: Int? = nil, document: RawScreen?)
     -> ElementBuilder.Options
   {
     Session.buildOptions(
@@ -248,13 +217,42 @@ extension Session {
 
   static func buildOptions(
     screen: (width: Double, height: Double, scale: Double), interactiveOnly: Bool = false, maxDepth: Int? = nil,
-    maxNodes: Int? = nil, document: AccessibilityScreenInfo?
+    maxNodes: Int? = nil, document: RawScreen?
   ) -> ElementBuilder.Options {
     var size = screen
     if size.width <= 0, let document { size = (document.width, document.height, size.scale) }
     return ElementBuilder.Options(
       screenWidth: size.width, screenHeight: size.height, interactiveOnly: interactiveOnly, maxDepth: maxDepth,
       maxNodes: maxNodes)
+  }
+
+  /// The screen as the app's interface draws it. `screen` is the portrait-up size; an app turned with the device
+  /// reports landscape frames (874×402 on a 402×874 iPhone), so its root decides: a root wider than tall that spans
+  /// most of the turned width swaps the axes. A portrait-locked app on a turned device keeps its portrait root, and so
+  /// the portrait size. Without one the size is left as it is.
+  static func interfaceScreen(
+    _ screen: (width: Double, height: Double, scale: Double), roots: [RawNode]
+  ) -> (width: Double, height: Double, scale: Double) {
+    guard screen.width > 0, screen.height > screen.width else { return screen }
+    let turned = roots.contains { root in
+      let frame = ElementBuilder.rect(root.frame)
+      return frame.width > frame.height && frame.width >= screen.height * 0.9
+    }
+    return turned ? (screen.height, screen.width, screen.scale) : screen
+  }
+
+  /// `interfaceScreen` for a hit-test, which has no root to read: a point or frame past the portrait width can only
+  /// be a landscape interface, one below the turned height only a portrait one; otherwise the last snapshot's verdict
+  /// (`InterfaceMemory`) holds, and portrait without one.
+  static func interfaceScreen(
+    _ screen: (width: Double, height: Double, scale: Double), hitAt point: CGPoint, frame: Rect,
+    rememberedLandscape: Bool?
+  ) -> (width: Double, height: Double, scale: Double) {
+    guard screen.width > 0, screen.height > screen.width else { return screen }
+    let turned = (screen.height, screen.width, screen.scale)
+    if point.y > screen.width || frame.y > screen.width { return screen }
+    if point.x > screen.width || frame.x + frame.width > screen.width + 1 { return turned }
+    return rememberedLandscape == true ? turned : screen
   }
 
   static func screenJSON(_ size: (width: Double, height: Double, scale: Double)) -> JSON {
@@ -267,18 +265,16 @@ extension Session {
 extension Session {
   func snapshot(_ request: SnapshotRequest) async throws -> JSON {
     let started = ContinuousClock.now
-    var options = AccessibilityRequestOptions(format: .complete, keys: request.keys)
-    options.filter = .all
-    let readOptions = options
+    let readOptions = AXReadOptions.complete(keys: request.keys)
     var target: PidTarget?
-    var outcome: AXOutcome<AccessibilityDocument>
+    var outcome: AXOutcome<RawDocument>
     if let pid = request.pid {
       outcome = try await withAX(backend: request.backend, op: "snapshot") { reader in
-        try await reader.describe(.application(pid: pid), options: readOptions).document
+        try await reader.describe(.application(pid: pid), options: readOptions)
       }
     } else {
       let targeted = try await withFrontmostAX(backend: request.backend, op: "snapshot") { reader, query in
-        try await reader.describe(query, options: readOptions).document
+        try await reader.describe(query, options: readOptions)
       }
       outcome = targeted.outcome
       target = targeted.target
@@ -288,9 +284,14 @@ extension Session {
     }
     let document = outcome.value
     let readMs = Session.milliseconds(since: started)
+    let placeholders = await missingPlaceholders(in: document, backend: outcome.backend)
     var data = Session.renderSnapshot(
       document: document, backend: outcome.backend, screen: screen, interactiveOnly: request.interactiveOnly,
-      maxDepth: request.maxDepth, maxNodes: request.maxNodes)
+      maxDepth: request.maxDepth, maxNodes: request.maxNodes, placeholders: placeholders)
+    if !document.elements.isEmpty {
+      let size = Session.interfaceScreen(screen, roots: document.elements)
+      interfaceMemory.remember(landscape: size.width > size.height)
+    }
     if let fallback = outcome.fallback {
       var fields: [String: JSON] = [
         "from": "axbridge", "to": .string(outcome.backend.rawValue), "reason": .string(fallback.reason),
@@ -301,9 +302,7 @@ extension Session {
     if let target {
       data["target"] = ["pid": .int(Int(target.pid)), "source": .string(target.source.rawValue)]
     }
-    if request.raw, let encoded = try? JSONEncoder().encode(document),
-      let raw = try? JSONDecoder().decode(JSON.self, from: encoded)
-    {
+    if request.raw, let raw = document.rawJSON?() {
       data["raw"] = raw
     }
     data["ms"] = .double(Session.milliseconds(since: started))
@@ -314,24 +313,24 @@ extension Session {
 
   /// A tree that is one childless node with no area: what the bridge reports when it is bound to an application
   /// that is gone (a relaunched app's old pid), rather than anything an app can draw.
-  static func isEmptyRoot(_ document: AccessibilityDocument) -> Bool {
+  static func isEmptyRoot(_ document: RawDocument) -> Bool {
     guard document.elements.count == 1, let root = document.elements.first, (root.children ?? []).isEmpty else {
       return false
     }
-    guard let frame = root.frame, let rect = frame else { return true }
+    guard let rect = root.frame else { return true }
     return (rect.width ?? 0) <= 0 || (rect.height ?? 0) <= 0
   }
 
   /// Reads again on the bridge once after `retryDelay`, then on the host `ax` reader, when the bridge answered with
   /// an empty root. Pure over its closures so a scripted sequence can test it.
   static func recoverFromEmptyRoot(
-    first: AXOutcome<AccessibilityDocument>,
+    first: AXOutcome<RawDocument>,
     retryDelay: Duration,
-    bridgeRead: @Sendable () async throws -> AccessibilityDocument,
-    hostRead: (@Sendable () async throws -> AccessibilityDocument)?,
+    bridgeRead: @Sendable () async throws -> RawDocument,
+    hostRead: (@Sendable () async throws -> RawDocument)?,
     sleep: @Sendable (Duration) async throws -> Void,
     log: @Sendable (String) -> Void
-  ) async throws -> AXOutcome<AccessibilityDocument> {
+  ) async throws -> AXOutcome<RawDocument> {
     log("axbridge returned an empty tree; reading again")
     try await sleep(retryDelay)
     if let again = try? await bridgeRead(), !isEmptyRoot(again) {
@@ -345,15 +344,15 @@ extension Session {
   }
 
   private func recoverEmptyRoot(
-    first: AXOutcome<AccessibilityDocument>, options: AccessibilityRequestOptions
-  ) async throws -> AXOutcome<AccessibilityDocument> {
+    first: AXOutcome<RawDocument>, options: AXReadOptions
+  ) async throws -> AXOutcome<RawDocument> {
     guard let bridge = axBridgeReader else { return first }
-    var hostRead: (@Sendable () async throws -> AccessibilityDocument)?
+    var hostRead: (@Sendable () async throws -> RawDocument)?
     if let host = axHostReader {
-      hostRead = { @Sendable in try await host.describe(.frontmost, options: options).document }
+      hostRead = { @Sendable in try await host.describe(.frontmost, options: options) }
     }
-    let bridgeRead: @Sendable () async throws -> AccessibilityDocument = { @Sendable in
-      try await bridge.describe(.frontmost, options: options).document
+    let bridgeRead: @Sendable () async throws -> RawDocument = { @Sendable in
+      try await bridge.describe(.frontmost, options: options)
     }
     let sleep: @Sendable (Duration) async throws -> Void = { @Sendable duration in
       try await Task.sleep(for: duration)
@@ -368,14 +367,15 @@ extension Session {
 
   /// The `snapshot` payload minus timing and diagnostics: pure, so fixtures can drive it without a simulator.
   static func renderSnapshot(
-    document: AccessibilityDocument, backend: AXBackend, screen: (width: Double, height: Double, scale: Double),
-    interactiveOnly: Bool, maxDepth: Int? = nil, maxNodes: Int? = nil
+    document: RawDocument, backend: AXBackend, screen: (width: Double, height: Double, scale: Double),
+    interactiveOnly: Bool, maxDepth: Int? = nil, maxNodes: Int? = nil, placeholders: [PlaceholderKey: String] = [:]
   ) -> [String: JSON] {
-    let built = ElementBuilder.build(
-      document.elements,
-      options: buildOptions(
-        screen: screen, interactiveOnly: interactiveOnly, maxDepth: maxDepth, maxNodes: maxNodes,
-        document: document.screen))
+    let screen = interfaceScreen(screen, roots: document.elements)
+    var options = buildOptions(
+      screen: screen, interactiveOnly: interactiveOnly, maxDepth: maxDepth, maxNodes: maxNodes,
+      document: document.screen)
+    options.placeholders = placeholders
+    let built = ElementBuilder.build(document.elements, options: options)
     var data: [String: JSON] = [
       "backend": .string(backend.rawValue),
       "screen": screenJSON(screen),
@@ -395,7 +395,7 @@ extension Session {
   }
 
   /// idb's blocking-modal verdict when it has one; else the frontmost alert / sheet found in the tree.
-  static func modalJSON(document: AccessibilityDocument, elements: [Element]) -> JSON? {
+  static func modalJSON(document: RawDocument, elements: [Element]) -> JSON? {
     let container = topmostModal(in: elements, modalType: document.modal?.elementType)
     if let modal = document.modal {
       var fields: [String: JSON] = ["description": .string(modal.label ?? modal.elementType)]
@@ -456,21 +456,27 @@ extension Session {
 
 extension Session {
   func elementAtPoint(_ request: PointRequest) async throws -> JSON {
-    var options = AccessibilityRequestOptions(format: .complete, keys: request.keys)
-    options.filter = .all
-    let readOptions = options
+    let readOptions = AXReadOptions.complete(keys: request.keys)
     let point = request.point
-    let outcome = try await withAX(backend: request.backend, op: "elementAtPoint") { reader -> AccessibilityElementsResponse? in
+    let outcome = try await withAX(backend: request.backend, op: "elementAtPoint") { reader -> RawHit? in
       do {
         return try await reader.hitTest(at: point, options: readOptions)
-      } catch UIAutomationError.noElementAtPoint {
+      } catch GuestError.noElementAtPoint {
         return nil
       }
     }
-    guard let response = outcome.value, let node = response.elements.elements.first else { return .null }
-    var element = ElementBuilder.convert(
-      node.reportingChildren(), path: "hit", depth: 0,
-      options: buildOptions(document: response.screen))
+    guard let response = outcome.value, let node = response.node else { return .null }
+    let size = Session.interfaceScreen(
+      screen, hitAt: point, frame: ElementBuilder.rect(node.frame),
+      rememberedLandscape: interfaceMemory.landscape)
+    var built = Session.buildOptions(screen: size, document: response.screen)
+    // a hit-test asks no further reader: it only reuses what an earlier snapshot learned about this field
+    if outcome.backend == .axbridge, PlaceholderFill.isCandidate(node),
+      case let .placeholder(text) = placeholderMemory.lookup(PlaceholderKey(node))
+    {
+      built.placeholders = [PlaceholderKey(node): text]
+    }
+    var element = ElementBuilder.convert(node, path: "hit", depth: 0, options: built)
     element.children = []
     return element.json
   }
@@ -501,14 +507,12 @@ extension Session {
   /// that sees what the caller is after; its failure is the op's failure (nothing else answered), and an `axbridge` read
   /// that finds a modal but no readable button answers `{buttons: []}` so the caller can look again.
   func alertButtons(_ request: AlertRequest) async throws -> JSON {
-    var options = AccessibilityRequestOptions(format: .complete, keys: wireKeys)
-    options.filter = .all
-    let readOptions = options
+    let readOptions = AXReadOptions.complete(keys: wireKeys)
     let screen = self.screen
     return try await Session.answerAlert(request, screen: screen) { backend in
       if backend == .ax {
         guard let reader = self.axHostReader else { return nil }
-        return try await reader.describe(.frontmost, options: readOptions).document
+        return try await reader.describe(.frontmost, options: readOptions)
       }
       guard let reader = self.axBridgeReader else { return nil }
       // the bridge is bounded like `withAX`, so a silent guest leaves the default read time for its `ax` half
@@ -523,7 +527,7 @@ extension Session {
       let coldAtStart = self.bridgeWarmth.isCold
       do {
         let document = try await Session.bounded(
-          { try await reader.describe(.frontmost, options: readOptions).document },
+          { try await reader.describe(.frontmost, options: readOptions) },
           deadlineMs: self.bridgeWarmth.deadlineMs(self.bridgeDeadline))
         self.bridgeWarmth.noteSuccess(generation: generation)
         self.bridgeStall.recordSuccess()
@@ -543,7 +547,7 @@ extension Session {
   /// sequence can test it.
   static func answerAlert(
     _ request: AlertRequest, screen: (width: Double, height: Double, scale: Double),
-    read: (AXBackend) async throws -> AccessibilityDocument?
+    read: (AXBackend) async throws -> RawDocument?
   ) async throws -> JSON {
     let backends: [AXBackend] = request.backend.map { [$0] } ?? [.ax, .axbridge]
     var lastError: (any Error)?
@@ -571,17 +575,18 @@ extension Session {
 
   /// idb names a blocking modal (`document.modal`) but no container with a button was found in the tree: the sheet is
   /// there and its buttons are not readable yet (still animating in, or not built).
-  static func modalWithoutButtons(document: AccessibilityDocument) -> JSON? {
+  static func modalWithoutButtons(document: RawDocument) -> JSON? {
     guard let modal = document.modal else { return nil }
     return .object(["buttons": .array([]), "title": .string(modal.label ?? modal.elementType)])
   }
 
   /// The `alertButtons` payload for one read, or nil when that read shows no alert.
   static func renderAlert(
-    document: AccessibilityDocument, backend: AXBackend, screen: (width: Double, height: Double, scale: Double)
+    document: RawDocument, backend: AXBackend, screen: (width: Double, height: Double, scale: Double)
   ) -> JSON? {
     let built = ElementBuilder.build(
-      document.elements, options: buildOptions(screen: screen, document: document.screen))
+      document.elements,
+      options: buildOptions(screen: interfaceScreen(screen, roots: document.elements), document: document.screen))
     let alert =
       topmostModal(in: built.elements, modalType: document.modal?.elementType)
       ?? (backend == .ax ? hostAlertRoot(in: built.elements) : nil)
@@ -645,7 +650,7 @@ extension Session {
   /// The pid of the running process of `bundleId` (one launchd lookup, ~150 ms), nil when it is not running. Remembered
   /// per bundle for `frontmost`, so the lookup `settle{bundleId}` already paid is not paid again by the next probe.
   func resolveBundlePid(_ bundleId: String) async -> pid_t? {
-    let pid: pid_t? = try? await simulator.application.processID(forBundleID: bundleId)
+    let pid: pid_t? = try? await apps.processID(bundleID: bundleId)
     bundlePids.remember(pid, for: bundleId)
     return pid
   }

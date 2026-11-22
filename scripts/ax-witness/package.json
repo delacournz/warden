@@ -1,0 +1,19 @@
+{
+	"name": "@delacour/warden-ax-witness",
+	"version": "0.1.0",
+	"description": "Local + CI harness: does an XCUITest runner answer while warden-simd's accessibility readers are silent?",
+	"type": "module",
+	"private": true,
+	"scripts": {
+		"ax-witness": "bun ax-witness.ts",
+		"fmt": "biome format --write .",
+		"lint": "biome lint --write .",
+		"check": "biome check .",
+		"typecheck": "tsc --noEmit",
+		"test": "bun test"
+	},
+	"devDependencies": {
+		"@delacour/warden-tsconfig": "workspace:*",
+		"typescript": "^5.9.3"
+	}
+}

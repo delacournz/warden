@@ -25,7 +25,7 @@ const MOMENTUM: Record<Momentum, { fraction: number; durationMs: number; momentu
 /** Share of a field's width, from its left edge, where a tap puts the caret after the text. */
 const FOCUS_X = 0.9;
 /** Never press more keys than this to empty a field. */
-const MAX_CLEAR_KEYS = 300;
+export const MAX_CLEAR_KEYS = 300;
 
 /** Where a tap on `entry` lands: `position` is an offset from its top-left corner, else the driver's tap point or the centre. */
 export function tapPointOf(entry: NodeEntry, position?: Point): Point {
@@ -89,16 +89,24 @@ export function isOnScreen(point: Point, screen: ScreenInfo): boolean {
 }
 
 /**
- * What a text field holds. Secure fields hold nothing readable; iOS reports the placeholder as the value of an empty
- * field; Android keeps an input's text in `text`.
+ * What a text field holds. Secure fields hold nothing readable; a field showing its placeholder holds nothing (iOS
+ * reports the placeholder as the value of an empty field, Android as the text of an empty edit field: see
+ * `NodeEntry.showsPlaceholder`); Android keeps an input's text in `text`.
  */
 export function fieldValue(entry: NodeEntry): string {
-	if (entry.secure) return "";
+	if (entry.secure || entry.showsPlaceholder) return "";
+	return fieldShows(entry);
+}
+
+/**
+ * What a text field shows, placeholder and all: what a fill compares against the typed text, since a field holding
+ * exactly its placeholder's text reads the same as an empty one.
+ */
+export function fieldShows(entry: NodeEntry): string {
 	const { element } = entry;
-	const own = entry.value ?? (entry.role === "textbox" || entry.role === "searchbox" ? element.text : undefined);
-	if (own === undefined || own === "") return "";
-	if (element.placeholder !== undefined && own === element.placeholder && entry.states.focused !== true) return "";
-	return own;
+	const textInput = entry.role === "textbox" || entry.role === "searchbox";
+	if (entry.showsPlaceholder) return entry.placeholder ?? "";
+	return entry.value ?? (textInput ? (element.text ?? "") : "");
 }
 
 const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
@@ -114,7 +122,7 @@ export function graphemes(text: string): number {
 const SECURE_DOTS: ReadonlySet<string> = new Set(["\u2022", "\u25cf"]);
 
 /** The bullets in a secure field's value. Any other text it shows (iOS puts the placeholder there when empty) is not content. */
-function countDots(value: string): number {
+export function countDots(value: string): number {
 	let count = 0;
 	for (const part of segmenter.segment(value)) if (SECURE_DOTS.has(part.segment)) count += 1;
 	return count;

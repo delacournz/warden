@@ -77,6 +77,9 @@ export const SHIM_PATH = "bin/warden.mjs";
 /** `@delacour/warden/config` (`defineConfig` for `warden.config.ts`) inside the main package. */
 export const CONFIG_ENTRY_JS = "config/index.mjs";
 export const CONFIG_ENTRY_DTS = "config/index.d.ts";
+/** `@delacour/warden/expo-build-cache` (Expo's `buildCacheProvider` plugin; plain CommonJS, Expo loads it under Node). */
+export const EXPO_BUILD_CACHE_JS = "expo-build-cache/index.js";
+export const EXPO_BUILD_CACHE_DTS = "expo-build-cache/index.d.ts";
 /** Path of the compiled binary inside a platform package. */
 export const BIN_DIR = "bin";
 export const BINARY_PATH = `${BIN_DIR}/warden`;
@@ -85,6 +88,13 @@ export const LICENSE_FILE = "LICENSE";
 
 /** npm search terms for `@delacour/warden`: the queries a developer types to find it. */
 export const CLI_KEYWORDS = [
+	"react-native-testing",
+	"expo-testing",
+	"e2e",
+	"end-to-end-testing",
+	"test-automation",
+	"detox-alternative",
+	"maestro-alternative",
 	"ios-simulator",
 	"android-emulator",
 	"ai-agents",
@@ -104,6 +114,12 @@ export const CLI_KEYWORDS = [
 
 /** npm search terms for `@delacour/warden-e2e`. */
 export const E2E_KEYWORDS = [
+	"react-native-testing",
+	"expo-testing",
+	"end-to-end-testing",
+	"test-automation",
+	"detox-alternative",
+	"maestro-alternative",
 	"e2e",
 	"e2e-testing",
 	"react-native",
@@ -162,7 +178,7 @@ export function platformManifest(target: ReleaseTarget, meta: PackageMeta, helpe
 }
 
 /**
- * `@delacour/warden`: a JS shim bin, the `./config` entry (`defineConfig` + types) and every platform
+ * `@delacour/warden`: a JS shim bin, the `./config` entry (`defineConfig` + types), the `./expo-build-cache` Expo provider and every platform
  * package as an exact-version optional dependency. The package manager installs only the one matching this machine's os/cpu.
  */
 export function mainManifest(meta: PackageMeta): MainManifest {
@@ -176,9 +192,18 @@ export function mainManifest(meta: PackageMeta): MainManifest {
 		bin: { warden: SHIM_PATH },
 		exports: {
 			"./config": { types: `./${CONFIG_ENTRY_DTS}`, default: `./${CONFIG_ENTRY_JS}` },
+			"./expo-build-cache": { types: `./${EXPO_BUILD_CACHE_DTS}`, default: `./${EXPO_BUILD_CACHE_JS}` },
 			"./package.json": "./package.json",
 		},
-		files: [SHIM_PATH, CONFIG_ENTRY_JS, CONFIG_ENTRY_DTS, "README.md", LICENSE_FILE],
+		files: [
+			SHIM_PATH,
+			CONFIG_ENTRY_JS,
+			CONFIG_ENTRY_DTS,
+			EXPO_BUILD_CACHE_JS,
+			EXPO_BUILD_CACHE_DTS,
+			"README.md",
+			LICENSE_FILE,
+		],
 		engines: { node: ">=18" },
 		optionalDependencies: Object.fromEntries(
 			RELEASE_TARGETS.map((target) => [platformPackageName(target), meta.version])

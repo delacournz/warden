@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { Exec, ExecResult } from "../exec";
 import { instanceId } from "../ownership";
 import { DEFAULT_SLIM_PROFILE, desiredLabels } from "../sims/slim.profile";
@@ -17,6 +17,7 @@ import {
 	checkIosRuntime,
 	createIosProvider,
 	deleteSim,
+	type IosCloneStrategy,
 	parseSimctlDevices,
 	parseSimctlDeviceTypes,
 	parseSimctlRuntimes,
@@ -200,6 +201,52 @@ describe("createIosProvider", () => {
 				lastUsedAt: 42,
 			},
 		]);
+	});
+
+	test("create asks again while a listed runtime refuses new simulators (Invalid runtime)", async () => {
+		const calls: Call[] = [];
+		let creates = 0;
+		const base = fake(
+			[
+				["xcrun simctl list devicetypes -j", { stdout: SIMCTL_DEVICETYPES_JSON }],
+				["xcrun simctl list runtimes -j", { stdout: SIMCTL_RUNTIMES_JSON }],
+			],
+			calls
+		);
+		const exec: Exec = async (cmd, opts) => {
+			if (cmd.join(" ").startsWith("xcrun simctl create")) {
+				calls.push({ cmd: [...cmd] });
+				creates += 1;
+				return creates < 3
+					? { exitCode: 145, stdout: "", stderr: "Invalid runtime: com.apple.CoreSimulator.SimRuntime.iOS-26-5" }
+					: { exitCode: 0, stdout: "NEW-UDID-1\n", stderr: "" };
+			}
+			return base(cmd, opts);
+		};
+		let clock = 0;
+		const slept: number[] = [];
+		const logs: string[] = [];
+		const p = createIosProvider(
+			{
+				exec,
+				store,
+				env: { WARDEN_SIM_LAUNCHD_STORE_ROOT: dir },
+				now: () => clock,
+				owner: { kind: "agent", sessionId: "s1", cwd: "/" },
+				log: (line) => void logs.push(line),
+			},
+			{
+				sleep: async (ms) => {
+					slept.push(ms);
+					clock += ms;
+				},
+			}
+		);
+		const result = await p.create("warden-iphone-17-3", "iphone-17");
+		expect(result.success && result.data.id).toBe("NEW-UDID-1");
+		expect(creates).toBe(3);
+		expect(slept).toEqual([3_000, 3_000]);
+		expect(logs).toContain("iOS-26-5 accepted the simulator after 6s");
 	});
 
 	test("create writes the ownership marker with the store's instance id into the sim's device dir", async () => {
@@ -555,6 +602,59 @@ describe("createIosProvider bootReady (16-15)", () => {
 		if (result.kind === "boot-failed") expect(result.error).toContain("Invalid device");
 	});
 
+	/** bootstatus that streams its progress lines, moving the clock between them. */
+	function streamingBootstatus(clock: { t: number }, steps: Array<[line: string, ms: number]>, exitCode = 0): Exec {
+		return async (cmd, opts) => {
+			if (cmd[2] !== "bootstatus") return { exitCode: 0, stdout: "", stderr: "" };
+			for (const [line, ms] of steps) {
+				opts?.onLine?.(line);
+				clock.t += ms;
+			}
+			return { exitCode, stdout: "", stderr: "" };
+		};
+	}
+	function loggingProvider(exec: Exec, clock: { t: number }, logs: string[]): DeviceProvider {
+		return createIosProvider(
+			{
+				exec,
+				store,
+				env: { WARDEN_SIM_LAUNCHD_STORE_ROOT: dir },
+				now: () => clock.t,
+				owner: { kind: "agent", sessionId: "s1", cwd: "/" },
+				log: (line) => logs.push(line),
+			},
+			{ sleep: async () => {} }
+		);
+	}
+
+	test("a boot logs how long each bootstatus phase took", async () => {
+		const clock = { t: 0 };
+		const logs: string[] = [];
+		const exec = streamingBootstatus(clock, [
+			["Booting", 9_000],
+			["Waiting on BackBoard", 4_000],
+			["Waiting on Data Migration", 85_000],
+			["Finished", 0],
+		]);
+		expect(await run(loggingProvider(exec, clock, logs), "U1")).toEqual({ kind: "ready" });
+		expect(logs).toEqual(["U1: booted in 98.0 s (booting 9.0 s, backboard 4.0 s, data migration 85.0 s)"]);
+	});
+
+	test("a boot that runs out of time logs the phase it was stuck in", async () => {
+		const clock = { t: 0 };
+		const logs: string[] = [];
+		const exec = streamingBootstatus(
+			clock,
+			[
+				["Waiting on BackBoard", 5_000],
+				["Waiting on Data Migration", 115_000],
+			],
+			143
+		);
+		expect((await run(loggingProvider(exec, clock, logs), "U1")).kind).toBe("not-ready");
+		expect(logs).toEqual(["U1: not ready after 120.0 s (backboard 5.0 s, data migration 115.0 s)"]);
+	});
+
 	test("bootstatus timing out is not ready, with no extra boot", async () => {
 		const calls: Call[] = [];
 		const p = bootProvider(fake([["xcrun simctl bootstatus", { exitCode: 143 }]], calls));
@@ -883,6 +983,92 @@ describe("createIosProvider slim (SLIM-2)", () => {
 	});
 });
 
+describe("createIosProvider primeClones", () => {
+	const owner = { kind: "agent", sessionId: "s1", cwd: "/" } as const;
+	let logs: string[];
+	beforeEach(() => {
+		logs = [];
+	});
+
+	function primed(exec: Exec, clone: IosCloneStrategy | undefined, primeClones = true): DeviceProvider {
+		return createIosProvider(
+			{
+				exec,
+				store,
+				env: { WARDEN_SIM_LAUNCHD_STORE_ROOT: dir },
+				now: () => 42,
+				owner,
+				log: (line) => logs.push(line),
+			},
+			{ ...(clone ? { clone } : {}), primeClones, sleep: async () => {} }
+		);
+	}
+	const cloned: IosCloneStrategy = async () => ({ success: true, data: { udid: "CLONED", runtime: "iOS-26-5" } });
+	const storeFile = () => join(dir, "com.apple.CoreSimulator.SimDevice.CLONED", "disabled.plist");
+
+	test("a clone boots once and shuts down before create returns, after its overrides are written", async () => {
+		const calls: Call[] = [];
+		let storeBeforeBoot: boolean | undefined;
+		const base = fake(
+			[
+				["xcrun simctl bootstatus CLONED -b", {}],
+				["xcrun simctl shutdown CLONED", {}],
+			],
+			calls
+		);
+		const exec: Exec = async (cmd, opts) => {
+			if (storeBeforeBoot === undefined && cmd.includes("bootstatus")) storeBeforeBoot = existsSync(storeFile());
+			return base(cmd, opts);
+		};
+		const result = await primed(exec, cloned).create("warden-iphone-17-9", "iphone-17");
+		expect(result.success && result.data).toMatchObject({ id: "CLONED", state: "shutdown" });
+		expect(calls.map((c) => c.cmd.join(" "))).toEqual([
+			"xcrun simctl bootstatus CLONED -b",
+			"xcrun simctl shutdown CLONED",
+		]);
+		expect(storeBeforeBoot).toBe(true);
+		expect(logs.join("\n")).toContain("warden-iphone-17-9: primed the clone (first boot) in");
+	});
+
+	test("a failed prime boot is a note: the clone is still returned and shut down", async () => {
+		const calls: Call[] = [];
+		const exec = fake(
+			[
+				["xcrun simctl bootstatus CLONED -b", { exitCode: 1, stderr: "boot failed" }],
+				["xcrun simctl shutdown CLONED", {}],
+			],
+			calls
+		);
+		const result = await primed(exec, cloned).create("warden-iphone-17-9", "iphone-17");
+		expect(result.success && result.data.id).toBe("CLONED");
+		expect(calls.map((c) => c.cmd.join(" "))).toEqual([
+			"xcrun simctl bootstatus CLONED -b",
+			"xcrun simctl shutdown CLONED",
+		]);
+		expect(logs.join("\n")).toContain("warden-iphone-17-9: clone not primed");
+	});
+
+	test("a fresh simctl create (clone failed) is never primed", async () => {
+		const calls: Call[] = [];
+		const exec = fake(
+			[
+				["xcrun simctl list devicetypes -j", { stdout: SIMCTL_DEVICETYPES_JSON }],
+				["xcrun simctl list runtimes -j", { stdout: SIMCTL_RUNTIMES_JSON }],
+				["xcrun simctl create", { stdout: "FRESH\n" }],
+			],
+			calls
+		);
+		await primed(exec, async () => ({ success: false, error: "no golden" })).create("warden-iphone-17-9", "iphone-17");
+		expect(calls.some((c) => c.cmd.includes("bootstatus") || c.cmd.includes("shutdown"))).toBe(false);
+	});
+
+	test("primeClones off: a clone is returned with no simctl call", async () => {
+		const calls: Call[] = [];
+		await primed(fake([], calls), cloned, false).create("warden-iphone-17-9", "iphone-17");
+		expect(calls).toEqual([]);
+	});
+});
+
 describe("createIosProvider physical iPhones (PHY-6.5)", () => {
 	const physicalProvider = (exec: Exec): DeviceProvider =>
 		createIosProvider(
@@ -981,6 +1167,89 @@ describe("createIosProvider physical iPhones (PHY-6.5)", () => {
 		await p.prepareBoot?.(FAKE_IPHONE_UDID);
 		await p.afterReady?.(FAKE_IPHONE_UDID);
 		expect(calls).toEqual([]);
+	});
+});
+
+describe("createIosProvider pre-boot accessibility prefs", () => {
+	const owner = { kind: "agent", sessionId: "s1", cwd: "/" } as const;
+	const plist = (udid: string): string =>
+		join(
+			dir,
+			"Library/Developer/CoreSimulator/Devices",
+			udid,
+			"data/Library/Preferences/com.apple.Accessibility.plist"
+		);
+	function axProvider(exec: Exec, env: Record<string, string> = {}, slim?: false): DeviceProvider {
+		return createIosProvider(
+			{ exec, store, env: { HOME: dir, WARDEN_SIM_LAUNCHD_STORE_ROOT: dir, ...env }, now: () => 42, owner },
+			{ sleep: async () => {}, ...(slim === false ? { slim } : {}) }
+		);
+	}
+	const record = (id: string): void =>
+		store.recordDevice({ platform: "ios", id, name: `warden-iphone-17-${id}`, profile: "iphone-17" }, 1);
+	/** plutil writes, without the read of the first-boot migration record. */
+	const plutilCalls = (calls: Call[]): string[] =>
+		calls.map((c) => c.cmd.join(" ")).filter((c) => c.startsWith("plutil") && !c.startsWith("plutil -convert"));
+	/** W1's migration record, as `plutil -convert json` prints it: its first boot migrated. */
+	const migrated: [string, Partial<ExecResult>] = [
+		"plutil -convert json",
+		{ stdout: JSON.stringify({ DMLastMigrationResults: { buildVersion: "24B8117", success: true } }) },
+	];
+	/** W1 booted before: its first boot's Data Migration record sits beside the plist. */
+	beforeEach(() => {
+		mkdirSync(dirname(plist("W1")), { recursive: true });
+		writeFileSync(join(dirname(plist("W1")), "com.apple.migration.plist"), "");
+		mkdirSync(dirname(plist("F1")), { recursive: true });
+	});
+
+	test("a warden sim gets AutomationEnabled and IgnoreAXServerEntitlements before it boots", async () => {
+		record("W1");
+		writeFileSync(plist("W1"), "");
+		const calls: Call[] = [];
+		await axProvider(fake([migrated, ["plutil", {}]], calls), {}, false).prepareBoot?.("W1");
+		expect(plutilCalls(calls)).toEqual([
+			`plutil -replace AutomationEnabled -bool true ${plist("W1")}`,
+			`plutil -replace IgnoreAXServerEntitlements -bool true ${plist("W1")}`,
+		]);
+	});
+
+	test("a warden sim simctl just created (no migration record yet) boots without them", async () => {
+		record("N1");
+		mkdirSync(dirname(plist("N1")), { recursive: true });
+		const calls: Call[] = [];
+		await axProvider(fake([["plutil", {}]], calls), {}, false).prepareBoot?.("N1");
+		expect(plutilCalls(calls)).toEqual([]);
+	});
+
+	test("WARDEN_AX_PREFS=0 writes nothing", async () => {
+		record("W1");
+		const calls: Call[] = [];
+		await axProvider(fake([["plutil", {}]], calls), { WARDEN_AX_PREFS: "0" }, false).prepareBoot?.("W1");
+		expect(plutilCalls(calls)).toEqual([]);
+	});
+
+	test("a sim warden did not create is never written", async () => {
+		const calls: Call[] = [];
+		await axProvider(fake([["plutil", {}]], calls), {}, false).prepareBoot?.("F1");
+		expect(plutilCalls(calls)).toEqual([]);
+	});
+
+	test("a failed write is a note, and the boot goes on", async () => {
+		record("W1");
+		const logs: string[] = [];
+		const p = createIosProvider(
+			{
+				exec: fake([migrated, ["plutil", { exitCode: 1, stderr: "denied" }]]),
+				store,
+				env: { HOME: dir },
+				now: () => 42,
+				owner,
+				log: (line) => logs.push(line),
+			},
+			{ sleep: async () => {}, slim: false }
+		);
+		await p.prepareBoot?.("W1");
+		expect(logs).toEqual([expect.stringContaining("warden-iphone-17-W1 accessibility prefs not written")]);
 	});
 });
 

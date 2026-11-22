@@ -589,6 +589,37 @@ describe("warden batch", () => {
 			expect(JSON.parse(h.files.get(join(batchDir, "batch.json")) ?? "{}").headless).toBe(false);
 		});
 
+		test("preset keychainAcl is WARDEN_KEYCHAIN_ACL in the job env; --no-keychain-acl / --keychain-acl beat it", async () => {
+			const preset = setup(["smoke", "--jobs", "a"]);
+			writeFileSync(
+				join(preset.cwd, JSON_CONFIG_FILE),
+				JSON.stringify({ keychainAcl: true, batches: { smoke: { platform: "ios", cmd: ["x"] } } })
+			);
+			const h1 = harness();
+			expect(await createBatchCommand(h1.deps).run(preset)).toBe(0);
+			expect(h1.jobs()[0]?.opts.env.WARDEN_KEYCHAIN_ACL).toBe("1");
+			preset.cleanup();
+
+			const off = setup(["smoke", "--jobs", "a", "--no-keychain-acl"]);
+			writeFileSync(
+				join(off.cwd, JSON_CONFIG_FILE),
+				JSON.stringify({ batches: { smoke: { platform: "ios", keychainAcl: true, cmd: ["x"] } } })
+			);
+			const h2 = harness();
+			expect(await createBatchCommand(h2.deps).run(off)).toBe(0);
+			expect(h2.jobs()[0]?.opts.env.WARDEN_KEYCHAIN_ACL).toBe("0");
+			off.cleanup();
+
+			const flag = setup(["ios", "--jobs", "a", "--keychain-acl", "--", "x"]);
+			const h3 = harness();
+			expect(await createBatchCommand(h3.deps).run(flag)).toBe(0);
+			expect(h3.jobs()[0]?.opts.env.WARDEN_KEYCHAIN_ACL).toBe("1");
+			const plain = setup(["ios", "--jobs", "a", "--", "x"]);
+			const h4 = harness();
+			expect(await createBatchCommand(h4.deps).run(plain)).toBe(0);
+			expect("WARDEN_KEYCHAIN_ACL" in (h4.jobs()[0]?.opts.env ?? {})).toBe(false);
+		});
+
 		test("preset headless (top-level default) applies; --no-headless beats it", async () => {
 			const on = setup(["smoke", "--jobs", "a"]);
 			writeFileSync(

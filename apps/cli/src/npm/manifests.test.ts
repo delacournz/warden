@@ -75,8 +75,20 @@ describe("mainManifest", () => {
 		expect(manifest.name).toBe("@delacour/warden");
 		expect(manifest.license).toBe("MIT");
 		expect(manifest.bin).toEqual({ warden: "bin/warden.mjs" });
-		expect(manifest.files).toEqual(["bin/warden.mjs", "config/index.mjs", "config/index.d.ts", "README.md", "LICENSE"]);
+		expect(manifest.files).toEqual([
+			"bin/warden.mjs",
+			"config/index.mjs",
+			"config/index.d.ts",
+			"expo-build-cache/index.js",
+			"expo-build-cache/index.d.ts",
+			"README.md",
+			"LICENSE",
+		]);
 		expect(manifest.exports["./config"]).toEqual({ types: "./config/index.d.ts", default: "./config/index.mjs" });
+		expect(manifest.exports["./expo-build-cache"]).toEqual({
+			types: "./expo-build-cache/index.d.ts",
+			default: "./expo-build-cache/index.js",
+		});
 		expect(manifest.publishConfig).toEqual({ access: "public" });
 		expect(Object.keys(manifest.optionalDependencies)).toEqual(
 			RELEASE_TARGETS.map((target) => `@delacour/warden-${target}`)
@@ -160,6 +172,20 @@ describe("npm keywords", () => {
 			expect(CLI_KEYWORDS).toContain(keyword);
 		}
 		for (const keyword of ["e2e-testing", "react-native", "expo", "ios-simulator", "android-emulator"]) {
+			expect(E2E_KEYWORDS).toContain(keyword);
+		}
+		const discovery = [
+			"react-native-testing",
+			"e2e",
+			"end-to-end-testing",
+			"expo-testing",
+			"mobile-testing",
+			"test-automation",
+			"detox-alternative",
+			"maestro-alternative",
+		];
+		for (const keyword of discovery) {
+			expect(CLI_KEYWORDS).toContain(keyword);
 			expect(E2E_KEYWORDS).toContain(keyword);
 		}
 		expect(new Set(CLI_KEYWORDS).size).toBe(CLI_KEYWORDS.length);

@@ -1,0 +1,5 @@
+{
+	"title": "CI",
+	"icon": "Workflow",
+	"pages": ["github-actions", "eas-workflows"]
+}

@@ -301,6 +301,33 @@ describe("action.yml artifacts", () => {
 		expect(action.inputs["compiler-cache"]?.default).toBe("true");
 	});
 
+	test("a repack cache miss restores Metro's cache by prefix before the build and saves it after one", () => {
+		const steps = action.runs.steps;
+		const at = (id: string) => steps.findIndex((s) => s.id === id);
+		const restore = steps[at("metro-cache")];
+		expect(restore?.uses).toStartWith("actions/cache/restore@");
+		expect(restore?.if).toContain("steps.repack-cache.outputs.cache-hit != 'true'");
+		// an older warden prints no metro group: its empty key skips the steps
+		expect(restore?.if).toContain("steps.keys.outputs.metro != ''");
+		expect(restore?.with?.path).toBe(`\${{ steps.keys.outputs.metro-dir }}`);
+		expect(restore?.with?.key).toBe(
+			`\${{ steps.keys.outputs.metro }}-\${{ github.run_id }}-\${{ github.run_attempt }}`
+		);
+		expect(restore?.with?.["restore-keys"]).toBe(`\${{ steps.keys.outputs.metro-restore }}`);
+		expect(at("repack-cache")).toBeLessThan(at("metro-cache"));
+		expect(at("metro-cache")).toBeLessThan(at("build"));
+		const save = steps.find(
+			(s) => s.uses?.startsWith("actions/cache/save@") && s.with?.key?.includes("outputs.metro ")
+		);
+		expect(save?.with?.key).toBe(restore?.with?.key);
+		expect(save?.if).toContain("inputs.save-cache == 'true'");
+		expect(save?.if).toContain("steps.metro-cache.outcome == 'success'");
+		expect(save?.if).toContain("steps.build.outputs.exit-code == '0'");
+		const keys = steps[at("keys")] as Step & { run?: string };
+		expect(keys.run).toContain('echo "metro=$(key metro)"');
+		expect(keys.run).toContain("metro-restore<<WARDEN_METRO_RESTORE");
+	});
+
 	test("warden doctor checks the host after ccache is installed, before anything uses the helper", () => {
 		const steps = action.runs.steps;
 		const at = (id: string) => steps.findIndex((s) => s.id === id);
@@ -333,10 +360,144 @@ describe("action.yml artifacts", () => {
 		expect(print.run).toContain("ccache-writes=");
 	});
 
+	test("the app is built in its own step before the suite, so the suite's timeout times the specs alone", () => {
+		const steps = action.runs.steps;
+		const at = (id: string) => steps.findIndex((s) => s.id === id);
+		const build = steps[at("build")] as Step & { run?: string; env?: Record<string, string> };
+		expect(at("ccache-prep")).toBeLessThan(at("build"));
+		expect(at("import")).toBeLessThan(at("build"));
+		expect(at("build")).toBeLessThan(at("run"));
+		expect(build.run).toContain("--build-only");
+		// the run's own selection and kind: same suite, profile and args
+		expect(build.env).toMatchObject({
+			SUITE: `\${{ inputs.suite }}`,
+			PROFILE: `\${{ inputs.profile }}`,
+			EXTRA: `\${{ inputs.args }}`,
+		});
+		// never under the suite's watchdog
+		expect(build.run).not.toContain("SUITE_TIMEOUT");
+		// an older warden without the flag leaves the build to the run instead of failing
+		expect(build.run).toContain("grep -q -- '--build-only'");
+		// read the help whole first: `--help | grep -q` under pipefail SIGPIPEs warden on an early match and reads as missing
+		expect(build.run).toContain("help=$(warden e2e --help 2>/dev/null || true)");
+		expect(build.run).not.toMatch(/--help[^\n]*\|\s*grep/);
+		const run = steps[at("run")] as Step & { run?: string; env?: Record<string, string> };
+		expect(run.env?.BUILD_EXIT).toBe(`\${{ steps.build.outputs.exit-code }}`);
+		expect(run.run).toContain("passed=false");
+		// the native build log is the build step's, not only the suite's
+		const print = steps[at("build-log")] as Step & { env?: Record<string, string> };
+		expect(print.env?.STARTED).toBe(`\${{ steps.build.outputs.started || steps.run.outputs.started }}`);
+	});
+
 	test("the cache export reuses the golden the collection archived", () => {
 		const steps = action.runs.steps;
 		const exportIndex = steps.findIndex((s) => s.id === "golden-export");
 		expect(steps.findIndex((s) => s.id === "artifacts")).toBeLessThan(exportIndex);
 		expect(JSON.stringify(steps[exportIndex])).toContain("steps.artifacts.outputs.golden-archived");
+	});
+});
+
+/**
+ * `build-only: true`: the app is built and the caches saved, no spec runs. A push to the default branch seeds the
+ * caches every pull request restores without running flows the merged pull request already ran.
+ */
+describe("action.yml build-only", () => {
+	type Step = { id?: string; run?: string; env?: Record<string, string> };
+	type Action = { inputs: Record<string, { default?: string }>; runs: { steps: Step[] } };
+	const action = Bun.YAML.parse(readFileSync(join(ACTION_DIR, "action.yml"), "utf8")) as Action;
+	const runStep = action.runs.steps.find((s) => s.id === "run");
+
+	/** Run the "Run the suite" step's script against a stub warden that records any call; returns its outputs. */
+	function runSuiteStep(env: { BUILD_ONLY: string; BUILD_EXIT: string }): {
+		outputs: Record<string, string>;
+		wardenCalled: boolean;
+	} {
+		const marker = join(home, "warden-called");
+		writeFileSync(join(home, "bin", "warden"), `#!/bin/sh\ntouch "${marker}"\nexit 0\n`);
+		const script = join(home, "run.sh");
+		writeFileSync(script, runStep?.run ?? "");
+		const output = join(home, "github-output");
+		writeFileSync(output, "");
+		const proc = Bun.spawnSync([BASH, script], {
+			cwd: home,
+			env: {
+				PATH: `${join(home, "bin")}:/usr/bin:/bin`,
+				HOME: home,
+				GITHUB_OUTPUT: output,
+				SUITE: "example",
+				PROFILE: "",
+				COUNT: "1",
+				RETRY: "1",
+				EXTRA: "",
+				REPORT: "report.json",
+				SUITE_TIMEOUT: "1",
+				WORKSPACE: home,
+				...env,
+			},
+		});
+		expect(proc.exitCode).toBe(0);
+		const outputs = Object.fromEntries(
+			readFileSync(output, "utf8")
+				.split("\n")
+				.filter(Boolean)
+				.map((line) => {
+					const at = line.indexOf("=");
+					return [line.slice(0, at), line.slice(at + 1)];
+				})
+		);
+		return { outputs, wardenCalled: existsSync(marker) };
+	}
+
+	test("defaults to running the suite", () => {
+		expect(action.inputs["build-only"]?.default).toBe("false");
+		expect(runStep?.env?.BUILD_ONLY).toBe(`\${{ inputs.build-only }}`);
+	});
+
+	test("a green build passes without running a spec, so the caches are saved", () => {
+		const { outputs, wardenCalled } = runSuiteStep({ BUILD_ONLY: "true", BUILD_EXIT: "0" });
+		expect(wardenCalled).toBe(false);
+		expect(outputs.passed).toBe("true");
+		expect(outputs["exit-code"]).toBe("0");
+	});
+
+	test("a failed build fails without running a spec", () => {
+		const { outputs, wardenCalled } = runSuiteStep({ BUILD_ONLY: "true", BUILD_EXIT: "65" });
+		expect(wardenCalled).toBe(false);
+		expect(outputs.passed).toBe("false");
+		expect(outputs["exit-code"]).toBe("65");
+	});
+
+	test("a warden without `e2e --build-only` built nothing: fails rather than seeding nothing", () => {
+		const { outputs, wardenCalled } = runSuiteStep({ BUILD_ONLY: "true", BUILD_EXIT: "" });
+		expect(wardenCalled).toBe(false);
+		expect(outputs.passed).toBe("false");
+		expect(outputs["exit-code"]).toBe("1");
+	});
+
+	test("off, the suite runs", () => {
+		const { outputs, wardenCalled } = runSuiteStep({ BUILD_ONLY: "false", BUILD_EXIT: "0" });
+		expect(wardenCalled).toBe(true);
+		expect(outputs.passed).toBe("true");
+	});
+});
+
+/** The repo's own e2e workflow: a push to develop seeds the caches; the pull requests (and the version PR) run the flows. */
+describe("e2e.yml", () => {
+	type Workflow = {
+		on: Record<string, unknown>;
+		jobs: Record<string, { name?: string; steps: { id?: string; with?: Record<string, string> }[] }>;
+	};
+	const workflow = Bun.YAML.parse(readFileSync(join(ROOT, ".github", "workflows", "e2e.yml"), "utf8")) as Workflow;
+	const e2e = workflow.jobs.example?.steps.find((s) => s.id === "e2e");
+
+	test("a push to develop builds and saves the caches without running a spec", () => {
+		expect(workflow.on.push).toBeDefined();
+		expect(e2e?.with?.["build-only"]).toContain("github.event_name == 'push'");
+		expect(e2e?.with?.artifacts).toContain("github.event_name == 'push'");
+	});
+
+	test("pull requests run the flows", () => {
+		expect(workflow.on.pull_request).toBeDefined();
+		expect(e2e?.with?.["build-only"]).not.toContain("pull_request");
 	});
 });

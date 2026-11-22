@@ -1,0 +1,21 @@
+{
+	"command": {
+		"accessibility": {
+			"action": {
+				"read": {
+					"options": {
+						"automationMode": true,
+						"clientType": 0,
+						"explainUnreachable": false,
+						"maxDepth": 50,
+						"maxNodes": 3000,
+						"traversal": "single-fetch"
+					},
+					"pid": 99999
+				}
+			}
+		}
+	},
+	"id": "ID-8",
+	"version": 6
+}

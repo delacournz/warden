@@ -42,6 +42,7 @@ describe("traceDevice", () => {
 		await device.orientation();
 		await device.appearance();
 		await device.biometrics.status();
+		await device.biometrics.reenroll();
 		await device.clipboard();
 		await device.setClipboard("x");
 		await device.snapshot();
@@ -52,6 +53,7 @@ describe("traceDevice", () => {
 			"device.orientation",
 			"device.appearance",
 			"device.biometrics.status",
+			"device.biometrics.reenroll",
 			"device.clipboard",
 			"device.setClipboard",
 			"device.snapshot",

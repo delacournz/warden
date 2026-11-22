@@ -137,6 +137,35 @@ describe("createSimRunner", () => {
 		if (!res.success) expect(res.error.code).toBe("E_HELPER_CRASHED");
 	});
 
+	test("each start writes a result bundle whose test failure names a runner that exited", async () => {
+		const argvs: string[][] = [];
+		const read: string[] = [];
+		const runner = createSimRunner({
+			udid: "U-1",
+			ensureBuild: async () => ok({ xctestrun: "/c/dd/x.xctestrun", derivedData: "/c/dd" }),
+			spawn: (argv) => {
+				argvs.push([...argv]);
+				return fakeProcess(["** TEST EXECUTE FAILED **"], true);
+			},
+			resultBundle: (derivedData) => `${derivedData}/../results/serve-U-1-1.xcresult`,
+			readFailures: async (bundle) => {
+				read.push(bundle);
+				return "RunnerTests/testServe(): /s/RunnerTests.swift:40: Failed to launch the host app";
+			},
+		});
+		const res = await runner.request("audit");
+		const bundle = "/c/dd/../results/serve-U-1-1.xcresult";
+		expect(argvs[0]?.slice(-2)).toEqual(["-resultBundlePath", bundle]);
+		expect(read).toEqual([bundle]);
+		expect(res.success).toBe(false);
+		if (!res.success) {
+			expect(res.error.code).toBe("E_HELPER_CRASHED");
+			expect(res.error.message).toContain("/s/RunnerTests.swift:40: Failed to launch the host app");
+			expect(res.error.message).toContain(`result bundle: ${bundle}`);
+			expect(res.error.detail).toEqual({ resultBundle: bundle });
+		}
+	});
+
 	test("a runner that never says ready times out and is killed", async () => {
 		const proc = fakeProcess(["still building"]);
 		const runner = createSimRunner({

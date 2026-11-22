@@ -651,7 +651,7 @@ describe("device state", () => {
 
 	test("biometrics: enroll and unenroll point at the golden snapshot", async () => {
 		const { driver } = await setup();
-		for (const op of ["enroll", "unenroll"] as const) {
+		for (const op of ["enroll", "unenroll", "reenroll"] as const) {
 			const res = await driver.biometrics(op);
 			expect(!res.success && res.error.code).toBe("E_UNSUPPORTED");
 			expect(!res.success && res.error.message).toContain("golden");

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { join } from "node:path";
-import { CCACHE_DIR_NAME } from "@delacour/warden-core/builds/builds.defaults";
+import { CCACHE_DIR_NAME, METRO_CACHE_DIR_NAME } from "@delacour/warden-core/builds/builds.defaults";
 import type { Exec } from "@delacour/warden-core/exec";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 
@@ -30,10 +30,17 @@ export type CacheGroup = PathsGroup | ArchiveGroup;
 
 /**
  * What a CI job caches between runs to skip warden's slow steps: `builds` (the native simulator base), `repack` (the
- * JS bundled into it), `golden` (the first-booted simulator new devices are cloned from) and `ccache` (compiled objects
- * a cold native build reuses after a native change: restored from the newest older key, saved under the new one).
+ * JS bundled into it), `golden` (the first-booted simulator new devices are cloned from), `ccache` (compiled objects
+ * a cold native build reuses after a native change) and `metro` (Metro's transform cache, which a repack reuses after
+ * a JS change). `ccache` and `metro` are restored from the newest older key and saved under the new one.
  */
-export type CacheGroups = { builds: PathsGroup; repack: PathsGroup; golden: ArchiveGroup; ccache: PathsGroup };
+export type CacheGroups = {
+	builds: PathsGroup;
+	repack: PathsGroup;
+	golden: ArchiveGroup;
+	ccache: PathsGroup;
+	metro: PathsGroup;
+};
 
 export type CacheGroupsInput = {
 	prefix: string;
@@ -67,6 +74,12 @@ export function cacheGroups(input: CacheGroupsInput): CacheGroups {
 			key: `${prefix}-ccache-${runner}-${nativeFingerprint}`,
 			restoreKeys: [`${prefix}-ccache-${runner}-`],
 			paths: [join(wardenHome, CCACHE_DIR_NAME)],
+		},
+		metro: {
+			kind: "paths",
+			key: `${prefix}-metro-${runner}-${js}`,
+			restoreKeys: [`${prefix}-metro-${runner}-`],
+			paths: [join(wardenHome, METRO_CACHE_DIR_NAME)],
 		},
 		golden: {
 			kind: "archive",

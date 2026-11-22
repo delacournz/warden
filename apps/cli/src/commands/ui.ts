@@ -5,6 +5,7 @@ import { registerConditionCommands } from "../agent-ui/conditions-register";
 import { registerDevtoolsCommands } from "../agent-ui/devtools-register";
 import { defaultUiDeps, type UiDeps } from "../agent-ui/driver";
 import { registerNetworkGroup } from "../agent-ui/network-register";
+import { registerPasskeyGroup } from "../agent-ui/passkey-register";
 import { registerSettingsCommands } from "../agent-ui/settings-register";
 import { withUiOptions } from "../agent-ui/ui-options";
 import { type Command, defineCommand } from "../command";
@@ -54,6 +55,7 @@ export function createUiCommand(deps: UiDeps): Command {
 					.option("--settle [ms]", "wait for a quiet screen (default budget 3000 ms), then print a +/-/= diff")
 					.option("--depth <n>", "only the first n levels of the tree")
 					.option("--a11y", "add hint, actions, a11y-focused and live-region facts (iOS: needs `open --a11y`)")
+					.option("--keys", "with -i: list the on-screen keyboard's keys (default: one [keyboard] line)")
 			).action(async (opts) => {
 				const { uiSnapshot } = await import("../agent-ui/snapshot-command");
 				done(await uiSnapshot(ctx, deps, opts));
@@ -82,6 +84,11 @@ export function createUiCommand(deps: UiDeps): Command {
 						"--a11y",
 						"iOS: launch with the injected library so a11y audit/order/speak/announcements can read hints, actions and announcements (remembered for the device; relaunches the app the first time)"
 					)
+					.option(
+						"--keychain-acl",
+						"iOS simulator: Keychain items with access control prompt for Face ID / passcode on read, like a phone (kept for the device; relaunches an app started without it)"
+					)
+					.option("--no-keychain-acl", "turn the Keychain ACL shim off for the device")
 					.addOption(kindOption())
 					.option("--project <dir>", "--kind: the app's project directory (default: cwd)")
 					.option("--settle [ms]", SETTLE)
@@ -179,8 +186,10 @@ export function createUiCommand(deps: UiDeps): Command {
 			withUiOptions(
 				cmd
 					.command("biometrics")
-					.description("simulated Face ID / Touch ID / fingerprint: status (default), enroll, unenroll, match, fail")
-					.argument("[op]", "status | enroll | unenroll | match | fail")
+					.description(
+						"simulated Face ID / Touch ID / fingerprint: status (default), enroll, unenroll, reenroll (a new enrolment), match, fail"
+					)
+					.argument("[op]", "status | enroll | unenroll | reenroll | match | fail")
 					.option("--settle [ms]", SETTLE)
 			).action(async (op, opts) => {
 				const { uiBiometrics } = await import("../agent-ui/controls");
@@ -338,6 +347,7 @@ export function createUiCommand(deps: UiDeps): Command {
 			registerConditionCommands(cmd, ctx, done, deps);
 			registerSettingsCommands(cmd, ctx, done, deps);
 			registerCameraGroup(cmd, ctx, done, deps);
+			registerPasskeyGroup(cmd, ctx, done, deps);
 		},
 	});
 }

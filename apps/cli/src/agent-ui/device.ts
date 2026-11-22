@@ -3,6 +3,7 @@ import { type PidAlive, processAlive } from "@delacour/warden-core/liveness";
 import { isEmulatorSerial } from "@delacour/warden-core/providers/android";
 import { DEVICE_LOCKED_HINT } from "@delacour/warden-core/providers/unlock-wait";
 import { PRIORITY } from "@delacour/warden-core/queue";
+import { wardenHome } from "@delacour/warden-core/store";
 import {
 	describeOwner,
 	isPhysicalIosId,
@@ -311,6 +312,8 @@ async function leaseCandidate(
 		pidAlive: check.pidAlive ?? processAlive,
 		claim,
 		label: UI_LEASE_LABEL,
+		home: wardenHome(ctx.env),
+		onNote: (note) => ctx.err(`warden: ${note}`),
 		...(pid !== undefined ? { pid } : {}),
 		exclusive: check.exclusive,
 		...(phone.kind === "phone" ? { physical: phone.physical } : {}),

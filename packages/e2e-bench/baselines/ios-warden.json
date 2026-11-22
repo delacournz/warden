@@ -1,14 +1,14 @@
 {
 	"baselineVersion": 1,
-	"id": "eas-ios-warden-2026-10-25-01a1756a",
-	"startedAt": "2026-10-25T23:55:27.736Z",
+	"id": "eas-ios-warden-2026-11-16-01a1e57b+01a1e590-mean",
+	"startedAt": "2026-11-16T18:01:36.137Z",
 	"platform": "ios",
 	"frameworks": [
 		{
 			"framework": "warden",
-			"cpuSecondsPerRep": 2.97,
-			"rssPeakBytes": 166330368,
-			"warmSuiteMedianMs": 86296
+			"cpuSecondsPerRep": 2.66,
+			"rssPeakBytes": 118128640,
+			"warmSuiteMedianMs": 64788
 		}
 	]
 }

@@ -6,25 +6,29 @@ import { canProbeFrontmost, canReadAlertOn } from "../alerts";
 import { canRecoverAxWedge } from "../ax-wedge";
 import { el, snapshotOf } from "../driver.testing";
 import type { Driver, Snapshot } from "../driver.types";
+import { canControlKeychainAcl, keychainAcl } from "../keychain-acl";
 import { canLiveTouch } from "../live-touch";
 import { fakeProxy } from "../network-proxy.testing";
 import { withReadDeadline } from "../read-deadline";
 import { HASH_FALLBACK_MIN_QUIET_MS, settleDetailOf } from "../settle";
 import { collectSpanDetail, type SpanDetail } from "../span-detail";
-import { canPasteText, canSelectAll } from "../typing";
-import { type ExecCall, fakeExec, joined } from "./exec.testing";
+import { canPasteText, canSelectAll, canTypeQuickly } from "../typing";
+import { type ExecCall, type FakeExecHandler, fakeExec, joined } from "./exec.testing";
 import type { InjectFs } from "./inject";
 import {
 	BRIDGE_COLD_DEADLINE_MS,
 	COLD_READ_TIMEOUT_MS,
 	coldReadTimeoutMs,
+	injectDylibFor,
 	KEY_USAGE,
 	type OpenIosDriverOptions,
 	openIosDriver,
 } from "./ios-driver";
+import { TYPING_AID_KEYS } from "./simctl";
 import { type FakeSimdReply, type FakeSimdRequest, fakeSimd } from "./simd.testing";
 import { spawnSimd } from "./simd-client";
 import { bunSpawn } from "./simd-transport";
+import { QUICK_KEY_PACING } from "./type-budget";
 
 const UDID = "UDID-1";
 const BUNDLE = "nz.co.delacour.warden.example";
@@ -298,9 +302,10 @@ describe("openIosDriver", () => {
 		expect(driver.capabilities).toMatchObject({ nativeSettle: true, unicodeText: true, alerts: true });
 	});
 
-	test("opening costs no xcrun call once the sim's plist has AutomationEnabled", async () => {
+	test("opening costs no xcrun call once the sim's plists have AutomationEnabled and the typing aids off", async () => {
 		const { calls } = await open(() => ({ data: null }), { devicesRoot: "/devices" }, [
 			["plutil -extract AutomationEnabled", { stdout: "true\n" }],
+			["plutil -extract Keyboard", { stdout: "false\n" }],
 		]);
 		expect(joined(calls).filter((line) => line.startsWith("xcrun"))).toEqual([]);
 	});
@@ -308,8 +313,35 @@ describe("openIosDriver", () => {
 	test("opening writes AutomationEnabled once when the plist lacks it", async () => {
 		const { calls } = await open(() => ({ data: null }), { devicesRoot: "/devices" }, [
 			["plutil -extract AutomationEnabled", { exitCode: 1, stderr: "no such key" }],
+			["plutil -extract Keyboard", { stdout: "false\n" }],
 		]);
 		expect(joined(calls).filter((line) => line.includes("defaults write"))).toHaveLength(1);
+	});
+
+	test("opening turns the keyboard's autocorrect, prediction and spell check off, so typed text reads back as typed", async () => {
+		const { calls } = await open(() => ({ data: null }), { devicesRoot: "/devices" });
+		const writes = joined(calls).filter((line) => line.includes("defaults write com.apple.keyboard.preferences"));
+		expect(writes.sort()).toEqual(
+			TYPING_AID_KEYS.map(
+				(key) => `xcrun simctl spawn ${UDID} defaults write com.apple.keyboard.preferences ${key} -bool NO`
+			).sort()
+		);
+	});
+
+	test("a typing-aid failure is logged, not fatal", async () => {
+		const calls: ExecCall[] = [];
+		const helper = fakeSimd(() => ({ data: null }));
+		const lines: string[] = [];
+		const result = await openIosDriver({
+			udid: UDID,
+			exec: fakeExec([["xcrun simctl spawn UDID-1 defaults write com.apple.Accessibility", {}]], calls),
+			spawn: helper.spawn,
+			helperPath: "/opt/warden-simd",
+			log: (line) => lines.push(line),
+		});
+		expect(result.success).toBe(true);
+		if (result.success) opened.push(result.data);
+		expect(lines.some((line) => line.includes("typing aids"))).toBe(true);
 	});
 
 	test("an AutomationEnabled failure is logged, not fatal", async () => {
@@ -979,6 +1011,31 @@ describe("system alerts through one reader and the frontmost probe", () => {
 		expect(helper.of("alertButtons").map((request) => request.backend)).toEqual(["ax", "axbridge"]);
 	});
 
+	test("a button the helper lists twice is one button; same label at another frame is kept", async () => {
+		const retry = {
+			role: "button",
+			rawType: "Button",
+			label: "Try Face ID Again",
+			frame: { x: 0, y: 0, width: 100, height: 44 },
+		};
+		const cancel = {
+			role: "button",
+			rawType: "Button",
+			label: "Cancel",
+			frame: { x: 0, y: 50, width: 100, height: 44 },
+		};
+		const cancelElsewhere = { ...cancel, frame: { x: 0, y: 200, width: 100, height: 44 } };
+		const { driver } = await open((request) =>
+			request.op === "alertButtons" ? { data: { buttons: [retry, cancel, retry, cancel, cancelElsewhere] } } : undefined
+		);
+		const alert = await unwrapped(driver.alert());
+		expect(alert?.buttons.map((button) => `${button.label}@${button.frame.y}`)).toEqual([
+			"Try Face ID Again@0",
+			"Cancel@50",
+			"Cancel@200",
+		]);
+	});
+
 	test("alert() still reads both readers (no backend on the wire)", async () => {
 		const { driver, helper } = await open((request) => (request.op === "alertButtons" ? { data: null } : undefined));
 		expect(await unwrapped(driver.alert())).toBeNull();
@@ -1078,6 +1135,7 @@ describe("typeText", () => {
 		const { driver, helper, calls } = await open(() => ({ data: null }));
 		await unwrapped(driver.typeText("Hello, World 123!"));
 		expect(helper.of("typeText")[0]?.text).toBe("Hello, World 123!");
+		expect(Object.keys(helper.of("typeText")[0] ?? {})).not.toContain("holdMs");
 		expect(helper.of("paste")).toHaveLength(0);
 		expect(joined(calls).some((line) => line.includes("pbcopy"))).toBe(false);
 	});
@@ -1133,6 +1191,44 @@ describe("typeText", () => {
 		const result = await driver.typeText("a");
 		expect(!result.success && result.error.code).toBe("E_HID");
 		expect(helper.of("paste")).toHaveLength(0);
+	});
+});
+
+describe("typeTextQuick", () => {
+	test("is the typeText op with the quick pacing in the request", async () => {
+		const { driver, helper } = await open(() => ({ data: null }), { keyPacingEnv: {} });
+		if (!canTypeQuickly(driver)) throw new Error("expected typeTextQuick");
+		await unwrapped(driver.typeTextQuick("ada@example.com"));
+		expect(helper.of("typeText")[0]).toMatchObject({ text: "ada@example.com", ...QUICK_KEY_PACING });
+	});
+
+	test("is not offered when WARDEN_SIMD_* key pacing is set: the user's pacing wins", async () => {
+		for (const name of [
+			"WARDEN_SIMD_PACE_MS",
+			"WARDEN_SIMD_HOLD_MS",
+			"WARDEN_SIMD_REPEAT_GAP_MS",
+			"WARDEN_SIMD_LEAD_MS",
+		]) {
+			const { driver } = await open(() => ({ data: null }), { keyPacingEnv: { [name]: "40" } });
+			expect(canTypeQuickly(driver)).toBe(false);
+		}
+	});
+
+	test("pastes what the HID keyboard map cannot type, like typeText", async () => {
+		const { driver, helper } = await open(
+			(request) =>
+				request.op === "typeText"
+					? { error: { code: "E_UNSUPPORTED_TEXT", message: "no HID usage for é", detail: { rest: "é" } } }
+					: { data: null },
+			{ keyPacingEnv: {} },
+			[
+				["sh -c", {}],
+				["xcrun simctl pbpaste", { stdout: "é" }],
+			]
+		);
+		if (!canTypeQuickly(driver)) throw new Error("expected typeTextQuick");
+		await unwrapped(driver.typeTextQuick("café"));
+		expect(helper.requests.map((request) => request.op)).toEqual(["typeText", "paste"]);
 	});
 });
 
@@ -1585,16 +1681,14 @@ describe("network conditions", () => {
 	/** an in-memory state dir whose app "acks" every state write */
 	function stateDir() {
 		const files = new Map<string, string>();
-		const app = { running: true };
+		const app = { running: true, keychainAcl: false };
 		const fs: InjectFs = {
 			mkdir: () => undefined,
 			writeAtomic: (path, text) => {
 				files.set(path, text);
 				if (app.running && path.endsWith("state.json")) {
-					files.set(
-						`${path}.ack`,
-						JSON.stringify({ seq: (JSON.parse(text) as { seq: number }).seq, pid: 4242, proxy: true })
-					);
+					const seq = (JSON.parse(text) as { seq: number }).seq;
+					files.set(`${path}.ack`, JSON.stringify({ seq, pid: 4242, proxy: true, keychainAcl: app.keychainAcl }));
 				}
 			},
 			read: (path) => files.get(path),
@@ -1662,6 +1756,93 @@ describe("network conditions", () => {
 		const env = helper.of("launch")[0]?.env;
 		expect(env).toMatchObject({ DYLD_INSERT_LIBRARIES: dylib, WARDEN_CAMERA: "1" });
 		expect(env).not.toHaveProperty("WARDEN_NET_PROXY");
+	});
+
+	test("passkeys without a lease is E_UNSUPPORTED and says what is missing", async () => {
+		const { driver } = await open(lifecycle);
+		const result = await driver.passkeys({ kind: "status" });
+		expect(!result.success && result.error.code).toBe("E_UNSUPPORTED");
+		expect(!result.success && result.error.message).toContain("injected dylib");
+	});
+
+	test("passkeys set before launch loads the dylib with the authenticator on, store under the lease's home", async () => {
+		const dir = stateDir();
+		dir.app.running = false;
+		const { driver, helper } = await open(lifecycle, {
+			networkProxy: fakeProxy(19_125),
+			injectFs: dir.fs,
+			exists,
+			env: { helperDir: "/opt" } as OpenIosDriverOptions["env"],
+			wardenHome: "/w",
+		});
+		const set = await driver.passkeys({ kind: "set", mode: "cancel" });
+		expect(set.success && set.data).toMatchObject({ enabled: true, mode: "cancel", appliesOnLaunch: true });
+		dir.app.running = true;
+		await unwrapped(driver.app.launch(BUNDLE));
+		const env = helper.of("launch")[0]?.env;
+		expect(env).toMatchObject({ DYLD_INSERT_LIBRARIES: dylib, WARDEN_PASSKEYS: "1" });
+		expect(env).not.toHaveProperty("WARDEN_NET_PROXY");
+		expect(JSON.parse(dir.files.get("/w/inject/UDID-1/state.json") ?? "{}").passkeys).toEqual({
+			mode: "cancel",
+			uv: "match",
+			storePath: "/w/passkeys/UDID-1/store.json",
+		});
+	});
+
+	test("the Keychain ACL shim is a capability of the simulator driver; without a lease it says what is missing", async () => {
+		const { driver } = await open(lifecycle);
+		expect(canControlKeychainAcl(driver)).toBe(true);
+		const result = await keychainAcl(driver, { kind: "on" });
+		expect(!result.success && result.error.code).toBe("E_UNSUPPORTED");
+		expect(!result.success && result.error.message).toContain("injected dylib");
+	});
+
+	test("the Keychain ACL shim switched on before launch loads the dylib with WARDEN_KEYCHAIN_ACL=1, no proxy", async () => {
+		const dir = stateDir();
+		dir.app.running = false;
+		const { driver, helper } = await open(lifecycle, {
+			networkProxy: fakeProxy(19_126),
+			injectFs: dir.fs,
+			exists,
+			env: { helperDir: "/opt" } as OpenIosDriverOptions["env"],
+			wardenHome: "/w",
+		});
+		const set = await keychainAcl(driver, { kind: "on" });
+		expect(set).toEqual({ success: true, data: { enabled: true, generation: 0, appliesOnLaunch: true } });
+		dir.app.running = true;
+		dir.app.keychainAcl = true;
+		await unwrapped(driver.app.launch(BUNDLE));
+		const env = helper.of("launch")[0]?.env;
+		expect(env).toMatchObject({ DYLD_INSERT_LIBRARIES: dylib, WARDEN_KEYCHAIN_ACL: "1" });
+		expect(env).not.toHaveProperty("WARDEN_NET_PROXY");
+		expect(JSON.parse(dir.files.get("/w/inject/UDID-1/state.json") ?? "{}").keychainAcl).toEqual({
+			enabled: true,
+			generation: 0,
+			itemsPath: "/w/inject/UDID-1/keychain-acl-items.json",
+		});
+	});
+
+	test("biometrics reenroll: unenroll then enroll on the sim, and with the shim on the generation goes up once", async () => {
+		const dir = stateDir();
+		const enrolled: FakeExecHandler[] = [
+			["xcrun simctl spawn UDID-1 notifyutil -g", { stdout: "com.apple.BiometricKit.enrollmentChanged 1\n" }],
+			["xcrun simctl spawn UDID-1 notifyutil", {}],
+		];
+		const { driver, calls } = await open(
+			lifecycle,
+			{ networkProxy: fakeProxy(19_127), injectFs: dir.fs, exists, wardenHome: "/w" },
+			enrolled
+		);
+		const plain = await driver.biometrics("reenroll");
+		expect(plain).toEqual({ success: true, data: { enrolled: true, modality: expect.any(String) } });
+		const notify = calls.map((c) => c.cmd.join(" ")).filter((c) => c.includes("notifyutil -s"));
+		expect(notify.map((c) => c.at(-1))).toEqual(["0", "1"]);
+		await keychainAcl(driver, { kind: "on" });
+		const bumped = await driver.biometrics("reenroll");
+		expect(bumped.success && bumped.data.generation).toBe(1);
+		expect(JSON.parse(dir.files.get("/w/inject/UDID-1/keychain-acl.json") ?? "{}")).toEqual({ generation: 1 });
+		const status = await driver.biometrics("status");
+		expect(status.success && "generation" in status.data).toBe(false);
 	});
 
 	test("a plain run launches exactly as before: no injected env at all", async () => {
@@ -2387,5 +2568,35 @@ describe("live touch", () => {
 		const result = await driver.touchMove({ x: 1, y: 1 });
 		expect(!result.success && result.error.code).toBe("E_BAD_REQUEST");
 		await unwrapped(driver.touchDown({ x: 1, y: 1 }));
+	});
+});
+
+describe("injectDylibFor", () => {
+	const fetched = "/w/simd/9.9.9/libwarden-inject.dylib";
+	const base = {
+		udid: UDID,
+		exec: fakeExec([]),
+		execPath: "/usr/local/bin/bun",
+		importDir: "/nowhere/src/driver/ios",
+		wardenHome: "/w",
+		exists: (path: string) => path === fetched,
+	};
+
+	test("finds the dylib `warden doctor --fetch-helper` staged under $WARDEN_HOME/simd/<WARDEN_VERSION>", () => {
+		// a spec process run by a source warden: execPath is bun, so only the version names the fetched helper dir
+		const found = injectDylibFor({
+			...base,
+			env: { simd: undefined, simdSocket: undefined, helperDir: undefined, wardenVersion: "9.9.9" },
+		});
+		expect(found).toEqual({ success: true, data: fetched });
+	});
+
+	test("an explicit version still wins over WARDEN_VERSION", () => {
+		const found = injectDylibFor({
+			...base,
+			version: "1.0.0",
+			env: { simd: undefined, simdSocket: undefined, helperDir: undefined, wardenVersion: "9.9.9" },
+		});
+		expect(found.success).toBe(false);
 	});
 });

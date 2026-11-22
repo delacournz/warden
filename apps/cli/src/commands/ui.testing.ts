@@ -50,6 +50,8 @@ export type HarnessOptions = {
 	pasteText?: boolean;
 	/** the fake driver offers `setText` (like the Android driver with `warden-uiad`) */
 	setText?: boolean;
+	/** the fake driver offers `typeTextQuick` (like the iOS driver) */
+	typeTextQuick?: boolean;
 	/** a tap on an alert's button answers it (the alert then reads as gone), like a real device */
 	answerAlertOnTap?: boolean;
 	/** override the fake driver's capabilities (e.g. `pinch: false`, `maxPointers: 1`) */
@@ -86,6 +88,7 @@ export function harness(screens: Snapshot[] | (() => Snapshot), options: Harness
 		...(options.selectAll ? { selectAll: true } : {}),
 		...(options.setText ? { setText: true } : {}),
 		...(options.pasteText ? { pasteText: true } : {}),
+		...(options.typeTextQuick ? { typeTextQuick: true } : {}),
 		...(options.answerAlertOnTap ? { answerAlertOnTap: true } : {}),
 		...(options.capabilities ? { capabilities: options.capabilities } : {}),
 		onCall: (call) => options.onCall?.(call, driver),

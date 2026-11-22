@@ -44,6 +44,8 @@ import {
 } from "../claim-flags";
 import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
+import type { E2eEventJson, E2eReportJson } from "../contracts/e2e.schema";
+import { SCHEMA_VERSIONS } from "../contracts/versions";
 import {
 	findBun,
 	NETPROXY_SUBCOMMAND,
@@ -58,7 +60,7 @@ import { type LaunchPlan, specBundleId, specDevClientScheme, specLaunchArgs } fr
 import { annotations, commonFailure, githubTarget, stepSummary, testEvent, testTotals } from "../e2e/report-output";
 import { type E2eTiming, runTiming, timingLine } from "../e2e/timing";
 import { exitGate, type RunShape, type SpecVerdict, type Verdicts, verdicts } from "../e2e/verdicts";
-import { type AppFlagValues, withLeaseOptions } from "../lease-session";
+import { type AppFlagValues, buildAppIntoCache, withLeaseOptions } from "../lease-session";
 import { emit, note, reportError, success, warn } from "../output";
 import { canPrompt, pickPhysicalArgs, reportPick } from "../physical-pick";
 import { currentBuild } from "../update/build-info";
@@ -99,6 +101,8 @@ export type E2eOpts = ClaimFlagValues &
 		tui: boolean;
 		report?: string;
 		dryRun?: true;
+		/** `--build-only`: build the app the run would install into the cache, then stop (no device, no spec) */
+		buildOnly?: true;
 		/** false = `--no-shutdown` */
 		shutdown: boolean;
 		/** false = `--no-warm` (default true) */
@@ -109,9 +113,13 @@ export type E2eOpts = ClaimFlagValues &
 		dev?: true;
 		/** `--a11y`: iOS apps launch with the injected library even when the suite sets no `a11y` */
 		a11y?: true;
+		/** `--keychain-acl` / `--no-keychain-acl`: iOS sims enforce Keychain access control (over the suite's `keychainAcl`) */
+		keychainAcl?: boolean;
 	};
 
 export type E2eReport = {
+	/** the `warden.e2e.report` contract version */
+	schemaVersion: (typeof SCHEMA_VERSIONS)["warden.e2e.report"];
 	suite: string;
 	platform: Platform;
 	base?: string;
@@ -354,12 +362,16 @@ async function metroPlan(suite: Suite, bundleId: string): Promise<Result<MetroPl
 }
 
 /** Write the report (batch dir + `--report`), print it for `--json` / as the last `--json-lines` event. */
-async function publish(ctx: CommandContext, deps: BatchDeps, opts: E2eOpts, report: E2eReport): Promise<void> {
+async function publish(ctx: CommandContext, deps: BatchDeps, opts: E2eOpts, built: E2eReport): Promise<void> {
+	// the published contract: a field the schema lacks fails to compile here
+	const report: E2eReportJson = built;
 	const text = `${JSON.stringify(report, null, 2)}\n`;
 	if (report.batchDir) await deps.writeFile(join(report.batchDir, "e2e-report.json"), text);
 	if (opts.report) await deps.writeFile(opts.report, text);
-	if (opts.jsonLines) ctx.out(`${JSON.stringify({ event: "report", report })}\n`);
-	else if (opts.json) emit(ctx, true, report, "");
+	if (opts.jsonLines) {
+		const event: E2eEventJson = { schemaVersion: SCHEMA_VERSIONS["warden.e2e.event"], event: "report", report };
+		ctx.out(`${JSON.stringify(event)}\n`);
+	} else if (opts.json) emit(ctx, true, report, "");
 }
 
 /**
@@ -433,7 +445,12 @@ const jsonOut = (opts: E2eOpts): true | undefined => opts.json ?? opts.jsonLines
 /** `--json-lines`: each finished test as one event on stdout. */
 function jsonLinesHook(ctx: CommandContext, opts: E2eOpts): { onTest?: (spec: string, result: TestResult) => void } {
 	if (!opts.jsonLines) return {};
-	return { onTest: (id, result) => ctx.out(`${JSON.stringify(testEvent(id, result))}\n`) };
+	return {
+		onTest: (id, result) => {
+			const event: E2eEventJson = testEvent(id, result);
+			ctx.out(`${JSON.stringify(event)}\n`);
+		},
+	};
 }
 
 /** Failed / not-run specs with their failing tests, any `test.only`, then the one-line gate verdict. */
@@ -450,7 +467,10 @@ function printVerdict(ctx: CommandContext, report: E2eReport): void {
 	const passed = report.specs.filter((f) => f.verdict === "passed").length;
 	const line = `warden e2e: ${passed}/${report.specs.length} spec(s) passed — ${report.ok ? "gate passed" : "gate failed"}`;
 	if (report.ok) success(ctx, line);
-	else reportError(ctx, "e2e", line.replace(/^warden e2e: /, ""));
+	else {
+		ctx.failure?.classify?.("tests_failed");
+		reportError(ctx, "e2e", line.replace(/^warden e2e: /, ""));
+	}
 	if (report.timing) ctx.err(timingLine(report.timing));
 }
 
@@ -483,6 +503,7 @@ type Plan = { affected: Affected; selection: Selection; specs: SelectedSpec[] };
 
 /** Affected specs for the one platform this run is for (warnings printed, `--explain` shown). */
 async function plan(ctx: CommandContext, suiteName: string | undefined, opts: E2eOpts): Promise<Result<Plan>> {
+	if (opts.buildOnly && opts.dryRun) return err("--build-only and --dry-run can't be combined");
 	const { color } = ctx.ui;
 	const affected = await runAffected(ctx, suiteName, opts);
 	if (!affected.success) return affected;
@@ -509,6 +530,7 @@ async function publishNotRun(
 	if (specs.length === 0) success(ctx, "warden e2e: no affected specs — nothing to run");
 	const notRun = specs.map((f): SpecVerdict => ({ ...f, verdict: "not-run", attempts: 0 }));
 	await publish(ctx, deps, opts, {
+		schemaVersion: SCHEMA_VERSIONS["warden.e2e.report"],
 		...base,
 		isolate: runIsolation(suite.config, opts, passed),
 		ok: true,
@@ -554,16 +576,11 @@ async function e2e(
 	}
 	const run = await preparedRun(ctx, deps, suite, selection.platform, specs, { ...opts, headless }, passed, kind.data);
 	if (!run.success) return fail(run.error);
-	// before any lease or build: a pinned runtime must be installed, never swapped for another
-	const missing = await missingRuntime(ctx, selection.platform, run.data);
-	if (missing !== undefined) return fail(missing);
-	// before any lease or build: several usable phones are asked about, or refused (ambiguous_device, exit 2)
-	const picked = await pickPhysicalArgs(ctx, resolveOwner(ctx), run.data.args, {
-		prompt: canPrompt(ctx, { json: jsonOut(opts) }),
-	});
-	if (picked.kind !== "ok") return reportPick(ctx, "e2e", picked);
+	if (opts.buildOnly) return buildOnly(ctx, deps, base, run.data.args.app, run.data.physical, opts);
+	const leasable = await leaseArgs(ctx, selection.platform, run.data, opts);
+	if (!leasable.ok) return leasable.exit;
 	const { shape, plan: jobs, argvOf, spec, physical } = run.data;
-	const { args } = picked;
+	const { args } = leasable;
 	const runs = shardRuns(jobs, { argvOf, readFile: deps.readFile });
 	const session = await runSession(
 		ctx,
@@ -596,6 +613,69 @@ async function e2e(
 }
 
 /**
+ * The checks between the plan and the first lease or build: a pinned runtime must be installed (never swapped for
+ * another), and several usable phones are asked about, or refused (`ambiguous_device`, exit 2).
+ */
+async function leaseArgs(
+	ctx: CommandContext,
+	platform: Platform,
+	run: RunPlan,
+	opts: E2eOpts
+): Promise<{ ok: true; args: BatchArgs } | { ok: false; exit: number }> {
+	const missing = await missingRuntime(ctx, platform, run);
+	if (missing !== undefined) {
+		reportError(ctx, "e2e", missing);
+		return { ok: false, exit: 1 };
+	}
+	const picked = await pickPhysicalArgs(ctx, resolveOwner(ctx), run.args, {
+		prompt: canPrompt(ctx, { json: jsonOut(opts) }),
+	});
+	if (picked.kind !== "ok") return { ok: false, exit: reportPick(ctx, "e2e", picked) };
+	return { ok: true, args: picked.args };
+}
+
+/** What `warden e2e --build-only --json` prints: the app the run would install, `null` when the suite installs none. */
+export type E2eBuildReport = {
+	suite: string;
+	platform: Platform;
+	app: { path: string; hash: string; source: string } | null;
+};
+
+/**
+ * `--build-only`: build (or find) the app the run would install into the cache, with the same kind, variant and
+ * bundle env, then stop before any device or spec. A CI job runs it as its own step, so the suite's own timeout
+ * times the specs, not a cold native build.
+ */
+async function buildOnly(
+	ctx: CommandContext,
+	deps: BatchDeps,
+	base: { suite: string; platform: Platform },
+	app: BatchArgs["app"],
+	physical: boolean,
+	opts: E2eOpts
+): Promise<number> {
+	const report = (built: E2eBuildReport["app"]): E2eBuildReport => ({
+		suite: base.suite,
+		platform: base.platform,
+		app: built,
+	});
+	if (app === undefined) {
+		emit(ctx, opts.json === true, report(null), `warden e2e: suite "${base.suite}" installs no app — nothing to build`);
+		return 0;
+	}
+	const build = deps.buildApp ?? buildAppIntoCache;
+	const built = await build(ctx, resolveOwner(ctx), base.platform, physical ? { ...app, physical: true } : app);
+	if (!built.success) {
+		reportError(ctx, "e2e", `build failed: ${built.error}`);
+		return 1;
+	}
+	const { appPath, hash, source } = built.data;
+	if (!opts.json) success(ctx, `warden e2e: ${base.platform} app ready (${source}): ${appPath}`);
+	else emit(ctx, true, report({ path: appPath, hash, source }), "");
+	return 0;
+}
+
+/**
  * The exit code of a session that ended before there were verdicts to print, else undefined: interrupted (130), stopped
  * before any spec (a phone's runner would not start: the session already said why, with its own exit code), or no
  * device claimed (a phone that stayed locked, `device_locked`, already reported: exit 2).
@@ -616,6 +696,7 @@ function buildReport(
 	timing: E2eTiming | undefined
 ): E2eReport {
 	return {
+		schemaVersion: SCHEMA_VERSIONS["warden.e2e.report"],
 		...base,
 		isolate,
 		ok: result.ok,
@@ -901,7 +982,7 @@ export async function specPlan(
 	deps: SpecPlanDeps,
 	suite: Suite,
 	platform: Platform,
-	opts: Pick<E2eOpts, "perf" | "biometrics" | "a11y"> = {},
+	opts: Pick<E2eOpts, "perf" | "biometrics" | "a11y" | "keychainAcl"> = {},
 	/** the run is on phones: an iPhone's app has the device bundle id (`projects[].ios.device.bundleIdentifier`) */
 	physical = false
 ): AsyncResult<SpecPlan> {
@@ -964,12 +1045,13 @@ function specTimeouts(spec: Suite["config"]["spec"]): Result<SpecPlan["env"]["ti
 	});
 }
 
-/** The spec env fields the suite (and `--biometrics` / `--a11y`) switch on: budgets, conditions, biometrics, a11y, camera feeds. */
+/** The spec env fields the suite (and `--biometrics` / `--a11y` / `--keychain-acl`) switch on: budgets, conditions, biometrics, a11y, Keychain ACL, camera feeds. */
 function suiteSpecEnv(
 	suite: Suite,
 	platform: Platform,
-	opts: Pick<E2eOpts, "biometrics" | "a11y">
+	opts: Pick<E2eOpts, "biometrics" | "a11y" | "keychainAcl">
 ): Partial<SpecPlan["env"]> {
+	const keychainAcl = opts.keychainAcl ?? suite.keychainAcl;
 	return {
 		...(suite.perfBudgets === undefined ? {} : { perfBudgets: suite.perfBudgets }),
 		...(suite.conditions === undefined ? {} : { conditions: suite.conditions }),
@@ -977,6 +1059,8 @@ function suiteSpecEnv(
 		...(suite.a11y === undefined ? {} : { a11yAudit: suite.a11y }),
 		// the injected library reads hint / actions / order / announcements on iOS: loaded only for a suite that asks (`a11y` key or `--a11y`)
 		...(platform === "ios" && (suite.a11y !== undefined || opts.a11y === true) ? { a11y: true } : {}),
+		// the shim is an iOS simulator thing: an Android suite sharing a top-level `keychainAcl` gets nothing
+		...(platform === "ios" && keychainAcl !== undefined ? { keychainAcl } : {}),
 		...(suite.config.camera === undefined
 			? {}
 			: { cameraFeeds: resolveCameraConfig(suite.config.camera, suite.configDir) }),
@@ -1041,6 +1125,10 @@ export function createE2eCommand(deps: BatchDeps): Command {
 				.option("--required-only", "only run specs with required: true")
 				.option("--explain", "print why each spec was selected before running")
 				.option("--dry-run", "select and explain, run nothing")
+				.option(
+					"--build-only",
+					"build (or find) the app the run would install into the cache, then stop: no device, no spec (a CI step before the timed run)"
+				)
 				.option("--report <file>", "also write e2e-report.json here")
 				.option(
 					"--json-lines",
@@ -1063,6 +1151,11 @@ export function createE2eCommand(deps: BatchDeps): Command {
 					"--a11y",
 					"iOS: launch apps with the injected library so specs can read hints, actions, reading order and announcements (a suite with an `a11y` key does this already)"
 				)
+				.option(
+					"--keychain-acl",
+					"iOS simulators: Keychain items with access control prompt for Face ID / passcode on read, like a phone (suite keychainAcl)"
+				)
+				.option("--no-keychain-acl", "leave the Keychain ACL shim off even when the suite sets keychainAcl")
 				.option("--no-warm", "skip pre-warming the iOS socket helper per device (default: on; suite warmDrivers)")
 				.addHelpText(
 					"after",

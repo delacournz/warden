@@ -30,6 +30,7 @@ const spec = (over: Partial<SpecVerdict> & Pick<SpecVerdict, "id">): SpecVerdict
 });
 
 const report = (specs: SpecVerdict[], ok = false): E2eReport => ({
+	schemaVersion: 1,
 	suite: "mobile",
 	platform: "ios",
 	isolate: "device",
@@ -144,6 +145,7 @@ describe("testEvent", () => {
 			device: { udid: "U1", platform: "ios", name: "warden-iphone-17-1" },
 		};
 		expect(testEvent("a01-sign-in", result)).toEqual({
+			schemaVersion: 1,
 			event: "test",
 			spec: "a01-sign-in",
 			file: "/w/app/e2e/m1/a01-sign-in.e2e.ts",

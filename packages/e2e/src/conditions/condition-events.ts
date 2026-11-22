@@ -10,6 +10,8 @@ import type {
 	LocaleCondition,
 	LocationCondition,
 	NetworkCondition,
+	PasskeyMode,
+	PasskeyUv,
 	PermissionCondition,
 } from "@delacour/warden-core/conditions/conditions.types";
 
@@ -28,6 +30,7 @@ export type ConditionEvent =
 	| { type: "condition"; area: "battery"; value: BatteryCondition; at: number }
 	| { type: "condition"; area: "keyboard"; value: KeyboardCondition; at: number }
 	| { type: "condition"; area: "camera"; value: CameraCondition; at: number }
+	| { type: "condition"; area: "passkeys"; value: { enabled: boolean; mode: PasskeyMode; uv: PasskeyUv }; at: number }
 	| { type: "condition"; area: "faults"; value: { kind: "faults"; rules: readonly HostFault[] }; at: number };
 
 export type ConditionSink = (event: ConditionEvent) => void;
@@ -55,6 +58,7 @@ const KNOWN_AREAS: ReadonlySet<string> = new Set([
 	"battery",
 	"keyboard",
 	"camera",
+	"passkeys",
 ]);
 
 function parseEvent(line: string): ConditionEvent | undefined {

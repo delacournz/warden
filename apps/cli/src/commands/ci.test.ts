@@ -99,6 +99,7 @@ describe("warden ci cache", () => {
 		expect(text).toContain("builds");
 		expect(text).toContain("warden-e2e-v1-builds-macOS-ARM64-f1b4");
 		expect(text).toContain("warden-e2e-v1-ccache-macOS-ARM64-f1b4");
+		expect(text).toContain("warden-e2e-v1-metro-macOS-ARM64-");
 		expect(text).toContain("golden");
 	});
 

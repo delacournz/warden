@@ -3,5 +3,5 @@
 	"description": "Every command, config key and env var",
 	"icon": "SquareTerminal",
 	"root": true,
-	"pages": ["cli", "configuration", "environment", "e2e-driver"]
+	"pages": ["cli", "json", "configuration", "environment", "e2e-driver"]
 }

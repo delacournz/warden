@@ -67,6 +67,22 @@ describe("release reset (core)", () => {
 	});
 });
 
+describe("release reset of the Keychain ACL shim (core)", () => {
+	test("switches the gate of a still-running app off, keeping its generation and sidecar", () => {
+		const dir = mkdtempSync(join(tmpdir(), "warden-inject-"));
+		try {
+			const path = injectStatePath(dir, "U1");
+			mkdirSync(dirname(path), { recursive: true });
+			const kacl = { enabled: true, generation: 2, itemsPath: "/w/i.json" };
+			writeFileSync(path, encodeInjectState({ seq: 3, keychainAcl: kacl }));
+			expect(neutralizeInjectState(path)).toBeUndefined();
+			expect(parseInjectState(readFileSync(path, "utf8"))?.keychainAcl).toEqual({ ...kacl, enabled: false });
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+});
+
 describe("injectLaunchEnv", () => {
 	test("loads the dylib and names the channel; the proxy and clock only when set", () => {
 		expect(injectLaunchEnv({ dylib: "/d/lib.dylib", statePath: "/s/state.json" })).toEqual({
@@ -88,6 +104,38 @@ describe("injectLaunchEnv", () => {
 			WARDEN_CLOCK_OFFSET_MS: "3600000",
 			WARDEN_INJECT_DEBUG: "1",
 		});
+	});
+});
+
+describe("keychain acl", () => {
+	const kacl = { enabled: true, generation: 2, itemsPath: "/w/inject/U/keychain-acl-items.json" };
+
+	test("the state round-trips; a malformed value is dropped", () => {
+		const text = encodeInjectState({ seq: 3, keychainAcl: kacl });
+		expect(JSON.parse(text).keychainAcl).toEqual(kacl);
+		expect(parseInjectState(text)?.keychainAcl).toEqual(kacl);
+		expect(parseInjectState(JSON.stringify({ seq: 1, keychainAcl: { enabled: true } }))?.keychainAcl).toBeUndefined();
+		expect(parseInjectState(JSON.stringify({ seq: 1 }))?.keychainAcl).toBeUndefined();
+	});
+
+	test("the ack says whether the app was launched with the shim", () => {
+		expect(parseInjectAck(JSON.stringify({ seq: 1, pid: 2, keychainAcl: true }))?.keychainAcl).toBe(true);
+		expect(parseInjectAck(JSON.stringify({ seq: 1, pid: 2, keychainAcl: false }))?.keychainAcl).toBeUndefined();
+	});
+
+	test("the launch env turns the shim on only when asked", () => {
+		const base = { dylib: "/d.dylib", statePath: "/s/state.json" };
+		expect(injectLaunchEnv({ ...base, keychainAcl: true })).toMatchObject({
+			DYLD_INSERT_LIBRARIES: "/d.dylib",
+			WARDEN_KEYCHAIN_ACL: "1",
+		});
+		expect(injectLaunchEnv(base)).not.toHaveProperty("WARDEN_KEYCHAIN_ACL");
+	});
+
+	test("the shim alone is a reason to inject", () => {
+		const none = { networkActive: false, clockActive: false, requested: false };
+		expect(shouldInject({ ...none, keychainAclActive: true })).toBe(true);
+		expect(shouldInject({ ...none, keychainAclActive: false })).toBe(false);
 	});
 });
 
@@ -158,6 +206,12 @@ describe("locateInjectDylib", () => {
 		expect(locateInjectDylib({ ...base, exists: (p) => p === dist })).toEqual({ success: true, data: dist });
 		const home = `/home/.warden/simd/1.2.3/${INJECT_DYLIB}`;
 		expect(locateInjectDylib({ ...base, exists: (p) => p === home })).toEqual({ success: true, data: home });
+	});
+
+	test("the warden home copy is keyed by version: a new warden never loads an older cached dylib", () => {
+		const old = `/home/.warden/simd/1.2.2/${INJECT_DYLIB}`;
+		const found = locateInjectDylib({ ...base, exists: (p) => p === old });
+		expect(found.success).toBe(false);
 	});
 
 	test("WARDEN_INJECT_DYLIB that points at nothing is an error, not a fall-through", () => {
@@ -375,6 +429,52 @@ describe("keyboard", () => {
 		});
 		expect(neutralizeInjectState(path, "keyboard")).toBeUndefined();
 		expect(parseInjectState(readFileSync(path, "utf8"))).toMatchObject({ seq: 7, keyboard: "software" });
+		rmSync(dir, { recursive: true, force: true });
+	});
+});
+
+describe("passkeys", () => {
+	const passkeys = { mode: "cancel" as const, uv: "skip" as const, storePath: "/w/passkeys/U1/store.json" };
+
+	test("the state carries mode, uv and the store path and round-trips them; no key when off", () => {
+		const text = encodeInjectState({ seq: 3, passkeys });
+		expect(JSON.parse(text).passkeys).toEqual(passkeys);
+		expect(parseInjectState(text)?.passkeys).toEqual(passkeys);
+		expect(JSON.parse(encodeInjectState({ seq: 4 }))).not.toHaveProperty("passkeys");
+		expect(parseInjectState(encodeInjectState({ seq: 4 }))?.passkeys).toBeUndefined();
+	});
+
+	test("a malformed passkeys object is dropped, not passed to the dylib", () => {
+		for (const bad of [{ mode: "bogus", uv: "match", storePath: "/s" }, { mode: "auto", uv: "match" }, "on", null]) {
+			expect(parseInjectState(JSON.stringify({ seq: 1, passkeys: bad }))?.passkeys).toBeUndefined();
+		}
+	});
+
+	test("the ack says whether the app was launched with the authenticator", () => {
+		expect(parseInjectAck(JSON.stringify({ seq: 1, pid: 2, passkeys: true }))?.passkeys).toBe(true);
+		expect(parseInjectAck(JSON.stringify({ seq: 1, pid: 2, passkeys: false }))?.passkeys).toBeUndefined();
+		expect(parseInjectAck(JSON.stringify({ seq: 1, pid: 2 }))?.passkeys).toBeUndefined();
+	});
+
+	test("the launch env turns the authenticator on only when asked", () => {
+		expect(injectLaunchEnv({ dylib: "/d", statePath: "/s", passkeys: true }).WARDEN_PASSKEYS).toBe("1");
+		expect(injectLaunchEnv({ dylib: "/d", statePath: "/s" })).not.toHaveProperty("WARDEN_PASSKEYS");
+	});
+
+	test("an enabled authenticator alone is a reason to inject", () => {
+		expect(shouldInject({ networkActive: false, clockActive: false, passkeysActive: true, requested: false })).toBe(
+			true
+		);
+	});
+
+	test("core's neutral state keeps the authenticator, except when the reset area is passkeys", () => {
+		const dir = mkdtempSync(join(tmpdir(), "warden-inject-pk-"));
+		const path = join(dir, "state.json");
+		writeFileSync(path, encodeInjectState({ seq: 5, passkeys }));
+		expect(neutralizeInjectState(path, "network")).toBeUndefined();
+		expect(parseInjectState(readFileSync(path, "utf8"))?.passkeys).toEqual(passkeys);
+		expect(neutralizeInjectState(path, "passkeys")).toBeUndefined();
+		expect(parseInjectState(readFileSync(path, "utf8"))?.passkeys).toBeUndefined();
 		rmSync(dir, { recursive: true, force: true });
 	});
 });

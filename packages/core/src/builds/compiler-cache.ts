@@ -20,6 +20,11 @@ export type CompilerCacheInput = {
 	 * it as a real env var every compile is plain clang and the cache stays empty.
 	 */
 	ccacheBinary?: string;
+	/**
+	 * The selected Xcode; becomes `CCACHE_COMPILERCHECK=string:xcode-<version>-<build>`. ccache's default (the compiler's
+	 * mtime) misses everything after a CI image reinstalls the same Xcode; its version + build names the same clang.
+	 */
+	xcode?: { version: string; build: string };
 	enabled: boolean;
 	/** caller env, to preserve `GRADLE_OPTS` */
 	baseEnv?: Record<string, string | undefined>;
@@ -43,6 +48,9 @@ export function compilerCacheEnv(input: CompilerCacheInput): Record<string, stri
 		CCACHE_FILECLONE: "true",
 		CCACHE_NOHASHDIR: "true",
 		...(input.ccacheBinary ? { CCACHE_BINARY: input.ccacheBinary } : {}),
+		...(input.xcode && !input.baseEnv?.CCACHE_COMPILERCHECK
+			? { CCACHE_COMPILERCHECK: `string:xcode-${input.xcode.version}-${input.xcode.build}` }
+			: {}),
 		...(input.xcodeMajor !== undefined && input.xcodeMajor >= XCODE_COMPILATION_CACHE_MIN_MAJOR
 			? { COMPILATION_CACHE_ENABLE_CACHING: "YES" }
 			: {}),

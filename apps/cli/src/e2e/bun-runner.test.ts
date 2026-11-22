@@ -169,6 +169,12 @@ describe("specEnv perf", () => {
 		expect("WARDEN_BIOMETRICS" in specEnv({ ...base, biometrics: false })).toBe(false);
 	});
 
+	test("WARDEN_KEYCHAIN_ACL is 1 / 0 when the suite or flag says so, absent otherwise", () => {
+		expect(specEnv({ ...base, keychainAcl: true }).WARDEN_KEYCHAIN_ACL).toBe("1");
+		expect(specEnv({ ...base, keychainAcl: false }).WARDEN_KEYCHAIN_ACL).toBe("0");
+		expect("WARDEN_KEYCHAIN_ACL" in specEnv(base)).toBe(false);
+	});
+
 	test("WARDEN_A11Y_AUDIT carries the suite's a11y config; WARDEN_A11Y=1 only when asked", () => {
 		const env = specEnv({
 			...base,

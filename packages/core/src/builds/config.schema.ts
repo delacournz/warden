@@ -101,6 +101,18 @@ export const projectConfigSchema = z
 					})
 					.strict()
 					.optional(),
+				/** the machine-wide CocoaPods cache (`warden pods install`, local iOS builds) */
+				pods: z
+					.object({
+						/** false = never restore or store pods for this project: every install is a real `pod install` (hooks with side effects) */
+						cache: z.boolean().optional(),
+						/** env names the Podfile or its `post_install` hooks read (`NAME_*` = a prefix): their values join the cache key */
+						env: z
+							.array(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*\*?$/, "an env name, or a prefix ending in *"))
+							.optional(),
+					})
+					.strict()
+					.optional(),
 			})
 			.strict()
 			.optional(),
@@ -167,6 +179,8 @@ export const wardenConfigSchema = z
 		slim: topLevelSlimSchema.optional(),
 		/** devices warden creates have a fingerprint / Face ID enrolled (own golden, own pool); `e2e` suites and `batches` presets override it */
 		biometrics: z.boolean().optional(),
+		/** iOS simulators: Keychain reads of access-controlled items prompt like a device (the Keychain ACL shim); `e2e` suites and `batches` presets override it */
+		keychainAcl: z.boolean().optional(),
 		/** what happens to a warden device's state when its lease ends (default `none`); `e2e` suites and `batches` presets override it, `WARDEN_RECLAIM` is the fallback below */
 		reclaim: reclaimSchema.optional(),
 		/** perf budgets every `e2e` suite starts from (a suite's own `perf.budgets` replace them per key) */

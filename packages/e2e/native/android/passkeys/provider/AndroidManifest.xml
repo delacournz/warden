@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="nz.co.delacour.warden.passkeys">
+
+    <uses-sdk android:minSdkVersion="34" android:targetSdkVersion="34" />
+
+    <application
+        android:label="Warden passkeys"
+        android:icon="@drawable/ic_key"
+        android:allowBackup="false">
+
+        <service
+            android:name=".WardenPasskeyService"
+            android:exported="true"
+            android:label="Warden passkeys"
+            android:icon="@drawable/ic_key"
+            android:permission="android.permission.BIND_CREDENTIAL_PROVIDER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.credentials.CredentialProviderService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.credentials.provider"
+                android:resource="@xml/provider" />
+        </service>
+
+        <activity
+            android:name=".ProviderActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
+        <provider
+            android:name=".SeedProvider"
+            android:authorities="nz.co.delacour.warden.passkeys"
+            android:exported="true"
+            android:permission="android.permission.DUMP" />
+    </application>
+</manifest>

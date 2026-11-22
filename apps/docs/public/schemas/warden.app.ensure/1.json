@@ -1,0 +1,165 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"anyOf": [
+		{
+			"type": "object",
+			"properties": {
+				"schemaVersion": {
+					"type": "number",
+					"const": 1
+				},
+				"appPath": {
+					"type": "string"
+				},
+				"hash": {
+					"type": "string"
+				},
+				"source": {
+					"type": "string",
+					"enum": [
+						"installed",
+						"cache",
+						"eas",
+						"build"
+					]
+				},
+				"installed": {
+					"type": "boolean"
+				}
+			},
+			"required": [
+				"schemaVersion",
+				"appPath",
+				"hash",
+				"source",
+				"installed"
+			],
+			"additionalProperties": false
+		},
+		{
+			"type": "object",
+			"properties": {
+				"schemaVersion": {
+					"type": "number",
+					"const": 1
+				},
+				"appPath": {
+					"type": "string"
+				},
+				"hash": {
+					"type": "string"
+				},
+				"source": {
+					"type": "string",
+					"enum": [
+						"installed",
+						"cache",
+						"eas",
+						"build"
+					]
+				},
+				"installed": {
+					"type": "boolean"
+				},
+				"kind": {
+					"type": "string",
+					"const": "simulator"
+				},
+				"requestedKind": {
+					"type": "string",
+					"enum": [
+						"dev",
+						"simulator",
+						"release"
+					]
+				},
+				"jsKey": {
+					"type": "string"
+				},
+				"baseHash": {
+					"type": "string"
+				},
+				"reused": {
+					"type": "boolean"
+				},
+				"bundleMs": {
+					"type": "number"
+				},
+				"fromBase": {
+					"type": "boolean",
+					"const": true
+				}
+			},
+			"required": [
+				"schemaVersion",
+				"appPath",
+				"hash",
+				"source",
+				"installed",
+				"kind",
+				"requestedKind",
+				"jsKey",
+				"baseHash",
+				"reused"
+			],
+			"additionalProperties": false
+		},
+		{
+			"type": "object",
+			"properties": {
+				"schemaVersion": {
+					"type": "number",
+					"const": 1
+				},
+				"appPath": {
+					"type": "string"
+				},
+				"hash": {
+					"type": "string"
+				},
+				"source": {
+					"type": "string",
+					"enum": [
+						"installed",
+						"cache",
+						"eas",
+						"build"
+					]
+				},
+				"installed": {
+					"type": "boolean"
+				},
+				"kind": {
+					"type": "string",
+					"enum": [
+						"dev",
+						"release"
+					]
+				},
+				"requestedKind": {
+					"type": "string",
+					"enum": [
+						"dev",
+						"simulator",
+						"release"
+					]
+				},
+				"fallbackReason": {
+					"type": "string"
+				}
+			},
+			"required": [
+				"schemaVersion",
+				"appPath",
+				"hash",
+				"source",
+				"installed",
+				"kind",
+				"requestedKind"
+			],
+			"additionalProperties": false
+		}
+	],
+	"$id": "https://warden.co.nz/schemas/warden.app.ensure/1.json",
+	"title": "warden.app.ensure"
+}

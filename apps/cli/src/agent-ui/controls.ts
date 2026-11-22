@@ -1,7 +1,8 @@
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { dedupeAlertButtons } from "@delacour/warden-e2e/alert-buttons";
 import { createDevice, type Device } from "@delacour/warden-e2e/device";
-import type { BiometricOp, Driver, Orientation } from "@delacour/warden-e2e/driver/driver.types";
+import type { BiometricOp, BiometricState, Driver, Orientation } from "@delacour/warden-e2e/driver/driver.types";
 import { driverErr } from "@delacour/warden-e2e/driver/errors";
 import type { E2eEnv } from "@delacour/warden-e2e/env";
 import { ok, type Result } from "@delacour/warden-types/result";
@@ -93,7 +94,7 @@ function alertText(alert: { title: string | null; message: string | null } | nul
 async function readAlert(device: UiDevice, driver: Driver): Promise<Result<UiSuccess, UiError>> {
 	const info = fromDriver(await driver.alert());
 	if (!info.success) return info;
-	const buttons = (info.data?.buttons ?? []).map(nameOf);
+	const buttons = dedupeAlertButtons(info.data?.buttons ?? []).map(nameOf);
 	const alert = info.data ? { title: info.data.title ?? null, message: info.data.message ?? null, buttons } : null;
 	return ok({
 		device: { udid: device.udid, platform: device.platform, name: device.name },
@@ -225,7 +226,7 @@ export function uiAppearance(
 	});
 }
 
-const BIOMETRIC_OPS: readonly BiometricOp[] = ["status", "enroll", "unenroll", "match", "fail"];
+const BIOMETRIC_OPS: readonly BiometricOp[] = ["status", "enroll", "unenroll", "reenroll", "match", "fail"];
 
 /** The error a physical device gets for any biometrics op: a real sensor is never enrolled or matched. */
 function biometricsPhysicalError(device: UiDevice) {
@@ -236,13 +237,14 @@ function biometricsPhysicalError(device: UiDevice) {
 	);
 }
 
-/** The one-line result of a biometrics op (`status` has no `op:` prefix). */
-function biometricsText(op: BiometricOp, modality: string, enrolled: boolean): string {
-	const state = `${modality} ${enrolled ? "enrolled" : "not enrolled"}`;
-	return op === "status" ? state : `${op}: ${state}`;
+/** The one-line result of a biometrics op (`status` has no `op:` prefix; a re-enrol names the shim's new generation). */
+function biometricsText(op: BiometricOp, state: BiometricState): string {
+	const enrolment = `${state.modality} ${state.enrolled ? "enrolled" : "not enrolled"}`;
+	const generation = state.generation === undefined ? "" : ` (Keychain ACL generation ${state.generation})`;
+	return op === "status" ? enrolment : `${op}: ${enrolment}${generation}`;
 }
 
-/** `warden ui biometrics [status|enroll|unenroll|match|fail]`: simulated Face ID / Touch ID / fingerprint; no op reads the state. */
+/** `warden ui biometrics [status|enroll|unenroll|reenroll|match|fail]`: simulated Face ID / Touch ID / fingerprint; no op reads the state. */
 export function uiBiometrics(
 	ctx: CommandContext,
 	deps: UiDeps,
@@ -264,10 +266,9 @@ export function uiBiometrics(
 		if (!driver.success) return driver;
 		const state = fromDriver(await driver.data.biometrics(op));
 		if (!state.success) return state;
-		const { enrolled, modality } = state.data;
 		return finishAction(ctx, deps, env, device, driver.data, settle.data, {
 			action: "biometrics",
-			text: biometricsText(op, modality, enrolled),
+			text: biometricsText(op, state.data),
 			...(op === "status" ? {} : { args: { op } }),
 			extra: { biometrics: state.data },
 		});

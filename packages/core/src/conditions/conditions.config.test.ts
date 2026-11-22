@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+	type ConditionsConfig,
 	cameraConfigSchema,
 	conditionsConfigSchema,
 	mergeConditionsConfig,
@@ -52,6 +53,34 @@ describe("conditionsConfigSchema", () => {
 		expect(parse({ network: { latencyMs: 300, downKbps: 500 } }).success).toBe(true);
 		expect(parse({ network: { latencyMs: -1 } }).success).toBe(false);
 		expect(parse({ network: { lossPct: 101 } }).success).toBe(false);
+	});
+});
+
+describe("passkeys suite config", () => {
+	test("a mode word turns the authenticator on with uv match", () => {
+		expect(parse({ passkeys: "auto" }).success).toBe(true);
+		const normalized = normalizeConditions({ passkeys: "cancel" });
+		expect(normalized.success && normalized.data.conditions.passkeys).toEqual({ mode: "cancel", uv: "match" });
+	});
+
+	test("an object sets mode, uv and seeded credentials; left-out fields take the defaults", () => {
+		const config: ConditionsConfig = {
+			passkeys: { uv: "skip", credentials: [{ rpId: "warden.co.nz", userName: "demo@warden.co.nz" }] },
+		};
+		expect(parse(config).success).toBe(true);
+		const normalized = normalizeConditions(config);
+		expect(normalized.success && normalized.data.conditions.passkeys).toEqual({
+			mode: "auto",
+			uv: "skip",
+			credentials: [{ rpId: "warden.co.nz", userName: "demo@warden.co.nz" }],
+		});
+	});
+
+	test("unknown modes, uv values and credential fields are refused", () => {
+		expect(parse({ passkeys: "maybe" }).success).toBe(false);
+		expect(parse({ passkeys: { uv: "sometimes" } }).success).toBe(false);
+		expect(parse({ passkeys: { credentials: [{ rpId: "a.b", userName: "x", pin: 1 }] } }).success).toBe(false);
+		expect(parse({ passkeys: { credentials: [{ userName: "x" }] } }).success).toBe(false);
 	});
 });
 

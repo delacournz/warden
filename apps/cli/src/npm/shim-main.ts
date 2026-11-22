@@ -6,6 +6,8 @@
 import { spawnSync } from "node:child_process";
 import { accessSync, chmodSync, constants } from "node:fs";
 import { createRequire } from "node:module";
+import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { locateBinary } from "./shim";
 
 const require = createRequire(import.meta.url);
@@ -25,7 +27,9 @@ const binary = locateBinary({
 	platform: process.platform,
 	arch: process.arch,
 	env: process.env,
-	resolvePackageJson: (name) => require.resolve(`${name}/package.json`),
+	scriptDir: dirname(fileURLToPath(import.meta.url)),
+	resolvePackageJson: (name, paths) =>
+		require.resolve(`${name}/package.json`, paths ? { paths: [...paths] } : undefined),
 });
 if (!binary.success) {
 	process.stderr.write(`${binary.error}\n`);

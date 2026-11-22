@@ -34,7 +34,13 @@ export function parseRunnerReady(line: string): number | undefined {
 }
 
 /** The argv that serves the runner on `udid`; `env` carries the `TEST_RUNNER_*` variables `xcodebuild` forwards. */
-export function simRunnerArgv(o: { xctestrun: string; udid: string; idleSeconds?: number }): string[] {
+export function simRunnerArgv(o: {
+	xctestrun: string;
+	udid: string;
+	idleSeconds?: number;
+	/** `-resultBundlePath` (must not exist yet): where `xcodebuild` records why the runner failed */
+	resultBundle?: string;
+}): string[] {
 	return [
 		"env",
 		`TEST_RUNNER_WARDEN_RUNNER_UDID=${o.udid}`,
@@ -46,13 +52,18 @@ export function simRunnerArgv(o: { xctestrun: string; udid: string; idleSeconds?
 		"-destination",
 		`id=${o.udid}`,
 		TEST_FILTER,
+		...(o.resultBundle === undefined ? [] : ["-resultBundlePath", o.resultBundle]),
 	];
 }
 
 export type SimRunnerDeps = {
 	udid: string;
 	/** a cached simulator runner build (`ensureSimRunnerBuild`), or why there is none */
-	ensureBuild(): Promise<Result<{ xctestrun: string }, string>>;
+	ensureBuild(): Promise<Result<{ xctestrun: string; derivedData?: string }, string>>;
+	/** a fresh `-resultBundlePath` for one start, from the build's derived data (undefined: none written) */
+	resultBundle?: (derivedData: string) => string | undefined;
+	/** the test failures a finished result bundle recorded, as one line; undefined for none or unreadable */
+	readFailures?: (bundle: string) => Promise<string | undefined>;
 	spawn?: SimdSpawn;
 	/** connect to the runner's port (tests inject a fake) */
 	connect?: (port: number, options: ClientOptions) => Promise<Result<SimdClient, DriverError>>;
@@ -95,6 +106,24 @@ export function createSimRunner(deps: SimRunnerDeps): SimRunner {
 	const readyTimeoutMs = deps.readyTimeoutMs ?? READY_TIMEOUT_MS;
 	let starting: Promise<Result<Started, DriverError>> | undefined;
 
+	/** `E_HELPER_CRASHED` for a runner that never got ready: the result bundle's test failure, else the output tail. */
+	async function notReady(
+		first: "timeout" | "exited",
+		resultBundle: string | undefined,
+		tail: readonly string[]
+	): Promise<DriverError> {
+		const why = first === "timeout" ? `did not start within ${readyTimeoutMs / 1000} s` : "exited before it was ready";
+		// only an exited xcodebuild has finished writing its result bundle
+		const failure =
+			first === "exited" && resultBundle !== undefined ? await deps.readFailures?.(resultBundle) : undefined;
+		const where = resultBundle === undefined ? "" : ` (result bundle: ${resultBundle})`;
+		return driverError(
+			"E_HELPER_CRASHED",
+			`the Simulator runner ${why}: ${failure ?? tail.slice(-3).join(" | ")}${where}`,
+			resultBundle === undefined ? {} : { detail: { resultBundle } }
+		);
+	}
+
 	async function start(): Promise<Result<Started, DriverError>> {
 		const built = await deps.ensureBuild();
 		if (!built.success) {
@@ -103,7 +132,15 @@ export function createSimRunner(deps: SimRunnerDeps): SimRunner {
 				error: driverError("E_UNSUPPORTED", `the Simulator runner is not available: ${built.error}`),
 			};
 		}
-		const proc = spawn(simRunnerArgv({ xctestrun: built.data.xctestrun, udid: deps.udid }));
+		const { derivedData } = built.data;
+		const resultBundle = derivedData === undefined ? undefined : deps.resultBundle?.(derivedData);
+		const proc = spawn(
+			simRunnerArgv({
+				xctestrun: built.data.xctestrun,
+				udid: deps.udid,
+				...(resultBundle === undefined ? {} : { resultBundle }),
+			})
+		);
 		const tail: string[] = [];
 		let onPort: (port: number) => void = () => undefined;
 		const ready = new Promise<number>((resolve) => {
@@ -127,12 +164,7 @@ export function createSimRunner(deps: SimRunnerDeps): SimRunner {
 		clearTimeout(timer);
 		if (typeof first !== "number") {
 			proc.kill();
-			const why =
-				first === "timeout" ? `did not start within ${readyTimeoutMs / 1000} s` : "exited before it was ready";
-			return {
-				success: false,
-				error: driverError("E_HELPER_CRASHED", `the Simulator runner ${why}: ${tail.slice(-3).join(" | ")}`),
-			};
+			return { success: false, error: await notReady(first, resultBundle, tail) };
 		}
 		const client = await connect(first, { ...(deps.log ? { log: deps.log } : {}), defaultTimeoutMs: 30_000 });
 		if (!client.success) {

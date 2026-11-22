@@ -1,3 +1,4 @@
+import { IconKey1 } from "@central-icons-react-native/round-outlined-radius-1-stroke-1.5";
 import { router } from "expo-router";
 import { useState } from "react";
 import { Uniwind, useUniwind } from "uniwind";
@@ -16,6 +17,7 @@ import {
 	IconHand5Finger,
 	IconLocation,
 	IconMoon,
+	IconPasskeys,
 	IconSignalTower,
 	IconWifiFull,
 } from "@/lib/icons/central";
@@ -162,6 +164,34 @@ export default function Settings() {
 						</ListGroup.ItemPrefix>
 						<ListGroup.ItemContent>
 							<ListGroup.ItemTitle>Biometrics</ListGroup.ItemTitle>
+						</ListGroup.ItemContent>
+						<ListGroup.ItemSuffix />
+					</ListGroup.Item>
+					<ListGroup.Item
+						accessibilityLabel="Keychain"
+						accessible
+						onPress={() => router.push("/keychain")}
+						testID="settings-keychain"
+					>
+						<ListGroup.ItemPrefix>
+							<Icon icon={IconKey1} />
+						</ListGroup.ItemPrefix>
+						<ListGroup.ItemContent>
+							<ListGroup.ItemTitle>Keychain</ListGroup.ItemTitle>
+						</ListGroup.ItemContent>
+						<ListGroup.ItemSuffix />
+					</ListGroup.Item>
+					<ListGroup.Item
+						accessibilityLabel="Passkeys"
+						accessible
+						onPress={() => router.push("/passkeys")}
+						testID="settings-passkeys"
+					>
+						<ListGroup.ItemPrefix>
+							<Icon icon={IconPasskeys} />
+						</ListGroup.ItemPrefix>
+						<ListGroup.ItemContent>
+							<ListGroup.ItemTitle>Passkeys</ListGroup.ItemTitle>
 						</ListGroup.ItemContent>
 						<ListGroup.ItemSuffix />
 					</ListGroup.Item>

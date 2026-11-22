@@ -4,12 +4,14 @@
  *   dist/npm/warden-<target>/  → @delacour/warden-<target>: package.json + bin/warden (the compiled binary)
  *   dist/npm/warden/           → @delacour/warden: package.json + bin/warden.mjs (node shim) + README.md
  *                                + config/index.{mjs,d.ts} (`@delacour/warden/config`: defineConfig + types)
+ *                                + expo-build-cache/index.{js,d.ts} (`@delacour/warden/expo-build-cache`: Expo build cache provider)
  * darwin-arm64 also gets the simulator helper (`bin/{warden-simd, Resources/, *.framework, manifest.json}`) copied from
  * `packages/e2e/native/dist` (override: `WARDEN_E2E_NATIVE_DIST`) when it is built; `--require-helper` (release) makes
  * a missing helper an error.
  *   dist/npm/warden-e2e/       → @delacour/warden-e2e: package.json + index.mjs/preload.mjs (+ chunk) + index.d.ts/preload.d.ts
  *                                + types/ (the spec API for `warden e2e`, bundled from packages/e2e; lock-step with warden)
  *   dist/warden-atf-<sha8>.jar → release asset: the Android audit jar, downloaded by @delacour/warden-e2e on first use
+ *   dist/warden-passkeys-<sha8>.apk → release asset: the Android virtual authenticator's provider app, same way
  *                                (kept out of the npm bundle: an inlined base64 zip held each release in npm's review)
  * Every package also gets the repo-root LICENSE and `homepage` (the website, from apps/cli/package.json; e2e → its docs).
  * Repository / bugs links are added only with
@@ -22,9 +24,12 @@ import { dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { ATF_DEX } from "@delacour/warden-e2e/driver/android/atf-dex.generated";
 import { atfAssetName, WORKSPACE_ATF_JAR } from "@delacour/warden-e2e/driver/android/atf-jar";
+import { passkeysApkAssetName, WORKSPACE_PASSKEYS_APK } from "@delacour/warden-e2e/driver/android/passkeys-apk";
+import { PASSKEYS_APK } from "@delacour/warden-e2e/driver/android/passkeys-apk.generated";
 import cliPackage from "../package.json" with { type: "json" };
 import { buildConfigEntry } from "../src/npm/config-entry";
 import { stageE2e } from "../src/npm/e2e-stage";
+import { buildExpoBuildCache } from "../src/npm/expo-build-cache-entry";
 import { HELPER_TARGET, type StagedHelper } from "../src/npm/helper";
 import { stageHelper } from "../src/npm/helper-stage";
 import {
@@ -101,6 +106,8 @@ writeFileSync(shimPath, code.startsWith("#!") ? code : `#!/usr/bin/env node\n${c
 chmodSync(shimPath, 0o755);
 const configEntry = await buildConfigEntry(main);
 if (!configEntry.success) throw new Error(configEntry.error);
+const expoBuildCache = await buildExpoBuildCache(main);
+if (!expoBuildCache.success) throw new Error(expoBuildCache.error);
 copyFileSync(join(repoRoot, "README.md"), join(main, "README.md"));
 copyFileSync(join(repoRoot, LICENSE_FILE), join(main, LICENSE_FILE));
 console.log("staged dist/npm/warden");
@@ -116,6 +123,16 @@ if (atfSha !== ATF_DEX.jarSha256) {
 }
 writeFileSync(join(dist, atfAssetName(ATF_DEX)), atfJar);
 console.log(`staged dist/${atfAssetName(ATF_DEX)} (release asset)`);
+
+const passkeysApk = readFileSync(WORKSPACE_PASSKEYS_APK);
+const passkeysSha = createHash("sha256").update(passkeysApk).digest("hex");
+if (passkeysSha !== PASSKEYS_APK.apkSha256) {
+	throw new Error(
+		`${WORKSPACE_PASSKEYS_APK}: sha256 ${passkeysSha} is not PASSKEYS_APK.apkSha256 — run \`android:emit-passkeys\``
+	);
+}
+writeFileSync(join(dist, passkeysApkAssetName(PASSKEYS_APK)), passkeysApk);
+console.log(`staged dist/${passkeysApkAssetName(PASSKEYS_APK)} (release asset)`);
 
 console.log(
 	`npm ${meta.version}: ${RELEASE_TARGETS.length} platform packages + @delacour/warden + @delacour/warden-e2e${repoLinks ? "" : " (no repo links)"}`

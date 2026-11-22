@@ -6,10 +6,10 @@ import XCTest
 
 /// Hands out scripted documents in order (the last one repeats); records how often it was read.
 private actor Script {
-  private var documents: [AccessibilityDocument]
+  private var documents: [RawDocument]
   private(set) var reads = 0
-  init(_ documents: [AccessibilityDocument]) { self.documents = documents }
-  func next() -> AccessibilityDocument {
+  init(_ documents: [RawDocument]) { self.documents = documents }
+  func next() -> RawDocument {
     reads += 1
     return documents.count > 1 ? documents.removeFirst() : documents[0]
   }
@@ -23,24 +23,24 @@ private final class Lines: @unchecked Sendable {
 }
 
 final class EmptyRootTests: XCTestCase {
-  private func emptyRoot() -> AccessibilityDocument {
-    var node = AccessibilityDocumentElement()
+  private func emptyRoot() -> RawDocument {
+    var node = RawNode()
     node.type = .some("Application")
-    node.frame = .some(AccessibilityFrame(x: 0, y: 0, width: 0, height: 0))
+    node.frame = .some(RawFrame(x: 0, y: 0, width: 0, height: 0))
     node.children = []
-    return AccessibilityDocument(elements: [node])
+    return RawDocument(elements: [node])
   }
 
-  private func fullTree() throws -> AccessibilityDocument {
+  private func fullTree() throws -> RawDocument {
     try DocumentFixture.document("sign-in.snapshot.golden.json")
   }
 
   private func run(
-    bridge: [AccessibilityDocument], host: [AccessibilityDocument]?, lines: Lines
-  ) async throws -> (outcome: AXOutcome<AccessibilityDocument>, bridgeReads: Int, hostReads: Int) {
+    bridge: [RawDocument], host: [RawDocument]?, lines: Lines
+  ) async throws -> (outcome: AXOutcome<RawDocument>, bridgeReads: Int, hostReads: Int) {
     let bridgeScript = Script(bridge)
     let hostScript = Script(host ?? [])
-    var hostRead: (@Sendable () async throws -> AccessibilityDocument)?
+    var hostRead: (@Sendable () async throws -> RawDocument)?
     if host != nil { hostRead = { @Sendable in await hostScript.next() } }
     let outcome = try await Session.recoverFromEmptyRoot(
       first: AXOutcome(value: emptyRoot(), backend: .axbridge, fallback: nil), retryDelay: .milliseconds(1),
@@ -53,7 +53,7 @@ final class EmptyRootTests: XCTestCase {
   func testEmptyRootIsDetectedOnlyForASingleAreaLessChildlessNode() throws {
     XCTAssertTrue(Session.isEmptyRoot(emptyRoot()))
     XCTAssertFalse(Session.isEmptyRoot(try fullTree()))
-    XCTAssertFalse(Session.isEmptyRoot(AccessibilityDocument(elements: [])))
+    XCTAssertFalse(Session.isEmptyRoot(RawDocument(elements: [])))
   }
 
   func testASecondBridgeReadThatRecoversIsUsedWithoutFallback() async throws {

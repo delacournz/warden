@@ -1,8 +1,9 @@
+import { injectStatePath, switchOffKeychainAcl } from "@delacour/warden-core/conditions/inject-state";
 import { DEFAULT_TTL_MS } from "@delacour/warden-core/config.defaults";
 import { bunExec, type Exec } from "@delacour/warden-core/exec";
 import { isLeaseAlive, type PidAlive } from "@delacour/warden-core/liveness";
 import { type ReclaimMode, resolveReclaim } from "@delacour/warden-core/reclaim";
-import { ownerKey, type Store } from "@delacour/warden-core/store";
+import { ownerKey, type Store, wardenHome } from "@delacour/warden-core/store";
 import {
 	type DeviceResource,
 	describeOwner,
@@ -49,6 +50,10 @@ export type EnsureLeaseOptions = {
 	exclusive?: boolean;
 	/** a real phone: stamped on a lease this call creates (an existing lease keeps what it has) */
 	physical?: DeviceResource["physical"];
+	/** warden's home (`wardenHome(env)`): a takeover switches the Keychain ACL shim off in the device's inject state */
+	home: string;
+	/** a takeover could not switch the shim off; the lease stands */
+	onNote?: (note: string) => void;
 };
 
 /** Message shown to the model/user when a device is held by someone else. */
@@ -76,6 +81,8 @@ function heldByOtherProcess(lease: Lease, opts: EnsureLeaseOptions): boolean {
  * The one lease check for a caller using a device (`warden ui`), atomically:
  * own lease → heartbeat (with `exclusive`, one a live warden process holds → `device_busy`; a shared
  * `warden dev` lease → `attached`); another live owner → `device_foreign`; stale or missing → taken over when `claim`, else `device_not_leased`.
+ * A takeover (`reclaimed` / `leased`) of an iOS device switches the Keychain ACL shim off: the lease it replaces ended
+ * without a release (expired, or none), so nothing else did, and the new holder never inherits its prompts.
  */
 export function ensureCallerLease(
 	store: Store,
@@ -85,7 +92,7 @@ export function ensureCallerLease(
 	opts: EnsureLeaseOptions
 ): Result<CallerLease, DeviceLeaseError> {
 	const probe: DeviceResource = { kind: "device", platform, id, name: opts.name ?? id };
-	return store.transaction((): Result<CallerLease, DeviceLeaseError> => {
+	const result = store.transaction((): Result<CallerLease, DeviceLeaseError> => {
 		const existing = store.findLeaseByResource(probe);
 		if (existing && sameOwner(existing.owner, owner)) return ownLease(store, existing, opts);
 		if (existing && isLeaseAlive(existing, opts.now, opts.pidAlive)) {
@@ -105,6 +112,12 @@ export function ensureCallerLease(
 		if (existing) store.deleteLeases([existing.id], { type: "expired", now: opts.now });
 		return ok({ lease: insertCallerLease(store, owner, probe, opts), action: existing ? "reclaimed" : "leased" });
 	});
+	const takenOver = result.success && (result.data.action === "reclaimed" || result.data.action === "leased");
+	if (takenOver && platform === "ios") {
+		const failed = switchOffKeychainAcl(injectStatePath(opts.home, id));
+		if (failed) opts.onNote?.(failed);
+	}
+	return result;
 }
 
 /**
@@ -216,6 +229,23 @@ async function runReclaimPhase(
 }
 
 /**
+ * The Keychain ACL shim is the lease's: `ui open` / `dev --keychain-acl` switch it on without a condition record, so
+ * each released iOS device lease switches it off here (a file read per lease; nothing loaded), or the next lease on
+ * the simulator would inherit prompts it never asked for. A failure is a note; the release goes ahead. A lease deleted
+ * without a release (expired, evicted) is covered by the next claim of the simulator (core `claim.ts`).
+ */
+function switchOffKeychainAclFor(host: ReleaseHost, leaseIds: readonly string[], opts: ReleaseOptions): void {
+	const store = host.store();
+	const home = wardenHome(host.env ?? process.env);
+	for (const lease of leaseIds.flatMap((id) => store.getLease(id) ?? [])) {
+		const target = lease.resource;
+		if (target.kind !== "device" || target.platform !== "ios" || !(opts.only?.(lease) ?? true)) continue;
+		const failed = switchOffKeychainAcl(injectStatePath(home, target.id));
+		if (failed) (opts.onNote ?? ((note: string) => host.err?.(`warden: ${note}`)))(failed);
+	}
+}
+
+/**
  * The single CLI choke point for deleting leases (devices, ports …). A device lease with conditions set
  * (network, location …) has them undone first, while it is still held; without any, the delete happens
  * synchronously, before the first await. `after` then runs per device lease. Unknown ids are skipped.
@@ -235,6 +265,7 @@ export async function releaseDevices(
 		const notes = await Promise.all(conditioned.map((l) => undoLeaseConditions(host, l)));
 		for (const note of notes.flat()) report(note);
 	}
+	switchOffKeychainAclFor(host, leaseIds, opts);
 	const mode = reclaimModeOf(host, opts);
 	const reclaim = mode === "none" ? undefined : await import("./reclaim");
 	let held: import("./reclaim").ReclaimHold[] = [];

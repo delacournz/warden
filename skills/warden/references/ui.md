@@ -14,6 +14,36 @@ warden ui wait id=todos-screen --udid $UDID   # verify with wait / is / get; a s
 warden ui close --release --udid $UDID
 ```
 
+## Drive efficiently
+
+Every stop to read output is a model turn. Batch the steps you already know in one Bash call, wait on where they lead, snapshot once at the end.
+
+| Do | Why |
+|---|---|
+| Target by `id=<testID>` (`press id=welcome-next`), not `@eN`, in a chain | a selector is matched against a fresh snapshot on every call, so it lands after the layout moved |
+| Use an `@eN` only for the next action after the snapshot that printed it | a recent `@eN` (< 30 s, no `--verify`, no input since) taps the frame stored with that snapshot. After any `press`/`fill`/… it is re-checked first, and a moved, duplicated or keyboard-covered target fails `stale_ref` (exit 4) instead of landing; `id=` just works |
+| Never carry an `@eN` across a `snapshot`, `find`, `--settle`, matched `wait` or `scroll --until` | each stores a new generation numbered from scratch: an old `@eN` names whatever holds that number now, or `stale_ref` (exit 4) when nothing does |
+| Chain known steps with `&&` in ONE Bash call | a failing step exits non-zero and stops the chain; its stderr names the step |
+| `wait <sel>` on the destination instead of `snapshot` after each step | `wait` polls (100 ms for 1 s, then 250 ms, up to `--timeout`, default 5000) and prints the matched line. `press <sel>` looks once: a target that is still animating in fails `target_not_found` |
+| `wait id=x && press id=x` when `x` appears only after a transition | the press then resolves against a screen that has it |
+| `snapshot -i` once at the end, or when a step failed | the only full read you need |
+| `get <sel> <property>`, `is <sel> <state>` | selector only (`@eN` is `usage`); the last word is required: `text\|value\|label\|id\|role\|frame\|count` / `visible\|hittable\|enabled\|checked\|selected\|focused` |
+
+```bash
+U=<udid>
+warden ui press id=welcome-next --udid $U &&
+warden ui wait id=welcome-step-1 value=current --udid $U &&
+warden ui press id=welcome-next --udid $U &&
+warden ui wait id=welcome-get-started --udid $U &&
+warden ui press id=welcome-get-started --udid $U &&
+warden ui wait id=sign-in-email --udid $U &&
+warden ui fill id=sign-in-email ada@example.com --udid $U &&
+warden ui fill id=sign-in-password password1 --secure --udid $U &&
+warden ui press id=sign-in-submit --udid $U &&
+warden ui wait id=todos-screen --udid $U &&
+warden ui snapshot -i --udid $U
+```
+
 ## Device resolution (in order)
 
 1. `--udid` / `--serial` / `--lease <id>`
@@ -30,6 +60,7 @@ Every call heartbeats your lease. Another live session's lease: `device_foreign`
 - `--metro <url>` launches the dev client on that Metro and remembers it for the devtools commands. iOS adds the same two dev-menu flags as `warden dev`, before your `--args`.
 - `--relaunch` without `--metro` gives no `--initialUrl`: expo-dev-client reopens the sim's most recent Metro, often another worktree's dead port → launcher home. Relaunch with `--metro <metroUrl from warden dev>`.
 - warden's Metro gets `WARDEN_WORKTREE` / `WARDEN_BRANCH`; `app.config.ts` can append them to `name` so the launcher lists each worktree's server by name.
+- Keychain items with access control (iOS simulator): `warden ui open <bundle> --keychain-acl --udid $UDID` turns on the Keychain ACL shim (kept for the device until `--no-keychain-acl` or the lease ends: a release, or the next claim after it expired; relaunches an app started without it). A read of a `.biometryCurrentSet` / `.userPresence` / `.devicePasscode` item then shows the system Face ID sheet: `warden ui biometrics match|fail`, Cancel → `-128`, no enrolment on a biometry-only item → `-25300`. Warns when the sim has no Face ID enrolled (claim with `--biometrics`). Android / a phone: `unsupported` (a device enforces ACLs itself).
 - No Metro / fastest JS loop for a Release-like app: `warden ui open <bundleId> --kind simulator --udid $UDID` (repack, install, launch). Re-run it after a JS edit; the dev client (`warden dev`) stays the default for feature work.
 - Android: `open <bundleId>` takes `--metro`/`--args` in the CLI but the driver rejects them. `warden dev android` opens the dev client via `adb reverse` + `exp+<slug>://expo-development-client/?url=...`. By hand, `open <url>` with that deep link.
 - `--relaunch`, `--metro`, `--args` apply to a bundle id, not a URL (`usage`).
@@ -42,9 +73,9 @@ Every call heartbeats your lease. Another live session's lease: `device_foreign`
 | `--claim` | claim a device when none is held, or take over a stale/missing lease |
 | `--platform ios\|android` `--profile <slug>` `--runtime <rt>` | choose the device for a `--claim` with none named (default ios) |
 | `--physical` | with `--claim` and no device named: claim a connected phone (`warden claim --physical`) instead of an emulator |
-| `--timeout <ms>` | per-command deadline (default 5000) |
+| `--timeout <ms>` | per-command deadline (default 5000); on iOS `snapshot` and `find` it also ends the wait for a cold accessibility bridge. A timeout fails `failed` (exit 1) with a hint: a cold simulator can need `--timeout 60000` |
 | `--force` | drive the device while your running `warden e2e` / `batch` / `run` holds it (else exit 2 `device_busy`); it disturbs that run. Not needed for your own `warden dev` |
-| `--json` | one JSON document on stdout |
+| `--json` | one JSON document on stdout: `{ ok, schemaVersion, command, device, generation?, durationMs, result, warnings? }` or `{ ok: false, schemaVersion, command, error: { code, message, hint? } }`; `snapshot`, `press`/`tap`, `fill`, `wait`, `is`, `get`, `open`, `close` publish `https://warden.co.nz/schemas/warden.ui.<verb>/1.json` |
 
 Actions also take `--settle [ms]`: wait for a quiet screen (500 ms unchanged, budget 3000 ms), then print what changed.
 
@@ -54,14 +85,19 @@ Every subcommand also takes `--no-record`: while a `record` is active, this call
 
 ```text
 generation 4 · axbridge · 393×852@3x · 5 of 41 elements
-@e1 [textbox] "Add a todo" id=todo-input value="" enabled hittable (24,118 345×48)
+@e1 [textbox] "Add a todo" id=todo-input placeholder="What needs doing?" enabled hittable (24,118 345×48)
+@e2 [textbox] "Email" id=sign-in-email value="grace@example.com" placeholder="ada@example.com" enabled hittable (21,210 360×42)
 ```
 
-Line: `@eN [role] "name" id=<testID> value="..." <states> (x,y w×h)`. States: `enabled`/`disabled`, `hittable`, `checked`/`unchecked`, `selected`, `focused`, `secure`, `hidden`, `expanded`/`collapsed`.
+Line: `@eN [role] "name" id=<testID> value="..." placeholder="..." <states> (x,y w×h)`. States: `enabled`/`disabled`, `hittable`, `checked`/`unchecked`, `selected`, `focused`, `secure`, `hidden`, `expanded`/`collapsed`.
+
+- Text inputs print `placeholder="…"` (iOS placeholder, Android hint; `placeholder` in `--json`). No `value=` = the field is empty: iOS and Android report the placeholder as an empty field's value, so warden drops a value equal to the placeholder. `get … value` prints `""`, `wait text` / `text=` never match a placeholder. On iOS a field holding exactly its placeholder's text reads as empty too (it reports it identically); `fill` still confirms it. Android is exact when warden-uiad answers (it says whether the field shows its hint): such a field prints `value=`; on the `uiautomator dump` fallback it reads as empty like iOS.
 
 - While a recording is active, `snapshot -i` appends `[no-id]` to interactive elements with no testID (`noId: true` in `--json`) and a hint. Add `testID` + `accessible` in the component, reload, `record undo`, redo by `id=`.
-- `-i` = interactive elements plus anything with a testID. Cap 200 lines (`--all` removes it). `--depth n` = first n levels.
-- The generation bumps on `snapshot`, `find`, any `--settle`, a matching `wait`, and `scroll --until`. Older refs then fail: exit 4 `stale_ref`, snapshot again.
+- `-i` = interactive elements plus anything with a testID, minus 0×0 non-hittable elements without one. Cap 200 lines (`--all` removes it). `--depth n` = first n levels.
+- `-i` folds the iOS on-screen keyboard into one line: `@e126 [keyboard] return="go" visible (0,546 402×328) 33 keys (--keys)`. The ref is the return key's (`press @e126` presses go/next/return), the frame the keyboard's; no return key = no ref. `--json`: one element `{ role: "keyboard", ref?, name?: <return key>, frame, keys }`. `--keys` (or a snapshot without `-i`) lists every key. To get the keyboard out of the way, see `keyboard` under Device settings. Android: the IME is its own window and never in the snapshot.
+- The generation bumps on `snapshot`, `find`, any `--settle`, a matching `wait`, and `scroll --until`, and refs are numbered from scratch: an older `@eN` resolves against the new snapshot (another element, or exit 4 `stale_ref` when the number is gone). Snapshot again before using a ref.
+- Ref lifetime: a ref is used as stored only until the next input to the device (any `press`, `fill`, `type`, `key`, `scroll`, `gesture`, `open`, `rotate`…, also from another call that failed half-way). After one, the ref is re-checked before it is acted on: iOS hit-tests its old centre (~10 ms; same role, id, label, frame = tap it there), else a fresh snapshot finds it by id, else role + name (+ its index among equal ones) and the CURRENT frame is tapped. Gone, now matching more or fewer elements than before, or under the keyboard: exit 4 `stale_ref`, nothing is tapped. `snapshot` / `find` / `--settle` after the input make refs fresh again.
 - A ref older than 30 s, or any ref with `--verify`, is re-checked against a fresh snapshot (same id, else role + name, else position). Prefer `id=` selectors for anything you touch twice.
 
 ## Subcommands
@@ -70,18 +106,18 @@ Line: `@eN [role] "name" id=<testID> value="..." <states> (x,y w×h)`. States: `
 |---|---|---|
 | `status` | | device, lease, helper, recording in progress (name, target, step count), conditions set on the lease (`conditions network 3g · location 37.3,-122`) |
 | `close` | `[--app [bundleId]] [--release]` | stops this device's helper; `--app` quits the app (default: the one `open` launched); `--release` frees the lease |
-| `snapshot` | `[-i\|--interactive] [--all] [--depth n] [--settle [ms]] [--a11y]` | `--settle` ends with a `-`/`+` diff and `= N unchanged`. `--a11y` adds `hint="…"`, `actions=[…]`, `a11y-focused`, `not-important`, `live=…` per line (`--json`: `a11y` per element); iOS needs `open --a11y` or it warns |
+| `snapshot` | `[-i\|--interactive] [--keys] [--all] [--depth n] [--settle [ms]] [--a11y]` | `--settle` ends with a `-`/`+` diff and `= N unchanged`. `--a11y` adds `hint="…"`, `actions=[…]`, `a11y-focused`, `not-important`, `live=…` per line (`--json`: `a11y` per element); iOS needs `open --a11y` or it warns. `--keys`: with `-i`, list the keyboard's keys instead of one `[keyboard]` line |
 | `find` | `<selector>` | matches with fresh `@eN` |
 | `open` | `<bundleId\|url> [--relaunch] [--metro url] [--args ...] [--kind dev\|simulator\|release] [--project dir] [--a11y] [--settle]` | URL on iOS accepts the "Open in ...?" sheet; running app is attached, not restarted. `--kind` installs that build first (`simulator` = the cached sim build with this worktree's JS repacked in, seconds; no Metro, so no `--metro`), relaunches when the build changed, and reports `kind` / `jsKey` (a repack fallback adds `fallbackReason`). Without `--kind` nothing is installed |
 | `press` / `tap` | `<@eN\|selector\|x y> [--verify] [--settle]` | |
-| `fill` | `<target> <text> [--secure] [--no-verify] [--via type\|paste] [--settle]` | `--` before text starting with `-`; types per key by default; `--via paste` pastes on iOS (one Cmd+V; Xcode 27 syncs every sim's pasteboard with the Mac clipboard both ways, so a paste lands in clipboard history and on other sims; the retry always types); reads back, retries once; `--secure` skips read-back and never echoes the text |
+| `fill` | `<target> <text> [--secure] [--no-verify] [--via type\|paste] [--settle]` | `--` before text starting with `-`; types per key by default (iOS: the first attempt of a read-back fill types at quick pacing, ~16-22 ms/char against ~38; a mismatch retypes at normal pacing; `--secure` / `--no-verify` / `x y` always normal pacing; any `WARDEN_SIMD_*` pacing var set turns quick off); iOS empties a secure field with select-all + one Backspace, checked by its dot count; `--via paste` pastes on iOS (one Cmd+V; Xcode 27 syncs every sim's pasteboard with the Mac clipboard both ways, so a paste lands in clipboard history and on other sims; the retry always types); reads back, retries once; `--secure` skips read-back and never echoes the text |
 | `type` | `<text> [--submit] [--settle]` | into whatever has focus |
 | `key` | `Enter\|Backspace\|Tab\|Space\|Escape\|Delete\|Up\|Down\|Left\|Right [--settle]` | |
 | `scroll` | `<dir> [amount=0.5] [--until <sel>] [--in <target>] [--max 10] [--settle]` | content direction: `scroll down` reveals what is below; amount 0-1; `--until` prints the fresh ref |
-| `alert` | `accept\|dismiss\|get [--settle]` | `get` with none = empty list; accept/dismiss with none = `no_alert` |
+| `alert` | `accept\|dismiss\|get [--settle]` | `get` with none = empty list; accept/dismiss with none = `no_alert`; `accept` prefers OK/Allow/…/`Try Face ID Again`/`Try Again`/`Retry`, never a Cancel-like button (`ACTION_FAILED` names the buttons); `dismiss` = Cancel |
 | `home` | `[--settle]` | |
 | `back` | `[--settle]` | Android only |
-| `biometrics` | `[status\|enroll\|unenroll\|match\|fail] [--settle]` | simulated Face ID / Touch ID / fingerprint; no op = `status`; answers `result.biometrics: { enrolled, modality: "face"\|"fingerprint" }`; bad op = `usage`; not recorded by `record`. See "Biometrics" below |
+| `biometrics` | `[status\|enroll\|unenroll\|reenroll\|match\|fail] [--settle]` | simulated Face ID / Touch ID / fingerprint; no op = `status`; `reenroll` = a new enrolment (unenroll + enroll); answers `result.biometrics: { enrolled, modality: "face"\|"fingerprint", generation? }` (`generation`: after `reenroll` with the Keychain ACL shim on); bad op = `usage`; not recorded by `record`. See "Biometrics" below |
 | `screen rotate` | `[portrait\|portrait-upside-down\|landscape-left\|landscape-right]` | device orientation; no arg reads it |
 | `screen appearance` | `[light\|dark]` | no arg reads it |
 | `screen screenshot` | `[path]` | default `$WARDEN_HOME/ui/<udid>/shots/NNN.png` |
@@ -106,16 +142,18 @@ Line: `@eN [role] "name" id=<testID> value="..." <states> (x,y w×h)`. States: `
 | `network set\|flap\|fault\|status\|reset` `location` `clock` | see Network and location | change the device's network / GPS; recorded on your lease, undone on release |
 | `permission` `timezone` `locale` `a11y` `battery` `keyboard` `memory-warning` `push` | see Device settings | permissions, timezone, locale, text size, battery, on-screen keyboard, memory warning, push; recorded on your lease, undone on release |
 | `camera set\|status\|clear` | see Camera | feed an image or video into the app's camera; recorded on your lease, undone on release |
+| `passkey set\|off\|add\|list\|remove\|clear\|status` | see Passkeys | simulated passkey authenticator for the app's real WebAuthn calls; recorded on your lease, undone on release |
 
 ## Biometrics
 
 `warden ui biometrics enroll` → app prompts → `warden ui biometrics match` (or `fail`). Simulators and emulators only; a physical device or a non-`emulator-*` serial fails `failed`, `details.driver: E_UNSUPPORTED`.
 
 - iOS: `enroll` / `unenroll` / `match` / `fail` all work; modality is Face ID or Touch ID by device model. Enrollment is lost on reboot. Enroll before the app is installed or launched: a new enrollment invalidates keys bound to the current biometry set. The first prompt per app shows "Allow X to use Face ID?": `warden ui alert accept`.
-- Android: fingerprint only. `match` / `fail` / `status` work; `enroll` / `unenroll` fail `E_UNSUPPORTED` (enrollment is baked into the `+bio` golden snapshot: claim with `--biometrics`, see suites.md).
+- `warden ui biometrics reenroll` (iOS): with the Keychain ACL shim on, `.biometryCurrentSet` items written before it read `-25300` (an `.or .devicePasscode` item stays readable: Face ID first on a simulator, a match opens it; a phone takes only the passcode), like a phone after a face is re-added. Destructive for those items: enrol before the app writes them.
+- Android: fingerprint only. `match` / `fail` / `status` work; `enroll` / `unenroll` / `reenroll` fail `E_UNSUPPORTED` (enrollment is baked into the `+bio` golden snapshot: claim with `--biometrics`, see suites.md).
 - Never add an app-side bypass: drive the real `LAContext` / `BiometricPrompt` flow.
 
-`screen ...` = the device (orientation, appearance, screenshot, video); `gesture ...` = touch. `screen rotate landscape-left` turns the device, `gesture rotate @e3 45` turns two fingers. The old top-level `rotate` `appearance` `screenshot` `video` `swipe` `longpress` are removed (unknown command). Max 2 fingers. Bad scale/degrees/`--path` = `usage` (exit 1); unsupported device = `failed`, `details.driver: E_UNSUPPORTED` (exit 1).
+`screen ...` = the device (orientation, appearance, screenshot, video); `gesture ...` = touch. `screen rotate landscape-left` turns the device, `gesture rotate @e3 45` turns two fingers. After `screen rotate`, snapshot frames, screenshots and `press x y` are in the app's interface space: an app that rotates reads landscape (e.g. 874×402), a portrait-locked one still reads portrait. Take coordinates from a fresh snapshot, never rotate them yourself. `screen rotate` (and `device.orientation(set)`) returns once the rotation animation is over (~0.7 s), so the next tap lands. The old top-level `rotate` `appearance` `screenshot` `video` `swipe` `longpress` are removed (unknown command). Max 2 fingers. Bad scale/degrees/`--path` = `usage` (exit 1); unsupported device = `failed`, `details.driver: E_UNSUPPORTED` (exit 1).
 
 ## Network, location and clock (`network`, `location`, `clock`)
 
@@ -208,6 +246,25 @@ Feeds a file into the app's real camera (preview, photo capture, QR scan), no ap
 - Text output ends with the lines saying when the change applies. `--json`: `result.action` is `camera-set`, `camera-clear`, `camera-status`; `result.camera` the feeds, plus `appliesOnLaunch` / `appliesOnCameraOpen` / `rebooted` when the driver reported them.
 - Physical devices: `E_UNSUPPORTED`.
 
+## Passkeys (`passkey`)
+
+A virtual authenticator answers the app's real passkey calls (create + sign in; `fmt: none`, test keys only). Credentials live in warden's per-device store, `mode` / `uv` are the lease's `passkeys` condition (shared with `device.passkeys` in specs); **release / gc undo it**.
+
+| Command | Args / flags | Notes |
+|---|---|---|
+| `passkey set` | `<auto\|cancel\|fail\|unavailable> [--uv match\|nomatch\|skip]` | turns the authenticator on. `--uv` default `match`; a later `set` without `--uv` keeps it. Default `--timeout` 120000 (Android installs the provider) |
+| `passkey off` | | authenticator off, credentials kept; not on = `changed: false` |
+| `passkey add` | `--rp <id> --user-name <n> [--display-name <n>] [--user-handle <b64url>] [--id <b64url>] [--key <path>] [--sign-count <n>]` | prints the new credential id (`result.credentialId`). `--rp` a bare lowercase host; `--key` a P-256 PKCS#8 PEM or DER file (default: generated); ids default to 16 random bytes; display name defaults to the user name; bad input = exit 1 `usage` before the driver |
+| `passkey list` | `[--rp <id>] [--with-keys]` | newest first; private keys only with `--with-keys`; reads only |
+| `passkey remove` | `<credentialId>` | |
+| `passkey clear` | | removes every credential |
+| `passkey status` | | mode, uv, credentials now; reads only |
+
+- Modes: `auto` succeeds without UI; `cancel` = the user cancelled; `fail` = an authenticator error; `unavailable` = no usable credential. `uv nomatch` = user verification fails, `skip` = the response says it did not verify.
+- iOS: live in an app launched with warden's dylib; an app started without it gets it from its next launch (`appliesOnLaunch`: `warden ui open <bundle> --relaunch`). Android: API 34+ emulator, warden's credential provider is enabled while passkeys are on and the prior provider settings restored on `off` / release.
+- Errors: `E_PASSKEY_API` (the platform passkey API refused or is missing), `E_PASSKEY_STORE` (the credential store is unreadable or unwritable), `E_UNSUPPORTED` (physical devices, or a platform without support).
+- `--json`: `result.action` is `passkey-set`, `-off`, `-add`, `-list`, `-remove`, `-clear`, `-status`; `result` carries `enabled`, `mode`, `uv`, `credentials`, plus `appliesOnLaunch` when the driver reported it, `credentialId` on `add`, `changed` on `off`.
+
 ## Selector grammar
 
 Space-separated `key=value`, each key at most once, AND-combined.
@@ -220,7 +277,7 @@ Space-separated `key=value`, each key at most once, AND-combined.
 | `editable=true\|false` | text fields vs rest |
 | `nth=<i>` | i-th match, 0-based |
 
-Values: bare `id=sign-in`, quoted `label="Sign in"`, or regex `text=/^\d+ left$/i`. Several matches: actions pick the most specific visible one; pin with `nth=`. Prefer `id=`. Coordinates `x y` only for canvas content with no accessibility node.
+Values: bare `id=sign-in`, a bare multi-word value `label=Try Face ID Again` (runs to the next ` <key>=` or the end; a value that itself contains ` role=`, ` nth=` etc. needs quotes), quoted `label="Sign in"`, or regex `text=/^\d+ left$/i`. Several matches: actions pick the most specific visible one; pin with `nth=`. Prefer `id=`. Coordinates `x y` only for canvas content with no accessibility node.
 
 ## Verify and failure codes
 

@@ -163,6 +163,21 @@ describe("findBatchPreset", () => {
 		expect(b.data.preset?.biometrics).toBe(false);
 	});
 
+	test("keychainAcl: the preset's own wins over the top-level default", () => {
+		write(JSON_CONFIG_FILE, {
+			keychainAcl: true,
+			batches: {
+				a: { platform: "ios", cmd: ["x"] },
+				b: { platform: "ios", keychainAcl: false, cmd: ["x"] },
+			},
+		});
+		const a = findBatchPreset({ start: dir, stopAt: dir, name: "a" });
+		const b = findBatchPreset({ start: dir, stopAt: dir, name: "b" });
+		if (!a.success || !b.success) throw new Error("config");
+		expect(a.data.preset?.keychainAcl).toBe(true);
+		expect(b.data.preset?.keychainAcl).toBe(false);
+	});
+
 	test("headless unset everywhere → undefined", () => {
 		write(JSON_CONFIG_FILE, { batches: { a: { platform: "ios", cmd: ["x"] } } });
 		const res = findBatchPreset({ start: dir, stopAt: dir, name: "a" });

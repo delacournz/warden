@@ -67,6 +67,15 @@ describe("ensureGolden", () => {
 		expect(store.listLeases()).toEqual([]);
 	});
 
+	test("a listed runtime that refuses the wip at first (Invalid runtime) → asked again, golden built", async () => {
+		const host = fakeHost({ migrationPolls: 0, createRefusals: 2 });
+		const logs: string[] = [];
+		const result = await ensureGolden(deps(host, logs), "iphone-17");
+		expect(result.success).toBe(true);
+		expect(host.calls.filter((c) => c[2] === "create")).toHaveLength(3);
+		expect(logs).toContain("golden: iOS-26-5 accepted the simulator after 6s");
+	});
+
 	test("finished golden → reused, stale goldens of this profile deleted", async () => {
 		const host = fakeHost({
 			sims: [
@@ -284,6 +293,17 @@ describe("golden recipe 2: AutomationEnabled baked in (16-7)", () => {
 		expect(result.success && result.data.built).toBe(true);
 		expect(host.sims.some((s) => s.udid === "G")).toBe(false);
 		expect(logs.join("\n")).toContain(`${GOLDEN} has no AutomationEnabled — rebuilding`);
+	});
+
+	test("a golden whose AutomationEnabled is stored as the integer 1 is kept, not rebuilt", async () => {
+		const host = fakeHost({
+			sims: [{ udid: "G", name: GOLDEN, state: "Shutdown" }],
+			migrationPolls: 0,
+			automationAsInteger: ["G"],
+		});
+		const result = await ensureGolden(deps(host), "iphone-17");
+		expect(result.success && result.data).toMatchObject({ name: GOLDEN, built: false });
+		expect(host.sims.some((s) => s.udid === "G")).toBe(true);
 	});
 
 	test("the recipe is part of the key: a recipe-2 golden is built next to the recipe-1 one, which a claim keeps (ios-claim-path-R4)", async () => {

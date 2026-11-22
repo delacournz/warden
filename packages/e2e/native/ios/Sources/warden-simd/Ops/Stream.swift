@@ -83,7 +83,10 @@ final class StreamHolder: @unchecked Sendable {
     _ = stop()
     let defaultPath = (NSTemporaryDirectory() as NSString).appendingPathComponent(
       "wsimd-\(session.udid.prefix(8)).sock")
-    let stream = try await StreamSession.start(simulator: session.simulator, request: request, defaultPath: defaultPath)
+    guard let display = session.display else {
+      throw WireError(.unsupported, "this helper's device backend has no display stream")
+    }
+    let stream = try await StreamSession.start(display: display, request: request, defaultPath: defaultPath)
     lock.withLock { current = stream }
     let size = stream.size
     return .object([

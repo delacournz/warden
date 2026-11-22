@@ -62,6 +62,8 @@ export const ENV_NAMES = {
 	netproxyCommand: "WARDEN_NETPROXY_COMMAND",
 	/** `1` when the suite's devices are biometrics devices: the session enrolls an iOS sim again before the app is installed */
 	biometrics: "WARDEN_BIOMETRICS",
+	/** `1` turns the Keychain ACL shim on for the session's iOS simulator launches, `0` turns it off (a suite's explicit `keychainAcl: false`) */
+	keychainAcl: "WARDEN_KEYCHAIN_ACL",
 	/** JSON of the suite's `a11y` (`ignore` / `minSeverity` / `rules`): the defaults `device.a11yAudit()` and `toPassA11yAudit()` use */
 	a11yAudit: "WARDEN_A11Y_AUDIT",
 	/** `1`: iOS apps launch with the injected library, so hint, custom actions, reading order and announcements can be read */
@@ -151,6 +153,7 @@ const schema = z.object({
 	leaseId: z.string().min(1).optional(),
 	netproxyCommand: launchArgs.pipe(z.array(z.string()).min(1)).optional(),
 	biometrics: toggle.optional(),
+	keychainAcl: toggle.optional(),
 	a11yAudit: a11yAudit.optional(),
 	cameraFeeds: cameraFeeds.optional(),
 	host: z.string().min(1).optional(),
@@ -207,6 +210,8 @@ export type E2eEnv = {
 	hostDriver?: string[];
 	/** `WARDEN_BIOMETRICS`: this is a biometrics device (profile `<p>+bio`); iOS enrollment does not survive a reboot or a spec's `unenroll` */
 	biometrics?: boolean;
+	/** `WARDEN_KEYCHAIN_ACL`: switch the Keychain ACL shim on (`true`) or off (`false`) before the first launch; unset leaves the lease's switch */
+	keychainAcl?: boolean;
 	/** `WARDEN_A11Y_AUDIT`: the suite's accessibility audit settings; absent = rules all, ignore none, minSeverity `error` */
 	a11yAudit?: A11yAuditConfig;
 	/** `WARDEN_CAMERA_FEEDS`: the suite's `camera` (absolute paths), applied before the first `app.open()` */
@@ -263,6 +268,7 @@ function toEnv(v: Parsed, now: () => Date): E2eEnv {
 		...(v.host === undefined ? {} : { host: v.host }),
 		...(v.hostDriver === undefined ? {} : { hostDriver: v.hostDriver }),
 		...(v.biometrics === true ? { biometrics: true } : {}),
+		...(v.keychainAcl === undefined ? {} : { keychainAcl: v.keychainAcl }),
 		...(v.a11yAudit === undefined ? {} : { a11yAudit: v.a11yAudit }),
 		...(v.cameraFeeds === undefined ? {} : { cameraFeeds: v.cameraFeeds }),
 		...(v.afterReboot === undefined ? {} : { afterReboot: v.afterReboot }),

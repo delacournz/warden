@@ -79,6 +79,8 @@ Builds:
                                 paths a CI job saves between runs
   builds                        list, remove, prune (LRU) and import cached
                                 native app builds
+  pods                          CocoaPods install shared across worktrees:
+                                install, list, remove, prune
 
 Account:
   view [leaseId|remoteId]       watch and drive a device: hosted (the warden
@@ -349,6 +351,10 @@ Options:
                               "1s")
   --devtools                  start the CDP devtools broker with the session
                               (default off: \`warden dev enable devtools\`)
+  --keychain-acl              iOS simulator: Keychain items with access control
+                              prompt for Face ID / passcode on read, like a
+                              phone (kept for the device)
+  --no-keychain-acl           turn the Keychain ACL shim off for the device
   --no-open                   don't open the dev client (Metro + the leases
                               only)
   --host <name>               run on a device of this warden host: Metro stays
@@ -540,6 +546,11 @@ Options:
   --no-tui                    plain log lines instead of the live grid
   --jobs <list>               comma-separated jobs
   --jobs-from <file>          one job per line from a file, or - for stdin
+  --keychain-acl              iOS simulators: Keychain items with access control
+                              prompt on read; sets WARDEN_KEYCHAIN_ACL=1 for
+                              every job (preset keychainAcl)
+  --no-keychain-acl           WARDEN_KEYCHAIN_ACL=0 for every job, even when the
+                              preset sets keychainAcl
   -h, --help                  display help for command
 
 Examples:
@@ -676,6 +687,9 @@ Options:
   --required-only             only run specs with required: true
   --explain                   print why each spec was selected before running
   --dry-run                   select and explain, run nothing
+  --build-only                build (or find) the app the run would install into
+                              the cache, then stop: no device, no spec (a CI
+                              step before the timed run)
   --report <file>             also write e2e-report.json here
   --json-lines                stdout: one JSON event per line, each test as it
                               finishes, then the report (progress stays on
@@ -694,6 +708,11 @@ Options:
                               specs can read hints, actions, reading order and
                               announcements (a suite with an \`a11y\` key does
                               this already)
+  --keychain-acl              iOS simulators: Keychain items with access control
+                              prompt for Face ID / passcode on read, like a
+                              phone (suite keychainAcl)
+  --no-keychain-acl           leave the Keychain ACL shim off even when the
+                              suite sets keychainAcl
   --no-warm                   skip pre-warming the iOS socket helper per device
                               (default: on; suite warmDrivers)
   -h, --help                  display help for command
@@ -2302,15 +2321,16 @@ Options:
   -h, --help      display help for command
 
 Commands:
-  cache           print the CI cache groups (builds, repack, golden, ccache):
-                  each key, its paths, and the golden's import/export commands
+  cache           print the CI cache groups (builds, repack, golden, ccache,
+                  metro): each key, its paths, and the golden's import/export
+                  commands
   help [command]  display help for command
 
 $ warden ci cache --help
 Usage: warden ci cache [options]
 
-print the CI cache groups (builds, repack, golden, ccache): each key, its paths,
-and the golden's import/export commands
+print the CI cache groups (builds, repack, golden, ccache, metro): each key, its
+paths, and the golden's import/export commands
 
 Options:
   --platform <platform>  ios (default; the only one with cacheable builds and a
@@ -2367,8 +2387,8 @@ Commands:
   home                            press the home button
   back                            press back (Android only)
   biometrics [op]                 simulated Face ID / Touch ID / fingerprint:
-                                  status (default), enroll, unenroll, match,
-                                  fail
+                                  status (default), enroll, unenroll, reenroll
+                                  (a new enrolment), match, fail
   screen                          the device screen: orientation, appearance,
                                   screenshot, video
   gesture                         touch gestures: swipe, longpress, pinch,
@@ -2433,6 +2453,9 @@ Commands:
   camera                          simulated camera: set <path> | status | clear
                                   (png, jpg, heic, mp4, mov into the app's
                                   camera)
+  passkey                         simulated passkeys: set <mode> | off | add |
+                                  list | remove | clear | status (answers the
+                                  app's real passkey calls)
   help [command]                  display help for command
 
 $ warden ui status --help
@@ -2502,6 +2525,8 @@ Options:
   --depth <n>            only the first n levels of the tree
   --a11y                 add hint, actions, a11y-focused and live-region facts
                          (iOS: needs \`open --a11y\`)
+  --keys                 with -i: list the on-screen keyboard's keys (default:
+                         one [keyboard] line)
   --udid <udid>          device udid (iOS) / serial (Android)
   --serial <serial>      Android serial
   --lease <id>           use the device behind this lease id
@@ -2566,6 +2591,11 @@ Options:
                          audit/order/speak/announcements can read hints, actions
                          and announcements (remembered for the device;
                          relaunches the app the first time)
+  --keychain-acl         iOS simulator: Keychain items with access control
+                         prompt for Face ID / passcode on read, like a phone
+                         (kept for the device; relaunches an app started without
+                         it)
+  --no-keychain-acl      turn the Keychain ACL shim off for the device
   --kind <kind>          install this build kind: dev (Debug, Metro), simulator
                          (Release + this worktree's JS repacked in seconds),
                          release (JS embedded at build) (choices: "dev",
@@ -2876,10 +2906,10 @@ $ warden ui biometrics --help
 Usage: warden ui biometrics [options] [op]
 
 simulated Face ID / Touch ID / fingerprint: status (default), enroll, unenroll,
-match, fail
+reenroll (a new enrolment), match, fail
 
 Arguments:
-  op                     status | enroll | unenroll | match | fail
+  op                     status | enroll | unenroll | reenroll | match | fail
 
 Options:
   --settle [ms]          wait for a quiet screen afterwards (default budget 3000
@@ -4567,6 +4597,224 @@ Options:
   --timeout <ms>         deadline in milliseconds (default 5000)
   --no-record            don't append this step to a running recording
   --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui passkey --help
+Usage: warden ui passkey [options] [command]
+
+simulated passkeys: set <mode> | off | add | list | remove | clear | status
+(answers the app's real passkey calls)
+
+Options:
+  -h, --help             display help for command
+
+Commands:
+  set <mode>             turn the authenticator on and pick how it answers. iOS:
+                         live in an app launched with it, else from its next
+                         launch. Android: warden's credential provider (API 34+
+                         emulator)
+  off                    turn the authenticator off (credentials stay in the
+                         store)
+  add                    add a credential; prints its id. Without --key a fresh
+                         P-256 key is generated
+  list                   the credentials in the store, newest first
+  remove <credentialId>  remove one credential
+  clear                  remove every credential
+  status                 mode, uv and credentials the authenticator has now
+  help [command]         display help for command
+
+$ warden ui passkey set --help
+Usage: warden ui passkey set [options] <mode>
+
+turn the authenticator on and pick how it answers. iOS: live in an app launched
+with it, else from its next launch. Android: warden's credential provider (API
+34+ emulator)
+
+Arguments:
+  mode                   auto | cancel | fail | unavailable
+
+Options:
+  --uv <uv>              user verification: match (default) | nomatch | skip
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui passkey off --help
+Usage: warden ui passkey off [options]
+
+turn the authenticator off (credentials stay in the store)
+
+Options:
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui passkey add --help
+Usage: warden ui passkey add [options]
+
+add a credential; prints its id. Without --key a fresh P-256 key is generated
+
+Options:
+  --rp <id>               relying party id, a bare host like example.com
+  --user-name <name>      user name shown in the account picker
+  --display-name <name>   display name (default the user name)
+  --user-handle <b64url>  user handle, base64url (default 16 random bytes)
+  --id <b64url>           credential id, base64url (default 16 random bytes)
+  --key <path>            P-256 PKCS#8 private key, PEM or DER file, relative to
+                          the working directory
+  --sign-count <n>        starting signature counter (default 0)
+  --udid <udid>           device udid (iOS) / serial (Android)
+  --serial <serial>       Android serial
+  --lease <id>            use the device behind this lease id
+  --claim                 take over a stale/missing lease, or claim a device
+                          when none is held
+  --platform <platform>   platform for --claim with no device named: ios
+                          (default) | android
+  --physical              with --claim and no device named: claim a connected
+                          phone, not an emulator
+  --profile <slug>        device profile for --claim with no device named
+  --runtime <runtime>     runtime for --claim with no device named
+  --force                 drive the device even while a live warden process
+                          (e2e, batch, run) holds your lease on it; your own
+                          warden dev device is shared without it
+  --timeout <ms>          deadline in milliseconds (default 5000)
+  --no-record             don't append this step to a running recording
+  --json                  machine-readable output: one JSON document on stdout
+  -h, --help              display help for command
+
+$ warden ui passkey list --help
+Usage: warden ui passkey list [options]
+
+the credentials in the store, newest first
+
+Options:
+  --rp <id>              only this relying party
+  --with-keys            include each private key (test keys)
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui passkey remove --help
+Usage: warden ui passkey remove [options] <credentialId>
+
+remove one credential
+
+Arguments:
+  credentialId           credential id (base64url)
+
+Options:
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui passkey clear --help
+Usage: warden ui passkey clear [options]
+
+remove every credential
+
+Options:
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui passkey status --help
+Usage: warden ui passkey status [options]
+
+mode, uv and credentials the authenticator has now
+
+Options:
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
+  --json                 machine-readable output: one JSON document on stdout
   -h, --help             display help for command"
 `;
 
@@ -4792,9 +5040,13 @@ Commands:
                        --max-size (build-locked ones stay)
   rm|remove <hash...>  remove cached builds by hash (or a unique prefix) and
                        forget the installs at that hash
+  path <platform>      print where this project's cached dev build is (exit 2 on
+                       a miss); never builds or downloads. The Expo build-cache
+                       provider calls it
   import <path>        copy a local .app / .apk into the cache under a
                        fingerprint hash (--kind simulator-base: a CI-built
-                       Release simulator .app that repacks clone from)
+                       Release simulator .app that repacks clone from; --kind
+                       dev: a Debug simulator .app)
   help [command]       display help for command
 
 $ warden builds ls --help
@@ -4837,21 +5089,41 @@ Options:
   --json                 machine-readable output
   -h, --help             display help for command
 
+$ warden builds path --help
+Usage: warden builds path [options] <platform>
+
+print where this project's cached dev build is (exit 2 on a miss); never builds
+or downloads. The Expo build-cache provider calls it
+
+Arguments:
+  platform          ios | android
+
+Options:
+  --kind <kind>     dev (the only kind)
+  --hash <hash>     <nativeFp> or <nativeFp>:dev to look up (default: warden's
+                    own dev-kind fingerprint)
+  --project <dir>   project directory (default: cwd)
+  --bundle-id <id>  override the bundle id / package
+  --json            machine-readable output
+  -h, --help        display help for command
+
 $ warden builds import --help
 Usage: warden builds import [options] <path>
 
 copy a local .app / .apk into the cache under a fingerprint hash (--kind
-simulator-base: a CI-built Release simulator .app that repacks clone from)
+simulator-base: a CI-built Release simulator .app that repacks clone from;
+--kind dev: a Debug simulator .app)
 
 Arguments:
   path                   path.app | path.apk
 
 Options:
   --hash <hash>          fingerprint hash to file it under (required without
-                         --kind; simulator-base: <nativeFp>, default warden's
-                         own)
+                         --kind; simulator-base / dev: <nativeFp>, default
+                         warden's own)
   --kind <kind>          simulator-base: file it as the base \`warden repack\` /
-                         \`warden e2e\` reuse
+                         \`warden e2e\` reuse; dev: file a Debug simulator .app as
+                         the project's dev build (--hash <nativeFp>[:dev])
   --platform <platform>  ios | android (default: from the extension)
   --project <dir>        project directory (default: cwd)
   --profile <profile>    build profile (default: the project's EAS profile, else
@@ -4859,6 +5131,81 @@ Options:
   --bundle-id <id>       override the bundle id / package
   --json                 machine-readable output
   -h, --help             display help for command"
+`;
+
+exports[`help output warden pods --help (and nested subcommands) 1`] = `
+"$ warden pods --help
+Usage: warden pods [options] [command]
+
+CocoaPods install shared across worktrees: install, list, remove, prune
+
+Options:
+  -h, --help             display help for command
+
+Commands:
+  install [pod-args...]  pod install through the machine-wide cache: same pods
+                         anywhere on this Mac restore in seconds (Expo: prebuild
+                         too); pass pod args after --
+  ls                     list cached pods installs (the default)
+  rm|remove <key...>     remove cached pods by key (or a unique prefix of at
+                         least 6 characters)
+  prune                  remove cached pods unused for --older-than, then
+                         least-recently-used until they fit --max-size (installs
+                         in progress stay); sizes are apparent: blocks are
+                         shared with the worktrees cloned from an entry
+  help [command]         display help for command
+
+$ warden pods install --help
+Usage: warden pods install [options] [pod-args...]
+
+pod install through the machine-wide cache: same pods anywhere on this Mac
+restore in seconds (Expo: prebuild too); pass pod args after --
+
+Arguments:
+  pod-args                   extra arguments for \`pod install\`, after --
+
+Options:
+  --project-directory <dir>  the ios dir, relative to the project (default: ios)
+  --no-cache                 run a plain pod install: don't restore from or
+                             store to the cache
+  --json                     machine-readable output
+  -h, --help                 display help for command
+
+$ warden pods ls --help
+Usage: warden pods ls [options]
+
+list cached pods installs (the default)
+
+Options:
+  --json      machine-readable output
+  -h, --help  display help for command
+
+$ warden pods rm --help
+Usage: warden pods rm|remove [options] <key...>
+
+remove cached pods by key (or a unique prefix of at least 6 characters)
+
+Arguments:
+  key         key or unique prefix, as \`warden pods ls\` shows it
+
+Options:
+  --dry-run   only show what would be removed
+  --json      machine-readable output
+  -h, --help  display help for command
+
+$ warden pods prune --help
+Usage: warden pods prune [options]
+
+remove cached pods unused for --older-than, then least-recently-used until they
+fit --max-size (installs in progress stay); sizes are apparent: blocks are
+shared with the worktrees cloned from an entry
+
+Options:
+  --max-size <size>        size limit, e.g. 10G (default: 10G)
+  --older-than <duration>  unused for this long, e.g. 30d (default: 30d)
+  --dry-run                only show what would be removed
+  --json                   machine-readable output
+  -h, --help               display help for command"
 `;
 
 exports[`help output warden hook --help (and nested subcommands) 1`] = `

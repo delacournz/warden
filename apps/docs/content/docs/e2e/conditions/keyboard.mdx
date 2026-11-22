@@ -2,6 +2,7 @@
 title: Keyboard
 description: Test sheets and footers that ride the on-screen keyboard by showing or hiding it from a spec or a suite.
 icon: Keyboard
+simulatorOnly: true
 ---
 
 `device.keyboard` switches the on-screen keyboard between `software` (it shows, the default) and `hardware` (it stays hidden, as with a connected keyboard), live, so a spec can check a bottom sheet or a sticky footer riding it up and down.
@@ -32,6 +33,10 @@ test("the footer stays above the keyboard", async ({ app, device, screen }) => {
 On iOS, a tap on a target the keyboard covers first scrolls it into view or dismisses the keyboard, then taps. On Android, call `device.hideKeyboard()` first.
 
 The mode goes back to the suite's `conditions.keyboard` (else `software`) when the test ends.
+
+## Typing aids are off
+
+On an iOS Simulator, warden turns off autocorrect, predictive text and spell check (`com.apple.keyboard.preferences`) when it starts driving the device, so text a spec types reads back exactly as typed. Without this, a fresh simulator can rewrite a word as the next space goes in (`Buy` + ` milk` read back as `But milk`). Autocapitalization stays on. The settings stay on the simulator.
 
 ## In a suite
 

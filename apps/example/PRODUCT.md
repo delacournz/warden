@@ -13,7 +13,7 @@ ios
 
 ## Product Purpose
 
-`@delacour/warden-example` is warden's dogfood app (Expo SDK 57, Expo Router, Uniwind, Delacour UI). Its showcase screens make one device capability visible each: biometrics (`/biometrics`), network (`/network`), location (`/location`), clock (`/clock`). Success: a viewer sees a `warden ui ...` command land and the phone visibly react, and the same screen passes its e2e spec.
+`@delacour/warden-example` is warden's dogfood app (Expo SDK 57, Expo Router, Uniwind, Delacour UI). Its showcase screens make one device capability visible each: biometrics (`/biometrics`), passkeys (`/passkeys`), network (`/network`), location (`/location`), clock (`/clock`). Success: a viewer sees a `warden ui ...` command land and the phone visibly react, and the same screen passes its e2e spec.
 
 ## Positioning
 
@@ -30,6 +30,7 @@ The screens show real device conditions on a real simulator, driven by warden: t
 - Network: `warden ui network set online|offline|edge|3g|4g|lte|wifi|slow|lossy`, `flap --up --down`, `fault <host-glob> 503|reset|delay:2s|blackhole`. iOS shapes only the app's own NSURLSession traffic, and only when launched with the dylib; HTTPS faults arrive as resets.
 - Location: `warden ui location set|route|gpx|scenario city-run|city-bike|freeway|clear`; fixes arrive through `expo-location`.
 - Clock: `warden ui clock set|advance|reset`; a large offset breaks HTTPS.
+- Passkeys: the real `ASAuthorizationController` / Credential Manager call, answered by warden's virtual authenticator (`warden ui passkey …`, planned WDN-PASS); the screen verifies every response's signature itself, so "Signed in" is a measured result.
 - Theme: the docs Device Hub palette via `delacour theme` (`src/styles/theme.css`), light and dark. Registry files under `src/components/ui`, `src/lib`, `src/hooks`, `src/styles` stay byte-identical except `theme.css` / `app.css`.
 - Tailwind scale tokens for type and spacing; px values only where geometry is bound to an SVG or a constant.
 

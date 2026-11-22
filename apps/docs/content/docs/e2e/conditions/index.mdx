@@ -1,10 +1,11 @@
 ---
 title: Device conditions
-description: Test the app offline, on 3G, with one host failing, at a moving GPS fix, two weeks in the future, with a failed Face ID, a denied permission, a QR code in the camera, another locale or the largest text size, from a spec or a suite.
+description: Test the app offline, on 3G, with one host failing, at a moving GPS fix, two weeks in the future, with a failed Face ID, a denied permission, a QR code in the camera, a cancelled passkey, another locale or the largest text size, from a spec or a suite.
 icon: Signal
+simulatorOnly: true
 ---
 
-import { Accessibility, BatteryMedium, BellRing, Camera, Clock, FingerprintPattern, Keyboard, Languages, MapPin, ShieldCheck, Wifi } from "lucide-react";
+import { Accessibility, BatteryMedium, BellRing, Camera, Clock, FingerprintPattern, KeyRound, Keyboard, Languages, LockKeyhole, MapPin, ShieldCheck, Wifi } from "lucide-react";
 
 A spec can put the device into a condition (offline, 3G, one host failing, a moving GPS fix, a clock two weeks ahead, a failed Face ID, a denied permission, a QR code in front of the camera) and check what the app does. Everything a test changes belongs to its lease: when the test ends, warden puts it back, so the next spec never inherits a shaped device.
 
@@ -30,8 +31,10 @@ The example app has a Conditions screen (`warden-example://conditions`) and a sp
 <Card icon={<MapPin />} title="Location" href="/docs/e2e/conditions/location">A GPS point, a route or GPX file played at a speed, bundled scenarios.</Card>
 <Card icon={<Clock />} title="Clock" href="/docs/e2e/conditions/clock">Expire a trial in one step: advance, jump or freeze the clock.</Card>
 <Card icon={<FingerprintPattern />} title="Biometrics" href="/docs/e2e/conditions/biometrics">Match and fail the real Face ID, Touch ID and fingerprint prompt.</Card>
+<Card icon={<LockKeyhole />} title="Keychain access control" href="/docs/e2e/conditions/keychain-acl">Keychain items behind Face ID that prompt like a phone; re-enrolment invalidates them.</Card>
 <Card icon={<ShieldCheck />} title="Permissions" href="/docs/e2e/conditions/permissions">Skip the prompt, or test the denied path on purpose.</Card>
 <Card icon={<Camera />} title="Camera" href="/docs/e2e/conditions/camera">Scan a known QR code, capture a known photo.</Card>
+<Card icon={<KeyRound />} title="Passkeys" href="/docs/e2e/conditions/passkeys">Passkey sign-up and sign-in with test keys; cancel and fail on demand.</Card>
 <Card icon={<Languages />} title="Locale and timezone" href="/docs/e2e/conditions/locale">Translations, date formats and day boundaries.</Card>
 <Card icon={<Accessibility />} title="Accessibility settings" href="/docs/e2e/conditions/accessibility">Layouts at the largest text size, reduced-motion paths.</Card>
 <Card icon={<BatteryMedium />} title="Battery" href="/docs/e2e/conditions/battery">Low-power banners and charging-only work.</Card>
@@ -94,8 +97,9 @@ e2e: {
 | `timezone` | an IANA name |
 | `a11y` | `{ textSize?, boldText?, contrast?, reduceMotion? }` |
 | `keyboard` | `"software"` (default) or `"hardware"` |
+| `passkeys` | `"auto"`, `"cancel"`, `"fail"`, `"unavailable"` or `{ mode?, uv?, credentials? }` |
 
-A suite's key replaces the top-level one for that area. A bad value fails config load. On iOS, declaring `network` or `clock` launches the app with the dylib, which is why the example runs its condition specs in a separate `conditions` suite: the other specs keep a plain launch.
+A suite's key replaces the top-level one for that area. A bad value fails config load. On iOS, declaring `network`, `clock` or `passkeys` launches the app with the dylib, which is why the example runs its condition specs in a separate `conditions` suite: the other specs keep a plain launch.
 
 ```bash
 warden e2e conditions --specs conditions/network,conditions/location,conditions/clock
@@ -116,4 +120,4 @@ A timeline changes the network and the location on a schedule. `at` is an offset
 
 ## What is undone after each spec
 
-The end of a spec puts the device back to the suite's baseline (or the real state without one): the network, location, clock, permissions, accessibility settings, locale, timezone, battery, keyboard and camera feed. Each change a spec makes is a `condition` line in `results.jsonl`. The full list is in [What is undone on release](/docs/sims/conditions#what-is-undone-on-release).
+The end of a spec puts the device back to the suite's baseline (or the real state without one): the network, location, clock, permissions, accessibility settings, locale, timezone, battery, keyboard, camera feed and passkey mode (credentials stay for the lease). Each change a spec makes is a `condition` line in `results.jsonl`. The full list is in [What is undone on release](/docs/sims/conditions#what-is-undone-on-release).

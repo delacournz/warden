@@ -1,0 +1,83 @@
+---
+title: Passkeys
+description: Test passkey sign-up and sign-in against warden's virtual authenticator, with test keys and no iCloud or Google account, from a spec or a suite. Cancel, fail and failed user verification on demand.
+icon: KeyRound
+simulatorOnly: true
+---
+
+<DemoClip src="/demos/passkeys/create-sign-in" label="warden ui passkey answering the example app's real passkey create and sign-in calls on a leased simulator, then a cancelled sign-in" />
+
+The app makes its real passkey calls (`ASAuthorizationController` on iOS, Credential Manager on Android) and warden's virtual authenticator answers them with test keys. Your server sees a normal WebAuthn registration and assertion. No iCloud or Google account, no associated domains to host, no sheet to tap through.
+
+## In a spec
+
+```ts
+import { expect, test } from "@delacour/warden-e2e";
+
+test("signs in with a passkey", async ({ app, device, screen }) => {
+	await device.passkeys.set({ mode: "auto" });
+	await app.open();
+	await screen.getByTestId("create-passkey").tap();
+	await expect(screen.getByTestId("status")).toHaveText("Saved");
+	await screen.getByTestId("sign-in").tap();
+	await expect(screen.getByTestId("status")).toHaveText("Signed in");
+
+	await device.passkeys.set({ mode: "cancel" });
+	await screen.getByTestId("sign-in").tap();
+	await expect(screen.getByTestId("status")).toHaveText("Cancelled");
+});
+```
+
+| Member | Does |
+|---|---|
+| `device.passkeys.set({ mode?, uv? })` | turns the authenticator on. `mode`: `"auto"` (default), `"cancel"`, `"fail"`, `"unavailable"`. `uv`: `"match"` (default), `"nomatch"`, `"skip"`. A field left out keeps its value. Returns `{ enabled, mode, uv, credentials, appliesOnLaunch? }` |
+| `device.passkeys.off()` | the app's calls get the platform's own answer again; credentials stay |
+| `device.passkeys.add({ rpId, userName, … })` | stores a credential as if the app had created it. `privateKey` (P-256, PEM or base64url PKCS#8), `credentialId`, `userHandle` (base64url) are generated when left out. Returns the credential with its private key, so a backend fixture can register its public key |
+| `device.passkeys.list({ rpId?, withKeys? })` | the credentials, newest first; private keys only with `withKeys` |
+| `device.passkeys.remove(credentialId)` / `clear()` | delete one, or all |
+| `device.passkeys.status()` | on or off, mode, uv, credentials |
+
+Mode and uv go back to the suite's `conditions.passkeys` (or off) when the test ends. Credentials stay for the lease, so a later spec can sign in with a passkey an earlier one created. Each change is a `condition` line in `results.jsonl`.
+
+## Modes
+
+| `mode` / `uv` | iOS answers | Android answers |
+|---|---|---|
+| `auto` | a registration or assertion, no UI | the same |
+| `cancel` | `ASAuthorizationError` 1001 (canceled) | `CreateCredentialCancellationException` / `GetCredentialCancellationException` |
+| `fail` | 1004 (failed) | `NotAllowedError` DOM exception |
+| `unavailable` | 1001, "No credentials available for login." | a cancellation (Play images show Google's own chooser first, as a real phone does) |
+| `uv: "nomatch"` | 1001, as after a Face ID the user gave up on | a cancellation |
+| `uv: "skip"` | succeeds with the UV flag off | the same |
+
+A registration whose `excludeCredentials` names a stored credential fails as the platform does: iOS 1006, Android `InvalidStateError`.
+
+## In a suite
+
+```ts
+export default defineConfig({
+	e2e: {
+		passkeys: {
+			conditions: {
+				passkeys: {
+					mode: "auto",
+					credentials: [{ rpId: "example.com", userName: "seed@example.com", privateKey: "<base64url PKCS#8>" }],
+				},
+			},
+		},
+	},
+});
+```
+
+`conditions.passkeys` is a mode word (`passkeys: "auto"`) or `{ mode?, uv?, credentials? }`. It applies before each spec's first `app.open()`; seeded credentials are added once per lease. On iOS, declaring it launches the app with warden's injected library.
+
+## What your server sees
+
+- Attestation `none`, ES256 (`-7`) keys, sign count `0`, backup eligible and backed up: a synced passkey.
+- Origin: iOS `https://<rpId>`; Android `android:apk-key-hash:<base64url SHA-256 of the app's signing certificate>`. Your server's allowed origins must include the one your app gets.
+- No extensions (`prf`, `largeBlob`).
+- Test keys only. Never seed a key your production relying party trusts.
+
+A server that requires attestation from an allow-list of authenticators rejects `none`.
+
+What each platform does, driving a running app and `warden ui passkey`: [Passkeys on a simulator](/docs/sims/conditions/passkeys). Errors and fixes are in [Debugging](/docs/e2e/debugging).

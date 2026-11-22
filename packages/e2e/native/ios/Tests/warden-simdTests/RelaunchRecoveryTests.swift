@@ -25,7 +25,7 @@ private final class PidBox: @unchecked Sendable {
 /// An app relaunched while no quiescence stream was open answers the bridge with "did not respond" until a stream
 /// binds to it; `readRecovering` opens that stream and reads again, and `health` stops claiming the bridge is fine.
 final class RelaunchRecoveryTests: XCTestCase {
-  private let notResponding = AXBridgeError.applicationNotResponding(pid: 42)
+  private let notResponding = IdbErrors.map(AXBridgeError.applicationNotResponding(pid: 42))
 
   /// A read that fails with each scripted error in turn, then returns "ok".
   private func script(_ errors: [any Error], calls: Counter) -> () async throws -> String {
@@ -69,14 +69,14 @@ final class RelaunchRecoveryTests: XCTestCase {
     XCTAssertEqual(named.value, 42)
     XCTAssertEqual(Session.notRespondingPid(notResponding), 42)
     XCTAssertEqual(
-      Session.notRespondingPid(UIAutomationError.applicationNotResponding(backend: .accessibility, pid: 7)), 7)
-    XCTAssertNil(Session.notRespondingPid(AXBridgeError.applicationUnavailable(pid: 42)))
+      Session.notRespondingPid(IdbErrors.map(UIAutomationError.applicationNotResponding(backend: .accessibility, pid: 7))), 7)
+    XCTAssertNil(Session.notRespondingPid(IdbErrors.map(AXBridgeError.applicationUnavailable(pid: 42))))
   }
 
   func testTheUIAutomationFlavourOfNotRespondingRecoversToo() async throws {
     let reads = Counter()
     let recovers = Counter()
-    let error = UIAutomationError.applicationNotResponding(backend: .accessibility, pid: 1)
+    let error = IdbErrors.map(UIAutomationError.applicationNotResponding(backend: .accessibility, pid: 1))
     _ = try await Session.readRecovering(
       read: script([error], calls: reads), recover: { _ in recovers.bump() }, log: { _ in })
     XCTAssertEqual(recovers.count, 1)
@@ -101,7 +101,7 @@ final class RelaunchRecoveryTests: XCTestCase {
     let recovers = Counter()
     do {
       _ = try await Session.readRecovering(
-        read: script([AXBridgeError.applicationUnavailable(pid: 42)], calls: reads), recover: { _ in recovers.bump() },
+        read: script([IdbErrors.map(AXBridgeError.applicationUnavailable(pid: 42))], calls: reads), recover: { _ in recovers.bump() },
         log: { _ in })
       XCTFail("expected the failure to propagate")
     } catch {

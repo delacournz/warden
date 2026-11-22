@@ -5,6 +5,7 @@ import type { Exec } from "@delacour/warden-core/exec";
 import { parseFingerprintEnrolled } from "@delacour/warden-core/golden/android-biometrics";
 import { wardenHome } from "@delacour/warden-core/store";
 import { atfAudit } from "../../a11y/native/atf";
+import { centre } from "../../alert-buttons";
 import type { ConditionSink } from "../../conditions/condition-events";
 import { planRoute } from "../../conditions/location-plan";
 import { type RouteTicker, realTickerClock, startRouteTicker, type TickerClock } from "../../conditions/route-ticker";
@@ -104,6 +105,7 @@ import { createScreenReaderOps } from "./android-screen-reader";
 import { createAndroidSettings } from "./android-settings";
 import { type AndroidStateStore, forSdk, patchFor } from "./android-state";
 import { ensureAtfJar } from "./atf-device";
+import { type AndroidPasskeys, createAndroidPasskeys } from "./passkeys";
 import { createUiadBackend, type UiadOptions } from "./uiad-backend";
 import { UIAD_MIN_SDK } from "./uiad-device";
 import { createUiadOps, type UiadOps } from "./uiad-ops";
@@ -198,6 +200,9 @@ const SNAPSHOT_ATTEMPTS = 3;
 const INPUT_TEXT_BASE_MS = 10_000;
 const INPUT_TEXT_PIECE_MS = 8_000;
 const SNAPSHOT_RETRY_MS = 400;
+/** Credential Manager sheets answered in a row by one look at the screen (create, then maybe a chooser), and the wait after each tap. */
+const PASSKEY_SHEET_ROUNDS = 3;
+const PASSKEY_SHEET_SETTLE_MS = 600;
 const SCREENSHOT_TIMEOUT_MS = 10_000;
 const DRAG_PRESS_MS = 500;
 const DRAG_MOVE_MS = 600;
@@ -415,7 +420,7 @@ function biometricsOp(session: AdbSession, exec: Exec, adb: string, serial: stri
 		if (!isEmulatorSerial(serial)) {
 			return driverErr("E_UNSUPPORTED", `biometrics need an emulator, not the physical device ${serial}`);
 		}
-		if (op === "enroll" || op === "unenroll") {
+		if (op === "enroll" || op === "unenroll" || op === "reenroll") {
 			return driverErr(
 				"E_UNSUPPORTED",
 				`Android fingerprint enrollment comes from the golden snapshot (profile \`biometrics: true\`); \`${op}\` is not available at run time`
@@ -495,9 +500,34 @@ function buildDriver(
 		return parseDump(dumped.data.xml, baseScreen, clock);
 	}
 
+	const readSnapshot = async (): DriverResult<Snapshot> => (await uiad?.snapshot()) ?? dumpSnapshot();
+
+	/** Set once the driver is built (not on a phone): answers the Credential Manager sheet a passkey call puts up. */
+	let passkeyKit: AndroidPasskeys | undefined;
+
+	/**
+	 * Any look at the screen that finds the Credential Manager sheet while the virtual authenticator is on answers it
+	 * first (`passkeys-sheet.ts`: continue / choose / dismiss per mode), so a spec or `warden ui` waiting on the app
+	 * never sees it. A sheet is a few taps at most; the loop is bounded.
+	 */
+	async function answerPasskeySheets(first: Awaited<DriverResult<Snapshot>>): DriverResult<Snapshot> {
+		let taken = first;
+		for (let round = 0; round < PASSKEY_SHEET_ROUNDS && taken.success; round++) {
+			const action = await passkeyKit?.sheetFor(taken.data.flat);
+			if (action === undefined || action.do !== "tap") return taken;
+			log?.(`passkey sheet: ${action.why}`);
+			const tapped = await tap(centre(action.element));
+			if (!tapped.success) return tapped;
+			await clock.sleep(PASSKEY_SHEET_SETTLE_MS);
+			taken = await readSnapshot();
+		}
+		return taken;
+	}
+
 	/** The server's snapshot when it is running (tens of ms); else, or when it cannot be used, `uiautomator dump` (about 2 s). */
 	async function takeSnapshot(): DriverResult<Snapshot> {
-		return (await uiad?.snapshot()) ?? dumpSnapshot();
+		const taken = await readSnapshot();
+		return passkeyKit === undefined ? taken : answerPasskeySheets(taken);
 	}
 
 	const input = async (cmd: string, timeoutMs?: number): DriverResult<void> => {
@@ -896,6 +926,29 @@ function buildDriver(
 		return { success: true, data: info };
 	};
 
+	const app = createAppCommands({
+		session,
+		exec,
+		adb,
+		serial,
+		...(log ? { log } : {}),
+		...(options.appPackage ? { appPackage: options.appPackage } : {}),
+		...(facts.physical ? { physical: true, ownedPackages: options.ownedPackages ?? [] } : {}),
+	});
+	const passkeys = createAndroidPasskeys({
+		serial,
+		wardenHome: options.wardenHome ?? wardenHome(process.env),
+		sdk: async () => sdk,
+		shell: async (argv) => {
+			const done = await session.run(shellCommand(argv));
+			return done.success
+				? { ok: done.data.exitCode === 0, stdout: done.data.stdout }
+				: { ok: false, stdout: done.error.message };
+		},
+		install: app.install,
+	});
+	if (!facts.physical) passkeyKit = passkeys;
+
 	return {
 		platform: "android",
 		id: serial,
@@ -947,6 +1000,7 @@ function buildDriver(
 			exec,
 			...(options.cameraHost ?? createAndroidCameraHost({ serial, exec })),
 		}),
+		passkeys: passkeys.op,
 		...(facts.physical ? physicalConditionOps(`physical Android device ${serial}`) : {}),
 		keyboardState: settings.keyboardState,
 		async dismissKeyboard() {
@@ -954,15 +1008,7 @@ function buildDriver(
 			return pressed.success ? { success: true, data: { via: "back" } } : pressed;
 		},
 		biometrics,
-		app: createAppCommands({
-			session,
-			exec,
-			adb,
-			serial,
-			...(log ? { log } : {}),
-			...(options.appPackage ? { appPackage: options.appPackage } : {}),
-			...(facts.physical ? { physical: true, ownedPackages: options.ownedPackages ?? [] } : {}),
-		}),
+		app,
 		close: async () => {
 			await stopFlap();
 			await stopTicker();

@@ -5,14 +5,17 @@ import { splitCameraProfile } from "../camera-profile";
 import { type Exec, type ExecResult, execError } from "../exec";
 import { isGoldenName } from "../golden/golden";
 import { realMarkerFs, writeMarker } from "../ownership";
+import { axPrefsEnabled, writePrebootAxPrefs } from "../sims/ax-prefs";
 import { disabledStoreRoot } from "../sims/disabled-store";
 import { slimSimulator } from "../sims/slim";
 import { prepareOfflineSlim, runtimeSupportsPersistentOverrides, verifyOfflineSlim } from "../sims/slim.offline";
 import { DEFAULT_SLIM_PROFILE, desiredLabels, type SlimProfile } from "../sims/slim.profile";
 import { type DeviceState, type InventoryDevice, isPhysicalIosId } from "../types";
+import { bootPhaseClock } from "./boot-phases";
 import { listPhysicalIos, probePhysicalIos } from "./devicectl";
 import { execWithin, probeIosHealth, probeIosWarm, realTimer, type TimedExec, type Timer } from "./health";
 import type { BootReady, DeviceProvider, ProviderDeps } from "./provider.types";
+import { createAcceptingRuntime } from "./sim-create";
 
 const RUNTIME_PREFIX = "com.apple.CoreSimulator.SimRuntime.";
 const DEVICE_TYPE_PREFIX = "com.apple.CoreSimulator.SimDeviceType.";
@@ -263,6 +266,8 @@ export const IOS_TIMEOUTS = {
 	cloneMs: 120_000,
 	bootMs: 120_000,
 	shutdownMs: 60_000,
+	/** a clone's priming boot (`bootstatus -b`): boot + shutdown measured 69.5 s on a 3-vCPU runner */
+	primeMs: 180_000,
 } as const;
 
 /** `exec` bounded by `timer` (real timers by default). */
@@ -274,15 +279,28 @@ export function timedOutError(cmd: readonly string[], timeoutMs: number): string
 	return `\`${cmd.join(" ")}\` did not finish within ${Math.round(timeoutMs / 1000)}s`;
 }
 
-/** Run `cmd`; with `timeoutMs`, a call still running then is an error (and the process is killed). */
-async function runCmd(runner: TimedExec, cmd: string[], timeoutMs?: number): Promise<ExecResult | string> {
-	if (timeoutMs === undefined) return runner.exec(cmd);
-	return (await execWithin(runner, cmd, timeoutMs)) ?? timedOutError(cmd, timeoutMs);
+/**
+ * Run `cmd`; with `timeoutMs`, a call still running then is an error (and the process is killed). `onLine` sees
+ * each output line as it arrives.
+ */
+async function runCmd(
+	runner: TimedExec,
+	cmd: string[],
+	timeoutMs?: number,
+	onLine?: (line: string) => void
+): Promise<ExecResult | string> {
+	if (timeoutMs === undefined) return runner.exec(cmd, onLine ? { onLine } : undefined);
+	return (await execWithin(runner, cmd, timeoutMs, onLine)) ?? timedOutError(cmd, timeoutMs);
 }
 
-async function simctl(runner: TimedExec, args: string[], timeoutMs?: number): AsyncResult<string> {
+async function simctl(
+	runner: TimedExec,
+	args: string[],
+	timeoutMs?: number,
+	onLine?: (line: string) => void
+): AsyncResult<string> {
 	const cmd = ["xcrun", "simctl", ...args];
-	const result = await runCmd(runner, cmd, timeoutMs);
+	const result = await runCmd(runner, cmd, timeoutMs, onLine);
 	if (typeof result === "string") return err(result);
 	return result.exitCode === 0 ? ok(result.stdout) : err(execError(cmd, result));
 }
@@ -357,6 +375,13 @@ export type IosCloneStrategy = (
 export type IosProviderOptions = {
 	/** when set, `create` clones (e.g. from a golden) and falls back to `simctl create` on failure */
 	clone?: IosCloneStrategy;
+	/**
+	 * Boot each clone once and shut it down inside `create`, so the claim's boot is its second. A clone's first
+	 * boot leaves the accessibility service silent on the first read (the driver then restarts backboardd or
+	 * reboots the sim, ~100 s on a 3-vCPU runner); a second boot answers at once. Best effort: a failed prime is a
+	 * note, and the claim boots the clone as before.
+	 */
+	primeClones?: boolean;
 	/** waits between `boot` attempts on a sim still `Shutting Down` (default: real timers) */
 	sleep?: (ms: number) => Promise<void>;
 	/**
@@ -406,8 +431,8 @@ export function createIosProvider(deps: ProviderDeps, options: IosProviderOption
 	const { exec } = deps;
 	const runner = timedExec(exec, deps.timer);
 	const sleep = options.sleep ?? Bun.sleep;
-	const waitReady = async (id: string, timeoutMs: number): AsyncResult<void> => {
-		const out = await simctl(runner, ["bootstatus", id, "-b"], timeoutMs);
+	const waitReady = async (id: string, timeoutMs: number, onLine?: (line: string) => void): AsyncResult<void> => {
+		const out = await simctl(runner, ["bootstatus", id, "-b"], timeoutMs, onLine);
 		return out.success ? ok(undefined) : err(`${id} not ready within ${Math.round(timeoutMs / 1000)}s: ${out.error}`);
 	};
 	const record = (id: string, name: string, profile: string, runtime: string): InventoryDevice => {
@@ -430,8 +455,17 @@ export function createIosProvider(deps: ProviderDeps, options: IosProviderOption
 		const parsed = inv.success ? parseSimctlDevices(inv.data) : inv;
 		return parsed.success ? parsed.data.find((d) => d.id === id)?.runtime : undefined;
 	};
+	/** Pre-boot accessibility prefs on a sim warden created (a foreign one is read-only); a failure is a note. */
+	const prepareAxPrefs = async (id: string): Promise<void> => {
+		if (!axPrefsEnabled(deps.env)) return;
+		const rec = deps.store.listDevices("ios").find((d) => d.id === id);
+		if (!rec) return;
+		const written = await writePrebootAxPrefs(runner, deps.env, id);
+		if (!written.success) note(`${rec.name} accessibility prefs not written (${written.error})`);
+	};
 	const prepareBoot = async (id: string): Promise<void> => {
 		if (isPhysicalIosId(id)) return;
+		await prepareAxPrefs(id);
 		const target = slim === false ? undefined : slimTarget(id);
 		if (slim === false || !target) return;
 		const runtime = await runtimeOf(id, target.runtime);
@@ -505,6 +539,18 @@ export function createIosProvider(deps: ProviderDeps, options: IosProviderOption
 		await prepareBoot(device.id);
 		return device;
 	};
+	/** `primeClones`: the clone's first boot and shutdown, after `prepareBoot` wrote its overrides and prefs. */
+	const primeClone = async (device: InventoryDevice): Promise<void> => {
+		const started = deps.now();
+		const ready = await waitReady(device.id, IOS_TIMEOUTS.primeMs);
+		const down = await idempotent(runner, ["shutdown", device.id], "Shutdown", IOS_TIMEOUTS.shutdownMs);
+		const failed = !ready.success ? ready.error : !down.success ? `shutdown: ${down.error}` : undefined;
+		if (failed !== undefined) {
+			note(`${device.name}: clone not primed (${failed}); the claim boots it as is`);
+			return;
+		}
+		note(`${device.name}: primed the clone (first boot) in ${((deps.now() - started) / 1000).toFixed(1)} s`);
+	};
 	return {
 		platform: "ios",
 
@@ -531,16 +577,19 @@ export function createIosProvider(deps: ProviderDeps, options: IosProviderOption
 			if (options.clone) {
 				const cloned = await options.clone(name, typeProfile, runtime);
 				if (cloned.success) {
-					return ok(await recordCreated(record(cloned.data.udid, name, profile, cloned.data.runtime)));
+					const device = await recordCreated(record(cloned.data.udid, name, profile, cloned.data.runtime));
+					if (options.primeClones === true) await primeClone(device);
+					return ok(device);
 				}
 				deps.log?.(`clone failed (${cloned.error}) — creating ${name} fresh (slow first boot)`);
 			}
 			const target = await lookupCreateTarget(exec, typeProfile, runtime, deps.timer);
 			if (!target.success) return target;
-			const created = await simctl(
-				runner,
-				["create", name, target.data.type.identifier, target.data.runtime.identifier],
-				IOS_TIMEOUTS.createMs
+			const runtimeId = target.data.runtime.identifier;
+			const created = await createAcceptingRuntime(
+				() => simctl(runner, ["create", name, target.data.type.identifier, runtimeId], IOS_TIMEOUTS.createMs),
+				runtimeId,
+				{ now: deps.now, sleep, log: note }
 			);
 			if (!created.success) return created;
 			const id = created.data.trim();
@@ -556,27 +605,37 @@ export function createIosProvider(deps: ProviderDeps, options: IosProviderOption
 		 * `bootstatus -b` boots a shut-down sim itself, so a separate `simctl boot` is one CoreSimulator
 		 * round trip too many (16-15). When bootstatus answers with an error (not a timeout) — e.g. a sim
 		 * still `Shutting Down` — fall back to `boot` (which waits that out) and wait again, with only what
-		 * is left of `timeoutMs`, so the whole call stays within one ready budget.
+		 * is left of `timeoutMs`, so the whole call stays within one ready budget. Logs how long each bootstatus phase
+		 * took (`booted in …` / `not ready after …`), so a slow first boot's data migration shows in CI output.
 		 */
 		async bootReady(id, timeoutMs): Promise<BootReady> {
 			if (isPhysicalIosId(id)) return { kind: "boot-failed", error: physicalRefusal("boot", id) };
 			const started = deps.now();
+			const phases = bootPhaseClock(deps.now);
+			const report = (ready: boolean): void =>
+				note(`${id}: ${ready ? "booted in" : "not ready after"} ${phases.summary()}`);
 			const cmd = ["xcrun", "simctl", "bootstatus", id, "-b"];
-			const status = await runCmd(runner, cmd, timeoutMs);
-			if (typeof status !== "string" && status.exitCode === 0) return { kind: "ready" };
+			const status = await runCmd(runner, cmd, timeoutMs, phases.line);
+			if (typeof status !== "string" && status.exitCode === 0) {
+				report(true);
+				return { kind: "ready" };
+			}
 			if (typeof status === "string") {
+				report(false);
 				return { kind: "not-ready", error: `${id} not ready within ${Math.round(timeoutMs / 1000)}s: ${status}` };
 			}
 			const booted = await bootAfterShutdown(runner, id, sleep);
 			if (!booted.success) return { kind: "boot-failed", error: booted.error };
 			const left = timeoutMs - (deps.now() - started);
 			if (left <= 0) {
+				report(false);
 				return {
 					kind: "not-ready",
 					error: `${id} not ready within ${Math.round(timeoutMs / 1000)}s: booted, no time left`,
 				};
 			}
-			const ready = await waitReady(id, left);
+			const ready = await waitReady(id, left, phases.line);
+			report(ready.success);
 			return ready.success ? { kind: "ready" } : { kind: "not-ready", error: ready.error };
 		},
 

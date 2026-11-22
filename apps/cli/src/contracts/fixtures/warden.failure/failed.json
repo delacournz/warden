@@ -1,0 +1,9 @@
+{
+	"ok": false,
+	"schemaVersion": 1,
+	"command": "delta",
+	"error": {
+		"code": "failed",
+		"message": "boom"
+	}
+}

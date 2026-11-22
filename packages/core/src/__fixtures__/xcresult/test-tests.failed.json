@@ -1,0 +1,67 @@
+{
+	"devices": [
+		{
+			"architecture": "arm64",
+			"deviceId": "00006040-0000000000000000",
+			"deviceName": "My Mac",
+			"modelName": "MacBook Pro",
+			"osBuildNumber": "25G83",
+			"osVersion": "26.6.2",
+			"platform": "macOS"
+		}
+	],
+	"testNodes": [
+		{
+			"children": [
+				{
+					"children": [
+						{
+							"children": [
+								{
+									"children": [
+										{
+											"name": "XCTAssertEqual failed: (\"42\") is not equal to (\"41\") - answer is wrong",
+											"nodeType": "Failure Message",
+											"sourceLocation": {
+												"filePath": "/Users/dev/Demo/Tests/DemoTests/DemoTests.swift",
+												"lineNumber": 4
+											}
+										}
+									],
+									"duration": "0.66s",
+									"durationInSeconds": 0.6561259031295776,
+									"name": "testAnswer()",
+									"nodeIdentifier": "DemoTests/testAnswer()",
+									"nodeIdentifierURL": "test://com.apple.xcode/Demo/DemoTests/DemoTests/testAnswer",
+									"nodeType": "Test Case",
+									"result": "Failed"
+								},
+								{
+									"duration": "0.00048s",
+									"durationInSeconds": 0.0004750490188598633,
+									"name": "testPasses()",
+									"nodeIdentifier": "DemoTests/testPasses()",
+									"nodeIdentifierURL": "test://com.apple.xcode/Demo/DemoTests/DemoTests/testPasses",
+									"nodeType": "Test Case",
+									"result": "Passed"
+								}
+							],
+							"name": "DemoTests",
+							"nodeIdentifierURL": "test://com.apple.xcode/Demo/DemoTests/DemoTests",
+							"nodeType": "Test Suite",
+							"result": "Failed"
+						}
+					],
+					"name": "DemoTests",
+					"nodeIdentifierURL": "test://com.apple.xcode/Demo/DemoTests",
+					"nodeType": "Unit test bundle",
+					"result": "Failed"
+				}
+			],
+			"name": "Demo-Package",
+			"nodeType": "Test Plan",
+			"result": "Failed"
+		}
+	],
+	"testPlanConfigurations": [{ "configurationId": "1", "configurationName": "Test Scheme Action" }]
+}

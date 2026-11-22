@@ -26,31 +26,31 @@ final class ErrorMappingTests: XCTestCase {
 
   func testWireErrorPassesThrough() {
     let original = WireError(.unsupportedText, "rest", detail: ["rest": "é"])
-    XCTAssertEqual(WireError.from(original), original)
+    XCTAssertEqual(wire(original), original)
   }
 
   func testCancellationAndUnknownErrorsAreInternal() {
-    XCTAssertEqual(WireError.from(CancellationError()).code, .internal)
+    XCTAssertEqual(wire(CancellationError()).code, .internal)
     struct Boom: Error {}
-    XCTAssertEqual(WireError.from(Boom()).code, .internal)
+    XCTAssertEqual(wire(Boom()).code, .internal)
   }
 
   func testFileSystemErrorsAreIO() {
-    XCTAssertEqual(WireError.from(CocoaError(.fileNoSuchFile)).code, .io)
-    XCTAssertEqual(WireError.from(POSIXError(.ENOSPC)).code, .io)
+    XCTAssertEqual(wire(CocoaError(.fileNoSuchFile)).code, .io)
+    XCTAssertEqual(wire(POSIXError(.ENOSPC)).code, .io)
   }
 
   func testBridgeErrors() {
-    XCTAssertEqual(WireError.from(AXBridgeError.bridgeUnavailable).code, .axUnavailable)
-    XCTAssertEqual(WireError.from(AXBridgeError.readerUnavailable("x")).code, .axUnavailable)
-    XCTAssertEqual(WireError.from(AXBridgeError.guestFailure("x")).code, .axUnavailable)
-    let unavailable = WireError.from(AXBridgeError.applicationUnavailable(pid: 42))
+    XCTAssertEqual(wire(AXBridgeError.bridgeUnavailable).code, .axUnavailable)
+    XCTAssertEqual(wire(AXBridgeError.readerUnavailable("x")).code, .axUnavailable)
+    XCTAssertEqual(wire(AXBridgeError.guestFailure("x")).code, .axUnavailable)
+    let unavailable = wire(AXBridgeError.applicationUnavailable(pid: 42))
     XCTAssertEqual(unavailable.code, .appUnavailable)
     XCTAssertEqual(unavailable.detail?["pid"], 42)
-    XCTAssertEqual(WireError.from(AXBridgeError.applicationNotResponding(pid: nil)).code, .appNotResponding)
-    XCTAssertTrue(WireError.from(AXBridgeError.applicationNotResponding(pid: nil)).retryable)
-    XCTAssertEqual(WireError.from(AXBridgeError.assertionFailed("x")).code, .noElement)
-    let silent = WireError.from(AXBridgeError.guestNotAnswering(after: 10))
+    XCTAssertEqual(wire(AXBridgeError.applicationNotResponding(pid: nil)).code, .appNotResponding)
+    XCTAssertTrue(wire(AXBridgeError.applicationNotResponding(pid: nil)).retryable)
+    XCTAssertEqual(wire(AXBridgeError.assertionFailed("x")).code, .noElement)
+    let silent = wire(AXBridgeError.guestNotAnswering(after: 10))
     XCTAssertEqual(silent.code, .timeout)
     XCTAssertEqual(silent.detail?["afterSeconds"], .double(10))
   }
@@ -58,32 +58,32 @@ final class ErrorMappingTests: XCTestCase {
   func testUIAutomationErrors() {
     let backend = UIAutomationBackend.accessibility
     XCTAssertEqual(
-      WireError.from(UIAutomationError.elementNotFound(backend: backend, key: "label", value: "x")).code, .noElement)
-    XCTAssertEqual(WireError.from(UIAutomationError.noElementAtPoint(backend: backend, x: 1, y: 2)).code, .noElement)
+      wire(UIAutomationError.elementNotFound(backend: backend, key: "label", value: "x")).code, .noElement)
+    XCTAssertEqual(wire(UIAutomationError.noElementAtPoint(backend: backend, x: 1, y: 2)).code, .noElement)
     XCTAssertEqual(
-      WireError.from(UIAutomationError.timedOut(backend: backend, key: "label", value: "x", timeout: 1)).code, .timeout)
+      wire(UIAutomationError.timedOut(backend: backend, key: "label", value: "x", timeout: 1)).code, .timeout)
     XCTAssertEqual(
-      WireError.from(UIAutomationError.operationUnsupported(backend: backend, operation: "pinch")).code, .unsupported)
+      wire(UIAutomationError.operationUnsupported(backend: backend, operation: "pinch")).code, .unsupported)
     XCTAssertEqual(
-      WireError.from(UIAutomationError.markerRequired(backend: backend, operation: "wait")).code, .badRequest)
-    let app = WireError.from(UIAutomationError.applicationUnavailable(backend: backend, pid: 7, bundleID: "a.b"))
+      wire(UIAutomationError.markerRequired(backend: backend, operation: "wait")).code, .badRequest)
+    let app = wire(UIAutomationError.applicationUnavailable(backend: backend, pid: 7, bundleID: "a.b"))
     XCTAssertEqual(app.code, .appUnavailable)
     XCTAssertEqual(app.detail?["bundleId"], "a.b")
     XCTAssertEqual(
-      WireError.from(UIAutomationError.applicationNotResponding(backend: backend, pid: 7)).code, .appNotResponding)
+      wire(UIAutomationError.applicationNotResponding(backend: backend, pid: 7)).code, .appNotResponding)
   }
 
   func testHIDErrorsAreE_HID() {
-    XCTAssertEqual(WireError.from(SimulatorHIDError.clientDisposed).code, .hid)
-    XCTAssertEqual(WireError.from(SimulatorHIDError.legacyInputSuppressed(operation: "Touch")).code, .hid)
+    XCTAssertEqual(wire(SimulatorHIDError.clientDisposed).code, .hid)
+    XCTAssertEqual(wire(SimulatorHIDError.legacyInputSuppressed(operation: "Touch")).code, .hid)
   }
 
   func testNegotiatedTransportFollowsCoreSimulatorVersion() {
-    XCTAssertEqual(Session.negotiatedTransport(coreSimulatorVersion: nil), "indigo")
-    XCTAssertEqual(Session.negotiatedTransport(coreSimulatorVersion: "1051.17"), "indigo")
-    XCTAssertEqual(Session.negotiatedTransport(coreSimulatorVersion: "1155.3"), "indigo")
-    XCTAssertEqual(Session.negotiatedTransport(coreSimulatorVersion: "1155.4"), "dtuhid")
-    XCTAssertEqual(Session.negotiatedTransport(coreSimulatorVersion: "1155.10"), "dtuhid")
-    XCTAssertEqual(Session.negotiatedTransport(coreSimulatorVersion: "1200.1"), "dtuhid")
+    XCTAssertEqual(IdbBackend.negotiatedTransport(coreSimulatorVersion: nil), "indigo")
+    XCTAssertEqual(IdbBackend.negotiatedTransport(coreSimulatorVersion: "1051.17"), "indigo")
+    XCTAssertEqual(IdbBackend.negotiatedTransport(coreSimulatorVersion: "1155.3"), "indigo")
+    XCTAssertEqual(IdbBackend.negotiatedTransport(coreSimulatorVersion: "1155.4"), "dtuhid")
+    XCTAssertEqual(IdbBackend.negotiatedTransport(coreSimulatorVersion: "1155.10"), "dtuhid")
+    XCTAssertEqual(IdbBackend.negotiatedTransport(coreSimulatorVersion: "1200.1"), "dtuhid")
   }
 }

@@ -1,7 +1,6 @@
-import FBSimulatorAX
 import Foundation
 
-/// idb `AccessibilityDocumentElement` tree -> normalized `Element` tree.
+/// Reader `RawNode` tree -> normalized `Element` tree.
 enum ElementBuilder {
   struct Options: Sendable {
     var screenWidth: Double
@@ -12,6 +11,8 @@ enum ElementBuilder {
     var maxDepth: Int?
     /// At most this many nodes (preorder, after `interactiveOnly`).
     var maxNodes: Int?
+    /// Placeholders the reader left out, by field (`PlaceholderFill`); a node's own placeholder wins.
+    var placeholders: [PlaceholderKey: String] = [:]
   }
 
   struct Output: Sendable {
@@ -20,7 +21,7 @@ enum ElementBuilder {
     var truncated: Bool
   }
 
-  static func build(_ nodes: [AccessibilityDocumentElement], options: Options) -> Output {
+  static func build(_ nodes: [RawNode], options: Options) -> Output {
     // ids are the preorder path in the *unfiltered* tree, so `0.2.1` names the same node with or without
     // `interactiveOnly`.
     var elements = nodes.enumerated().map { index, node in
@@ -37,35 +38,30 @@ enum ElementBuilder {
     return Output(elements: elements, truncated: truncated)
   }
 
-  /// idb's document attributes are doubly optional (unset vs. explicit null); both mean "unknown" here.
-  static func flat<T>(_ value: T??) -> T? { value ?? nil }
-
   // MARK: - Node
 
-  static func convert(_ node: AccessibilityDocumentElement, path: String, depth: Int, options: Options) -> Element {
-    let traits = TraitNames.normalize(flat(node.traits) ?? [])
-    let rawType = nonEmpty(flat(node.type)) ?? nonEmpty(roleName(node)) ?? "Other"
+  static func convert(_ node: RawNode, path: String, depth: Int, options: Options) -> Element {
+    let traits = TraitNames.normalize(node.traits ?? [])
+    let rawType = nonEmpty(node.type) ?? nonEmpty(roleName(node)) ?? "Other"
     let role = RoleMap.role(forType: rawType, traits: traits)
-    let label = nonEmpty(flat(node.label))
-    let value = valueString(flat(node.value))
-    let frame = rect(flat(node.frame))
-    let hidden = flat(node.hidden)
-    let enabled = (flat(node.enabled) ?? true) && !traits.contains("not-enabled")
-    let interactable = flat(node.interactable)
+    let label = nonEmpty(node.label)
+    let value = valueString(node.value)
+    let frame = rect(node.frame)
+    let hidden = node.hidden
+    let enabled = (node.enabled ?? true) && !traits.contains("not-enabled")
+    let interactable = node.interactable
 
     var hittable: Bool
     var tapPoint: Point? = frame.hasArea ? frame.center : nil
     switch interactable {
-    case let .actionable(point):
+    case let .actionable(x, y):
       hittable = true
-      tapPoint = Point(x: point.x, y: point.y)
+      tapPoint = Point(x: x, y: y)
     case .blocked:
       hittable = false
     case nil:
       hittable =
         enabled && hidden != true && frame.intersectsScreen(width: options.screenWidth, height: options.screenHeight)
-    @unknown default:
-      hittable = false
     }
 
     let isStaticText = rawType == "StaticText"
@@ -74,22 +70,23 @@ enum ElementBuilder {
       role: role,
       rawType: rawType,
       label: label,
-      identifier: nonEmpty(flat(node.identifier)),
+      identifier: nonEmpty(node.identifier),
       value: value,
       text: isStaticText ? (label ?? value) : nil,
-      placeholder: nonEmpty(flat(node.placeholder)),
+      placeholder: nonEmpty(node.placeholder)
+        ?? (options.placeholders.isEmpty ? nil : options.placeholders[PlaceholderKey(node)]),
       frame: frame,
       normFrame: frame.normalized(width: options.screenWidth, height: options.screenHeight),
       traits: traits,
       enabled: enabled,
       // UIKit leaves AX `focused` false on the first responder text field; `is-editing` is its keyboard focus
-      focused: traits.contains("is-editing") ? true : flat(node.focused),
+      focused: traits.contains("is-editing") ? true : node.focused,
       hidden: hidden,
-      selected: node.traits == nil ? nil : traits.contains("selected"),
+      selected: node.traitsReported ? traits.contains("selected") : nil,
       checked: checked(role: role, value: value),
       hittable: hittable,
       tapPoint: tapPoint,
-      pid: flat(node.pid).map { Int($0) },
+      pid: node.pid.map { Int($0) },
       depth: depth,
       children: []
     )
@@ -109,7 +106,7 @@ enum ElementBuilder {
     }
   }
 
-  static func valueString(_ value: AccessibilityAttributeValue?) -> String? {
+  static func valueString(_ value: RawValue?) -> String? {
     switch value {
     case let .string(text): return nonEmpty(text)
     case let .bool(flag): return flag ? "1" : "0"
@@ -119,17 +116,17 @@ enum ElementBuilder {
     }
   }
 
-  static func rect(_ frame: AccessibilityFrame?) -> Rect {
+  static func rect(_ frame: RawFrame?) -> Rect {
     guard let frame else { return .zero }
     return Rect(x: frame.x ?? 0, y: frame.y ?? 0, width: frame.width ?? 0, height: frame.height ?? 0)
   }
 
-  private static func roleName(_ node: AccessibilityDocumentElement) -> String? {
-    guard let raw = flat(node.role) else { return nil }
+  private static func roleName(_ node: RawNode) -> String? {
+    guard let raw = node.role else { return nil }
     return raw.hasPrefix("AX") ? String(raw.dropFirst(2)) : raw
   }
 
-  private static func nonEmpty(_ string: String?) -> String? {
+  static func nonEmpty(_ string: String?) -> String? {
     guard let string, !string.isEmpty else { return nil }
     return string
   }

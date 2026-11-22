@@ -1,10 +1,11 @@
 ---
 title: Device conditions
-description: Change the network, GPS location, clock, biometrics, permissions, camera feed, locale, accessibility settings, battery and keyboard of a leased simulator or emulator with warden ui, and have it undone on release.
+description: Change the network, GPS location, clock, biometrics, permissions, camera feed, passkeys, locale, accessibility settings, battery and keyboard of a leased simulator or emulator with warden ui, and have it undone on release.
 icon: Signal
+simulatorOnly: true
 ---
 
-import { Accessibility, BatteryMedium, BellRing, Camera, Clock, FingerprintPattern, Keyboard, Languages, MapPin, ShieldCheck, Wifi } from "lucide-react";
+import { Accessibility, BatteryMedium, BellRing, Camera, Clock, FingerprintPattern, KeyRound, Keyboard, Languages, MapPin, ShieldCheck, Wifi } from "lucide-react";
 
 <DemoTabs ids={["network", "fault", "location", "clock", "biometrics", "camera", "a11y", "events"]} />
 
@@ -30,6 +31,7 @@ The example app has a Conditions screen (`warden-example://conditions`).
 <Card icon={<FingerprintPattern />} title="Biometrics" href="/docs/sims/conditions/biometrics">Enroll, match and fail Face ID, Touch ID and fingerprint on the real prompt.</Card>
 <Card icon={<ShieldCheck />} title="Permissions" href="/docs/sims/conditions/permissions">Grant, deny or unset location, camera, photos and more before launch.</Card>
 <Card icon={<Camera />} title="Camera" href="/docs/sims/conditions/camera">An image or video in the app's real camera: preview, capture, QR scanning.</Card>
+<Card icon={<KeyRound />} title="Passkeys" href="/docs/sims/conditions/passkeys">A virtual authenticator answers the app's real passkey calls.</Card>
 <Card icon={<Languages />} title="Locale and timezone" href="/docs/sims/conditions/locale">Another language, region or timezone for the app.</Card>
 <Card icon={<Accessibility />} title="Accessibility settings" href="/docs/sims/conditions/accessibility">Text size, bold text, contrast, reduce motion, screen reader on.</Card>
 <Card icon={<BatteryMedium />} title="Battery" href="/docs/sims/conditions/battery">Level and charging state.</Card>
@@ -47,8 +49,10 @@ Simulators and emulators only: every condition fails `E_UNSUPPORTED` on a physic
 | [Location](/docs/sims/conditions/location) | points and routes; a route plays once | points and routes, looped or not; the last fix stays |
 | [Clock](/docs/sims/conditions/clock) | the app's clock; can be frozen | the emulator's clock; cannot be frozen |
 | [Biometrics](/docs/sims/conditions/biometrics) | Face ID and Touch ID | fingerprint |
+| [Keychain access control](/docs/sims/conditions/biometrics#keychain-items-behind-face-id) | prompts and error codes, in an app launched by warden | not needed: no shim |
 | [Permissions](/docs/sims/conditions/permissions) | every name but `camera` and `notifications` | the names the manifest declares |
 | [Camera](/docs/sims/conditions/camera) | image or video, swapped live; QR decoded | a `--camera` emulator; a video feed reboots it |
+| [Passkeys](/docs/sims/conditions/passkeys) | live, in an app launched by warden | API 34+; warden's credential provider |
 | [Locale and timezone](/docs/sims/conditions/locale) | the next launch | live; locale needs Android 13+ |
 | [Accessibility settings](/docs/sims/conditions/accessibility) | text size, bold, contrast, reduce motion; a simulated screen reader | text size, bold, reduce motion; real TalkBack |
 | [Battery](/docs/sims/conditions/battery) | status bar only | what the app reads |
@@ -68,6 +72,6 @@ Release, gc and the end of a spec put the device back:
 - network online, faults cleared, the shaping proxy, the flap scheduler and the route ticker stopped
 - the location cleared on iOS (Android keeps the last GPS fix: the emulator cannot unset one)
 - the clock real again; a still-running injected iOS app is reset to online and the real clock
-- permissions reset, text size and contrast or font scale and bold back to defaults, the app locale cleared, the timezone back, the battery real, the keyboard back to `software`, the camera feed off
+- permissions reset, text size and contrast or font scale and bold back to defaults, the app locale cleared, the timezone back, the battery real, the keyboard back to `software`, the camera feed off, the passkey authenticator and its credentials removed (Android: the previous credential provider back)
 
 In a spec, the end of the test puts them back too, and each change is a `condition` line in `results.jsonl`.

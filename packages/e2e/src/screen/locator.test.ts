@@ -218,6 +218,42 @@ describe("fill", () => {
 		expect(host.steps).toEqual(['fill getByTestId("field")']);
 	});
 
+	describe("quick typing (iOS)", () => {
+		const quick = (driver: FakeDriver) =>
+			driver
+				.callsOf("typeTextQuick")
+				.map((call) => call.text)
+				.join("");
+
+		test("the first attempt types quickly and is verified", async () => {
+			const { driver, state } = fieldFixture({ value: "old", selectAll: true, typeTextQuick: true });
+			const { screen } = setup(driver);
+			await screen.getByTestId("field").fill("ada@example.test");
+			expect(quick(driver)).toBe("ada@example.test");
+			expect(driver.callsOf("typeText")).toEqual([]);
+			expect(state.value).toBe("ada@example.test");
+			expect(driver.calls.at(-1)?.method).toBe("elementAtPoint");
+		});
+
+		test("a quick attempt that lost keys is retyped paced after counted Backspaces", async () => {
+			const { driver, state } = fieldFixture({ typeTextQuick: true, quickKeeps: 3 });
+			const { screen } = setup(driver);
+			await screen.getByTestId("field").fill("hello");
+			expect(quick(driver)).toBe("hello");
+			expect(typed(driver)).toBe("hello");
+			expect(driver.callsOf("tap")).toHaveLength(2);
+			expect(state.value).toBe("hello");
+		});
+
+		test("a secure field is never typed quickly: it cannot be read back", async () => {
+			const { driver } = fieldFixture({ secure: true, typeTextQuick: true });
+			const { screen } = setup(driver);
+			await screen.getByTestId("field").fill("password1");
+			expect(driver.callsOf("typeTextQuick")).toEqual([]);
+			expect(typed(driver)).toBe("password1");
+		});
+	});
+
 	describe("via paste (iOS)", () => {
 		const pasted = (driver: FakeDriver) =>
 			driver

@@ -1,0 +1,85 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"type": "object",
+	"properties": {
+		"schemaVersion": {
+			"type": "number",
+			"const": 1
+		},
+		"released": {
+			"type": "array",
+			"items": {
+				"type": "string"
+			}
+		},
+		"shutdown": {
+			"type": "array",
+			"items": {
+				"type": "string"
+			}
+		},
+		"remoteStopped": {
+			"type": "array",
+			"items": {
+				"type": "string"
+			}
+		},
+		"remoteStopReasons": {
+			"type": "object",
+			"propertyNames": {
+				"type": "string"
+			},
+			"additionalProperties": {
+				"type": "string",
+				"enum": [
+					"user",
+					"idle",
+					"credits_exhausted",
+					"error"
+				]
+			}
+		},
+		"hostReleased": {
+			"type": "array",
+			"items": {
+				"type": "string"
+			}
+		},
+		"deleted": {
+			"type": "array",
+			"items": {
+				"type": "string"
+			}
+		},
+		"quarantined": {
+			"type": "array",
+			"items": {
+				"type": "string"
+			}
+		},
+		"unknown": {
+			"type": "array",
+			"items": {
+				"type": "string"
+			}
+		},
+		"notes": {
+			"type": "array",
+			"items": {
+				"type": "string"
+			}
+		}
+	},
+	"required": [
+		"schemaVersion",
+		"released",
+		"shutdown",
+		"deleted",
+		"quarantined",
+		"unknown",
+		"notes"
+	],
+	"additionalProperties": false,
+	"$id": "https://warden.co.nz/schemas/warden.release/1.json",
+	"title": "warden.release"
+}

@@ -1,0 +1,30 @@
+{
+	"ok": true,
+	"schemaVersion": 1,
+	"command": "get",
+	"device": {
+		"udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+		"platform": "ios",
+		"name": "sim"
+	},
+	"durationMs": 0,
+	"result": {
+		"matched": true,
+		"property": "value",
+		"value": "a@b.co",
+		"element": {
+			"role": "textbox",
+			"name": "Email",
+			"id": "email",
+			"value": "a@b.co",
+			"enabled": true,
+			"frame": {
+				"x": 0,
+				"y": 100,
+				"width": 390,
+				"height": 44
+			}
+		},
+		"waitedMs": 0
+	}
+}

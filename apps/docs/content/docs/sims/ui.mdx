@@ -53,16 +53,16 @@ Between `warden ui record start <name>` and `record stop`, every action and quer
 ```text
 $ warden ui snapshot -i --udid $UDID
 generation 4 · axbridge · 393×852@3x · 5 of 41 elements
-@e1 [textbox] "Add a todo" id=todo-input value="" enabled hittable (24,118 345×48)
+@e1 [textbox] "Add a todo" id=todo-input placeholder="What needs doing?" enabled hittable (24,118 345×48)
 @e2 [button] "Add" id=todo-add enabled hittable (24,176 345×48)
 @e3 [checkbox] "Write specs" id=todo-1 unchecked enabled hittable (24,244 345×56)
 ```
 
-A line is `@ref [role] "name" id=<testID> value="…" <states> (x,y w×h)`. States are `enabled`/`disabled`, `hittable`, `checked`/`unchecked`, `selected`, `focused`, `secure`, `hidden`, `expanded`/`collapsed`; the frame is `(x,y w×h)` in the screen units the header reports. The header says how many elements are shown and whether the backend truncated the tree.
+A line is `@ref [role] "name" id=<testID> value="…" placeholder="…" <states> (x,y w×h)`. A text input with no `value=` is empty: iOS and Android report an empty field's placeholder as its value, so warden prints it as `placeholder="…"` only. States are `enabled`/`disabled`, `hittable`, `checked`/`unchecked`, `selected`, `focused`, `secure`, `hidden`, `expanded`/`collapsed`; the frame is `(x,y w×h)` in the screen units the header reports. The header says how many elements are shown and whether the backend truncated the tree.
 
 | Command | Use |
 |---|---|
-| `snapshot [-i\|--interactive] [--all] [--depth n] [--a11y]` | the screen. `-i` filters to interactive elements and `testID`s; the default caps at 200 lines (`--all` removes the cap); `--depth n` keeps the first `n` levels; `--a11y` adds `hint`, `actions`, `a11y-focused`, `not-important` and `live` per line ([Accessibility](/docs/e2e/accessibility)) |
+| `snapshot [-i\|--interactive] [--keys] [--all] [--depth n] [--a11y]` | the screen. `-i` filters to interactive elements and `testID`s (and leaves out 0×0 elements that are neither hittable nor carry a `testID`); with the iOS keyboard up it prints one `@eN [keyboard] return="go" visible (0,546 402×328) 33 keys (--keys)` line instead of every key, where `@eN` is the return key (`press @eN` presses it); `--keys` lists the keys again; the default caps at 200 lines (`--all` removes the cap); `--depth n` keeps the first `n` levels; `--a11y` adds `hint`, `actions`, `a11y-focused`, `not-important` and `live` per line ([Accessibility](/docs/e2e/accessibility)) |
 | `snapshot --settle [ms]` | wait for a quiet screen (the tree hash is unchanged for 500 ms, so a navigation push is never caught mid-transition; default budget 3000 ms), then print what changed against the previous snapshot as `-` / `+` lines and a `= N unchanged` count |
 | `find <selector…>` | only the elements matching a [selector](#targets-and-selectors), each with a fresh `@eN` |
 | `screen screenshot [path]` | a PNG; default `$WARDEN_HOME/ui/<udid>/shots/NNN.png` |
@@ -74,7 +74,7 @@ A line is `@ref [role] "name" id=<testID> value="…" <states> (x,y w×h)`. Stat
 
 Actions take a **target**: an `@eN` ref, a selector, or screen coordinates `x y` (points). Coordinates are for canvas content with no accessibility node; everything else should be a selector.
 
-**Refs.** `@eN` comes from the latest snapshot of this device. A ref older than 30 s, or any ref with `--verify`, is re-checked against a fresh snapshot first (same id, else same role and name, else same position in the tree). When the element is no longer there the call fails with `stale_ref` (exit 4): take a new snapshot.
+**Refs.** `@eN` comes from the latest snapshot of this device. Once anything has been sent to the device since that snapshot (a press, a fill that brought the keyboard up, a scroll), a ref is re-checked before it is used: on iOS one hit-test at its old position (about 10 ms), otherwise a fresh snapshot that finds it by id, else by role and name, and the press lands on its current frame. A ref older than 30 s, or any ref with `--verify`, is re-checked against a fresh snapshot first (same id, else same role and name, else same position in the tree). When the element is no longer there, now matches more or fewer elements than before, or sits under the keyboard, the call fails with `stale_ref` (exit 4) and nothing is tapped: take a new snapshot.
 
 **Selectors** are `key=value` words joined by spaces:
 
@@ -88,7 +88,7 @@ Actions take a **target**: an `@eN` ref, a selector, or screen coordinates `x y`
 | `editable=true\|false` | text fields vs everything else |
 | `nth=<i>` | the i-th match (0-based) when several remain |
 
-A value is bare (`id=sign-in`), quoted when it has spaces (`label="Sign in"`), or a regex (`text=/^\d+ left$/i`). Keys combine with AND: `role=button label=add`.
+A value is bare (`id=sign-in`), multi-word and bare (`label=Try Face ID Again`: it runs to the next ` <key>=` token or the end of the selector), quoted (`label="Sign in"`; required when the value itself contains ` role=`, ` nth=` or another key), or a regex (`text=/^\d+ left$/i`). Keys combine with AND: `role=button label=add`.
 
 When a selector matches several elements, an action picks the most specific visible one: visible first, then the most exact text terms, then the smallest frame, then reading order. Pin a different one with `nth=`. `find` lists every match, and `get <selector> count` counts them; `wait`, `is` and `get` use the same most-specific pick as an action.
 
@@ -98,7 +98,7 @@ Every action accepts `--settle [ms]`: wait for a quiet screen afterwards (defaul
 
 | Command | Effect |
 |---|---|
-| `open <bundleId\|url> [--relaunch] [--metro <url>] [--args …] [--a11y]` | launch the app, or open a URL (on iOS the "Open in …?" sheet is accepted). A bundle id that is already running is attached to, not restarted (`attached to <id>`, `--json` `attached: true`); `--relaunch` starts it fresh. `--metro` starts the dev client on that Metro and remembers it for the devtools commands. `--a11y` launches an iOS app with the injected accessibility library (relaunches once; `WARDEN_A11Y=1` does the same) |
+| `open <bundleId\|url> [--relaunch] [--metro <url>] [--args …] [--a11y] [--keychain-acl]` | launch the app, or open a URL (on iOS the "Open in …?" sheet is accepted). A bundle id that is already running is attached to, not restarted (`attached to <id>`, `--json` `attached: true`); `--relaunch` starts it fresh. `--metro` starts the dev client on that Metro and remembers it for the devtools commands. `--a11y` launches an iOS app with the injected accessibility library (relaunches once; `WARDEN_A11Y=1` does the same). `--keychain-acl` (iOS simulator) makes Keychain items behind Face ID or the passcode prompt as on a phone, until `--no-keychain-acl` or release: [Keychain items behind Face ID](/docs/sims/conditions/biometrics#keychain-items-behind-face-id) |
 | `press <target>` (alias `tap`) | tap. `--verify` re-checks an `@eN` first |
 | `fill <target> <text>` | focus the field, empty it, put the text in, then read it back (retried once). The text is typed key by key; `--via paste` pastes it on iOS (one Cmd+V) instead. Xcode syncs the simulator pasteboard with your Mac clipboard in both directions, so a pasted value shows up in your clipboard history and on every other booted simulator. A paste that cannot be confirmed is typed, and the retry always types. `--secure` skips the read-back and never echoes the text; `--no-verify` skips only the read-back. Use `--` before text that starts with `-` |
 | `type <text> [--submit]` | type into whatever has focus; `--submit` then presses Enter |
@@ -113,7 +113,7 @@ Every action accepts `--settle [ms]`: wait for a quiet screen afterwards (defaul
 | `home` · `back` | the home button; back is Android only |
 | `screen rotate [orientation]` | `portrait`, `portrait-upside-down`, `landscape-left`, `landscape-right`; without an argument it reads the current one |
 | `screen appearance [light\|dark]` | set or read light / dark mode |
-| `biometrics [status\|enroll\|unenroll\|match\|fail]` | simulated Face ID / Touch ID / fingerprint, see [Biometrics](/docs/sims/conditions/biometrics) |
+| `biometrics [status\|enroll\|unenroll\|reenroll\|match\|fail]` | simulated Face ID / Touch ID / fingerprint, see [Biometrics](/docs/sims/conditions/biometrics) |
 | `a11y set\|reset\|status` | display settings (`--text-size`, `--bold`, `--reduce-motion`, `--screen-reader`, ... each also `--no-`), recorded on your lease and undone on release, see [Accessibility](/docs/e2e/accessibility) |
 | `a11y audit\|order\|speak\|announcements\|spoken\|focus` | audit the screen, the simulated reading order and wording, announcements, real TalkBack output and focus; `audit` exits 1 when an issue is at or above `--min-severity` (default `error`), see [Accessibility](/docs/e2e/accessibility) |
 | `camera [set\|status\|clear]` | feed an image or video into the app's camera, see [Camera](/docs/sims/conditions/camera) |

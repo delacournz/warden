@@ -120,6 +120,66 @@ describe("Session biometrics", () => {
 	});
 });
 
+describe("Session keychain acl", () => {
+	const scripted = (
+		platform: "ios" | "android",
+		env: { keychainAcl?: boolean; biometrics?: boolean; physical?: boolean },
+		capable = true
+	) => {
+		const fake = scriptedDriver({ platform, screens: [], keychainAcl: capable });
+		const notes: string[] = [];
+		const session = createSession({
+			env: {
+				...envIn(tmp()),
+				platform,
+				...(env.keychainAcl === undefined ? {} : { keychainAcl: env.keychainAcl }),
+				...(env.biometrics ? { biometrics: true } : {}),
+				...(env.physical ? { deviceKind: "physical" as const } : {}),
+			},
+			driverFactory: async () => ({ success: true, data: fake }),
+			exitHook: false,
+			log: (line) => notes.push(line),
+		});
+		return { fake, session, notes };
+	};
+
+	test("WARDEN_KEYCHAIN_ACL=1 turns the shim on when the driver opens, before any launch", async () => {
+		const { fake, session } = scripted("ios", { keychainAcl: true, biometrics: true });
+		await session.driver();
+		await session.driver();
+		expect(fake.callsOf("keychainAcl").map((c) => c.op)).toEqual([{ kind: "on" }]);
+		expect(fake.callsOf("app.launch")).toEqual([]);
+	});
+
+	test("an explicit 0 turns it off, so a suite never inherits the lease's earlier switch; unset leaves it", async () => {
+		const off = scripted("ios", { keychainAcl: false });
+		await off.session.driver();
+		expect(off.fake.callsOf("keychainAcl").map((c) => c.op)).toEqual([{ kind: "off" }]);
+		const unset = scripted("ios", {});
+		await unset.session.driver();
+		expect(unset.fake.callsOf("keychainAcl")).toEqual([]);
+	});
+
+	test("without biometrics it still turns on, with one note that biometry-only items will read as not found", async () => {
+		const { fake, session, notes } = scripted("ios", { keychainAcl: true });
+		await session.driver();
+		expect(fake.callsOf("keychainAcl")).toHaveLength(1);
+		expect(notes.filter((n) => n.includes("keychainAcl") && n.includes("biometrics"))).toHaveLength(1);
+	});
+
+	test("a physical iPhone and Android are never asked: one note says why", async () => {
+		for (const [platform, physical] of [
+			["ios", true],
+			["android", false],
+		] as const) {
+			const { fake, session, notes } = scripted(platform, { keychainAcl: true, biometrics: true, physical }, false);
+			await session.driver();
+			expect(fake.callsOf("keychainAcl")).toEqual([]);
+			expect(notes.some((n) => n.includes("a physical device enforces ACLs itself"))).toBe(true);
+		}
+	});
+});
+
 describe("Session", () => {
 	test("driver factory is not called until the first driver()", async () => {
 		const f = factory();

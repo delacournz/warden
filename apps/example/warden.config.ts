@@ -38,6 +38,7 @@ const SETTINGS_ROWS = [
 	"a11y",
 	"camera",
 	"biometrics",
+	"keychain",
 	"network",
 	"location",
 	"clock",
@@ -91,6 +92,7 @@ const AFFECTED = {
 		"framework/runner": { entries: ["src/app/welcome.tsx"] },
 		"framework/device": { entries: ["src/app/welcome.tsx"] },
 		"app/gestures": { entries: ["src/app/welcome.tsx", "src/app/gestures.tsx", "src/modules/gestures"] },
+		"app/landscape": { entries: ["src/app/welcome.tsx", "src/app/landscape.tsx", "app.config.ts"] },
 		"app/keyboard": { entries: ["src/app/welcome.tsx", "src/app/keyboard-sheet.tsx", "src/modules/keyboard"] },
 		"conditions/network": {
 			entries: [...CONDITIONS, "src/app/network.tsx", "src/modules/network", "src/modules/showcase"],
@@ -104,8 +106,23 @@ const AFFECTED = {
 		biometrics: {
 			entries: ["src/app/welcome.tsx", "src/app/biometrics.tsx", "src/modules/biometrics", "src/modules/showcase"],
 		},
+		"keychain-acl": {
+			entries: [
+				"src/app/welcome.tsx",
+				"src/app/keychain.tsx",
+				"src/modules/keychain",
+				"src/modules/showcase",
+				"modules/keychain-acl",
+			],
+		},
+		"keychain-acl-off": {
+			entries: ["src/app/welcome.tsx", "src/app/keychain.tsx", "src/modules/keychain", "modules/keychain-acl"],
+		},
 		a11y: { entries: ["src/app/welcome.tsx", "src/app/a11y.tsx", "src/modules/a11y"] },
 		camera: { entries: ["src/app/welcome.tsx", "src/app/camera.tsx", "src/modules/camera"] },
+		passkeys: {
+			entries: ["src/app/welcome.tsx", "src/app/passkeys.tsx", "src/modules/passkeys", "src/modules/showcase"],
+		},
 	},
 } satisfies Partial<WardenE2eSuite>;
 
@@ -166,7 +183,10 @@ const EXAMPLE_SUITE = {
  * warden e2e conditions              # network / location / clock specs (iOS app launched with the network dylib)
  * warden e2e a11y                  # the accessibility spec (iOS launched with the a11y library)
  * warden e2e biometrics --all        # the biometrics spec alone, on +bio devices (the example suite excludes it)
+ * warden e2e keychain-acl --all      # Keychain items behind Face ID prompt like a phone (iOS; keychainAcl: true)
+ * warden e2e keychain-acl-off --all  # the negative control: shim off, the same read never prompts
  * warden e2e camera --all            # the camera spec alone: suite feed qr-hello, Android claimed with --camera
+ * warden e2e passkeys --all          # the passkeys spec alone: warden's virtual authenticator on (Android API 34+)
  * warden affected example            # which specs this branch needs
  * warden repack ios                  # just the repacked simulator build (cached per JS)
  * warden dev ios                     # cached Debug dev client + Metro
@@ -187,9 +207,14 @@ export default {
 	],
 	perf: { budgets: { jankPct: 5, maxCommitMs: 100, p95CpuPct: 90, peakMemoryMb: 600 } },
 	e2e: {
+		/**
+		 * `golden: true`: the run's simulators are cloned from a golden (first-booted once; unsettled on a 3-vCPU CI runner), so a
+		 * claim skips the first-boot data migration (50-85 s per fresh sim there). The e2e action caches the golden after a green run.
+		 */
 		example: {
 			...EXAMPLE_SUITE,
-			exclude: [CONDITION_SPECS, "biometrics", "a11y", "camera"],
+			golden: true,
+			exclude: [CONDITION_SPECS, "biometrics", "keychain-acl", "keychain-acl-off", "a11y", "camera", "passkeys"],
 		},
 		conditions: {
 			...EXAMPLE_SUITE,
@@ -208,11 +233,36 @@ export default {
 			biometrics: true,
 			include: ["biometrics"],
 		},
+		/**
+		 * The Keychain ACL shim on Face ID devices: reads of the Keychain screen's access-controlled items prompt like a
+		 * phone (iOS simulators; Android runs nothing).
+		 */
+		"keychain-acl": {
+			...EXAMPLE_SUITE,
+			count: 1,
+			biometrics: true,
+			keychainAcl: true,
+			include: ["keychain-acl"],
+		},
+		/** The negative control: the same screen with the shim off, where a simulator never prompts. */
+		"keychain-acl-off": {
+			...EXAMPLE_SUITE,
+			count: 1,
+			biometrics: true,
+			keychainAcl: false,
+			include: ["keychain-acl-off"],
+		},
 		camera: {
 			...EXAMPLE_SUITE,
 			count: 1,
 			camera: { back: "e2e/fixtures/camera/qr-hello.png" },
 			include: ["camera"],
+		},
+		passkeys: {
+			...EXAMPLE_SUITE,
+			count: 1,
+			conditions: { passkeys: "auto" },
+			include: ["passkeys"],
 		},
 	},
 } satisfies WardenConfig;

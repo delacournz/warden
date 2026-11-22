@@ -12,7 +12,7 @@ import type { SpanRunner } from "./runner/span";
  */
 export function traceDevice(device: Device, span: SpanRunner | undefined): Device {
 	if (span === undefined) return device;
-	const { network, location, clock, permissions, camera } = device;
+	const { network, location, clock, permissions, camera, passkeys } = device;
 	const { screenReader } = device;
 	const traced: Device = {
 		os: device.os,
@@ -72,6 +72,15 @@ export function traceDevice(device: Device, span: SpanRunner | undefined): Devic
 			clear: (facing) => span("device.camera.clear", () => camera.clear(facing)),
 			status: () => span("device.camera.status", () => camera.status()),
 		},
+		passkeys: {
+			set: (options) => span("device.passkeys.set", () => passkeys.set(options)),
+			off: () => span("device.passkeys.off", () => passkeys.off()),
+			add: (input) => span("device.passkeys.add", () => passkeys.add(input)),
+			remove: (credentialId) => span("device.passkeys.remove", () => passkeys.remove(credentialId)),
+			clear: () => span("device.passkeys.clear", () => passkeys.clear()),
+			list: (options) => span("device.passkeys.list", () => passkeys.list(options)),
+			status: () => span("device.passkeys.status", () => passkeys.status()),
+		},
 		memoryWarning: (options) => span("device.memoryWarning", () => device.memoryWarning(options)),
 		push: (payload, options) => span("device.push", () => device.push(payload, options)),
 		timeline: (steps) => span("device.timeline", () => device.timeline(steps)),
@@ -85,6 +94,7 @@ export function traceDevice(device: Device, span: SpanRunner | undefined): Devic
 			status: () => span("device.biometrics.status", () => device.biometrics.status()),
 			enroll: () => span("device.biometrics.enroll", () => device.biometrics.enroll()),
 			unenroll: () => span("device.biometrics.unenroll", () => device.biometrics.unenroll()),
+			reenroll: () => span("device.biometrics.reenroll", () => device.biometrics.reenroll()),
 			match: () => span("device.biometrics.match", () => device.biometrics.match()),
 			fail: () => span("device.biometrics.fail", () => device.biometrics.fail()),
 		},

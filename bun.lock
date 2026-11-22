@@ -19,7 +19,7 @@
     },
     "apps/cli": {
       "name": "@delacour/warden",
-      "version": "0.16.0",
+      "version": "0.20.0",
       "bin": {
         "warden": "./src/cli.ts",
       },
@@ -93,12 +93,15 @@
         "@expo-google-fonts/martian-mono": "^0.4.2",
         "@expo-google-fonts/mona-sans": "^0.4.1",
         "@legendapp/list": "^3.6.0",
+        "@noble/curves": "2.4.0",
+        "@noble/hashes": "2.4.0",
         "@react-native-community/netinfo": "12.0.1",
         "clsx": "^2.1.1",
         "cn": "^0.5.0",
         "expo": "~58.0.23",
         "expo-camera": "~58.0.14",
         "expo-constants": "~58.0.15",
+        "expo-crypto": "~58.0.8",
         "expo-dev-client": "~58.0.18",
         "expo-image-picker": "~58.0.10",
         "expo-linear-gradient": "~58.0.3",
@@ -113,6 +116,7 @@
         "react-native": "0.88.1",
         "react-native-gesture-handler": "~3.3.0",
         "react-native-keyboard-controller": "1.22.7",
+        "react-native-passkey": "3.6.2",
         "react-native-pulsar": "^1.7.0",
         "react-native-reanimated": "4.7.1",
         "react-native-safe-area-context": "~5.11.1",
@@ -182,7 +186,7 @@
     },
     "packages/e2e": {
       "name": "@delacour/warden-e2e",
-      "version": "0.16.0",
+      "version": "0.20.0",
       "dependencies": {
         "@delacour/warden-core": "workspace:*",
         "@delacour/warden-types": "workspace:*",
@@ -230,6 +234,14 @@
     "packages/types": {
       "name": "@delacour/warden-types",
       "version": "1.0.0",
+      "devDependencies": {
+        "@delacour/warden-tsconfig": "workspace:*",
+        "typescript": "^5.9.3",
+      },
+    },
+    "scripts/ax-witness": {
+      "name": "@delacour/warden-ax-witness",
+      "version": "0.1.0",
       "devDependencies": {
         "@delacour/warden-tsconfig": "workspace:*",
         "typescript": "^5.9.3",
@@ -507,6 +519,8 @@
     "@delacour/react-native-bottom-sheet": ["@delacour/react-native-bottom-sheet@0.3.0", "", { "peerDependencies": { "react": ">=19", "react-native": ">=0.88", "react-native-gesture-handler": ">=3.3", "react-native-keyboard-controller": ">=1.18", "react-native-reanimated": ">=4", "react-native-safe-area-context": ">=5", "react-native-teleport": ">=1.2", "react-native-worklets": ">=0.5" } }, "sha512-INebA8AuX9Nun7C/GBrs/ZYVknRuV1M6gnSJS+CduIQvE+qsPS87BWvQpeaFSecTm7mFIDmNHIM47I/Gf57how=="],
 
     "@delacour/warden": ["@delacour/warden@workspace:apps/cli"],
+
+    "@delacour/warden-ax-witness": ["@delacour/warden-ax-witness@workspace:scripts/ax-witness"],
 
     "@delacour/warden-biome-config": ["@delacour/warden-biome-config@workspace:packages/biome-config"],
 
@@ -797,6 +811,10 @@
     "@modelcontextprotocol/sdk": ["@modelcontextprotocol/sdk@1.32.2", "", { "dependencies": { "@hono/node-server": "^1.19.9 || ^2.0.5", "ajv": "^8.17.1", "ajv-formats": "^3.0.1", "content-type": "^1.0.5", "cors": "^2.8.5", "cross-spawn": "^7.0.5", "eventsource": "^3.0.2", "eventsource-parser": "^3.0.0", "express": "^5.2.1", "express-rate-limit": "^8.2.1", "hono": "^4.11.4", "jose": "^6.1.3", "json-schema-typed": "^8.0.2", "pkce-challenge": "^5.0.0", "raw-body": "^3.0.0", "zod": "^3.25 || ^4.0", "zod-to-json-schema": "^3.25.1" }, "peerDependencies": { "@cfworker/json-schema": "^4.1.1" }, "optionalPeers": ["@cfworker/json-schema"] }, "sha512-SWsVtH/0vULSQStoZ6xxH2K09Li8fXYTMC64ZeogCdpZ3XSi1eCPOByV1OpuJxuI3OcmHhosDWYyii07tpPsLw=="],
 
     "@modelcontextprotocol/server": ["@modelcontextprotocol/server@2.3.0", "", { "dependencies": { "@modelcontextprotocol/core": "2.3.0", "zod": "^4.2.0" } }, "sha512-+6b0LdsQLmHsvS7J6sQJ4weTpzUn61fU1JKS+321/+IyDYoHW5CR2Tgqcs6GgAAQvlesCo6yX3xttgmx+XGtJw=="],
+
+    "@noble/curves": ["@noble/curves@2.4.0", "", { "dependencies": { "@noble/hashes": "2.4.0" } }, "sha512-P4/62zrgfH33CneE3Dn4WhJVA22YUU0eR51wKIan4NVRvwsA0YnPTwWGpNbpuacSujmSFLvyzpyuR30+fbq2Ew=="],
+
+    "@noble/hashes": ["@noble/hashes@2.4.0", "", {}, "sha512-X5XaVWZIBCT7HHZGm5I7ZQXDwLG+bGXuSrMQAW+7Zvl87h1kmc1ZB1VSRJcpUfoUrGQp4Fkoxm5kZ+Ms+aW+eA=="],
 
     "@nodelib/fs.scandir": ["@nodelib/fs.scandir@2.1.5", "", { "dependencies": { "@nodelib/fs.stat": "2.0.5", "run-parallel": "^1.1.9" } }, "sha512-vq24Bq3ym5HEQm2NKCr3yXDwjc7vTsEThRDnkp2DK9p1uqLR+DHurm/NOTo0KG7HYHU7eppKZj3MyqYuMBf62g=="],
 
@@ -1762,6 +1780,8 @@
 
     "expo-constants": ["expo-constants@58.0.15", "", { "dependencies": { "@expo/env": "~2.5.4", "@expo/require-utils": "^58.0.5" }, "peerDependencies": { "expo": "*", "react-native": "*" } }, "sha512-uokwzsYdjM/ZTEvQJCANhP4eJ4XGGR6keJy/Ac9HntLsQART8o+Y8nTVAXdMaRv6T5wuzJOliJmKUYJlDlamdg=="],
 
+    "expo-crypto": ["expo-crypto@58.0.8", "", { "peerDependencies": { "expo": "*" } }, "sha512-yMSiMlallOweQ28oQ3BqJf6I/4ZoBggFNRg+PfjG1NbQWBWzGKmkPPUrd3yT0oPW4P+AYppg+Mw6xoAYddLUKA=="],
+
     "expo-dev-client": ["expo-dev-client@58.0.18", "", { "dependencies": { "expo-dev-launcher": "~58.0.18", "expo-dev-menu": "~58.0.12", "expo-dev-menu-interface": "~58.0.1", "expo-manifests": "~58.0.1", "expo-updates-interface": "~58.0.1" }, "peerDependencies": { "expo": "*" } }, "sha512-1oTxhWiZAdFK1zXDWE047cjSw0S3xOATMso8fxXnjK9YvpaG1mGQpCMUVanXvXmiwmqDCHlVXW0myAKBSRzATQ=="],
 
     "expo-dev-launcher": ["expo-dev-launcher@58.0.18", "", { "dependencies": { "@expo/schema-utils": "^58.0.3", "expo-dev-menu": "~58.0.12", "expo-manifests": "~58.0.1" }, "peerDependencies": { "expo": "*", "react-native": "*" } }, "sha512-WjcuYTGn86bwz0qCpPgi/EXHfo9Pj/Z3ynHTaX5h9yaOhe+3p20bm50XVrDIOC+GAbuke8LK8bglVkpkQrIOrg=="],
@@ -2495,6 +2515,8 @@
     "react-native-is-edge-to-edge": ["react-native-is-edge-to-edge@1.3.1", "", { "peerDependencies": { "react": "*", "react-native": "*" } }, "sha512-NIXU/iT5+ORyCc7p0z2nnlkouYKX425vuU1OEm6bMMtWWR9yvb+Xg5AZmImTKoF9abxCPqrKC3rOZsKzUYgYZA=="],
 
     "react-native-keyboard-controller": ["react-native-keyboard-controller@1.22.7", "", { "dependencies": { "react-native-is-edge-to-edge": "^1.2.1" }, "peerDependencies": { "react": "*", "react-native": "*", "react-native-reanimated": ">=3.0.0" } }, "sha512-IBR9z6Nl/iDLRfiv1zN9QQroOXAwYMugeAjVDb+CFbRBNC8fayXlHTBbshVcWc4j95Itsv+1/FgwfxKnIn1Vmg=="],
+
+    "react-native-passkey": ["react-native-passkey@3.6.2", "", { "peerDependencies": { "react": "*", "react-native": "*" } }, "sha512-3x7uS0EYx3KkHYdYDvDOOmw5DVrKqqDDJxP9Lwph922EwHJT6HR5/2cQs4+MfK6iE/N0FCCNjUJEvQ8XuYj+/A=="],
 
     "react-native-pulsar": ["react-native-pulsar@1.7.0", "", { "peerDependencies": { "react": "*", "react-native": "*", "react-native-worklets": "*" } }, "sha512-izuzr3S76Ltrobvngceke380XDOea4n9J7Lbha6XDgzYBx1H+rz/obcI1b2sBNyiJ9ig9KCNXrkd+6uQY9ailw=="],
 

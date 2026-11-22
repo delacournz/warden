@@ -1,6 +1,4 @@
 import CoreVideo
-import FBControlCore
-import FBSimulatorControl
 import Foundation
 import IOSurface
 
@@ -10,9 +8,8 @@ import IOSurface
 final class StreamSession: @unchecked Sendable {
   let request: StreamStartRequest
   let socket: AUSocket
-  /// Held for the stream's life: the attachment's events stop when the framebuffer is released.
-  private let framebuffer: Framebuffer
-  private let attachment: FramebufferAttachment
+  /// Held for the stream's life (`DisplayAttachment`): cancelling it ends the events.
+  private let attachment: any DisplayAttachment
   private let lock = NSLock()
   private var pacer: FramePacer
   private var surface: IOSurface?
@@ -29,16 +26,15 @@ final class StreamSession: @unchecked Sendable {
   private var keyCount = 0
   private var lastError: String?
 
-  static func start(simulator: Simulator, request: StreamStartRequest, defaultPath: String) async throws -> StreamSession {
-    let framebuffer = try await simulator.framebuffer.connect()
-    let attachment = try framebuffer.attach()
-    return try StreamSession(
-      request: request, framebuffer: framebuffer, attachment: attachment, path: request.path ?? defaultPath)
+  static func start(display: any DisplaySource, request: StreamStartRequest, defaultPath: String) async throws
+    -> StreamSession
+  {
+    let attachment = try await display.attach()
+    return try StreamSession(request: request, attachment: attachment, path: request.path ?? defaultPath)
   }
 
-  private init(request: StreamStartRequest, framebuffer: Framebuffer, attachment: FramebufferAttachment, path: String) throws {
+  private init(request: StreamStartRequest, attachment: any DisplayAttachment, path: String) throws {
     self.request = request
-    self.framebuffer = framebuffer
     self.attachment = attachment
     pacer = FramePacer(fps: request.fps, keepaliveMs: request.keepaliveMs)
     let owner = WeakStream()
@@ -133,13 +129,9 @@ final class StreamSession: @unchecked Sendable {
         if let next {
           do { try adopt(next) } catch { lock.withLock { lastError = "\(error)" } }
         }
-      case .configurationChanged:
-        continue
       case let .ended(reason):
         lock.withLock { lastError = "display ended: \(reason)" }
         return
-      @unknown default:
-        continue
       }
     }
   }

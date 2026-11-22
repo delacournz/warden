@@ -1,0 +1,23 @@
+{
+	"command": {
+		"accessibility": {
+			"action": {
+				"readFrontmost": {
+					"method": "window-server",
+					"options": {
+						"automationMode": true,
+						"clientType": 0,
+						"explainUnreachable": false,
+						"maxDepth": 50,
+						"maxNodes": 3000,
+						"traversal": "single-fetch"
+					},
+					"x": 201,
+					"y": 437
+				}
+			}
+		}
+	},
+	"id": "ID-3",
+	"version": 6
+}

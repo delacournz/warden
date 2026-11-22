@@ -2,7 +2,7 @@ import type { Driver, KeyName, Point, Rect, ScreenInfo } from "@delacour/warden-
 import { typeText } from "@delacour/warden-e2e/driver/typing";
 import {
 	contentPath,
-	fieldValue,
+	fieldShows,
 	focusPoint,
 	type SwipeDirection,
 	screenRect,
@@ -13,6 +13,7 @@ import {
 	confirmFieldValue,
 	confirmReadsFor,
 	type FillVia,
+	fillPace,
 	focusClearType,
 	hitTestField,
 } from "@delacour/warden-e2e/screen/field";
@@ -181,16 +182,17 @@ async function readBack(
 }
 
 /**
- * What the field shows now, or undefined when it cannot be found. First a hit-test at the field (≈10 ms; a full
+ * What the field shows now (placeholder and all: typing exactly the placeholder's text reads the same as an empty
+ * field, so only what is shown can be compared), or undefined when it cannot be found. First a hit-test at the field (≈10 ms; a full
  * snapshot takes 300-1000 ms and starves the app of the very key events being read back), then a snapshot.
  */
 async function readField(driver: Driver, wanted: NodeEntry): Promise<Result<string | undefined, UiError>> {
 	const hit = await hitTestField(driver, wanted);
-	if (hit.ok && hit.entry) return ok(fieldValue(hit.entry));
+	if (hit.ok && hit.entry) return ok(fieldShows(hit.entry));
 	const fresh = await driver.snapshot();
 	if (!fresh.success) return { success: false, error: driverUiError(fresh.error) };
 	const found = findInFresh(wanted, indexSnapshot(fresh.data));
-	return ok(found ? fieldValue(found) : undefined);
+	return ok(found ? fieldShows(found) : undefined);
 }
 
 type FillPlan = {
@@ -226,6 +228,7 @@ async function fillAttempt(
 ): Promise<Result<FillRun | undefined, UiError>> {
 	const { entry, text } = plan;
 	const method: ClearMethod = attempt === 1 ? "auto" : "counted";
+	const readable = plan.verify && !plan.secure && entry !== undefined;
 	const typed = fromDriver(
 		await focusClearType(
 			driver,
@@ -235,11 +238,12 @@ async function fillAttempt(
 			text,
 			method,
 			ctx.env,
-			attempt === 1 ? plan.via : "type"
+			attempt === 1 ? plan.via : "type",
+			fillPace(attempt, readable)
 		)
 	);
 	if (!typed.success) return typed;
-	if (!(plan.verify && !plan.secure && entry !== undefined)) return ok(undefined);
+	if (!readable) return ok(undefined);
 	return readBack(ctx, deps, driver, entry, text, { budgetMs: plan.budgetMs, maxMs: plan.maxMs });
 }
 
@@ -303,7 +307,7 @@ function fillDone(
 	secure: boolean,
 	verified: boolean | "unconfirmed" | undefined,
 	via: FillVia
-): ActionDone {
+): ActionDone<"fill", { characters: number; secure?: true }> {
 	const shown = secure ? `${[...text].length} characters (secure)` : JSON.stringify(text);
 	return {
 		action: "fill",
@@ -312,7 +316,7 @@ function fillDone(
 		...(verified !== undefined ? { verified } : {}),
 		args: { ...(secure ? { secure: true } : { text }), ...(via === "paste" ? { via } : {}) },
 		...(secure ? { secret: text } : {}),
-		extra: { characters: [...text].length, ...(secure ? { secure: true } : {}) },
+		extra: { characters: [...text].length, ...(secure ? { secure: true as const } : {}) },
 	};
 }
 

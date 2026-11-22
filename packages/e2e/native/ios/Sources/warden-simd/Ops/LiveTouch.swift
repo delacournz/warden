@@ -1,5 +1,4 @@
 import CoreGraphics
-import FBSimulatorControl
 import Foundation
 
 // Live touch ops (plan WDN-STRM, STRM-6): `touch.down{x,y,pointer?=0,unit?}`, `touch.move{x,y,pointer?,unit?}`,
@@ -40,7 +39,7 @@ struct LiveTouchState: Sendable {
   }
 
   /// The HID event for the pressed fingers in `direction`, nil when none is pressed.
-  private func event(_ direction: SimulatorHIDDirection) -> SimulatorHIDEvent? {
+  private func event(_ direction: HIDDirection) -> HIDEvent? {
     let pressed = fingers.keys.sorted().compactMap { key in fingers[key].flatMap { $0.pressed ? $0.point : nil } }
     switch pressed.count {
     case 1: return .touch(direction: direction, x: pressed[0].x, y: pressed[0].y)
@@ -53,7 +52,7 @@ struct LiveTouchState: Sendable {
     for key in fingers.keys { fingers[key]?.pressed = true }
   }
 
-  mutating func touchDown(_ pointer: Int, at point: CGPoint, now: Double) throws -> [SimulatorHIDEvent] {
+  mutating func touchDown(_ pointer: Int, at point: CGPoint, now: Double) throws -> [HIDEvent] {
     guard fingers[pointer] == nil else {
       throw WireError(
         .badRequest, "pointer \(pointer) is already down (touch.up or touch.cancel first)",
@@ -64,7 +63,7 @@ struct LiveTouchState: Sendable {
     return event(.down).map { [$0] } ?? []
   }
 
-  mutating func touchMove(_ pointer: Int, to point: CGPoint, now: Double) throws -> [SimulatorHIDEvent] {
+  mutating func touchMove(_ pointer: Int, to point: CGPoint, now: Double) throws -> [HIDEvent] {
     guard fingers[pointer] != nil else { throw Self.notDown(pointer) }
     fingers[pointer]?.point = point
     fingers[pointer]?.lastAt = now
@@ -72,7 +71,7 @@ struct LiveTouchState: Sendable {
     return event(.down).map { [$0] } ?? []
   }
 
-  mutating func touchUp(_ pointer: Int, at point: CGPoint?) throws -> [SimulatorHIDEvent] {
+  mutating func touchUp(_ pointer: Int, at point: CGPoint?) throws -> [HIDEvent] {
     guard let finger = fingers[pointer] else { throw Self.notDown(pointer) }
     if let point { fingers[pointer]?.point = point }
     defer {
@@ -84,7 +83,7 @@ struct LiveTouchState: Sendable {
   }
 
   /// Lifts every pressed finger and forgets them all; answers how many were held.
-  mutating func cancel() -> (events: [SimulatorHIDEvent], released: Int) {
+  mutating func cancel() -> (events: [HIDEvent], released: Int) {
     let released = fingers.count
     let lift = event(.up)
     fingers = [:]
@@ -92,10 +91,10 @@ struct LiveTouchState: Sendable {
   }
 
   /// Lifts each finger untouched for `staleAfter` seconds at `now`.
-  mutating func expire(now: Double) -> (events: [SimulatorHIDEvent], released: Int) {
+  mutating func expire(now: Double) -> (events: [HIDEvent], released: Int) {
     let stale = fingers.filter { now - $0.value.lastAt >= Self.staleAfter }.keys.sorted()
     if stale.count == fingers.count { return cancel() }
-    var events: [SimulatorHIDEvent] = []
+    var events: [HIDEvent] = []
     for pointer in stale { events += (try? touchUp(pointer, at: nil)) ?? [] }
     return (events, stale.count)
   }
@@ -168,7 +167,7 @@ actor LiveTouch {
   }
 
   /// Replies `{down, hidUs}`: fingers still down, and the microseconds the HID send took (for the latency bench).
-  private func apply(_ events: [SimulatorHIDEvent]) async throws -> JSON {
+  private func apply(_ events: [HIDEvent]) async throws -> JSON {
     let started = ContinuousClock.now
     try await send(events)
     let took = (ContinuousClock.now - started).components
@@ -178,7 +177,7 @@ actor LiveTouch {
   }
 
   /// Sends `events`; once no finger is held the sink's open operation is closed.
-  private func send(_ events: [SimulatorHIDEvent]) async throws {
+  private func send(_ events: [HIDEvent]) async throws {
     do {
       for event in events { try await sink.send(event) }
     } catch {
@@ -264,7 +263,7 @@ enum LiveTouchOps {
   /// drained `send(event:)` per event costs ~90 ms (it waits for the guest), an undrained one ~8.6 ms (measured).
   static func make(for session: Session) -> LiveTouch {
     let environment = InputOps.environment(for: session)
-    return LiveTouch(environment: environment, sink: StreamingHIDSink.hid(session.hid.hid, gate: environment.gate))
+    return LiveTouch(environment: environment, sink: StreamingHIDSink.sender(session.hid, gate: environment.gate))
   }
 
   static let ops: [String: Dispatcher<Session>.OpHandler] = Dictionary(

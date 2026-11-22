@@ -12,12 +12,22 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { err, ok } from "@delacour/warden-types/result";
 import type { Exec, ExecResult } from "../exec";
 import { createGitFactsCache } from "../git-facts";
+import type { PodsInstallOptions } from "../pods/pods.types";
+import { IOS_BUILD_RESULT_BUNDLE } from "./builds.defaults";
 import { fakeApp, testProject } from "./builds.testing";
 import { releaseKey } from "./fingerprint";
 import { combineKey, jsInputsHash } from "./js-inputs";
-import { artifactCandidates, locateArtifact, runLocalBuild, snapshotArtifacts } from "./local";
+import {
+	artifactCandidates,
+	type LocalPodsDeps,
+	localBuildEnv,
+	locateArtifact,
+	runLocalBuild,
+	snapshotArtifacts,
+} from "./local";
 
 let dir: string;
 beforeEach(() => {
@@ -558,6 +568,61 @@ describe("runLocalBuild compiler cache env", () => {
 		expect(readFileSync(logPath, "utf8")).toContain(bad);
 	});
 
+	test("a failed iOS build with a fresh result bundle reports its errors and names the bundle", async () => {
+		const s = iosSetup();
+		const fixture = readFileSync(
+			join(import.meta.dir, "..", "__fixtures__", "xcresult", "build-results.failed.json"),
+			"utf8"
+		);
+		const bundle = join(s.root, "ios", IOS_BUILD_RESULT_BUNDLE);
+		const exec: Exec = async (cmd, opts) => {
+			if (cmd[2] === "xb") {
+				mkdirSync(bundle, { recursive: true });
+				return { exitCode: 65, stdout: "noise\n", stderr: "** BUILD FAILED **\n" };
+			}
+			if (cmd[0] === "xcrun" && cmd.includes(bundle)) return { exitCode: 0, stdout: fixture, stderr: "" };
+			return s.exec(cmd, opts);
+		};
+		const result = await runLocalBuild({
+			...common,
+			exec,
+			project: s.project,
+			platform: "ios",
+			hash: "h1",
+			env: { HOME: dir },
+			wardenHome: join(dir, "wh"),
+		});
+		expect(result.success).toBe(false);
+		if (result.success) return;
+		expect(result.error).toContain("1 error: /Users/dev/Demo/Sources/Demo/Demo.swift:1: Cannot convert");
+		expect(result.error).toContain(`result bundle: ${bundle}`);
+	});
+
+	test("a result bundle left by an earlier build is not read", async () => {
+		const s = iosSetup();
+		const bundle = join(s.root, "ios", IOS_BUILD_RESULT_BUNDLE);
+		mkdirSync(bundle, { recursive: true });
+		utimesSync(bundle, new Date(0), new Date(0));
+		const xcrun: string[][] = [];
+		const exec: Exec = async (cmd, opts) => {
+			if (cmd[2] === "xb") return { exitCode: 65, stdout: "error: plain\n", stderr: "" };
+			if (cmd[0] === "xcrun") xcrun.push([...cmd]);
+			return s.exec(cmd, opts);
+		};
+		const result = await runLocalBuild({
+			...common,
+			exec,
+			project: s.project,
+			platform: "ios",
+			hash: "h1",
+			env: { HOME: dir },
+			wardenHome: join(dir, "wh"),
+		});
+		expect(result.success).toBe(false);
+		expect(xcrun).toEqual([]);
+		if (!result.success) expect(result.error).toContain("1 error: plain");
+	});
+
 	test("iOS build gets ccache env", async () => {
 		const s = iosSetup();
 		await runLocalBuild({
@@ -577,6 +642,25 @@ describe("runLocalBuild compiler cache env", () => {
 			CCACHE_BINARY: "/opt/homebrew/bin/ccache",
 			EXPO_NO_TELEMETRY: "1",
 		});
+	});
+
+	test("localBuildEnv is the caching env the build adds, so `warden pods install` keys pods like the build does", async () => {
+		const s = iosSetup();
+		const env = await localBuildEnv({ exec: s.exec, project: s.project, platform: "ios", env: {}, wardenHome: "/w" });
+		expect(env).toMatchObject({
+			USE_CCACHE: "1",
+			CCACHE_DIR: "/w/ccache",
+			CCACHE_BASEDIR: s.root,
+			CCACHE_BINARY: "/opt/homebrew/bin/ccache",
+		});
+		const off = await localBuildEnv({
+			exec: s.exec,
+			project: s.project,
+			platform: "ios",
+			env: {},
+			compilerCache: false,
+		});
+		expect(off.USE_CCACHE).toBeUndefined();
 	});
 
 	test("no ccache on PATH → no CCACHE_BINARY, the build still runs", async () => {
@@ -1099,5 +1183,186 @@ describe("runLocalBuild: a stale CNG native dir is regenerated before the build"
 		const { result, written } = s.run("h0");
 		expect((await result).success).toBe(false);
 		expect(written).toEqual([]);
+	});
+});
+
+describe("runLocalBuild pods cache", () => {
+	const podsDeps = {
+		store: {} as never,
+		now: () => 0,
+		pid: 1,
+		pidAlive: () => true,
+		sleep: async () => {},
+		owner: { kind: "ci", runId: "r" } as const,
+	};
+
+	function podsSetup(
+		build: string,
+		opts: {
+			install?: LocalPodsDeps["install"];
+			env?: Record<string, string>;
+			withPods?: boolean;
+			platform?: "ios" | "android";
+			podsEnv?: string[];
+			podsCache?: false;
+			compilerCache?: false;
+		} = {}
+	) {
+		const root = join(dir, "app");
+		const platform = opts.platform ?? "ios";
+		mkdirSync(join(root, platform), { recursive: true });
+		const calls: PodsInstallOptions[] = [];
+		const envs: Record<string, string | undefined>[] = [];
+		const logs: string[] = [];
+		const install: LocalPodsDeps["install"] =
+			opts.install ??
+			(async (d, o) => {
+				calls.push(o);
+				envs.push(d.env);
+				return ok({ kind: "hit" as const, key: "k1", mode: "cng" as const, ms: 800 });
+			});
+		const exec: Exec = async (cmd) => {
+			if (cmd[2]?.startsWith("do-build")) {
+				const out =
+					platform === "ios"
+						? join(root, "ios", "build", SIM)
+						: join(root, "android", "app", "build", "outputs", "apk", "debug");
+				if (platform === "ios") fakeApp(out);
+				else {
+					mkdirSync(out, { recursive: true });
+					writeFileSync(join(out, "app-debug.apk"), "apk");
+				}
+				return { exitCode: 0, stdout: "", stderr: "" };
+			}
+			if (cmd[0] === "plutil" || cmd[0] === "git")
+				return { exitCode: cmd[0] === "git" ? 0 : 1, stdout: "", stderr: "" };
+			return { exitCode: 0, stdout: '{"hash":"h1"}', stderr: "" };
+		};
+		const project = testProject({
+			root,
+			fingerprintCommand: "fp",
+			build: { ios: build, android: build },
+			...(opts.podsEnv ? { podsEnv: opts.podsEnv } : {}),
+			...(opts.podsCache === false ? { podsCache: false as const } : {}),
+		});
+		const run = () =>
+			runLocalBuild({
+				exec,
+				project,
+				platform,
+				hash: "h1",
+				env: { HOME: "/nope", ...(opts.env ?? {}) },
+				log: (l) => logs.push(l),
+				...(opts.withPods === false ? {} : { pods: { ...podsDeps, install } }),
+				...(opts.compilerCache === false ? { compilerCache: false } : {}),
+			});
+		return { run, calls, envs, logs };
+	}
+	const POD = "do-build # pod install";
+
+	test("ios command with pod install → podsInstall runs, outcome logged", async () => {
+		const s = podsSetup(POD);
+		{
+			const r = await s.run();
+			expect(r.success ? "ok" : r.error).toBe("ok");
+		}
+		expect(s.calls).toHaveLength(1);
+		expect(s.calls[0]?.framework).toBe("expo");
+		expect(s.calls[0]?.env).toBeUndefined();
+		expect(s.logs).toContain("pods: restored k1 in 0.8s");
+	});
+
+	test("ios.pods.env reaches podsInstall", async () => {
+		const s = podsSetup(POD, { podsEnv: ["CI", "SENTRY_*"] });
+		await s.run();
+		expect(s.calls[0]?.env).toEqual(["CI", "SENTRY_*"]);
+	});
+
+	test("pod install sees the compiler-cache env, so React Native wires ccache into the Pods project", async () => {
+		const s = podsSetup(POD, { env: { CCACHE_BINARY: "/opt/bin/ccache" } });
+		await s.run();
+		expect(s.envs[0]).toMatchObject({
+			HOME: "/nope",
+			USE_CCACHE: "1",
+			CCACHE_DIR: "/nope/.warden/ccache",
+			CCACHE_BINARY: "/opt/bin/ccache",
+		});
+	});
+
+	test("compilerCache: false → pod install gets the caller env only", async () => {
+		const s = podsSetup(POD, { compilerCache: false });
+		await s.run();
+		expect(s.envs[0]?.USE_CCACHE).toBeUndefined();
+		expect(s.envs[0]?.HOME).toBe("/nope");
+	});
+
+	test("ios.pods.cache: false → not called, the build's own pod install runs; says why", async () => {
+		const s = podsSetup(POD, { podsCache: false });
+		const r = await s.run();
+		expect(r.success ? "ok" : r.error).toBe("ok");
+		expect(s.calls).toHaveLength(0);
+		expect(s.logs).toContain("pods: cache off (ios.pods.cache: false); the build installs pods itself");
+	});
+
+	test("not called for android, a command without pod install, WARDEN_PODS_CACHE=0, or no pods dep", async () => {
+		for (const s of [
+			podsSetup(POD, { platform: "android" }),
+			podsSetup("do-build"),
+			podsSetup(POD, { env: { WARDEN_PODS_CACHE: "0" } }),
+			podsSetup(POD, { withPods: false }),
+		]) {
+			{
+				const r = await s.run();
+				expect(r.success ? "ok" : r.error).toBe("ok");
+			}
+			expect(s.calls).toHaveLength(0);
+		}
+	});
+
+	test("podsInstall err or throw → warning, build still runs", async () => {
+		for (const install of [
+			async () => err("boom"),
+			async (): Promise<never> => {
+				throw new Error("kaboom");
+			},
+		] as const) {
+			const s = podsSetup(POD, { install });
+			{
+				const r = await s.run();
+				expect(r.success ? "ok" : r.error).toBe("ok");
+			}
+			expect(s.logs.some((l) => l.startsWith("pods: cache skipped"))).toBe(true);
+		}
+	});
+
+	test("a pods restore that creates ios/ is still the build's own prebuild (key may move)", async () => {
+		const root = join(dir, "app");
+		const install: LocalPodsDeps["install"] = async () => {
+			mkdirSync(join(root, "ios"), { recursive: true });
+			return ok({ kind: "hit" as const, key: "k1", mode: "cng" as const, ms: 1 });
+		};
+		rmSync(root, { recursive: true, force: true });
+		mkdirSync(root, { recursive: true });
+		let n = 0;
+		const exec: Exec = async (cmd) => {
+			if (cmd[2]?.startsWith("do-build")) {
+				fakeApp(join(root, "ios", "build", SIM));
+				return { exitCode: 0, stdout: "", stderr: "" };
+			}
+			if (cmd[0] === "plutil") return { exitCode: 1, stdout: "", stderr: "" };
+			if (cmd[0] === "git") return { exitCode: 0, stdout: "", stderr: "" };
+			n++;
+			return { exitCode: 0, stdout: JSON.stringify({ hash: n === 1 ? "h1" : "h2" }), stderr: "" };
+		};
+		const res = await runLocalBuild({
+			exec,
+			project: testProject({ root, fingerprintCommand: "fp", build: { ios: POD, android: POD } }),
+			platform: "ios",
+			hash: "h1",
+			env: { HOME: "/nope" },
+			log: () => {},
+			pods: { ...podsDeps, install },
+		});
+		expect(res.success ? "ok" : res.error).toBe("ok");
 	});
 });

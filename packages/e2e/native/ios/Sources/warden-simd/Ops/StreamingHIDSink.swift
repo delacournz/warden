@@ -1,9 +1,8 @@
-import FBSimulatorControl
 import Foundation
 
 /// Where live touch sends its HID events: one at a time, each call returning once the event was delivered.
 protocol LiveHIDSink: Sendable {
-  func send(_ event: SimulatorHIDEvent) async throws
+  func send(_ event: HIDEvent) async throws
   /// The gesture is over (no finger down): close whatever the sink keeps open.
   func end() async
 }
@@ -12,7 +11,7 @@ protocol LiveHIDSink: Sendable {
 struct PerEventHIDSink: LiveHIDSink {
   let environment: InputEnvironment
 
-  func send(_ event: SimulatorHIDEvent) async throws {
+  func send(_ event: HIDEvent) async throws {
     let environment = environment
     try await environment.gate.run { try await environment.send(event) }
   }
@@ -20,20 +19,20 @@ struct PerEventHIDSink: LiveHIDSink {
   func end() async {}
 }
 
-/// The events of one open HID operation. idb's `send(events:)` asks for the next event only after it delivered the
+/// The events of one open HID operation. The backend's `send(events:)` (idb's) asks for the next event only after it delivered the
 /// one before, so each `next()` after the first confirms the previous event (`onDelivered`).
 struct DeliveredHIDEvents: AsyncSequence, Sendable {
-  typealias Element = SimulatorHIDEvent
+  typealias Element = HIDEvent
 
-  let stream: AsyncStream<SimulatorHIDEvent>
+  let stream: AsyncStream<HIDEvent>
   let onDelivered: @Sendable () -> Void
 
   struct AsyncIterator: AsyncIteratorProtocol {
-    var base: AsyncStream<SimulatorHIDEvent>.AsyncIterator
+    var base: AsyncStream<HIDEvent>.AsyncIterator
     let onDelivered: @Sendable () -> Void
     var handedOut = false
 
-    mutating func next() async -> SimulatorHIDEvent? {
+    mutating func next() async -> HIDEvent? {
       if handedOut { onDelivered() }
       let event = await base.next()
       handedOut = event != nil
@@ -48,19 +47,19 @@ struct DeliveredHIDEvents: AsyncSequence, Sendable {
 
 /// Keeps ONE HID operation open for a whole gesture and feeds each live event into it. A fresh `send(event:)` per
 /// event is a whole HID operation (~8-9 ms each on a sim, measured), which a 60 Hz finger cannot afford; yielding into
-/// an open `send(events:)` costs well under a millisecond. `run` is idb's `send(events:)`, under the HID gate, so
+/// an open `send(events:)` costs well under a millisecond. `run` is the backend's `send(events:)`, under the HID gate, so
 /// other input waits until the fingers lift (at most the 10 s stuck-finger limit). A failed operation fails the
 /// waiting send and the next send opens a new one.
 final class StreamingHIDSink: LiveHIDSink, @unchecked Sendable {
   typealias Run = @Sendable (DeliveredHIDEvents) async throws -> Void
 
   private final class Operation: @unchecked Sendable {
-    let continuation: AsyncStream<SimulatorHIDEvent>.Continuation
+    let continuation: AsyncStream<HIDEvent>.Continuation
     /// sends waiting for their event to be delivered, oldest first
     var waiting: [CheckedContinuation<Void, any Error>] = []
     var finished = false
 
-    init(continuation: AsyncStream<SimulatorHIDEvent>.Continuation) {
+    init(continuation: AsyncStream<HIDEvent>.Continuation) {
       self.continuation = continuation
     }
   }
@@ -73,15 +72,14 @@ final class StreamingHIDSink: LiveHIDSink, @unchecked Sendable {
     self.run = run
   }
 
-  /// idb's open-ended send through `gate`.
-  static func hid(_ hid: SimulatorHID, gate: HIDGate) -> StreamingHIDSink {
-    let logger = NullLogger()
-    return StreamingHIDSink(run: { events in
-      try await gate.run { try await hid.send(events: events, logger: logger) }
+  /// The backend's open-ended send (`HIDSender.send(events:)`) through `gate`.
+  static func sender(_ hid: any HIDSender, gate: HIDGate) -> StreamingHIDSink {
+    StreamingHIDSink(run: { events in
+      try await gate.run { try await hid.send(events: events) }
     })
   }
 
-  func send(_ event: SimulatorHIDEvent) async throws {
+  func send(_ event: HIDEvent) async throws {
     try await withCheckedThrowingContinuation { (waiter: CheckedContinuation<Void, any Error>) in
       lock.withLock {
         let operation = current ?? open()
@@ -102,7 +100,7 @@ final class StreamingHIDSink: LiveHIDSink, @unchecked Sendable {
 
   /// Under `lock`: a new operation and the task that runs it.
   private func open() -> Operation {
-    let (stream, continuation) = AsyncStream<SimulatorHIDEvent>.makeStream(bufferingPolicy: .unbounded)
+    let (stream, continuation) = AsyncStream<HIDEvent>.makeStream(bufferingPolicy: .unbounded)
     let operation = Operation(continuation: continuation)
     current = operation
     let events = DeliveredHIDEvents(stream: stream) { [weak self] in self?.delivered(operation) }

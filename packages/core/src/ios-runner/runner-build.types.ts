@@ -27,12 +27,12 @@ type RunnerErrorBase = { message: string; hint: string };
 /**
  * Why the on-device runner cannot be built / signed / started. `hint` is the one thing to do about it.
  * `ios_team_ambiguous` carries the teams to pick from; `build_failed` is anything unclassified (with the
- * tail of the output).
+ * tail of the output, and the `xcodebuild` result bundle when one was written).
  */
 export type RunnerBuildError =
 	| (RunnerErrorBase & { code: Exclude<ClassifiedRunnerErrorCode, "ios_team_ambiguous"> })
 	| (RunnerErrorBase & { code: "ios_team_ambiguous"; teams: SigningTeam[] })
-	| (RunnerErrorBase & { code: "build_failed"; output: string });
+	| (RunnerErrorBase & { code: "build_failed"; output: string; resultBundle?: string });
 
 export type RunnerBuildErrorCode = RunnerBuildError["code"];
 

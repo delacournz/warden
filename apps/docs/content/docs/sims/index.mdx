@@ -99,11 +99,11 @@ Under `warden dev`, `open` attaches to the running dev client. `snapshot -i` pri
 
 ```text
 generation 4 · axbridge · 393×852@3x · 5 of 41 elements
-@e1 [textbox] "Add a todo" id=todo-input value="" enabled hittable (24,118 345×48)
+@e1 [textbox] "Add a todo" id=todo-input placeholder="What needs doing?" enabled hittable (24,118 345×48)
 @e2 [button] "Add" id=todo-add enabled hittable (24,176 345×44)
 ```
 
-Each line is `@eN [role] "name" id=<testID> value="…" <states> (x,y w×h)`. A ref is valid until the next snapshot; a selector such as `id=todo-add` outlives screen changes. Add `testID` and `accessible` in the component for anything the agent must touch.
+Each line is `@eN [role] "name" id=<testID> value="…" placeholder="…" <states> (x,y w×h)`; a text input with no `value=` is empty. A ref is valid until the next snapshot; a selector such as `id=todo-add` outlives screen changes. Add `testID` and `accessible` in the component for anything the agent must touch.
 
 </Step>
 <Step>

@@ -4,7 +4,17 @@ import type { CommandContext } from "../context";
 import { errorMessage } from "../hooks/json";
 import { resolveUiDevice, type UiDevice, type UiDeviceFlags } from "./device";
 import type { UiDeps } from "./driver";
-import { reportError, reportOk, type UiError, type UiExitCode, type UiSuccess, uiError } from "./output";
+import { watchInputs } from "./inputs";
+import {
+	reportError,
+	reportOk,
+	type UiError,
+	type UiExitCode,
+	type UiResultOf,
+	type UiSuccess,
+	uiError,
+} from "./output";
+import { noteInput } from "./state";
 import { DEFAULT_UI_TIMEOUT_MS } from "./ui-options";
 
 /** Subcommands that only read: a device a live warden process holds is reported on, not refused. */
@@ -26,6 +36,8 @@ const READ_ONLY: ReadonlySet<string> = new Set([
 	"battery status",
 	"keyboard status",
 	"camera status",
+	"passkey status",
+	"passkey list",
 ]);
 
 /** Values `withUiOptions` parses to. */
@@ -48,17 +60,26 @@ function parseTimeout(raw: string | undefined): Result<number, UiError> {
 	return { success: true, data: Number(raw) };
 }
 
+/** Count an input for the ref check (`target.ts`); best effort: a busy store must not fail the tap itself. */
+function countInput(ctx: CommandContext, udid: string): void {
+	try {
+		noteInput(ctx, udid);
+	} catch {
+		// best effort
+	}
+}
+
 /**
  * The shared frame of a `warden ui` subcommand: validate globals, resolve + lease-check the device, run
  * `work`, print the result as text or the `--json` envelope, return the exit code. Any throw becomes a
  * `failed` error (exit 1) so `--json` always gets one document.
  */
-export async function runUi(
+export async function runUi<C extends string>(
 	ctx: CommandContext,
 	deps: UiDeps,
-	command: string,
+	command: C,
 	opts: UiOptionValues,
-	work: (device: UiDevice, env: UiRunEnv) => Promise<Result<UiSuccess, UiError>>
+	work: (device: UiDevice, env: UiRunEnv) => Promise<Result<UiSuccess<UiResultOf<C>>, UiError>>
 ): Promise<UiExitCode> {
 	const report = { command, json: opts.json === true, startedAt: ctx.now() };
 	try {
@@ -77,8 +98,13 @@ export async function runUi(
 		}
 		const info = { udid: device.data.udid, platform: device.data.platform, name: device.data.name };
 		let opened: Promise<Result<Driver, UiError>> | undefined;
+		const udid = device.data.udid;
 		const driver = () => {
-			opened ??= deps.driver(ctx, device.data);
+			opened ??= deps
+				.driver(ctx, device.data)
+				.then((made) =>
+					made.success ? { success: true, data: watchInputs(made.data, () => countInput(ctx, udid)) } : made
+				);
 			return opened;
 		};
 		try {
@@ -91,6 +117,7 @@ export async function runUi(
 			if (used?.success) await used.data.close().catch(() => undefined);
 		}
 	} catch (error) {
+		ctx.failure?.classify?.("failed", error);
 		return reportError(ctx, report, uiError("failed", errorMessage(error)));
 	}
 }

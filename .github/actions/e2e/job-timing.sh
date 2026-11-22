@@ -4,6 +4,7 @@
 # install and the specs, which warden's own `took … — setup · tests · teardown` line splits further).
 #
 # Env (epoch seconds): ACTION_STARTED, SUITE_STARTED, SUITE_ENDED, and JOB_STARTED when the caller knows it.
+# BUILD_STARTED (the `warden e2e --build-only` step) splits an `app build` span off the action's prep, up to the suite.
 # Without JOB_STARTED it is read from the jobs API (JOB_TIMING_TOKEN, needs `actions: read`): the job on this
 # runner that is in progress. Any failure falls back to the action's part alone. Never fails the job.
 # Bash 3.2 (macOS system bash): no associative arrays, no ${var^^}.
@@ -38,13 +39,21 @@ job_started() {
 }
 
 job=$(job_started)
-action=$(span "$ACTION_STARTED" "$SUITE_STARTED")
+build=0
+build_part=""
+if [ -n "${BUILD_STARTED:-}" ]; then
+  action=$(span "$ACTION_STARTED" "$BUILD_STARTED")
+  build=$(span "$BUILD_STARTED" "$SUITE_STARTED")
+  build_part=" · app build $(fmt "$build")"
+else
+  action=$(span "$ACTION_STARTED" "$SUITE_STARTED")
+fi
 suite=$(span "$SUITE_STARTED" "$SUITE_ENDED")
 
 if [ -z "$job" ]; then
-  echo "job timing: action prep $(fmt "$action") · warden e2e $(fmt "$suite") (job start unknown: the token needs actions: read)"
+  echo "job timing: action prep $(fmt "$action")$build_part · warden e2e $(fmt "$suite") (job start unknown: the token needs actions: read)"
   exit 0
 fi
 workflow=$(span "$job" "$ACTION_STARTED")
 prep=$((workflow + action))
-echo "job timing: prep $(fmt "$prep") (workflow steps $(fmt "$workflow") · action $(fmt "$action")) · warden e2e $(fmt "$suite") · total $(fmt $((prep + suite)))"
+echo "job timing: prep $(fmt "$prep") (workflow steps $(fmt "$workflow") · action $(fmt "$action"))$build_part · warden e2e $(fmt "$suite") · total $(fmt $((prep + build + suite)))"

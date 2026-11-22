@@ -1,0 +1,44 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"type": "object",
+	"properties": {
+		"schemaVersion": {
+			"type": "number",
+			"const": 1
+		},
+		"udid": {
+			"type": "string"
+		},
+		"port": {
+			"type": "number"
+		},
+		"metroUrl": {
+			"type": "string"
+		},
+		"leaseIds": {
+			"type": "array",
+			"items": {
+				"type": "string"
+			}
+		},
+		"source": {
+			"type": "string",
+			"enum": [
+				"repo",
+				"overlay",
+				"auto"
+			]
+		}
+	},
+	"required": [
+		"schemaVersion",
+		"udid",
+		"port",
+		"metroUrl",
+		"leaseIds",
+		"source"
+	],
+	"additionalProperties": false,
+	"$id": "https://warden.co.nz/schemas/warden.dev/1.json",
+	"title": "warden.dev"
+}

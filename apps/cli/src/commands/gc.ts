@@ -1,4 +1,4 @@
-import { readdirSync, rmSync, statSync } from "node:fs";
+import { existsSync, readdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { DEFAULT_MAX_CACHE_SIZE } from "@delacour/warden-core/builds/builds.defaults";
 import { cacheCap, formatSize, GC_PRUNE_GRACE_MS, isAlias, pruneBuilds } from "@delacour/warden-core/builds/prune";
@@ -26,6 +26,7 @@ import { androidSnapshotPass } from "../golden-deps";
 import { goldenPrunePass } from "../golden-prune";
 import { simMarkerBlock } from "../marker-guard";
 import { emit, heading, plural, reportError } from "../output";
+import { DEFAULT_PODS_MAX_AGE } from "../pods-defaults";
 import { providerFor } from "../providers";
 import { hasForegroundApp } from "../running-apps";
 import { withSpinner } from "../spinner-context";
@@ -216,6 +217,27 @@ function pruneCache(ctx: CommandContext, maxBytes: number, now: number): string[
 		];
 	} catch (e) {
 		return [`build cache prune failed: ${e instanceof Error ? e.message : String(e)}`];
+	}
+}
+
+/** Prune cached pods installs unused for `DEFAULT_PODS_MAX_AGE` (installs in progress stay). Imported lazily: a gc with no pods cache never loads it. */
+async function prunePodsCache(ctx: CommandContext, now: number): Promise<string[]> {
+	const maxAge = parseDuration(DEFAULT_PODS_MAX_AGE);
+	if (!maxAge.success || !existsSync(join(wardenHome(ctx.env), "pods"))) return [];
+	try {
+		const { livePodsKeys, prunePods } = await import("@delacour/warden-core/pods/pods-store");
+		const removed = prunePods(ctx.store(), ctx.env, {
+			olderThanMs: maxAge.data,
+			now,
+			live: livePodsKeys(ctx.store(), now, processAlive),
+		});
+		if (removed.length === 0) return [];
+		const freed = removed.reduce((sum, e) => sum + e.sizeBytes, 0);
+		return [
+			`pruned ${plural(removed.length, "cached pods install")} unused for ${DEFAULT_PODS_MAX_AGE} (${formatSize(freed)})`,
+		];
+	} catch (e) {
+		return [`pods cache prune failed: ${e instanceof Error ? e.message : String(e)}`];
 	}
 }
 
@@ -443,6 +465,7 @@ async function gc(ctx: CommandContext, opts: GcOpts): Promise<number> {
 			? pruneCache(ctx, cap.bytes.data, now)
 			: [`WARDEN_MAX_CACHE_SIZE: ${cap.bytes.error}; build cache prune skipped`])
 	);
+	notes.push(...(await prunePodsCache(ctx, now)));
 	notes.push(...sweepDevDirs(ctx, now));
 	notes.push(...pruneEvents(ctx, now));
 	store.setMeta("last_gc_at", String(now));

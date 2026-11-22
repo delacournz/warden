@@ -327,8 +327,9 @@ jobs:
           node-version: 24
           registry-url: https://registry.npmjs.org
 
-      # dist/warden-* includes warden-atf-<sha8>.jar, which @delacour/warden-e2e downloads on the first Android
-      # audit, so the release (and that asset) must exist before npm publishes the version that asks for it.
+      # dist/warden-* includes warden-atf-<sha8>.jar and warden-passkeys-<sha8>.apk, which @delacour/warden-e2e
+      # downloads on the first Android audit / passkey op, so the release (and those assets) must exist before npm
+      # publishes the version that asks for them.
       # A rerun after a failed npm publish finds the release already created: replace its assets
       # instead of failing on create, so `gh run rerun --failed` can finish the publish.
       - name: Publish GitHub release

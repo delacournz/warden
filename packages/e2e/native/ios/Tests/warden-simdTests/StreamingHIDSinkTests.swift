@@ -1,4 +1,3 @@
-import FBSimulatorControl
 import XCTest
 
 @testable import warden_simd
@@ -6,11 +5,11 @@ import XCTest
 /// A fake HID operation: consumes events like idb's `send(events:)`, recording each and which operation it was in.
 private final class FakeHID: @unchecked Sendable {
   private let lock = NSLock()
-  private var storage: [(op: Int, event: SimulatorHIDEvent)] = []
+  private var storage: [(op: Int, event: HIDEvent)] = []
   private var operations = 0
-  var failOn: SimulatorHIDEvent?
+  var failOn: HIDEvent?
 
-  var events: [(op: Int, event: SimulatorHIDEvent)] { lock.withLock { storage } }
+  var events: [(op: Int, event: HIDEvent)] { lock.withLock { storage } }
   var opened: Int { lock.withLock { operations } }
 
   func run(_ events: DeliveredHIDEvents) async throws {
@@ -26,9 +25,9 @@ private final class FakeHID: @unchecked Sendable {
 }
 
 final class StreamingHIDSinkTests: XCTestCase {
-  private let down = SimulatorHIDEvent.touch(direction: .down, x: 1, y: 1)
-  private let move = SimulatorHIDEvent.touch(direction: .down, x: 2, y: 2)
-  private let up = SimulatorHIDEvent.touch(direction: .up, x: 2, y: 2)
+  private let down = HIDEvent.touch(direction: .down, x: 1, y: 1)
+  private let move = HIDEvent.touch(direction: .down, x: 2, y: 2)
+  private let up = HIDEvent.touch(direction: .up, x: 2, y: 2)
 
   func testEventsOfOneGestureShareOneOperationAndReturnOnceDelivered() async throws {
     let hid = FakeHID()

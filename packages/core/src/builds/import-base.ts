@@ -43,7 +43,7 @@ function debugMarkers(executable: string): string[] {
 	];
 }
 
-function isExecutable(path: string): boolean {
+export function isExecutable(path: string): boolean {
 	try {
 		return (statSync(path).mode & 0o111) !== 0;
 	} catch {
@@ -51,7 +51,7 @@ function isExecutable(path: string): boolean {
 	}
 }
 
-async function plistValue(exec: Exec, app: string, key: string): Promise<string | undefined> {
+export async function plistValue(exec: Exec, app: string, key: string): Promise<string | undefined> {
 	const run = await exec(["plutil", "-extract", key, "raw", "-o", "-", join(app, "Info.plist")]);
 	const value = run.stdout.trim();
 	return run.exitCode === 0 && value !== "" ? value : undefined;

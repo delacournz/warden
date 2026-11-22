@@ -100,6 +100,17 @@ describe("job-timing.sh", () => {
 		);
 	});
 
+	test("an app build step before the suite gets its own span, out of the action's prep", () => {
+		// action 1080 → build 1090 → suite 1106: action 10s, app build 16s
+		expect(run({ JOB_STARTED: "1000", BUILD_STARTED: "1090" }).out).toBe(
+			"job timing: prep 1m30s (workflow steps 1m20s · action 10s) · app build 16s · warden e2e 2m41s · total 4m27s"
+		);
+		stubCurl("", 22);
+		expect(run({ ...API, BUILD_STARTED: "1090" }).out).toBe(
+			"job timing: action prep 10s · app build 16s · warden e2e 2m41s (job start unknown: the token needs actions: read)"
+		);
+	});
+
 	test("no suite times (it never started): prints nothing", () => {
 		expect(run({ JOB_STARTED: "1000", SUITE_STARTED: "", SUITE_ENDED: "" })).toEqual({ code: 0, out: "" });
 	});
@@ -121,6 +132,7 @@ describe("action.yml job timing", () => {
 		expect(timing?.env).toEqual({
 			JOB_TIMING_TOKEN: `\${{ inputs.github-token }}`,
 			ACTION_STARTED: `\${{ steps.prepare.outputs.started }}`,
+			BUILD_STARTED: `\${{ steps.build.outputs.started }}`,
 			SUITE_STARTED: `\${{ steps.run.outputs.started }}`,
 			SUITE_ENDED: `\${{ steps.run.outputs.ended }}`,
 		});

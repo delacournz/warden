@@ -1,11 +1,13 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { writeFileSync } from "node:fs";
 import type { KindApp } from "@delacour/warden-core/builds/ensure-kind";
-import { el, failWith, snapshotOf } from "@delacour/warden-e2e/driver/driver.testing";
+import { type DriverCall, el, failWith, snapshotOf } from "@delacour/warden-e2e/driver/driver.testing";
 import type { Snapshot } from "@delacour/warden-e2e/driver/driver.types";
+import { ok } from "@delacour/warden-types/result";
 import type { UiDeps } from "../agent-ui/driver";
 import { readState, updateState } from "../agent-ui/state";
 import type { VideoSpec } from "../agent-ui/video";
+import { expectContract } from "../contracts/contracts.testing";
 import { cleanupHarnesses, doc, harness, LOGIN, UDID } from "./ui.testing";
 
 afterEach(cleanupHarnesses);
@@ -67,6 +69,56 @@ describe("press / tap", () => {
 		expect(await h.run("press", "@e4", "--json")).toBe(4);
 		expect(doc(h.c).error.code).toBe("stale_ref");
 		expect(h.driver.callsOf("tap")).toHaveLength(0);
+	});
+
+	test("after an input moved it: a recent @ref is re-checked and the current frame tapped", async () => {
+		const moved = snapshotOf([
+			el("window", {
+				children: [
+					el("text", { label: "Welcome" }),
+					el("textfield", { label: "Email", id: "email", value: "a@b.co" }),
+					el("button", { label: "Sign in", id: "sign-in-submit", frame: { x: 0, y: 40, width: 390, height: 44 } }),
+					el("keyboard", { frame: { x: 0, y: 120, width: 390, height: 300 } }),
+				],
+			}),
+		]);
+		const h = harness([snapshotOf(LOGIN)], { capabilities: { cheapHitTest: true } });
+		await h.run("snapshot");
+		h.driver.set(moved);
+		expect(await h.run("press", "@e3")).toBe(0);
+		expect(await h.run("press", "@e4", "--json")).toBe(0);
+		expect(h.driver.callsOf("tap").at(-1)).toEqual({ method: "tap", point: { x: 195, y: 62 } });
+		expect(doc(h.c).result).toMatchObject({ verified: true, target: { ref: "@e4", point: { x: 195, y: 62 } } });
+	});
+
+	test("after an input: a recent @ref still in place costs one hit-test, no snapshot", async () => {
+		const h = harness([snapshotOf(LOGIN)], { capabilities: { cheapHitTest: true } });
+		await h.run("snapshot");
+		await h.run("press", "@e3");
+		const before = h.driver.callsOf("snapshot").length;
+		expect(await h.run("press", "@e4", "--json")).toBe(0);
+		expect(h.driver.callsOf("snapshot")).toHaveLength(before);
+		expect(h.driver.callsOf("elementAtPoint")).toHaveLength(1);
+		expect(h.driver.callsOf("tap").at(-1)).toEqual({ method: "tap", point: SIGN_IN });
+	});
+
+	test("after an input removed it: stale_ref, exit 4, no second tap", async () => {
+		const h = harness([snapshotOf(LOGIN)]);
+		await h.run("snapshot");
+		h.driver.set(snapshotOf([el("text", { label: "Welcome back" })]));
+		expect(await h.run("press", "@e3")).toBe(0);
+		expect(await h.run("press", "@e4", "--json")).toBe(4);
+		expect(doc(h.c).error).toMatchObject({ code: "stale_ref", hint: "run `warden ui snapshot` again" });
+		expect(h.driver.callsOf("tap")).toHaveLength(1);
+	});
+
+	test("a snapshot after the input makes its refs fresh again: no re-check", async () => {
+		const h = harness([snapshotOf(LOGIN)], { capabilities: { cheapHitTest: true } });
+		await h.run("snapshot");
+		await h.run("press", "@e3");
+		await h.run("snapshot");
+		expect(await h.run("press", "@e4")).toBe(0);
+		expect(h.driver.callsOf("elementAtPoint")).toHaveLength(0);
 	});
 
 	test("--verify re-checks a recent @ref too", async () => {
@@ -173,6 +225,7 @@ describe("fill", () => {
 		expect(h.driver.callsOf("key").every((call) => call.key === "Backspace")).toBe(true);
 		expect(h.driver.callsOf("typeText").map((call) => call.text)).toEqual(["new@x.co"]);
 		expect(doc(h.c).result).toMatchObject({ action: "fill", verified: true, characters: 8 });
+		expectContract("warden.ui.fill", doc(h.c), { name: "verified" });
 		expect(h.steps[0]?.args).toEqual({ text: "new@x.co" });
 	});
 
@@ -228,6 +281,29 @@ describe("fill", () => {
 		expect(doc(h.c).result).toMatchObject({ verified: true });
 		// one hit-test sees the field take focus after the tap, two confirm the text
 		expect(h.driver.callsOf("elementAtPoint")).toHaveLength(3);
+	});
+
+	test("filling exactly the placeholder's text verifies: the field reads the same as an empty one", async () => {
+		let typed = "";
+		const screen = (value: string) =>
+			snapshotOf([
+				el("window", {
+					children: [el("textfield", { label: "Email", id: "email", value: value || "Email", placeholder: "Email" })],
+				}),
+			]);
+		const h = harness([screen("")], {
+			selectAll: true,
+			onCall: (call, driver) => {
+				if (call.method === "typeText") {
+					typed += call.text;
+					driver.set(screen(typed));
+				}
+				return undefined;
+			},
+		});
+		expect(await h.run("fill", "id=email", "Email", "--json")).toBe(0);
+		expect(h.driver.callsOf("typeText")).toHaveLength(1);
+		expect(doc(h.c).result).toMatchObject({ verified: true });
 	});
 
 	test("the retry after a field did not take the text backspaces per character, not by select-all", async () => {
@@ -380,6 +456,68 @@ describe("fill on a driver with pasteText (iOS)", () => {
 		expect(h.driver.callsOf("pasteText").map((call) => call.text)).toEqual(["hunter2hunter2"]);
 		expect(h.steps[0]?.args).toEqual({ secure: true, via: "paste" });
 		expect(h.c.stdout[0]).not.toContain("hunter2");
+	});
+});
+
+describe("fill on a driver that types quickly (iOS)", () => {
+	/** a filled email field; quick typing keeps only `keeps` characters of each call, paced typing all of them */
+	function quickHarness(keeps?: number) {
+		let typed = "";
+		const edit = (call: DriverCall): string | undefined => {
+			switch (call.method) {
+				case "selectAll":
+					return "";
+				case "key":
+					return typed.slice(0, -1);
+				case "typeTextQuick":
+					return typed + call.text.slice(0, keeps ?? call.text.length);
+				case "typeText":
+					return typed + call.text;
+				default:
+					return undefined;
+			}
+		};
+		return harness([typingScreen("a@b.co")], {
+			selectAll: true,
+			typeTextQuick: true,
+			onCall: (call, driver) => {
+				const next = edit(call);
+				if (next === undefined) return undefined;
+				typed = next;
+				driver.set(typingScreen(typed));
+				return undefined;
+			},
+		});
+	}
+	const inputs = (h: ReturnType<typeof quickHarness>): string[] =>
+		h.driver.calls.map((call) => call.method).filter((m) => m !== "snapshot" && m !== "elementAtPoint");
+
+	test("the first attempt types quickly and the read-back confirms it", async () => {
+		const h = quickHarness();
+		expect(await h.run("fill", "id=email", "new@x.co", "--json")).toBe(0);
+		expect(inputs(h)).toEqual(["tap", "selectAll", "typeTextQuick", "close"]);
+		expect(doc(h.c).result).toMatchObject({ action: "fill", verified: true, characters: 8 });
+	});
+
+	test("a quick attempt that lost keys is retyped paced and still verified", async () => {
+		const h = quickHarness(3);
+		expect(await h.run("fill", "id=email", "new@x.co", "--json")).toBe(0);
+		expect(h.driver.callsOf("typeTextQuick").map((call) => call.text)).toEqual(["new@x.co"]);
+		expect(h.driver.callsOf("typeText").map((call) => call.text)).toEqual(["new@x.co"]);
+		expect(doc(h.c).result).toMatchObject({ verified: true });
+	});
+
+	test("--secure, --no-verify and an x y target type paced: nothing reads them back", async () => {
+		for (const argv of [
+			["id=email", "hunter2", "--secure"],
+			["id=email", "abc", "--no-verify"],
+			["50", "60", "abc"],
+		]) {
+			const h = quickHarness();
+			expect(await h.run("fill", ...argv, "--json")).toBe(0);
+			expect(h.driver.callsOf("typeTextQuick")).toEqual([]);
+			expect(h.driver.callsOf("typeText")).toHaveLength(1);
+		}
 	});
 });
 
@@ -602,7 +740,35 @@ const ALERT = snapshotOf([
 	}),
 ]);
 
+const FACE_SHEET = snapshotOf([
+	el("alert", {
+		label: "Face Not Recognized",
+		children: [
+			el("text", { label: "Face Not Recognized" }),
+			el("button", { label: "Try Face ID Again", frame: { x: 50, y: 500, width: 100, height: 40 } }),
+			el("button", { label: "Cancel", frame: { x: 200, y: 500, width: 100, height: 40 } }),
+			el("button", { label: "Try Face ID Again", frame: { x: 50, y: 500, width: 100, height: 40 } }),
+			el("button", { label: "Cancel", frame: { x: 200, y: 500, width: 100, height: 40 } }),
+		],
+	}),
+]);
+
 describe("alert", () => {
+	test("get lists each button once, in text and json", async () => {
+		const h = harness([FACE_SHEET]);
+		expect(await h.run("alert", "get")).toBe(0);
+		expect(h.c.stdout.join("\n")).toBe('alert "Face Not Recognized"\n  [Try Face ID Again]\n  [Cancel]');
+		const json = harness([FACE_SHEET]);
+		expect(await json.run("alert", "get", "--json")).toBe(0);
+		expect(doc(json.c).result.buttons).toEqual(["Try Face ID Again", "Cancel"]);
+	});
+
+	test("accept presses the retry button, not Cancel", async () => {
+		const h = harness([FACE_SHEET], { answerAlertOnTap: true });
+		expect(await h.run("alert", "accept")).toBe(0);
+		expect(h.driver.callsOf("tap").map((call) => call.point)).toEqual([{ x: 100, y: 520 }]);
+	});
+
 	test("accept presses Allow, dismiss presses Don't Allow", async () => {
 		const accept = harness([ALERT], { answerAlertOnTap: true });
 		expect(await accept.run("alert", "accept")).toBe(0);
@@ -854,6 +1020,19 @@ describe("device controls", () => {
 		expect(await h.run("biometrics", "unenroll", "--json")).toBe(0);
 		expect(doc(h.c).result.biometrics.enrolled).toBe(false);
 		expect(h.driver.callsOf("biometrics").map((c) => c.op)).toEqual(["status", "enroll", "match", "fail", "unenroll"]);
+	});
+
+	test("biometrics reenroll: a new enrolment; the shim's generation is in the text and --json", async () => {
+		const h = harness([snapshotOf(LOGIN)], {
+			onCall: (call) =>
+				call.method === "biometrics" && call.op === "reenroll"
+					? ok({ enrolled: true, modality: "face" as const, generation: 2 })
+					: undefined,
+		});
+		expect(await h.run("biometrics", "reenroll")).toBe(0);
+		expect(h.c.stdout.join("\n")).toContain("reenroll: face enrolled (Keychain ACL generation 2)");
+		expect(await h.run("biometrics", "reenroll", "--json")).toBe(0);
+		expect(doc(h.c).result.biometrics).toEqual({ enrolled: true, modality: "face", generation: 2 });
 	});
 
 	for (const platform of ["ios", "android"] as const) {
