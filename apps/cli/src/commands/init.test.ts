@@ -111,6 +111,9 @@ describe("warden init", () => {
 		const c = setup(["--bundle-id", "com.my-app"], { slug: "fresh" });
 		expect(await initCommand.run(c)).toBe(1);
 		expect(c.stderr.join("\n")).toContain("--bundle-id");
+		// the way out: an id that fits both platforms, or the Android package set in app.json first
+		expect(c.stderr.join("\n")).toContain("com.example.app");
+		expect(c.stderr.join("\n")).toContain("expo.android.package");
 		expect(JSON.parse(read(c, "app.json"))).toEqual({ expo: { slug: "fresh" } });
 		expect(existsSync(join(c.cwd, "warden.config.ts"))).toBe(false);
 	});

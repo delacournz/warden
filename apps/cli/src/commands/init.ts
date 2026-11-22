@@ -77,6 +77,13 @@ function withBundleId(appJson: AppJson, id: string | undefined): AppJson | undef
 	};
 }
 
+/** What to do when `--bundle-id` does not fit a platform init would fill it in for. */
+const FLAG_ID_FIX: Record<InitPlatform, string> = {
+	android:
+		"init fills it in for Android too: pass an id that fits both platforms (com.example.app), or set expo.android.package in app.json first",
+	ios: "init fills it in for iOS too: pass an id that fits both platforms (com.example.app), or set expo.ios.bundleIdentifier in app.json first",
+};
+
 /** `--bundle-id` must be an app id for each platform it would be used for (the ones the app has no id for yet). */
 function checkFlagId(appJson: AppJson | undefined, id: string | undefined): Result<undefined> {
 	if (id === undefined) return ok(undefined);
@@ -87,7 +94,7 @@ function checkFlagId(appJson: AppJson | undefined, id: string | undefined): Resu
 	];
 	for (const platform of missing) {
 		const checked = checkAppId(id, platform, "--bundle-id");
-		if (!checked.success) return checked;
+		if (!checked.success) return err(`${checked.error}. ${FLAG_ID_FIX[platform]}`);
 	}
 	return ok(undefined);
 }
