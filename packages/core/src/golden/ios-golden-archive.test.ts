@@ -329,7 +329,8 @@ describe("importGoldens", () => {
 				name: GOLDEN,
 				profile: "iphone-17",
 				imported: false,
-				reason: "the archive has no tree summary (exported by an older warden): export it again",
+				reason:
+					"the archive has no tree summary (exported by an older warden): delete this cache entry so a new archive is saved, or key the cache on the golden key of `warden ci cache`",
 			},
 		]);
 		expect(host.calls.some((c) => c[2] === "create")).toBe(false);

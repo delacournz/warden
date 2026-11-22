@@ -281,7 +281,7 @@ function repointLinks(root: string, from: { udid: string; home?: string }, to: {
  */
 function archiveProblem(archive: string, manifest: GoldenManifest): string | undefined {
 	if (manifest.tree === undefined) {
-		return "the archive has no tree summary (exported by an older warden): export it again";
+		return "the archive has no tree summary (exported by an older warden): delete this cache entry so a new archive is saved, or key the cache on the golden key of `warden ci cache`";
 	}
 	const device = join(archive, DEVICE_DIR);
 	try {
