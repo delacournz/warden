@@ -2,7 +2,7 @@ import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { err, ok, type Result } from "@delacour/warden-types/result";
 import type { z } from "zod";
-import { readGitFactsSync } from "../git-facts";
+import { readGitFactsFromDisk } from "../git-facts";
 import type { Platform } from "../types";
 import { checkAppId } from "./app-id";
 import {
@@ -367,7 +367,7 @@ export function findWardenConfig(
 	env: Record<string, string | undefined> = process.env,
 	overlayDir?: string
 ): Result<FoundConfig | undefined> {
-	for (const dir of ancestors(resolve(start), stopAt ? resolve(stopAt) : undefined)) {
+	for (const dir of ancestors(resolve(start), stopAt ? resolve(stopAt) : undefined, env)) {
 		const read = readConfigIn(dir, env);
 		if (!read.success) return read;
 		if (read.data) return ok({ dir, config: read.data.config, source: "repo", rootDir: dir });
@@ -404,8 +404,12 @@ function configuredProject(
 	return ok(project);
 }
 
-/** A `--bundle-id` override must be an app id for the platform it is given for. */
-function checkOverride(override: Project["bundleId"]): Result<undefined> {
+/**
+ * A `--bundle-id` override must be an app id for the platform it is given for. Checked where the flag is read
+ * (`projectContext`), not in `loadProject`: ids Expo resolved arrive there the same way, and those are judged per
+ * platform by `bundleIdFor`, which names the app config.
+ */
+export function checkBundleIdFlag(override: Project["bundleId"] = {}): Result<undefined> {
 	for (const platform of ["ios", "android"] as const) {
 		const id = override[platform];
 		const checked = id === undefined ? undefined : checkAppId(id, platform, "--bundle-id");
@@ -421,9 +425,7 @@ function checkOverride(override: Project["bundleId"]): Result<undefined> {
 export function loadProject(input: LoadProjectInput): Result<Project> {
 	const start = resolve(input.start);
 	const override = input.bundleId ?? {};
-	const checked = checkOverride(override);
-	if (!checked.success) return checked;
-	const dirs = ancestors(start, input.stopAt ? resolve(input.stopAt) : undefined);
+	const dirs = ancestors(start, input.stopAt ? resolve(input.stopAt) : undefined, input.env);
 	const found = findWardenConfig(start, input.stopAt, input.env, input.overlayDir);
 	if (!found.success) return found;
 	const projects = found.data?.config.projects;
@@ -585,8 +587,9 @@ function real(path: string): string {
  * checkout `start` is in, and outside a checkout it is `start` alone: a config in some unrelated parent directory
  * is never picked up.
  */
-function ancestors(start: string, stop: string | undefined): string[] {
-	const top = stop === undefined ? readGitFactsSync(start)?.toplevel : undefined;
+function ancestors(start: string, stop: string | undefined, env?: Record<string, string | undefined>): string[] {
+	// read from the checkout's files, no spawn; a setup only git itself can answer for counts as no checkout here
+	const top = stop === undefined ? readGitFactsFromDisk(start, env)?.toplevel : undefined;
 	if (stop === undefined && top === undefined) return [start];
 	const out: string[] = [];
 	for (let dir = start; ; dir = dirname(dir)) {

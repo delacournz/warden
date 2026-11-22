@@ -17,7 +17,7 @@ import {
 	simulatorBaseDir,
 	storeArtifact,
 } from "./cache";
-import { JSON_CONFIG_FILE } from "./config";
+import { bundleIdFor, JSON_CONFIG_FILE } from "./config";
 import {
 	type EnsureInput,
 	type EnsureKindInput,
@@ -784,6 +784,40 @@ describe("ensureApp", () => {
 });
 
 describe("projectContext", () => {
+	test("--bundle-id that is not an app id for its platform is an error naming the flag", async () => {
+		const top = join(dir, "flag");
+		mkdirSync(top, { recursive: true });
+		writeFileSync(join(top, "app.json"), JSON.stringify({ expo: { name: "a" } }));
+		const exec: Exec = async () => ({ exitCode: 1, stdout: "", stderr: "" });
+		const git = () => createGitFactsCache();
+		const bad = await projectContext({ exec, env, start: top, bundleId: { android: "com.my-app" }, git: git() });
+		expect(bad.success).toBe(false);
+		if (!bad.success) expect(bad.error).toContain("--bundle-id");
+		expect((await projectContext({ exec, env, start: top, bundleId: { ios: "com.my-app" }, git: git() })).success).toBe(
+			true
+		);
+	});
+
+	test("an id Expo resolved that is not an app id fails only its own platform, naming the app config", async () => {
+		const top = join(dir, "dynamic");
+		mkdirSync(top, { recursive: true });
+		writeFileSync(join(top, "app.config.ts"), "export default {}");
+		const resolved = { slug: "demo", ios: { bundleIdentifier: "com.demo" }, android: { package: "demo" } };
+		const exec: Exec = async (cmd) =>
+			cmd.join(" ") === EXPO_CONFIG_ARGV.join(" ")
+				? { exitCode: 0, stdout: JSON.stringify(resolved), stderr: "" }
+				: { exitCode: 1, stdout: "", stderr: "" };
+		const res = await projectContext({ exec, env, start: top, git: createGitFactsCache() });
+		if (!res.success) throw new Error(res.error);
+		expect(bundleIdFor(res.data.project, "ios")).toEqual({ success: true, data: "com.demo" });
+		const android = bundleIdFor(res.data.project, "android");
+		expect(android.success).toBe(false);
+		if (!android.success) {
+			expect(android.error).toContain("expo.android.package");
+			expect(android.error).not.toContain("--bundle-id");
+		}
+	});
+
 	test("outside a git checkout: a project root below the command's directory finds that directory's config; without one only the start is read", async () => {
 		const top = join(dir, "plain");
 		mkdirSync(join(top, "apps", "a"), { recursive: true });

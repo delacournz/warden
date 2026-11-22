@@ -107,6 +107,20 @@ describe("warden init", () => {
 		expect(JSON.parse(c.stdout.join("\n")).written).toEqual(["e2e/smoke.e2e.ts"]);
 	});
 
+	test("--bundle-id that is not an app id for a platform it would fill → exit 1 naming the flag, nothing written", async () => {
+		const c = setup(["--bundle-id", "com.my-app"], { slug: "fresh" });
+		expect(await initCommand.run(c)).toBe(1);
+		expect(c.stderr.join("\n")).toContain("--bundle-id");
+		expect(JSON.parse(read(c, "app.json"))).toEqual({ expo: { slug: "fresh" } });
+		expect(existsSync(join(c.cwd, "warden.config.ts"))).toBe(false);
+	});
+
+	test("--bundle-id is only checked for the platforms that have no id yet", async () => {
+		const c = setup(["--bundle-id", "com.my-app"], { slug: "fresh", android: { package: "com.my.app" } });
+		expect(await initCommand.run(c)).toBe(0);
+		expect(JSON.parse(read(c, "app.json")).expo.ios).toEqual({ bundleIdentifier: "com.my-app" });
+	});
+
 	test("--dry-run writes nothing", async () => {
 		const c = setup(["--dry-run", "--bundle-id", "com.a"], { slug: "fresh" });
 		expect(await initCommand.run(c)).toBe(0);

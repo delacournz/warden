@@ -25,7 +25,15 @@ import {
 	recordInstall,
 	storeArtifact,
 } from "./cache";
-import { appStart, bundleIdFor, dynamicAppConfigDir, type EasSettings, loadProject, type Project } from "./config";
+import {
+	appStart,
+	bundleIdFor,
+	checkBundleIdFlag,
+	dynamicAppConfigDir,
+	type EasSettings,
+	loadProject,
+	type Project,
+} from "./config";
 import { type Download, resolveFromEas } from "./eas";
 import { computeCacheKey } from "./fingerprint";
 import {
@@ -88,7 +96,7 @@ export type ProjectContextInput = {
 function searchTop(input: ProjectContextInput, toplevel: string | undefined): string | undefined {
 	if (toplevel !== undefined || input.cwd === undefined) return toplevel;
 	const rel = relative(resolve(input.cwd), resolve(input.start));
-	return rel.startsWith("..") || isAbsolute(rel) ? undefined : resolve(input.cwd);
+	return rel === "" || rel.startsWith("..") || isAbsolute(rel) ? undefined : resolve(input.cwd);
 }
 
 /** The `loadProject` options for a `projectContext` call. */
@@ -140,6 +148,8 @@ async function loadWithExpoFallback(
 
 /** Load the project for `start` (bounded by its git toplevel) and compute its project key. */
 export async function projectContext(input: ProjectContextInput): AsyncResult<ProjectContext> {
+	const flag = checkBundleIdFlag(input.bundleId);
+	if (!flag.success) return flag;
 	const facts = await readGitFacts(input.exec, input.start, input.git);
 	const stopAt = searchTop(input, facts?.toplevel);
 	const overlay = await overlayDirUnlessRepoConfig(input.exec, input.start, stopAt, input.env, input.git);
