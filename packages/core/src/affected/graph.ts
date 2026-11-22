@@ -94,18 +94,27 @@ function besideWarden(): string | undefined {
 	}
 }
 
-/** `<dir>/node_modules/typescript`'s entry file (its `main`, else `index.js`), when that file exists. */
+/**
+ * `<dir>/node_modules/typescript`'s entry file (its `main`, else `index.js`), when the package is named `typescript`
+ * and the entry is a file inside it once links are followed (a package linked in from a store resolves; an entry
+ * that leads out of the package does not). Anything else is not a compiler, and the lookup goes on upward.
+ */
 function typescriptIn(dir: string): string | undefined {
 	const pkgDir = join(dir, "node_modules", "typescript");
 	let main = "index.js";
 	try {
-		const pkg: { main?: unknown } = JSON.parse(readFileSync(join(pkgDir, "package.json"), "utf8"));
+		const pkg: { name?: unknown; main?: unknown } = JSON.parse(readFileSync(join(pkgDir, "package.json"), "utf8"));
+		if (pkg.name !== "typescript") return undefined;
 		if (typeof pkg.main === "string") main = pkg.main;
 	} catch {
 		return undefined;
 	}
 	const entry = resolve(pkgDir, main);
-	return existsSync(entry) ? entry : undefined;
+	try {
+		return within(realpathSync(pkgDir), realpathSync(entry)) ? entry : undefined;
+	} catch {
+		return undefined;
+	}
 }
 
 /**
