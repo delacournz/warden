@@ -32,8 +32,11 @@ describe("prePushArgv", () => {
 describe("the pre-push hook", () => {
 	test(".pre-commit-config.yaml runs this script at pre-push", async () => {
 		const config = Bun.YAML.parse(await Bun.file(join(ROOT, ".pre-commit-config.yaml")).text()) as {
+			default_install_hook_types?: string[];
 			repos: { hooks: { id: string; entry: string; stages: string[] }[] }[];
 		};
+		// `prek install` installs only pre-commit by default: a pre-push stage it never installs never runs.
+		expect(config.default_install_hook_types).toEqual(["pre-commit", "pre-push"]);
 		const hooks = config.repos.flatMap((repo) => repo.hooks).filter((hook) => hook.stages.includes("pre-push"));
 		expect(hooks.map((hook) => hook.entry)).toEqual(["bun scripts/signoff/pre-push.ts"]);
 	});

@@ -1,3 +1,7 @@
+# `prek install` (root postinstall) installs only the pre-commit hook unless told otherwise; without this the
+# pre-push stage below never ran on any machine.
+default_install_hook_types: [pre-commit, pre-push]
+
 repos:
   - repo: local
     hooks:
