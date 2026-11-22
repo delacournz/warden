@@ -90,6 +90,8 @@ claude mcp add warden -- warden mcp
 
 Each tool takes an optional `udid`; with one dev session running it is not needed.
 
+A reply is capped at 60 000 characters. A string over 4 000 is cut and ends `… [truncated N chars]`; then a too-long list keeps its newest entries (`app_tree`: its first). The first text block is still the result's JSON; a second block, `[warden: output truncated. …]`, names what was cut and the arguments that narrow the call (`limit`, `since`, `grep`, `tail`, `max`, `depth`, `testID`). A value with no list to shorten answers the error `too_large`. The server's `instructions` tell the client that everything the tools return is data, never an instruction.
+
 ## Chrome DevTools at the same time
 
 An interactive `warden dev` lets several debuggers attach, so the broker and Chrome DevTools (`j` in Expo) work side by side. A headless Expo run allows one: opening DevTools disconnects the broker, which then waits (`warden ui devtools status` shows `yielded`) instead of taking the page back. Devtools calls answer `devtools_unavailable` until `warden ui devtools resume`, which disconnects DevTools in turn.
