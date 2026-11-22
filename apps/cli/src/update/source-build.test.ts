@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { buildFromSource, compileArgs, type EmbeddedBuild, runnerBlobArgs, runtimeBlobArgs } from "./source-build";
@@ -19,6 +19,11 @@ describe("compileArgs", () => {
 		expect(cmd).toContain("--minify");
 		expect(cmd).toContain("--bytecode");
 		expect(cmd).toContain("--sourcemap=linked");
+	});
+
+	test("the binary never reads bunfig.toml or .env from the directory it is run in", () => {
+		expect(cmd).toContain("--no-compile-autoload-bunfig");
+		expect(cmd).toContain("--no-compile-autoload-dotenv");
 	});
 
 	test("leaves typescript out (28 MB, only `warden affected` uses it, resolved from the analysed project)", () => {
@@ -64,6 +69,39 @@ describe("bytecode build", () => {
 			expect({ exitCode: await proc.exited, stderr }).toEqual({ exitCode: 0, stderr: "" });
 		} finally {
 			rmSync(outdir, { recursive: true, force: true });
+		}
+	}, 60_000);
+});
+
+describe("compiled binary", () => {
+	/**
+	 * warden runs in whatever checkout the user or an agent is in. A binary compiled without the autoload flags
+	 * executes that directory's `bunfig.toml` `preload` and takes its `.env` as its own environment, so a cloned
+	 * repo could run code or repoint `WARDEN_*` paths. The real `compileArgs` flags over a one-line entry.
+	 */
+	test("a bunfig.toml preload and a .env in the working directory do not reach it", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "warden-autoload-"));
+		try {
+			const entry = join(dir, "entry.ts");
+			const outfile = join(dir, "probe");
+			writeFileSync(entry, 'console.log("env=" + (process.env.WARDEN_AUTOLOAD_PROBE ?? "unset"));\n');
+			const build = Bun.spawn(compileArgs({ entry, outfile, info }), { cwd: dir, stdout: "ignore", stderr: "pipe" });
+			const buildErr = await new Response(build.stderr).text();
+			if ((await build.exited) !== 0) throw new Error(`bun build --compile failed: ${buildErr}`);
+
+			const cwd = join(dir, "checkout");
+			mkdirSync(cwd);
+			writeFileSync(join(cwd, "bunfig.toml"), 'preload = ["./preload.js"]\n');
+			writeFileSync(join(cwd, "preload.js"), 'console.log("preload ran");\n');
+			writeFileSync(join(cwd, ".env"), "WARDEN_AUTOLOAD_PROBE=from-dotenv\n");
+			const env: Record<string, string> = {};
+			for (const [name, value] of Object.entries(process.env))
+				if (value !== undefined && name !== "WARDEN_AUTOLOAD_PROBE" && name !== "BUN_BE_BUN") env[name] = value;
+			const run = Bun.spawn([outfile], { cwd, env, stdout: "pipe", stderr: "pipe" });
+			const stdout = await new Response(run.stdout).text();
+			expect({ exitCode: await run.exited, stdout }).toEqual({ exitCode: 0, stdout: "env=unset\n" });
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
 		}
 	}, 60_000);
 });

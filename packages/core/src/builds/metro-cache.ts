@@ -4,14 +4,11 @@ import { dirname, join } from "node:path";
 import { wardenHome } from "../store";
 import type { Platform } from "../types";
 import { METRO_CACHE_DIR_NAME, METRO_CACHE_MAX_AGE_MS, METRO_CACHE_MAX_IDLE_MS } from "./builds.defaults";
-import { bundleEnvLines } from "./js-key";
+import { bundleEnvLines, envFileLines } from "./js-key";
 import { safeKey } from "./project-key";
 
 /** Salt of the hashed text: bump it to start every Metro cache afresh. */
 const KEY_FORMAT = "warden metro-cache v1";
-
-/** `.env*` files `@expo/env` loads into the bundler's env (`.env`, `.env.local`, `.env.production`, …). */
-const ENV_FILE = /^\.env(?:\.[\w.-]+)?$/;
 
 /** Metro's FileStore under `TMPDIR` (`os.tmpdir()/metro-cache`). */
 const STORE = "metro-cache";
@@ -31,24 +28,6 @@ export type MetroCacheDirInput = {
 	/** the bundler flags (`bundlerFlags`) */
 	flags: readonly string[];
 };
-
-/** `name\0content` of each `.env*` file in `root`, sorted by name. */
-function envFileLines(root: string | undefined): string[] {
-	if (root === undefined) return [];
-	let names: string[];
-	try {
-		names = readdirSync(root).filter((name) => ENV_FILE.test(name));
-	} catch {
-		return [];
-	}
-	return names.sort().map((name) => {
-		try {
-			return `${name}\0${readFileSync(join(root, name), "utf8")}`;
-		} catch {
-			return `${name}\0`;
-		}
-	});
-}
 
 /**
  * The persistent Metro cache of a project's repack bundles: `$WARDEN_HOME/metro-cache/<safe projectKey>/<platform>-<h>`,
