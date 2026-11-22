@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { z } from "zod";
 
 /**
@@ -5,6 +6,25 @@ import { z } from "zod";
  * schemas and `SimdClient` are reused unchanged): the `appState` op, and the facts about the runner the driver acts on.
  * The runner's own contract is `native/ios-runner/AGENTS.md`.
  */
+
+/**
+ * How a runner session's token reaches the runner: `xcodebuild` forwards `TEST_RUNNER_<NAME>` to the UI-test process
+ * as `<NAME>`. Always through the environment of the `xcodebuild` process, never its command line.
+ */
+export const RUNNER_TOKEN_ENV = "TEST_RUNNER_WARDEN_RUNNER_TOKEN";
+
+/** A token for one runner session: 32 random bytes, hex. Made by whoever starts the runner and kept in that process. */
+export function newRunnerToken(): string {
+	return randomBytes(32).toString("hex");
+}
+
+/**
+ * The first line of every TCP connection to the runner. The runner answers it with its `ready` event; it sends
+ * nothing before it and closes a connection whose first line is anything else.
+ */
+export function runnerAuthLine(token: string): string {
+	return `${JSON.stringify({ op: "auth", token })}\n`;
+}
 
 export const appStateSchema = z.enum([
 	"notRunning",

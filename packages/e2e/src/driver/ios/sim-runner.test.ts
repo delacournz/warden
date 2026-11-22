@@ -75,6 +75,49 @@ describe("simRunnerArgv", () => {
 	});
 });
 
+describe("the session token", () => {
+	test("goes to the runner through the environment, never the command line, and to the connection", async () => {
+		const spawns: Array<{ argv: string[]; env: Record<string, string> | undefined }> = [];
+		const connects: Array<{ port: number; token: string }> = [];
+		const runner = createSimRunner({
+			udid: "U-1",
+			ensureBuild: async () => ok({ xctestrun: "/dd/x.xctestrun" }),
+			token: () => "f".repeat(64),
+			spawn: (argv, env) => {
+				spawns.push({ argv: [...argv], env: env === undefined ? undefined : { ...env } });
+				return fakeProcess([READY]);
+			},
+			connect: async (port, _options, token) => {
+				connects.push({ port, token });
+				return ok(fakeClient([]));
+			},
+		});
+		await runner.request("audit");
+		expect(spawns[0]?.env).toEqual({ TEST_RUNNER_WARDEN_RUNNER_TOKEN: "f".repeat(64) });
+		expect(spawns[0]?.argv.join(" ")).not.toContain("f".repeat(64));
+		expect(spawns[0]?.argv.join(" ")).not.toContain("TOKEN");
+		expect(connects).toEqual([{ port: 53001, token: "f".repeat(64) }]);
+		await runner.close();
+	});
+
+	test("each start has its own token", async () => {
+		const tokens: Array<string | undefined> = [];
+		const runner = createSimRunner({
+			udid: "U-1",
+			ensureBuild: async () => ok({ xctestrun: "/x" }),
+			spawn: (_argv, env) => {
+				tokens.push(env?.TEST_RUNNER_WARDEN_RUNNER_TOKEN);
+				return fakeProcess(["nope"], true);
+			},
+		});
+		await runner.request("audit");
+		await runner.request("audit");
+		expect(tokens).toHaveLength(2);
+		expect(tokens[0]).toMatch(/^[0-9a-f]{64}$/);
+		expect(tokens[1]).not.toBe(tokens[0]);
+	});
+});
+
 describe("createSimRunner", () => {
 	test("starts once, connects to the printed port and reuses the runner for every request", async () => {
 		const procs: Array<ReturnType<typeof fakeProcess>> = [];

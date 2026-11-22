@@ -39,10 +39,16 @@ export type SimdProcess = {
 	exited: Promise<number>;
 };
 
-export type SimdSpawn = (cmd: readonly string[]) => SimdProcess;
+/** `env` is added to the caller's own environment: for values that must not show on a command line. */
+export type SimdSpawn = (cmd: readonly string[], env?: Readonly<Record<string, string>>) => SimdProcess;
 
-export const bunSpawn: SimdSpawn = (cmd) => {
-	const proc = Bun.spawn([...cmd], { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
+export const bunSpawn: SimdSpawn = (cmd, env) => {
+	const proc = Bun.spawn([...cmd], {
+		stdin: "pipe",
+		stdout: "pipe",
+		stderr: "pipe",
+		...(env === undefined ? {} : { env: { ...process.env, ...env } }),
+	});
 	return {
 		write(data) {
 			proc.stdin.write(data);
@@ -146,10 +152,13 @@ type SocketLike = {
 	end(): void;
 };
 
-/** Where a socket transport connects: the daemon's unix socket, or a TCP port on this Mac (the Simulator runner). */
+/**
+ * Where a socket transport connects: the daemon's unix socket, or a TCP port on this Mac (the Simulator runner).
+ * `firstLine` (newline-terminated) is written as soon as the TCP connection is made, ahead of every request.
+ */
 export type SocketTarget =
 	| { socketPath: string; tcp?: undefined; socketScope?: SocketScope }
-	| { tcp: { hostname: string; port: number }; socketPath?: undefined };
+	| { tcp: { hostname: string; port: number }; socketPath?: undefined; firstLine?: string };
 
 export function socketTransport(opts: SocketTarget): TransportFactory {
 	const label = opts.tcp ? `${opts.tcp.hostname}:${opts.tcp.port}` : (opts.socketPath ?? "");
@@ -198,6 +207,10 @@ export function socketTransport(opts: SocketTarget): TransportFactory {
 				? await Bun.connect({ hostname: opts.tcp.hostname, port: opts.tcp.port, socket: socketHandlers })
 				: await Bun.connect({ unix: opts.socketPath, socket: socketHandlers });
 			socket = connected;
+			if (opts.tcp && opts.firstLine !== undefined) {
+				queued = encoder.encode(opts.firstLine);
+				flush();
+			}
 		} catch (error) {
 			const reason = error instanceof Error ? error.message : String(error);
 			return {
