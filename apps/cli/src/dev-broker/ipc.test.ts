@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { nodePrivateFs } from "@delacour/warden-core/private-fs";
 import { brokerErr } from "./broker.types";
 import { type BrokerServer, callBroker, chooseSocketPath, serveBroker } from "./ipc";
 
@@ -131,12 +132,34 @@ describe("serveBroker / callBroker", () => {
 });
 
 describe("serveBroker socket permissions", () => {
-	test("the socket is 0600 in a directory made 0700", async () => {
-		const run = join(tempDir(), "run");
+	test("under the warden home the socket is 0600 in a directory made 0700", async () => {
+		const home = tempDir();
+		const run = join(home, "run");
 		mkdirSync(run);
 		chmodSync(run, 0o755);
-		await serve(join(run, "b.sock"), async () => ({ success: true, data: 1 }));
+		const served = await serveBroker(join(run, "b.sock"), async () => ({ success: true, data: 1 }), {
+			env: { WARDEN_HOME: home },
+		});
+		if (!served.success) throw new Error(served.error.message);
+		servers.push(served.data);
 		expect(statSync(run).mode & 0o777).toBe(0o700);
 		expect(statSync(join(run, "b.sock")).mode & 0o777).toBe(0o600);
+	});
+
+	test("a client refuses a socket in a per-user temp directory another user owns, before connecting", async () => {
+		const tmp = join(tempDir(), "warden-501");
+		const path = join(tmp, "b.sock");
+		const scope = { env: { WARDEN_HOME: join(tempDir(), "home") }, tmp: () => tmp };
+		const served = await serveBroker(path, async () => ({ success: true, data: 1 }), scope);
+		if (!served.success) throw new Error(served.error.message);
+		servers.push(served.data);
+		expect(await callBroker(path, { method: "x", params: {} }, { socketScope: scope })).toEqual({
+			success: true,
+			data: 1,
+		});
+		const other = { ...nodePrivateFs, uid: () => statSync(tmp).uid + 1 };
+		const refused = await callBroker(path, { method: "x", params: {} }, { socketScope: { ...scope, fs: other } });
+		expect(refused.success).toBe(false);
+		if (!refused.success) expect(refused.error.code).toBe("broker_unreachable");
 	});
 });

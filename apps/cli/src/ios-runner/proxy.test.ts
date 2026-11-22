@@ -200,13 +200,19 @@ describe("proxy", () => {
 });
 
 describe("startProxy socket permissions", () => {
-	test("the socket is 0600 in a directory made 0700", async () => {
+	test("under the warden home the socket is 0600 in a directory made 0700", async () => {
 		const dir = mkdtempSync(join(tmpdir(), "wdn-proxy-"));
 		cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
-		const run = join(dir, "run");
+		const home = dir;
+		const run = join(home, "run");
 		mkdirSync(run);
 		chmodSync(run, 0o755);
-		const started = await startProxy({ socketPath: join(run, "r.sock"), target: () => undefined, now: Date.now });
+		const started = await startProxy({
+			socketPath: join(run, "r.sock"),
+			target: () => undefined,
+			now: Date.now,
+			socketScope: { env: { WARDEN_HOME: home } },
+		});
 		if (!started.success) throw new Error(started.error);
 		cleanups.push(() => started.data.close());
 		expect(statSync(run).mode & 0o777).toBe(0o700);

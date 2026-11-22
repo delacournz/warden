@@ -1,6 +1,6 @@
 import { existsSync, unlinkSync } from "node:fs";
 import net from "node:net";
-import { ensureSocketDir, listenOwnerOnly, restrictSocket } from "@delacour/warden-core/private-fs";
+import { ensureSocketDir, listenOwnerOnly, restrictSocket, type SocketScope } from "@delacour/warden-core/private-fs";
 import type { Result } from "@delacour/warden-types/result";
 import type { RunnerAddress } from "./types";
 
@@ -27,6 +27,8 @@ export type ProxyOptions = {
 	target: () => RunnerAddress | undefined;
 	now: () => number;
 	log?: (line: string) => void;
+	/** where warden's own socket directories are (tests) */
+	socketScope?: SocketScope;
 };
 
 /** Copy `from` to `to`, pausing `from` while `to` is full. */
@@ -95,7 +97,7 @@ export function startProxy(opts: ProxyOptions): Promise<Result<RunnerProxy, stri
 		server.once("error", (error) =>
 			resolve({ success: false, error: `cannot listen on ${opts.socketPath}: ${error.message}` })
 		);
-		const socketDir = ensureSocketDir(opts.socketPath);
+		const socketDir = ensureSocketDir(opts.socketPath, opts.socketScope);
 		if (!socketDir.success) {
 			resolve({ success: false, error: socketDir.error });
 			return;

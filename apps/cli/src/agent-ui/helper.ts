@@ -921,7 +921,7 @@ function attemptFor<C extends HelperClient>(
 	);
 	if (!timeout.success) return timeout;
 	const socketPath = opts.socketPath ?? socketPathOf(kind, host, udid);
-	const socketDir = ensureSocketDir(socketPath);
+	const socketDir = ensureSocketDir(socketPath, { env: host.env });
 	if (!socketDir.success) return { success: false, error: uiError("engine_unavailable", socketDir.error) };
 	mkdirSync(kind.dir(host), { recursive: true, mode: 0o700 });
 	const logPath = join(kind.dir(host), `${udid}.log`);

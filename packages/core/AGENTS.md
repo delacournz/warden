@@ -8,7 +8,8 @@ Lease registry + allocation + device providers + build cache. No CLI code here (
 |------|---------|
 | `types.ts` | `Resource` / `Owner` / `Lease` / `InventoryDevice` / `AllocationPlan` unions, `resourceKey` |
 | `store.ts` | bun:sqlite `$WARDEN_HOME/warden.db` (WAL). `transaction()` = `BEGIN IMMEDIATE` = cross-process mutex. `MIGRATIONS` append-only |
-| `private-fs.ts` | owner-only state: `ensurePrivateDir` (`0700`, tightens a loose one, refuses another user's), `privateTmpDir` (`/tmp/warden-<uid>` for sockets whose path is too long), `ensureSocketDir` + `listenOwnerOnly` + `restrictSocket` (every unix socket: `0600` in a `0700` directory) |
+| `private-fs.ts` | owner-only state: `ensurePrivateDir` (`0700`, tightens a loose one, refuses another user's), `privateTmpDir` (`/tmp/warden-<uid>` for sockets whose path is too long), `ensureSocketDir` (tightens and ownership-checks only warden's own socket directories: under the home or the per-user temp dir; any other parent is left alone) + `listenOwnerOnly` + `restrictSocket` (every unix socket `0600`), `verifySocketDir` (clients, before connecting to a socket in the per-user temp dir) |
+| `home.ts` | `wardenHome(env)` (re-exported by `store.ts`) |
 | `liveness.ts` | lease alive = heartbeat within ttl OR pid alive; a supervised lease (pid + `heartbeat_ms`, stamped by `holdLeases`) with a dead pid only within `LOST_HEARTBEATS` (3) periods (pure; `processAlive` = kill 0) |
 | `allocate.ts` | pure `(inventory, leases, request) → assign{reuse/boot/create} | wait` |
 | `owner.ts` | detect owner: hook session → CI → session env → parent pid; git repo/worktree |

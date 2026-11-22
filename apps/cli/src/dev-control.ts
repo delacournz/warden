@@ -1,7 +1,14 @@
 import { createHash } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { ensureSocketDir, listenOwnerOnly, privateTmpDir, restrictSocket } from "@delacour/warden-core/private-fs";
+import {
+	ensureSocketDir,
+	listenOwnerOnly,
+	privateTmpDir,
+	restrictSocket,
+	type SocketScope,
+	verifySocketDir,
+} from "@delacour/warden-core/private-fs";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import type { Socket } from "bun";
 
@@ -108,8 +115,12 @@ function parseJson(text: string): unknown {
  * (a toggle waits for the one before it), so two agents flipping devtools never start two brokers. The `warden dev`
  * that serves it is the only writer, so a leftover socket file is removed rather than probed.
  */
-export async function serveDevControl(socketPath: string, handle: DevControlHandler): AsyncResult<DevControlServer> {
-	const socketDir = ensureSocketDir(socketPath);
+export async function serveDevControl(
+	socketPath: string,
+	handle: DevControlHandler,
+	scope: SocketScope = {}
+): AsyncResult<DevControlServer> {
+	const socketDir = ensureSocketDir(socketPath, scope);
 	if (!socketDir.success) return socketDir;
 	if (existsSync(socketPath)) {
 		try {
@@ -173,8 +184,11 @@ export async function serveDevControl(socketPath: string, handle: DevControlHand
 export function callDevControl(
 	socketPath: string,
 	request: DevControlRequest,
-	timeoutMs = DEFAULT_CALL_TIMEOUT_MS
+	timeoutMs = DEFAULT_CALL_TIMEOUT_MS,
+	scope: SocketScope = {}
 ): AsyncResult<DevControlResponse> {
+	const socketDir = verifySocketDir(socketPath, scope);
+	if (!socketDir.success) return Promise.resolve(socketDir);
 	return new Promise((resolve) => {
 		let buffer = "";
 		let settled = false;

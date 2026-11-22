@@ -194,7 +194,7 @@ On a spec failure read `screen-at-failure.txt` and `failure.png` in the test's e
 ## Metro ownership
 
 - `warden dev` owns Metro: it starts it on your leased port and verifies it serves this worktree. Never start Metro by hand. Metro listens on `127.0.0.1` only (`--localhost`; bare RN `--host 127.0.0.1`); `warden dev ios -- --lan` (or `--tunnel`, `--host <h>`) opens it to the network.
-- `$WARDEN_HOME` is owner-only (`0700`, `warden.db` `0600`; a looser one is tightened, one owned by another user is an error); warden's unix sockets are `0600`, and one whose path is too long lives in `/tmp/warden-<uid>` (`0700`).
+- `$WARDEN_HOME` is owner-only (`0700`, `warden.db` `0600`; a looser one is tightened, one owned by another user is an error); warden's unix sockets are `0600`, and one whose path is too long lives in `/tmp/warden-<uid>` (`0700`; a symbolic link or another user's directory there is refused by servers and clients).
 - `port <p> is served by <dir>, not this worktree`: another checkout's Metro holds the port. Stop it or let warden pick another port.
 - Two devices on one Metro: the runner pins by `WARDEN_DEVICE_NAME`.
 

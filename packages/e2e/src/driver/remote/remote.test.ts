@@ -364,11 +364,15 @@ describe("remote driver", () => {
 });
 
 describe("serveDriver socket permissions", () => {
-	test("the socket is 0600 in a directory made 0700", async () => {
-		const run = join(dirname(socketPath()), "run");
+	test("under the warden home the socket is 0600 in a directory made 0700", async () => {
+		const home = dirname(socketPath());
+		const run = join(home, "run");
 		mkdirSync(run);
 		chmodSync(run, 0o755);
-		await serve(fakeDriver({ screens: [], platform: "android" }), { socketPath: join(run, "d.sock") });
+		await serve(fakeDriver({ screens: [], platform: "android" }), {
+			socketPath: join(run, "d.sock"),
+			socketScope: { env: { WARDEN_HOME: home } },
+		});
 		expect(statSync(run).mode & 0o777).toBe(0o700);
 		expect(statSync(join(run, "d.sock")).mode & 0o777).toBe(0o600);
 	});

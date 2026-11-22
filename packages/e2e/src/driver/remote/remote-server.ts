@@ -1,5 +1,5 @@
 import { unlinkSync } from "node:fs";
-import { ensureSocketDir, listenOwnerOnly, restrictSocket } from "@delacour/warden-core/private-fs";
+import { ensureSocketDir, listenOwnerOnly, restrictSocket, type SocketScope } from "@delacour/warden-core/private-fs";
 import type { Driver, DriverError, DriverResult, Logger } from "../driver.types";
 import { driverError } from "../errors";
 import { createLineSplitter } from "../ios/simd-protocol";
@@ -26,6 +26,8 @@ import {
 export type ServeDriverOptions = {
 	driver: Driver;
 	socketPath: string;
+	/** where warden's own socket directories are (tests) */
+	socketScope?: SocketScope;
 	/** call `onIdle` once no client has been connected and no op has run for this long; absent or 0 = never */
 	idleMs?: number;
 	onIdle?: () => void;
@@ -217,7 +219,7 @@ export async function serveDriver(options: ServeDriverOptions): Promise<RemoteSe
 		});
 	};
 
-	const socketDir = ensureSocketDir(socketPath);
+	const socketDir = ensureSocketDir(socketPath, options.socketScope);
 	if (!socketDir.success) throw new Error(socketDir.error);
 	try {
 		unlinkSync(socketPath);

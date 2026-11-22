@@ -1,8 +1,8 @@
 import { Database } from "bun:sqlite";
 import { randomUUID } from "node:crypto";
 import { closeSync, openSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { wardenHome } from "./home";
 import {
 	type EventFilter,
 	INTERNAL_LEASE_LABELS,
@@ -18,11 +18,7 @@ import { isWaitReason, type WaitReason } from "./queue";
 import type { Lease, Owner, Platform, QueueEntry, Resource } from "./types";
 import { resourceKey } from "./types";
 
-/** `$WARDEN_HOME`, else `~/.warden` (the user's home directory when `HOME` is not set). */
-export function wardenHome(env: Record<string, string | undefined> = process.env): string {
-	if (env.WARDEN_HOME) return env.WARDEN_HOME;
-	return join(env.HOME || homedir(), ".warden");
-}
+export { wardenHome };
 
 export function defaultDbPath(env: Record<string, string | undefined> = process.env): string {
 	return join(wardenHome(env), "warden.db");

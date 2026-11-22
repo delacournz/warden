@@ -1,7 +1,14 @@
 import { createHash } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { ensureSocketDir, listenOwnerOnly, privateTmpDir, restrictSocket } from "@delacour/warden-core/private-fs";
+import {
+	ensureSocketDir,
+	listenOwnerOnly,
+	privateTmpDir,
+	restrictSocket,
+	type SocketScope,
+	verifySocketDir,
+} from "@delacour/warden-core/private-fs";
 import type { Socket, SocketListener } from "bun";
 import { z } from "zod";
 import { wireRequestSchema } from "./broker.schema";
@@ -111,8 +118,12 @@ function listening(path: string): Promise<boolean> {
  * `{id, success, data | error}`, in completion order, so requests on one connection may overlap. A socket file
  * left behind by a dead process is removed; one that is live is an error.
  */
-export async function serveBroker(socketPath: string, handle: RequestHandler): Promise<BrokerResult<BrokerServer>> {
-	const socketDir = ensureSocketDir(socketPath);
+export async function serveBroker(
+	socketPath: string,
+	handle: RequestHandler,
+	scope: SocketScope = {}
+): Promise<BrokerResult<BrokerServer>> {
+	const socketDir = ensureSocketDir(socketPath, scope);
 	if (!socketDir.success) return brokerErr("io_failed", socketDir.error);
 	if (existsSync(socketPath)) {
 		if (await listening(socketPath)) {
@@ -191,6 +202,8 @@ export async function serveBroker(socketPath: string, handle: RequestHandler): P
 export type CallOptions = {
 	/** give up after this long (default 15 s, or the request's own `timeoutMs` plus 5 s) */
 	timeoutMs?: number;
+	/** where the per-user socket directory is (tests) */
+	socketScope?: SocketScope;
 };
 
 const replySchema = z.looseObject({ id: z.string(), success: z.boolean() });
@@ -215,6 +228,9 @@ export function callBroker<R extends BrokerRequest>(
 	request: R,
 	options: CallOptions = {}
 ): Promise<BrokerResult<ResponseOf<R>>> {
+	const socketDir = verifySocketDir(socketPath, options.socketScope);
+	if (!socketDir.success)
+		return Promise.resolve(brokerErr("broker_unreachable", socketDir.error) as BrokerResult<ResponseOf<R>>);
 	const id = `${process.pid}-${++callCounter}`;
 	const timeoutMs = timeoutOf(request, options);
 	return new Promise((resolve) => {

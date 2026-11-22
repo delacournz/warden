@@ -11,6 +11,7 @@ import {
 	privateTmpDir,
 	restrictFile,
 	restrictSocket,
+	verifySocketDir,
 } from "./private-fs";
 
 let dir: string;
@@ -90,20 +91,64 @@ describe("privateTmpDir", () => {
 });
 
 describe("ensureSocketDir", () => {
-	test("creates the socket's directory owner-only", () => {
-		const socket = join(dir, "run", "a.sock");
-		expect(ensureSocketDir(socket).success).toBe(true);
-		expect(mode(join(dir, "run"))).toBe(0o700);
+	const scope = () => ({ env: { WARDEN_HOME: join(dir, "home") }, tmp: () => join(dir, "warden-501") });
+
+	test("under the warden home: created owner-only, a loose one tightened, a symlinked one refused", () => {
+		const at = scope();
+		const simd = join(dir, "home", "simd");
+		expect(ensureSocketDir(join(simd, "a.sock"), at).success).toBe(true);
+		expect(mode(simd)).toBe(0o700);
+		chmodSync(simd, 0o777);
+		expect(ensureSocketDir(join(simd, "a.sock"), at).success).toBe(true);
+		expect(mode(simd)).toBe(0o700);
+		symlinkSync(simd, join(dir, "home", "link"));
+		expect(ensureSocketDir(join(dir, "home", "link", "a.sock"), at).success).toBe(false);
 	});
 
-	test("tightens an existing directory, and refuses a symlinked one", () => {
-		const run = join(dir, "run");
-		mkdirSync(run);
-		chmodSync(run, 0o777);
-		expect(ensureSocketDir(join(run, "a.sock")).success).toBe(true);
-		expect(mode(run)).toBe(0o700);
-		symlinkSync(run, join(dir, "link"));
-		expect(ensureSocketDir(join(dir, "link", "a.sock")).success).toBe(false);
+	test("the per-user temp directory: tightened, and refused when another user owns it", () => {
+		const at = scope();
+		mkdirSync(at.tmp());
+		chmodSync(at.tmp(), 0o755);
+		expect(ensureSocketDir(join(at.tmp(), "a.sock"), at).success).toBe(true);
+		expect(mode(at.tmp())).toBe(0o700);
+		const other: PrivateFs = { ...nodePrivateFs, uid: () => statSync(at.tmp()).uid + 1 };
+		expect(ensureSocketDir(join(at.tmp(), "a.sock"), { ...at, fs: other }).success).toBe(false);
+	});
+
+	test("anywhere else: the directory is created when missing and otherwise left as it is, whoever owns it", () => {
+		const at = scope();
+		const shared = join(dir, "shared");
+		mkdirSync(shared);
+		chmodSync(shared, 0o755);
+		const other: PrivateFs = { ...nodePrivateFs, uid: () => statSync(shared).uid + 1 };
+		expect(ensureSocketDir(join(shared, "a.sock"), { ...at, fs: other }).success).toBe(true);
+		expect(mode(shared)).toBe(0o755);
+		expect(ensureSocketDir(join(dir, "made", "a.sock"), at).success).toBe(true);
+		expect(mode(join(dir, "made"))).toBe(0o700);
+	});
+});
+
+describe("verifySocketDir", () => {
+	const tmp = () => join(dir, "warden-501");
+
+	test("a socket in the per-user temp directory: the directory must be the caller's own, not a symlink", () => {
+		mkdirSync(tmp(), { mode: 0o700 });
+		const socket = join(tmp(), "a.sock");
+		expect(verifySocketDir(socket, { tmp }).success).toBe(true);
+		const other: PrivateFs = { ...nodePrivateFs, uid: () => statSync(tmp()).uid + 1 };
+		const refused = verifySocketDir(socket, { tmp, fs: other });
+		expect(refused.success).toBe(false);
+		if (!refused.success) expect(refused.error).toContain("is owned by uid");
+		rmSync(tmp(), { recursive: true });
+		mkdirSync(join(dir, "real"));
+		symlinkSync(join(dir, "real"), tmp());
+		expect(verifySocketDir(socket, { tmp }).success).toBe(false);
+	});
+
+	test("a missing directory, or a socket anywhere else, is not checked", () => {
+		expect(verifySocketDir(join(tmp(), "a.sock"), { tmp }).success).toBe(true);
+		const other: PrivateFs = { ...nodePrivateFs, uid: () => -1 };
+		expect(verifySocketDir(join(dir, "a.sock"), { tmp, fs: other }).success).toBe(true);
 	});
 });
 
