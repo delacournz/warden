@@ -1,7 +1,8 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { err, ok, type Result } from "@delacour/warden-types/result";
 import type { z } from "zod";
+import { readGitFactsSync } from "../git-facts";
 import type { Platform } from "../types";
 import { checkAppId } from "./app-id";
 import {
@@ -564,12 +565,27 @@ function dynamicConfigVerdict(dir: string): string | undefined | "continue" {
 	return ids.ios === undefined && ids.android === undefined ? dir : undefined;
 }
 
-/** `start` and its parents, up to and including `stop` (or the filesystem root). */
+function real(path: string): string {
+	try {
+		return realpathSync(path);
+	} catch {
+		return path;
+	}
+}
+
+/**
+ * `start` and its parents, up to and including `stop`. Without a `stop` the search ends at the root of the git
+ * checkout `start` is in, and outside a checkout it is `start` alone: a config in some unrelated parent directory
+ * is never picked up.
+ */
 function ancestors(start: string, stop: string | undefined): string[] {
+	const top = stop === undefined ? readGitFactsSync(start)?.toplevel : undefined;
+	if (stop === undefined && top === undefined) return [start];
 	const out: string[] = [];
 	for (let dir = start; ; dir = dirname(dir)) {
 		out.push(dir);
-		if (dir === stop || dirname(dir) === dir) return out;
+		// git prints a realpath'd toplevel; `start` may reach it through a link
+		if (dir === stop || (top !== undefined && real(dir) === top) || dirname(dir) === dir) return out;
 	}
 }
 

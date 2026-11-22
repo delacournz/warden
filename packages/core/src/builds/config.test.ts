@@ -10,6 +10,7 @@ import {
 	CONFIG_FILE,
 	dynamicAppConfigDir,
 	findWardenConfig,
+	hasRepoConfig,
 	JSON_CONFIG_FILE,
 	loadProject,
 	parseWardenConfig,
@@ -507,6 +508,29 @@ describe("loadProject", () => {
 		if (!res.success) throw new Error(res.error);
 		expect(bundleIdFor(res.data, "ios")).toEqual({ success: true, data: "x" });
 		expect(bundleIdFor(res.data, "android").success).toBe(false);
+	});
+});
+
+describe("the config search without a stopAt", () => {
+	test("outside a git checkout only the starting directory is searched", () => {
+		write(JSON_CONFIG_FILE, { projects: [{ name: "a", bundleId: { ios: "com.a" } }] });
+		mkdirSync(join(dir, "deep", "er"), { recursive: true });
+		expect(findWardenConfig(dir)).toMatchObject({ success: true, data: { dir } });
+		expect(findWardenConfig(join(dir, "deep", "er"))).toEqual({ success: true, data: undefined });
+		expect(hasRepoConfig(join(dir, "deep", "er"))).toBe(false);
+		expect(loadProject({ start: join(dir, "deep", "er"), env }).success).toBe(false);
+	});
+
+	test("inside a git checkout the search goes up to the checkout's root, and no further", () => {
+		const repo = join(dir, "repo");
+		mkdirSync(join(repo, "deep", "er"), { recursive: true });
+		expect(Bun.spawnSync(["git", "init", "-q", repo]).exitCode).toBe(0);
+		write(join("repo", JSON_CONFIG_FILE), { projects: [{ name: "a", bundleId: { ios: "com.a" } }] });
+		expect(findWardenConfig(join(repo, "deep", "er"))).toMatchObject({ success: true, data: { rootDir: repo } });
+		expect(hasRepoConfig(join(repo, "deep", "er"))).toBe(true);
+		rmSync(join(repo, JSON_CONFIG_FILE));
+		write(JSON_CONFIG_FILE, { projects: [{ name: "b", bundleId: { ios: "com.b" } }] });
+		expect(findWardenConfig(join(repo, "deep", "er"))).toEqual({ success: true, data: undefined });
 	});
 });
 

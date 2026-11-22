@@ -308,6 +308,8 @@ describe("computeAffected without e2e suites (an Expo app with an e2e/ dir)", ()
 	let app: string;
 	beforeEach(() => {
 		app = mkdtempSync(join(tmpdir(), "warden-default-suite-"));
+		// a checkout: the app config is found from `e2e/` up to its root
+		expect(Bun.spawnSync(["git", "init", "-q", app]).exitCode).toBe(0);
 		writeFileSync(join(app, "app.json"), JSON.stringify({ expo: { slug: "fresh", ios: { bundleIdentifier: "x.y" } } }));
 	});
 	afterEach(() => rmSync(app, { recursive: true, force: true }));

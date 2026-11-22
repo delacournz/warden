@@ -255,7 +255,7 @@ describe("findBatchPreset", () => {
 			},
 		});
 		mkdirSync(join(dir, "sub"));
-		const a = findBatchPreset({ start: join(dir, "sub"), name: "a" });
+		const a = findBatchPreset({ start: join(dir, "sub"), stopAt: dir, name: "a" });
 		if (!a.success) throw new Error(a.error);
 		expect(a.data.preset).toMatchObject({
 			cwd: dir,
