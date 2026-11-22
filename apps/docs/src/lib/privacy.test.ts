@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { plainText } from "@/components/rich-text";
+import { AGENT_BUCKETS } from "./analytics/server";
 import { type Disclosure, PRIVACY, PRIVACY_SECTIONS } from "./privacy";
 import { siteUrl } from "./shared";
 
@@ -118,6 +119,34 @@ describe("the privacy policy's claims", () => {
 		expect(row).toBeDefined();
 		expect(plainText((row as Disclosure).what)).toContain("user agent");
 		expect((row as Disclosure).to).toContain("PostHog");
+	});
+
+	test("names only labels the server can send for the program, and says the rest is not sent", () => {
+		const row = DISCLOSURES.find((disclosure) => disclosure.what.startsWith("When a program"));
+		const what = (row as Disclosure).what;
+		const labels: readonly string[] = [...AGENT_BUCKETS.map((bucket) => bucket.label), "other"];
+		const named = [...what.matchAll(/`([^`]+)`/g)].map((match) => match[1]).filter((name) => !name.includes("."));
+
+		expect(named.length).toBeGreaterThan(0);
+		expect(named.filter((name) => !labels.includes(name))).toEqual([]);
+		expect(named).toContain("other");
+		expect(plainText(what)).toContain("never the user agent itself");
+	});
+
+	test("the server's event reads the request's user agent and no other header", () => {
+		const server = read("lib", "analytics", "server.ts");
+		const headersRead = [...server.matchAll(/headers\.get\("([^"]+)"\)/g)].map((match) => match[1]);
+
+		expect(headersRead).toEqual(["user-agent"]);
+		expect(server).not.toContain("$browser_language");
+	});
+
+	test("says reads are counted only up to a cap, as the server caps them", () => {
+		const server = read("lib", "analytics", "server.ts");
+		const row = DISCLOSURES.find((disclosure) => disclosure.what.startsWith("When a program"));
+
+		expect(server).toContain("createEventCap({ limit: 120, windowMs: 60_000 })");
+		expect((row as Disclosure).why).toContain("120 a minute");
 	});
 
 	test("claims self-hosted fonts only while the stylesheet loads none from Google", () => {

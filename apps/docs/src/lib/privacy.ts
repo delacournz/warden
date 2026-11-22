@@ -100,9 +100,9 @@ export const PRIVACY_SECTIONS: readonly PrivacySection[] = [
 				why: "To watch how a reader moves through the docs and where they get stuck. Nothing is recorded until you choose Accept, and choosing Decline later stops it. The recording is of this site only.",
 			},
 			{
-				what: "When a program rather than a browser reads `llms.txt`, `llms-full.txt` or a documentation page's Markdown: the address read and the program's user agent, for example `ClaudeBot/1.0` or `curl/8.7.1`",
+				what: "When a program rather than a browser reads `llms.txt`, `llms-full.txt` or a documentation page's Markdown: the address of the page read and which kind of program read it, as one label from a short fixed list worked out from its user agent, for example `claudebot` or `curl`, and `other` for anything not on the list; never the user agent itself",
 				to: "PostHog, sent by our own server",
-				why: "Coding agents run no scripts and see no banner, so our server counts these reads itself. It sends no IP address; PostHog sees only our server's.",
+				why: "Coding agents run no scripts and see no banner, so our server counts these reads itself, up to 120 a minute; reads past that are served and not counted. It sends no IP address, language or other header; PostHog sees only our server's address.",
 			},
 			{
 				what: "Your light or dark choice, and your answer to the cookie banner",
