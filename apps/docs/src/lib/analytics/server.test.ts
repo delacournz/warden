@@ -81,7 +81,7 @@ describe("agentBucket", () => {
 	test("only ever answers with a label from the list", () => {
 		const labels = new Set<string>([...AGENT_BUCKETS.map((bucket) => bucket.label), "other"]);
 
-		for (const agent of ["x".repeat(500), "ClaudeBot/1.0 <script>", "curl/8.7.1\nsecond-line", "🤖"]) {
+		for (const agent of ["x".repeat(500), "ClaudeBot/1.0 (a b; c)", "curl/8.7.1\nsecond-line", "🤖"]) {
 			expect(labels.has(agentBucket(agent))).toBe(true);
 		}
 	});
