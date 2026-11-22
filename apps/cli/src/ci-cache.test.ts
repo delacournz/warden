@@ -87,7 +87,7 @@ describe("cacheGroups", () => {
 	test("golden: an archive dir with the commands to run around it", () => {
 		expect(groups.golden).toEqual({
 			kind: "archive",
-			key: "warden-e2e-v1-macOS-ARM64-warden-golden-iphone-17-645b28cbef-r2",
+			key: "warden-e2e-v1-macOS-ARM64-warden-golden-iphone-17-645b28cbef-r2-a2",
 			paths: ["/Users/runner/warden-goldens"],
 			afterRestore: "warden golden import /Users/runner/warden-goldens",
 			beforeSave: "warden golden export /Users/runner/warden-goldens --allow-unsettled",

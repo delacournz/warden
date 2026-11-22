@@ -11,7 +11,9 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { bunExec } from "../exec";
 import { openStore, type Store } from "../store";
+import { summarizeTree } from "./archive-tree";
 import { GOLDEN_RECIPE, goldenKey, goldenName, wipName } from "./golden";
 import { fakeHost, IPHONE_17, RUNTIME_BUILD, RUNTIME_ID } from "./golden.testing";
 import type { GoldenDeps } from "./ios-golden";
@@ -70,12 +72,20 @@ function seedDevice(udid: string): void {
 	mkdirSync(join(root, "datacom.apple.modelcatalog/tokenStore"), { recursive: true });
 }
 
-function writeManifest(name: string, overrides: Record<string, unknown> = {}): void {
+/** An archive as `exportGolden` leaves it. `plant` changes the device tree before its summary is taken. */
+function writeManifest(
+	name: string,
+	overrides: Record<string, unknown> = {},
+	plant: (device: string) => void = () => {}
+): void {
 	const root = join(archive, name);
 	mkdirSync(join(root, "device/data/Library/Preferences"), { recursive: true });
 	writeFileSync(join(root, "device/data/Library/Preferences/com.apple.migration.plist"), "migrated");
 	mkdirSync(join(root, "device/data/Library/Trial"), { recursive: true });
 	symlinkSync(join(deviceDir("OLD-UDID"), "data/Library/Preferences"), join(root, "device/data/Library/Trial/prefs"));
+	plant(join(root, "device"));
+	const tree = summarizeTree(join(root, "device"));
+	if (!tree.success) throw new Error(tree.error);
 	writeFileSync(
 		join(root, GOLDEN_MANIFEST),
 		JSON.stringify({
@@ -87,6 +97,7 @@ function writeManifest(name: string, overrides: Record<string, unknown> = {}): v
 			udid: "OLD-UDID",
 			...INPUTS,
 			exportedAt: 0,
+			tree: tree.data,
 			...overrides,
 		})
 	);
@@ -130,7 +141,36 @@ describe("exportGolden", () => {
 			udid: "G",
 			...INPUTS,
 		});
+		const tree = summarizeTree(join(out, "device"));
+		if (!tree.success) throw new Error(tree.error);
+		expect(tree.data.entries).toBeGreaterThan(5);
+		expect(JSON.parse(readFileSync(join(out, GOLDEN_MANIFEST), "utf8")).tree).toEqual(tree.data);
 		expect(store.listLeases()).toEqual([]);
+	});
+
+	test("what it exports, import takes back on a machine without the golden", async () => {
+		// a udid no temp dir name can contain: import re-points every occurrence of it in a link target
+		const host = fakeHost({ sims: [{ udid: "GOLD-UDID", name: GOLDEN, state: "Shutdown" }], migrationPolls: 0 });
+		seedDevice("GOLD-UDID");
+		const exported = await exportGolden(deps(host), "iphone-17", undefined, archive);
+		expect(exported).toMatchObject({ success: true });
+		const other = fakeHost({ migrationPolls: 0 });
+		const imported = await importGoldens(deps(other), archive);
+		expect(imported.success && imported.data).toEqual([
+			{ name: GOLDEN, profile: "iphone-17", imported: true, udid: "NEW-1" },
+		]);
+		expect(readlinkSync(join(deviceDir("NEW-1"), "data/Library/Trial/prefs"))).toBe(
+			join(deviceDir("NEW-1"), "data/Library/Preferences")
+		);
+	});
+
+	test("a socket or FIFO in the device dir stays out of the archive", async () => {
+		const host = fakeHost({ sims: [{ udid: "G", name: GOLDEN, state: "Shutdown" }], migrationPolls: 0 });
+		seedDevice("G");
+		expect((await bunExec(["mkfifo", join(deviceDir("G"), "data/pipe")])).exitCode).toBe(0);
+		const exported = await exportGolden(deps(host), "iphone-17", undefined, archive);
+		expect(exported.success).toBe(true);
+		expect(existsSync(join(archive, GOLDEN, "device/data/pipe"))).toBe(false);
 	});
 
 	test("no golden yet → builds it, then exports; a second export replaces the first", async () => {
@@ -278,6 +318,55 @@ describe("importGoldens", () => {
 		expect(JSON.stringify(result.data[0])).toContain("AutomationEnabled");
 		expect(host.sims).toEqual([]);
 		expect(existsSync(deviceDir("NEW-1"))).toBe(false);
+	});
+
+	test("an archive without a tree summary (exported by an older warden) → skipped, nothing created", async () => {
+		writeManifest(GOLDEN, { tree: undefined });
+		const host = fakeHost({ migrationPolls: 0 });
+		const result = await importGoldens(deps(host), archive);
+		expect(result.success && result.data).toEqual([
+			{
+				name: GOLDEN,
+				profile: "iphone-17",
+				imported: false,
+				reason: "the archive has no tree summary (exported by an older warden): export it again",
+			},
+		]);
+		expect(host.calls.some((c) => c[2] === "create")).toBe(false);
+	});
+
+	test("an archive whose tree is not the one exported (a partial restore) → skipped, nothing created", async () => {
+		for (const damage of [
+			(device: string) => rmSync(join(device, "data/Library/Preferences/com.apple.migration.plist")),
+			(device: string) => writeFileSync(join(device, "data/extra"), "x"),
+			(device: string) => writeFileSync(join(device, "data/Library/Preferences/com.apple.migration.plist"), "m"),
+		]) {
+			rmSync(archive, { recursive: true, force: true });
+			writeManifest(GOLDEN);
+			damage(join(archive, GOLDEN, "device"));
+			const host = fakeHost({ migrationPolls: 0 });
+			const result = await importGoldens(deps(host), archive);
+			expect(result.success).toBe(true);
+			if (!result.success) return;
+			expect(result.data[0]).toMatchObject({ name: GOLDEN, imported: false });
+			expect(JSON.stringify(result.data[0])).toContain("does not match its manifest");
+			expect(host.calls.some((c) => c[2] === "create")).toBe(false);
+		}
+	});
+
+	test("an archive with a symlink that leaves the device → skipped, nothing created or copied", async () => {
+		for (const target of ["/etc", "../../../../../../outside", join(deviceDir("OTHER"), "data")]) {
+			rmSync(archive, { recursive: true, force: true });
+			writeManifest(GOLDEN, {}, (device) => symlinkSync(target, join(device, "data/Library/out")));
+			const host = fakeHost({ migrationPolls: 0 });
+			const result = await importGoldens(deps(host), archive);
+			expect(result.success).toBe(true);
+			if (!result.success) return;
+			expect(result.data[0]).toMatchObject({ name: GOLDEN, imported: false });
+			expect(JSON.stringify(result.data[0])).toContain("data/Library/out points outside the device");
+			expect(host.calls.some((c) => c[2] === "create")).toBe(false);
+			expect(existsSync(deviceDir("NEW-1"))).toBe(false);
+		}
 	});
 
 	test("a manifest that does not parse → skipped, not an error", async () => {

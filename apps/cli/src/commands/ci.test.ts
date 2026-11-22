@@ -54,7 +54,7 @@ describe("warden ci cache", () => {
 		expect(out.repack.key).toMatch(/^warden-e2e-v1-repack-macOS-ARM64-f1b4-[0-9a-f]{16}$/);
 		expect(out.golden).toMatchObject({
 			kind: "archive",
-			key: "warden-e2e-v1-macOS-ARM64-warden-golden-iphone-17-645b28cbef-r2",
+			key: "warden-e2e-v1-macOS-ARM64-warden-golden-iphone-17-645b28cbef-r2-a2",
 			paths: ["/home/ci/warden-goldens"],
 			afterRestore: "warden golden import /home/ci/warden-goldens",
 		});

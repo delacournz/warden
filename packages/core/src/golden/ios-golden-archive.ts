@@ -9,10 +9,15 @@
  * archived dir replaces its contents (all but `device.plist`), the migration record is checked, and only then is it
  * renamed to the golden's name, all under the `golden:ios` lease. Anything that does not match is skipped, and the
  * next claim builds the golden as before.
+ *
+ * The manifest carries a summary of the archived tree (`archive-tree.ts`). Import takes an archive only when its tree
+ * still has that summary and every symlink in it stays within the device; an archive without one (written by an older
+ * warden) is skipped like any other mismatch.
  */
 import {
 	cpSync,
 	existsSync,
+	lstatSync,
 	mkdirSync,
 	readdirSync,
 	readFileSync,
@@ -27,6 +32,7 @@ import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/r
 import { z } from "zod";
 import { withBuildLock } from "../builds/lock";
 import type { Exec } from "../exec";
+import { checkArchiveLinks, dropSpecialFiles, summarizeTree } from "./archive-tree";
 import { GOLDEN_RECIPE, goldenKey, goldenName, migrationDone, olderRecipeNames, planGolden } from "./golden";
 import {
 	allSims,
@@ -69,6 +75,8 @@ const manifestSchema = z.object({
 	runtimeBuild: z.string(),
 	deviceType: z.string(),
 	exportedAt: z.number(),
+	/** `summarizeTree` of `device/` at export; absent in an archive an older warden wrote, which is not imported */
+	tree: z.object({ sha256: z.string(), entries: z.number() }).optional(),
 });
 
 export type GoldenManifest = z.infer<typeof manifestSchema>;
@@ -110,6 +118,12 @@ export async function goldenInfo(deps: GoldenDeps, profile: string, runtime?: st
 	return target.success ? ok(info(target.data)) : target;
 }
 
+/** Files, directories and symlinks: a socket or FIFO a simulator left behind is not something `cpSync` can copy. */
+function copyable(path: string): boolean {
+	const stat = lstatSync(path);
+	return stat.isFile() || stat.isDirectory() || stat.isSymbolicLink();
+}
+
 /** APFS clone (`cp -c`, near-free on one volume); a plain copy (symlinks verbatim) where the volume cannot clone. */
 async function copyTree(exec: Exec, src: string, dst: string): AsyncResult<void> {
 	rmSync(dst, { recursive: true, force: true });
@@ -118,7 +132,7 @@ async function copyTree(exec: Exec, src: string, dst: string): AsyncResult<void>
 	if (clone.exitCode === 0) return ok(undefined);
 	rmSync(dst, { recursive: true, force: true });
 	try {
-		cpSync(src, dst, { recursive: true, verbatimSymlinks: true });
+		cpSync(src, dst, { recursive: true, verbatimSymlinks: true, filter: copyable });
 		return ok(undefined);
 	} catch (error) {
 		return err(`copying ${src} → ${dst}: ${error instanceof Error ? error.message : String(error)}`);
@@ -136,14 +150,27 @@ async function copyDeviceEntries(exec: Exec, from: string, to: string): AsyncRes
 	return ok(undefined);
 }
 
-/** Stage `<final>.staging` (device entries + manifest) and move it over `final`; the staging dir always goes. */
-async function writeArchive(exec: Exec, source: string, final: string, manifest: GoldenManifest): AsyncResult<void> {
+/**
+ * Stage `<final>.staging` (device entries + manifest) and move it over `final`; the staging dir always goes. Sockets
+ * and FIFOs a simulator left behind are dropped from the copy, and the manifest records the tree as archived.
+ */
+async function writeArchive(
+	exec: Exec,
+	source: string,
+	final: string,
+	manifest: Omit<GoldenManifest, "tree">
+): AsyncResult<void> {
 	const staging = `${final}.staging`;
 	rmSync(staging, { recursive: true, force: true });
 	try {
-		const copied = await copyDeviceEntries(exec, source, join(staging, DEVICE_DIR));
+		const device = join(staging, DEVICE_DIR);
+		const copied = await copyDeviceEntries(exec, source, device);
 		if (!copied.success) return copied;
-		writeFileSync(join(staging, GOLDEN_MANIFEST), `${JSON.stringify(manifest, null, 2)}\n`);
+		dropSpecialFiles(device);
+		const tree = summarizeTree(device);
+		if (!tree.success) return err(`exporting ${manifest.name}: ${tree.error}`);
+		const full: GoldenManifest = { ...manifest, tree: tree.data };
+		writeFileSync(join(staging, GOLDEN_MANIFEST), `${JSON.stringify(full, null, 2)}\n`);
 		rmSync(final, { recursive: true, force: true });
 		renameSync(staging, final);
 		return ok(undefined);
@@ -248,7 +275,29 @@ function repointLinks(root: string, from: { udid: string; home?: string }, to: {
 	walk(root);
 }
 
-/** Create the `-wip` device, swap the archive in, check the migration, rename. Caller holds the golden lock. */
+/**
+ * Why an archive is not taken, before anything is created from it: no tree summary, a tree that is not the one
+ * exported (a cache restored it in part), or a symlink that leaves the device.
+ */
+function archiveProblem(archive: string, manifest: GoldenManifest): string | undefined {
+	if (manifest.tree === undefined) {
+		return "the archive has no tree summary (exported by an older warden): export it again";
+	}
+	const device = join(archive, DEVICE_DIR);
+	try {
+		const tree = summarizeTree(device);
+		if (!tree.success) return tree.error;
+		if (tree.data.sha256 !== manifest.tree.sha256 || tree.data.entries !== manifest.tree.entries) {
+			return `the archived device does not match its manifest (${tree.data.entries} entries, ${manifest.tree.entries} exported): the archive is incomplete or was changed after export`;
+		}
+		const links = checkArchiveLinks(device, manifest);
+		return links.success ? undefined : links.error;
+	} catch (error) {
+		return `reading the archive: ${error instanceof Error ? error.message : String(error)}`;
+	}
+}
+
+/** Check the archive, create the `-wip` device, swap the archive in, check the migration, rename. Caller holds the golden lock. */
 async function registerArchive(
 	deps: GoldenDeps,
 	archive: string,
@@ -268,6 +317,11 @@ async function registerArchive(
 			udid: plan.sim.udid,
 			reason: "already on this machine",
 		});
+	}
+	const problem = archiveProblem(archive, manifest);
+	if (problem !== undefined) {
+		log(deps, `not importing ${name}: ${problem}`);
+		return ok({ name, profile: target.profile, imported: false, reason: problem });
 	}
 	const pruned = await deleteSims(deps, plan.stale);
 	if (!pruned.success) return pruned;
