@@ -7,14 +7,38 @@ const pageCache = "public, max-age=0, s-maxage=300, stale-while-revalidate=86400
 const staticCache = "public, max-age=86400, s-maxage=604800, stale-while-revalidate=86400";
 
 /**
- * Sent on every response (nitro merges `/**` under each matching rule). Only `frame-ancestors` from
- * CSP: a full policy would have to track PostHog, the demo video and Fumadocs' inline scripts.
+ * The policy the site is being held to before it is enforced, sent as `Content-Security-Policy-Report-Only`:
+ * a browser logs what it would have refused and refuses nothing.
+ *
+ * - `script-src`: the bundled chunks, plus `'unsafe-inline'` for the scripts the HTML carries (the theme
+ *   script, the router's scroll restoration and TanStack Start's hydration stream, whose body is the page's
+ *   own data, so no fixed hash covers it). A nonce is the way to drop it, and needs a header written per
+ *   response rather than here: pages are cached at the edge, and `routeRules` headers are static.
+ * - `connect-src`: the site's own search and server functions, and PostHog through `i.delacour.co.nz`.
+ *   External script loading is off in `posthog.ts`, so PostHog needs no `script-src` entry.
+ * - `worker-src`: session replay's recorder starts its worker from a `blob:`.
+ * - `object-src` / `base-uri`: the site embeds no plugins and sets no `<base>`.
+ *
+ * No `report-to`: there is no collector, so a violation shows in the browser console only.
+ */
+export const reportOnlyPolicy = [
+	"script-src 'self' 'unsafe-inline'",
+	"connect-src 'self' https://i.delacour.co.nz",
+	"worker-src 'self' blob:",
+	"object-src 'none'",
+	"base-uri 'self'",
+].join("; ");
+
+/**
+ * Sent on every response (nitro merges `/**` under each matching rule). The enforced policy is
+ * `frame-ancestors` alone; the rest of a policy is `reportOnlyPolicy`, observed and not yet enforced.
  */
 const securityHeaders = {
 	"Strict-Transport-Security": "max-age=63072000; includeSubDomains",
 	"X-Content-Type-Options": "nosniff",
 	"X-Frame-Options": "SAMEORIGIN",
 	"Content-Security-Policy": "frame-ancestors 'self'",
+	"Content-Security-Policy-Report-Only": reportOnlyPolicy,
 	"Referrer-Policy": "strict-origin-when-cross-origin",
 	"Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
 } as const;

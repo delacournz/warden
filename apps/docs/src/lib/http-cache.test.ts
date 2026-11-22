@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { compressResponse, hostRobotsTag, routeRules, shouldCompress } from "./http-cache";
+import { compressResponse, hostRobotsTag, reportOnlyPolicy, routeRules, shouldCompress } from "./http-cache";
 
 const base = {
 	acceptEncoding: "gzip, br",
@@ -69,6 +69,42 @@ describe("routeRules", () => {
 		expect(all["Permissions-Policy"]).toContain("camera=()");
 		expect("Cache-Control" in all).toBe(false);
 		expect("X-Robots-Tag" in all).toBe(false);
+	});
+});
+
+describe("the report-only content security policy", () => {
+	const header = routeRules["/**"].headers["Content-Security-Policy-Report-Only"];
+	const directives = new Map(
+		header.split("; ").map((directive) => {
+			const [name, ...sources] = directive.split(" ");
+			return [name, sources] as const;
+		})
+	);
+
+	test("is sent on every response beside the enforced policy, which is unchanged", () => {
+		expect(header).toBe(reportOnlyPolicy);
+		expect(routeRules["/**"].headers["Content-Security-Policy"]).toBe("frame-ancestors 'self'");
+	});
+
+	test("allows scripts from the site itself and the inline ones its HTML carries, and nowhere else", () => {
+		expect(directives.get("script-src")).toEqual(["'self'", "'unsafe-inline'"]);
+	});
+
+	test("allows requests to the site and the analytics proxy only", () => {
+		expect(directives.get("connect-src")).toEqual(["'self'", "https://i.delacour.co.nz"]);
+	});
+
+	test("allows the replay recorder's worker, no plugins and no foreign base", () => {
+		expect(directives.get("worker-src")).toEqual(["'self'", "blob:"]);
+		expect(directives.get("object-src")).toEqual(["'none'"]);
+		expect(directives.get("base-uri")).toEqual(["'self'"]);
+	});
+
+	test("names nothing it does not need: no wildcard, no eval, no default-src", () => {
+		expect(header).not.toContain("*");
+		expect(header).not.toContain("unsafe-eval");
+		expect(directives.has("default-src")).toBe(false);
+		expect([...directives.keys()]).toEqual(["script-src", "connect-src", "worker-src", "object-src", "base-uri"]);
 	});
 });
 
