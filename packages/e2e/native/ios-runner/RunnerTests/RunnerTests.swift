@@ -9,6 +9,10 @@ import XCTest
 ///   WARDEN_RUNNER_PORT          TCP port; 0 or unset picks a free one (the ready line says which)
 ///   WARDEN_RUNNER_UDID          the device id echoed in the ready event
 ///   WARDEN_RUNNER_IDLE_SECONDS  exit after this long with no request (default 3600, 0 = never)
+///   WARDEN_RUNNER_TOKEN         the session token every connection's first line must carry (`RunnerAuth`); required,
+///                               never printed
+///
+/// On a Simulator the listener binds `127.0.0.1`; on a phone it is reached through the CoreDevice tunnel.
 final class RunnerTests: XCTestCase {
   private let issues = IssueCollector()
 
@@ -34,6 +38,17 @@ final class RunnerTests: XCTestCase {
     let port = UInt16(environment["WARDEN_RUNNER_PORT"] ?? "") ?? 0
     let udid = environment["WARDEN_RUNNER_UDID"] ?? "unknown"
     let idleSeconds = Double(environment["WARDEN_RUNNER_IDLE_SECONDS"] ?? "") ?? 3600
+    guard let token = RunnerAuth.token(in: environment) else {
+      print("WARDEN_RUNNER_FAILED \(RunnerServerError.noToken)")
+      fflush(stdout)
+      XCTFail("\(RunnerServerError.noToken)")
+      return
+    }
+    #if targetEnvironment(simulator)
+      let loopbackOnly = true
+    #else
+      let loopbackOnly = false
+    #endif
 
     XCTestObservationCenter.shared.addTestObserver(issues)
     defer { XCTestObservationCenter.shared.removeTestObserver(issues) }
@@ -50,7 +65,8 @@ final class RunnerTests: XCTestCase {
     let transport = DispatchQueue(label: "nz.co.delacour.warden.runner.transport")
     var failure: String?
     let server = RunnerServer(
-      port: port, queue: transport, readyFields: { executor.readyFields() },
+      port: port, queue: transport, token: token, loopbackOnly: loopbackOnly,
+      readyFields: { executor.readyFields() },
       handle: { request in
         gate.respond(
           to: request,
