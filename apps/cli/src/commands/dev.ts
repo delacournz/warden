@@ -16,6 +16,7 @@ import { readGitFacts, readGitFactsSync } from "@delacour/warden-core/git-facts"
 import { isPortFree } from "@delacour/warden-core/ports";
 import type { DeviceProvider } from "@delacour/warden-core/providers/provider.types";
 import { PRIORITY } from "@delacour/warden-core/queue";
+import { adbShellArgv } from "@delacour/warden-core/shell-words";
 import { devKeepsSim } from "@delacour/warden-core/shutdown-policy";
 import { wardenHome } from "@delacour/warden-core/store";
 import type { Lease, Owner, Platform } from "@delacour/warden-core/types";
@@ -188,25 +189,41 @@ function parseJson(text: string): unknown {
 	}
 }
 
+/**
+ * A URL scheme: a letter, then letters, digits, `+`, `.` or `-` (RFC 3986), plus `_`: an Expo slug may hold one, and
+ * Android registers the `exp+<slug>` scheme as written.
+ */
+const URL_SCHEME = /^[A-Za-z][A-Za-z0-9+._-]*$/;
+
+/** `scheme` when it is a URL scheme, else an error naming `source` (`--scheme`, the app slug). */
+export function urlScheme(scheme: string, source: string): Result<string> {
+	return URL_SCHEME.test(scheme)
+		? ok(scheme)
+		: err(
+				`"${scheme}" (from ${source}) is not a URL scheme: a letter, then letters, digits, "+", ".", "-" or "_" — pass --scheme <scheme>`
+			);
+}
+
 /** `--scheme`, else `exp+<slug>` (the scheme expo-dev-client registers) from app.json, the resolved app config, or `expo config`. */
 export async function devScheme(
 	ctx: CommandContext,
 	context: ProjectContext,
 	override: string | undefined
 ): AsyncResult<string> {
-	if (override !== undefined) return ok(override);
-	if (context.appConfig?.slug !== undefined) return ok(`exp+${context.appConfig.slug}`);
+	if (override !== undefined) return urlScheme(override, "--scheme");
+	const fromSlug = (slug: string) => urlScheme(`exp+${slug}`, "the app slug");
+	if (context.appConfig?.slug !== undefined) return fromSlug(context.appConfig.slug);
 	const { project } = context;
 	const appJson = join(project.root, "app.json");
 	if (existsSync(appJson)) {
 		const slug = slugOf(field(parseJson(readFileSync(appJson, "utf8")), "expo"));
-		if (slug !== undefined) return ok(`exp+${slug}`);
+		if (slug !== undefined) return fromSlug(slug);
 	}
 	const argv = ["bunx", "expo", "config", "--json", "--type", "public"];
 	const res = await ctx.exec(argv, { cwd: project.root, env: { EXPO_NO_TELEMETRY: "1" } });
 	const slug = slugOf(parseJson(res.stdout));
 	return res.exitCode === 0 && slug !== undefined
-		? ok(`exp+${slug}`)
+		? fromSlug(slug)
 		: err("could not read the app slug from `expo config` — pass --scheme <scheme>");
 }
 
@@ -584,19 +601,9 @@ async function openDevClient(
 	const resolved = await scheme();
 	if (!resolved.success) return resolved;
 	const url = devClientUrl(resolved.data, port);
-	return run([
-		"adb",
-		"-s",
-		deviceId,
-		"shell",
-		"am",
-		"start",
-		"-a",
-		"android.intent.action.VIEW",
-		"-d",
-		url,
-		bundle.data,
-	]);
+	return run(
+		adbShellArgv(["adb", "-s", deviceId], ["am", "start", "-a", "android.intent.action.VIEW", "-d", url, bundle.data])
+	);
 }
 
 /**

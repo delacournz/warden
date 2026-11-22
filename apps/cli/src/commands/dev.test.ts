@@ -22,6 +22,7 @@ import {
 	defaultDevDeps,
 	devClientUrl,
 	selectDevUi,
+	urlScheme,
 } from "./dev";
 import type { DevMetroMode, DevReady, DevUi, MetroTerminal } from "./dev-ui";
 import { plainDevUi } from "./dev-ui.plain";
@@ -187,6 +188,25 @@ describe("warden dev --keychain-acl", () => {
 		const { env, statePath } = await launchWith(["--no-keychain-acl"]);
 		expect(env.SIMCTL_CHILD_WARDEN_KEYCHAIN_ACL).toBeUndefined();
 		expect(JSON.parse(readFileSync(statePath, "utf8")).keychainAcl.enabled).toBe(false);
+	});
+});
+
+describe("urlScheme", () => {
+	test("a URL scheme is a letter, then letters, digits, `+`, `.`, `-` or `_`", () => {
+		expect(urlScheme("exp+my_app", "the app slug")).toEqual({ success: true, data: "exp+my_app" });
+		expect(urlScheme("exp+demo", "--scheme")).toEqual({ success: true, data: "exp+demo" });
+		expect(urlScheme("my-app.dev2", "--scheme")).toEqual({ success: true, data: "my-app.dev2" });
+	});
+
+	test("anything else is an error that names where the scheme came from", () => {
+		for (const bad of ["", "my app", "2app", "app://", "exp+my/app"]) {
+			const res = urlScheme(bad, "--scheme");
+			expect(res.success).toBe(false);
+			if (!res.success) expect(res.error).toContain("--scheme");
+		}
+		const fromSlug = urlScheme("exp+my app", "the app slug");
+		expect(fromSlug.success).toBe(false);
+		if (!fromSlug.success) expect(fromSlug.error).toContain("the app slug");
 	});
 });
 
@@ -536,7 +556,7 @@ describe("warden dev", () => {
 		const joined = calls.map((cmd) => cmd.join(" "));
 		expect(joined).toContain("adb -s emulator-5554 reverse tcp:8081 tcp:8081");
 		expect(joined).toContain(
-			`adb -s emulator-5554 shell am start -a android.intent.action.VIEW -d ${devClientUrl("myapp", 8081)} com.demo`
+			`adb -s emulator-5554 shell am start -a android.intent.action.VIEW -d '${devClientUrl("myapp", 8081)}' com.demo`
 		);
 		h.finish(0);
 		expect(await running).toBe(0);
@@ -730,7 +750,7 @@ describe("warden dev", () => {
 			await waitFor(() => calls.some((cmd) => cmd.includes("am")));
 			expect(configReadBeforeInstallEnded).toBe(true);
 			expect(calls.map((cmd) => cmd.join(" "))).toContain(
-				`adb -s emulator-5554 shell am start -a android.intent.action.VIEW -d ${devClientUrl("exp+demo", 8081)} com.demo`
+				`adb -s emulator-5554 shell am start -a android.intent.action.VIEW -d '${devClientUrl("exp+demo", 8081)}' com.demo`
 			);
 			h.finish(0);
 			expect(await running).toBe(0);

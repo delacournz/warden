@@ -1,11 +1,11 @@
 import type { HostFault, NetworkCondition } from "@delacour/warden-core/conditions/conditions.types";
 import { type EmuNetwork, resolveNetwork } from "@delacour/warden-core/conditions/network.presets";
 import type { Exec } from "@delacour/warden-core/exec";
+import { shellCommand } from "@delacour/warden-core/shell-words";
 import type { Driver, DriverError, DriverResult, NetworkProxyFeature, NetworkState } from "../driver.types";
 import { driverErr, driverError } from "../errors";
 import { faultNotes, type NetworkProxyPort } from "../network-proxy";
 import type { AdbSession } from "./adb-session";
-import { shellCommand } from "./android-argv";
 import type { Clock } from "./android-device";
 
 /**

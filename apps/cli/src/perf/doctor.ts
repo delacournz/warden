@@ -2,6 +2,7 @@ import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import type { Command as Commander } from "@commander-js/extra-typings";
 import { androidTools } from "@delacour/warden-core/providers/android";
+import { adbShellArgv } from "@delacour/warden-core/shell-words";
 import { wardenHome } from "@delacour/warden-core/store";
 import { parsePackageFlags } from "@delacour/warden-perf/shared/app-detect";
 import {
@@ -151,7 +152,7 @@ async function appCheck(
 	if (!app.success) return check("app", "warn", app.error.message, app.error.hint);
 	if (device.platform === "ios") return check("app", "ok", `${app.data.id} (${app.data.source})`);
 	const res = await ctx.exec(
-		[androidTools(ctx.env).adb, "-s", device.udid, "shell", "dumpsys", "package", app.data.id],
+		adbShellArgv([androidTools(ctx.env).adb, "-s", device.udid], ["dumpsys", "package", app.data.id]),
 		{
 			timeoutMs: 15_000,
 		}

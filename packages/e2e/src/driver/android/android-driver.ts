@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 import type { LatLon } from "@delacour/warden-core/conditions/conditions.types";
 import type { Exec } from "@delacour/warden-core/exec";
 import { parseFingerprintEnrolled } from "@delacour/warden-core/golden/android-biometrics";
+import { shellCommand } from "@delacour/warden-core/shell-words";
 import { wardenHome } from "@delacour/warden-core/store";
 import { atfAudit } from "../../a11y/native/atf";
 import { centre } from "../../alert-buttons";
@@ -74,7 +75,6 @@ import {
 	SELECT_ALL_MIN_SDK,
 	screencapArgv,
 	selectAllArgv,
-	shellCommand,
 	swipeArgv,
 	tapArgv,
 	textArgvs,

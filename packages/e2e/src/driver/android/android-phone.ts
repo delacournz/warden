@@ -1,7 +1,7 @@
+import { shellCommand } from "@delacour/warden-core/shell-words";
 import type { DriverResult, Logger } from "../driver.types";
 import { driverErr } from "../errors";
 import type { AdbSession } from "./adb-session";
-import { shellCommand } from "./android-argv";
 import type { Clock } from "./android-device";
 import {
 	type AndroidDeviceState,

@@ -1,9 +1,9 @@
 import type { ClockCondition } from "@delacour/warden-core/conditions/conditions.types";
 import type { Exec } from "@delacour/warden-core/exec";
+import { shellCommand } from "@delacour/warden-core/shell-words";
 import type { ClockState, DriverResult } from "../driver.types";
 import { driverErr } from "../errors";
 import type { AdbSession } from "./adb-session";
-import { shellCommand } from "./android-argv";
 
 /**
  * Android mock clock: system time, device-wide. `settings put global auto_time 0` stops the network time sync from

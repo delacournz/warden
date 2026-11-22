@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { ExecResult } from "@delacour/warden-core/exec";
 import { androidTools } from "@delacour/warden-core/providers/android";
+import { adbShellArgv } from "@delacour/warden-core/shell-words";
 import {
 	analyzeCpu,
 	analyzeHangs,
@@ -112,7 +113,9 @@ async function deviceClock(ctx: CommandContext, a: Adb): Promise<{ wallMs: numbe
 
 /** Warn early (stderr) when Android will probably refuse to profile the app. */
 async function warnIfNotProfileable(ctx: CommandContext, a: Adb, app: string): Promise<void> {
-	const res = await ctx.exec([a.adb, "-s", a.serial, "shell", "dumpsys", "package", app], { timeoutMs: 15_000 });
+	const res = await ctx.exec(adbShellArgv([a.adb, "-s", a.serial], ["dumpsys", "package", app]), {
+		timeoutMs: 15_000,
+	});
 	if (res.exitCode !== 0) return;
 	const flags = parsePackageFlags(res.stdout);
 	if (flags.debuggable || flags.profileable) return;

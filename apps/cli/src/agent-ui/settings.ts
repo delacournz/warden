@@ -17,6 +17,7 @@ import {
 } from "@delacour/warden-core/conditions/conditions.types";
 import { appliedA11y, resolveTextSize } from "@delacour/warden-core/conditions/text-size";
 import { androidTools } from "@delacour/warden-core/providers/android";
+import { adbShellArgv } from "@delacour/warden-core/shell-words";
 import { ok, type Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import type { A11yVerbOptions } from "./a11y";
@@ -459,7 +460,7 @@ async function a11yReset(ctx: CommandContext, deps: Deps, device: UiDevice): Pro
 		if (device.platform === "android") {
 			const { adb } = androidTools(ctx.env);
 			for (const argv of androidScreenReaderResets(recorded)) {
-				await ctx.exec([adb, "-s", device.udid, "shell", ...argv]);
+				await ctx.exec(adbShellArgv([adb, "-s", device.udid], argv));
 			}
 		}
 		forget(ctx, device, "a11y");

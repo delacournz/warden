@@ -1,8 +1,8 @@
+import { shellQuote } from "@delacour/warden-core/shell-words";
 import type { DriverError, DriverResult, Logger } from "../driver.types";
 import { driverErr, driverError } from "../errors";
 import type { SimdSpawn } from "../ios/simd-transport";
 import type { AdbSession } from "./adb-session";
-import { shellQuote } from "./android-argv";
 import { isBusy, startUiad, type UiadClient } from "./uiad-client";
 import { UIAD_DEX } from "./uiad-dex.generated";
 import { UIAD_MAIN_CLASS } from "./uiad-protocol";

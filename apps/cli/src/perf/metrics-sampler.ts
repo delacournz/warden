@@ -1,4 +1,5 @@
 import { androidTools } from "@delacour/warden-core/providers/android";
+import { adbShellArgv } from "@delacour/warden-core/shell-words";
 import type { Platform } from "@delacour/warden-core/types";
 import { parseMeminfo } from "@delacour/warden-perf/metrics/meminfo";
 import {
@@ -130,7 +131,7 @@ function androidSampler(ctx: CommandContext, target: MetricsTarget, startMs: num
 				row = pid === undefined ? undefined : await top(pid);
 			}
 			if (pid === undefined || row === undefined) return { success: false, error: notRunning(target) };
-			const mem = await ctx.exec([adb, "-s", target.udid, "shell", "dumpsys", "meminfo", target.app], {
+			const mem = await ctx.exec(adbShellArgv([adb, "-s", target.udid], ["dumpsys", "meminfo", target.app]), {
 				timeoutMs: 15_000,
 			});
 			const info = mem.exitCode === 0 ? parseMeminfo(mem.stdout) : undefined;

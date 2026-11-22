@@ -1,4 +1,5 @@
 import { androidTools } from "@delacour/warden-core/providers/android";
+import { adbShellArgv } from "@delacour/warden-core/shell-words";
 import type { Platform } from "@delacour/warden-core/types";
 import { ok, type Result } from "@delacour/warden-types/result";
 import { type UiError, uiError } from "../agent-ui/output";
@@ -54,7 +55,7 @@ function iosPidFrom(launchctl: string, bundleId: string): number | undefined {
 /** The app's running pid on the device, or undefined when it is not running. */
 export async function appPid(ctx: CommandContext, device: DeviceRef, appId: string): Promise<number | undefined> {
 	if (device.platform === "android") {
-		const res = await ctx.exec([androidTools(ctx.env).adb, "-s", device.id, "shell", "pidof", appId], {
+		const res = await ctx.exec(adbShellArgv([androidTools(ctx.env).adb, "-s", device.id], ["pidof", appId]), {
 			timeoutMs: 5_000,
 		});
 		const pid = res.stdout.trim().split(/\s+/)[0];

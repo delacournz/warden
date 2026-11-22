@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { PLACEHOLDER_PNG } from "../camera-placeholder";
 import type { Exec, ExecResult } from "../exec";
+import { shellQuote } from "../shell-words";
 import { openStore, type Store } from "../store";
 import type { Lease, Owner } from "../types";
 import { activeConditions, recordCondition } from "./conditions";
@@ -161,7 +162,7 @@ describe("undoConditions", () => {
 		const result = await undoConditions(deps(), l);
 		expect(result.success).toBe(true);
 		expect(calls).toEqual([
-			[...ADB, "shell", "settings", "put", "secure", "enabled_input_methods", `'${enabled}'`],
+			[...ADB, "shell", "settings", "put", "secure", "enabled_input_methods", shellQuote(enabled)],
 			[...ADB, "shell", "settings", "put", "secure", "default_input_method", "a.b/.LatinIME"],
 			[...ADB, "shell", "settings", "delete", "global", "warden_ime_enabled"],
 			[...ADB, "shell", "settings", "delete", "global", "warden_ime_default"],
@@ -207,6 +208,13 @@ describe("undoConditions", () => {
 	test("android timezone without a recorded previous one goes to the host's", async () => {
 		const l = lease("android", "emulator-5554");
 		recordCondition(store, l.id, "locale", { timezone: "Asia/Tokyo" }, 1);
+		await undoConditions({ ...deps(), hostTimezone: () => "Pacific/Auckland" }, l);
+		expect(calls).toEqual([[...ADB, "shell", "cmd", "alarm", "set-timezone", "Pacific/Auckland"]]);
+	});
+
+	test("android timezone falls back to the host's when the recorded one is not a timezone id", async () => {
+		const l = lease("android", "emulator-5554");
+		recordCondition(store, l.id, "locale", { timezone: "Asia/Tokyo", previousTimezone: "not a zone" }, 1);
 		await undoConditions({ ...deps(), hostTimezone: () => "Pacific/Auckland" }, l);
 		expect(calls).toEqual([[...ADB, "shell", "cmd", "alarm", "set-timezone", "Pacific/Auckland"]]);
 	});
@@ -282,7 +290,7 @@ describe("undoConditions", () => {
 				"enabled_accessibility_services",
 				"'com.other/com.other.Svc$Inner'",
 			],
-			[...ADB, "shell", "settings", "put", "secure", "accessibility_enabled", "'1'"],
+			[...ADB, "shell", "settings", "put", "secure", "accessibility_enabled", "1"],
 		]);
 	});
 
@@ -584,8 +592,8 @@ describe("passkeys", () => {
 		expect(res.success).toBe(true);
 		expect(calls).toEqual([
 			[...ADB, "shell", "sh", "-c", `'pm uninstall ${PKG} >/dev/null 2>&1; true'`],
-			[...ADB, "shell", "settings", "put", "secure", "credential_service", `'${GMS}'`],
-			[...ADB, "shell", "settings", "put", "secure", "credential_service_primary", `'${GMS}'`],
+			[...ADB, "shell", "settings", "put", "secure", "credential_service", shellQuote(GMS)],
+			[...ADB, "shell", "settings", "put", "secure", "credential_service_primary", shellQuote(GMS)],
 		]);
 		expect(existsSync(store_)).toBe(false);
 		expect(activeConditions(store, l.id)).toEqual([]);

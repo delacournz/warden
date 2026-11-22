@@ -1,3 +1,4 @@
+import { shellCommand } from "@delacour/warden-core/shell-words";
 import type { Logger } from "../driver.types";
 import type { AdbSession } from "./adb-session";
 import {
@@ -5,7 +6,6 @@ import {
 	animationReadArgvs,
 	animationRestoreArgvs,
 	animationScaleArgvs,
-	shellCommand,
 	transitionRestoreArgv,
 } from "./android-argv";
 import { type AndroidStateStore, parseAnimationValues, patchFor, planAnimations } from "./android-state";

@@ -1,10 +1,10 @@
+import { shellCommand } from "@delacour/warden-core/shell-words";
 import { TALKBACK_LOGCAT_ARGV } from "../../a11y/talkback-log";
 import type { Driver, DriverResult, Element, Point } from "../driver.types";
 import type { ActsOnElements, ScrollDirection } from "../element-actions";
 import { driverErr } from "../errors";
 import type { DrivesScreenReader } from "../screen-reader";
 import type { AdbSession } from "./adb-session";
-import { shellCommand } from "./android-argv";
 import type { Clock } from "./android-device";
 import { readSpoken } from "./android-spoken";
 import type { TalkBackControl } from "./android-talkback";

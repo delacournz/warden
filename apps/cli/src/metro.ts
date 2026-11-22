@@ -4,6 +4,7 @@ import type { AppFramework } from "@delacour/warden-core/builds/native-ids";
 import { type Exec, execError } from "@delacour/warden-core/exec";
 import type { GitFacts } from "@delacour/warden-core/git-facts";
 import { findNodeBin } from "@delacour/warden-core/node-bin";
+import { adbShellArgv } from "@delacour/warden-core/shell-words";
 import type { Platform } from "@delacour/warden-core/types";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 
@@ -407,8 +408,8 @@ export function bareAppLaunchArgvs(platform: Platform, deviceId: string, bundleI
 	const adb = ["adb", "-s", deviceId];
 	return [
 		[...adb, "reverse", "tcp:8081", `tcp:${port}`],
-		[...adb, "shell", "am", "force-stop", bundleId],
-		[...adb, "shell", "monkey", "-p", bundleId, "-c", "android.intent.category.LAUNCHER", "1"],
+		adbShellArgv(adb, ["am", "force-stop", bundleId]),
+		adbShellArgv(adb, ["monkey", "-p", bundleId, "-c", "android.intent.category.LAUNCHER", "1"]),
 	];
 }
 

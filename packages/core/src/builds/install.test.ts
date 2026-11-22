@@ -233,7 +233,8 @@ describe("appMatchesArtifact on Android", () => {
 				"adb -s emulator-5554 shell pm path com.x": {
 					stdout: "package:/data/app/~~x==/com.x-y==/base.apk\n",
 				},
-				"adb -s emulator-5554 shell sha256sum /data/app/~~x==/com.x-y==/base.apk":
+				// the device path holds `~`, so it reaches the device shell single-quoted
+				"adb -s emulator-5554 shell sha256sum '/data/app/~~x==/com.x-y==/base.apk'":
 					deviceSha === undefined ? { exitCode: 1 } : { stdout: `${deviceSha}  /data/app/~~x==/com.x-y==/base.apk\n` },
 			},
 			calls
