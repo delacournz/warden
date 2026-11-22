@@ -11,6 +11,9 @@ name: e2e
 # entries every PR restores: without it each new PR built the app from source on a cold compiler cache (~33 min
 # instead of ~13). `workflow_dispatch` on develop seeds them by hand (`build-only` to skip the flows).
 #
+# A pull request from a fork is skipped: the install needs a registry token (`@delacournz/cli-telemetry`), and
+# a fork's code never gets one. A maintainer runs e2e for it after reading the change.
+#
 # Runner: the `runner` input (e.g. a self-hosted Mac label), else the repo variable WARDEN_E2E_RUNNER, else
 # `xcode-27` (GitHub's macOS 27 image, public preview; `macos-26` stops at Xcode 26.6, which can't build
 # warden-simd). Checkout and caches are GitHub's own actions, so any macOS label works.
@@ -84,6 +87,7 @@ concurrency:
 jobs:
   example:
     name: ${{ (github.event_name == 'push' || inputs.build-only) && 'example (build + caches, no specs)' || 'example' }}
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ${{ inputs.runner || vars.WARDEN_E2E_RUNNER || 'xcode-27' }}
     # A cold native build (~70 min with no ccache hits, warden stops it at 90) + the suite's 35 min + prep. The suite's
     # own timeout (`suite-timeout-minutes`) times the specs only: the action builds the app in a step before it.
@@ -155,7 +159,8 @@ jobs:
       - name: Build warden-simd from this checkout
         if: (inputs.warden-version || 'source') == 'source' && steps.simd-cache.outputs.cache-hit != 'true'
         env:
-          NPM_TOKEN: ${{ github.token }}
+          # Same rule as the job's `if`: a pull request from a fork never gets the token.
+          NPM_TOKEN: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.token || '' }}
           DEVELOPER_DIR: ${{ steps.xcode.outputs.developer-dir }}
         run: |
           set -euo pipefail

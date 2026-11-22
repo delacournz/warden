@@ -48,13 +48,13 @@ progress $! "warden-simd build" "$HOME/simd-build.log"; wait $! || { tail -n 60 
 
 case "$FW" in
   argent)
-    log "bun add -g @swmansion/argent"
-    bun add -g @swmansion/argent > "$HOME/fw-install.log" 2>&1 &
+    log "bun add -g @swmansion/argent@0.34.0"
+    bun add -g @swmansion/argent@0.34.0 > "$HOME/fw-install.log" 2>&1 &
     progress $! "argent install" "$HOME/fw-install.log"; wait $! || { tail -n 40 "$HOME/fw-install.log"; exit 1; }
     argent --version ;;
   agent-device)
-    log "bun add -g agent-device"
-    bun add -g agent-device > "$HOME/fw-install.log" 2>&1 &
+    log "bun add -g agent-device@0.21.25"
+    bun add -g agent-device@0.21.25 > "$HOME/fw-install.log" 2>&1 &
     progress $! "agent-device install" "$HOME/fw-install.log"; wait $! || { tail -n 40 "$HOME/fw-install.log"; exit 1; }
     agent-device --version ;;
   tester-army) node -v ;;   # e2e + @e2e-dev/mobile come with bun install; the image's Node is inside e2e's range

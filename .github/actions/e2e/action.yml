@@ -46,8 +46,8 @@ inputs:
     description: Where `install-command` runs, relative to the workspace.
     default: .
   npm-token:
-    description: Exported as NPM_TOKEN for `install-command` (private registries read it from bunfig.toml / .npmrc).
-    default: ${{ github.token }}
+    description: Exported as NPM_TOKEN for `install-command` (private registries read it from bunfig.toml / .npmrc). Defaults to the job token, and to nothing on a pull request from a fork.
+    default: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.token || '' }}
   github-token:
     description: "Reads this job's start from the jobs API for the `job timing` line (needs `actions: read`). Without it the line times the action alone. Never passed to warden."
     default: ${{ github.token }}

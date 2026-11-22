@@ -117,7 +117,9 @@
 
 		// changeset-config.test imports apps/cli/scripts/release and reads every workspace
 		// package.json, the changeset config and the workflows; workflows.test reads .github/workflows;
-		// e2e-action.test runs .github/actions/e2e/artifacts.sh and reads its action.yml.
+		// e2e-action.test runs .github/actions/e2e/artifacts.sh and reads its action.yml;
+		// repo-hardening.test runs evidence.sh and reads dependabot.yml, CODEOWNERS, SECURITY.md, the
+		// docs Dockerfile, the EAS workflows and the bench's EAS script.
 		"@delacour/warden-release#typecheck": {
 			"dependsOn": ["transit", "@delacour/warden#transit"],
 			"cache": true,
@@ -135,7 +137,13 @@
 				"$TURBO_ROOT$/scripts/*/package.json",
 				"$TURBO_ROOT$/.changeset/config.json",
 				"$TURBO_ROOT$/.github/workflows/**",
-				"$TURBO_ROOT$/.github/actions/**"
+				"$TURBO_ROOT$/.github/actions/**",
+				"$TURBO_ROOT$/.github/dependabot.yml",
+				"$TURBO_ROOT$/.github/CODEOWNERS",
+				"$TURBO_ROOT$/SECURITY.md",
+				"$TURBO_ROOT$/apps/docs/Dockerfile",
+				"$TURBO_ROOT$/apps/example/.eas/workflows/**",
+				"$TURBO_ROOT$/packages/e2e-bench/scripts/eas-bench.sh"
 			]
 		},
 

@@ -20,6 +20,10 @@ on:
 jobs:
   build_libraries:
     runs_on: macos-large
+    # The inputs reach the script as environment variables, never as script text.
+    env:
+      IDB_REPOSITORY: ${{ inputs.repository }}
+      IDB_REF: ${{ inputs.ref }}
     steps:
       - uses: eas/checkout
       - name: Host facts
@@ -27,25 +31,24 @@ jobs:
           xcodebuild -version; sw_vers; sysctl -n hw.ncpu hw.memsize
           brew --version | head -1
       - name: Build library package
-        # Expressions are interpolated in run, so the inputs are read here.
         run: |
           set -euo pipefail
           brew list xcodegen > /dev/null 2>&1 || brew install xcodegen
           brew list xcbeautify > /dev/null 2>&1 || brew install xcbeautify
           SRC="$HOME/idb"
           git init -q "$SRC"
-          git -C "$SRC" remote add origin "${{ inputs.repository }}"
-          git -C "$SRC" fetch --depth 1 origin "${{ inputs.ref }}"
+          git -C "$SRC" remote add origin "$IDB_REPOSITORY"
+          git -C "$SRC" fetch --depth 1 origin "$IDB_REF"
           git -C "$SRC" checkout -q --detach FETCH_HEAD
           cd "$SRC"
-          echo "== building $(git rev-parse HEAD) from ${{ inputs.repository }} $(date +%T)"
+          echo "== building $(git rev-parse HEAD) from $IDB_REPOSITORY $(date +%T)"
           ./build.sh build libraries
           ./build.sh build library-package
           OUT="$HOME/idb-libraries-out"
           mkdir -p "$OUT"
           tar -C Build/LibraryPackage -czf "$OUT/idb-libraries.macos-arm64.tar.gz" .
           ( cd "$OUT" && shasum -a 256 idb-libraries.macos-arm64.tar.gz | tee idb-libraries.macos-arm64.tar.gz.sha256 )
-          { echo "repository: ${{ inputs.repository }}"; echo "ref: $(git rev-parse HEAD)"; xcodebuild -version; sw_vers; date -u; } > "$OUT/provenance.txt"
+          { echo "repository: $IDB_REPOSITORY"; echo "ref: $(git rev-parse HEAD)"; xcodebuild -version; sw_vers; date -u; } > "$OUT/provenance.txt"
           ls -la "$OUT"
       - name: Upload xcodebuild logs on failure
         if: ${{ failure() }}

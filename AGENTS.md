@@ -47,7 +47,7 @@ PostHog only, off unless `VITE_POSTHOG_TOKEN` (`phc_…`) and `VITE_POSTHOG_HOST
 
 ## Design systems (`@delacournz/ui`, `@delacournz/apogee`)
 
-`apps/docs` lists both design systems from delacour-monorepo as optionalDependencies (GitHub Packages, `@delacournz` scope in `bunfig.toml`; CI installs with the `NPM_READ_TOKEN` secret, a tokenless clone skips them). **Installed, not yet used** — nothing imports their CSS or components.
+`apps/docs` lists both design systems from delacour-monorepo as optionalDependencies (GitHub Packages, `@delacournz` scope in `bunfig.toml`; CI installs with the `NPM_READ_TOKEN` secret; without a token they are skipped with a warning, but `bun install` as a whole still stops on `@delacournz/cli-telemetry`, a hard dependency of `apps/cli`). **Installed, not yet used** — nothing imports their CSS or components.
 
 - `@delacournz/ui` — the "site" design system (Base UI + shadcn base-lyra, Tailwind v4). CSS: `@import "@delacournz/ui/styles";`
 - `@delacournz/apogee` — the "app" design system (coss on Base UI, Orbit palettes, Phosphor icons, Tailwind v4). CSS: `@import "@delacournz/apogee/styles.css";`
