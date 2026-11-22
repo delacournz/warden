@@ -68,10 +68,22 @@ export function metroUrl(port: number): string {
 	return `http://127.0.0.1:${port}`;
 }
 
+/** Expo's host choices: it accepts one of them, so warden adds none when the caller's args carry one. */
+const EXPO_HOST_FLAGS = ["--host", "-m", "--lan", "--tunnel", "--localhost", "--offline"];
+const REACT_NATIVE_HOST_FLAGS = ["--host"];
+
+function choosesHost(extra: readonly string[], flags: readonly string[]): boolean {
+	return extra.some((arg) => flags.some((flag) => arg === flag || arg.startsWith(`${flag}=`)));
+}
+
 /**
  * `expo start` for a dev client on `port`, plus the caller's extra args; `react-native start` for a bare
  * React Native app. `bin` (the project's own `node_modules/.bin/expo` / `react-native`) runs directly;
  * without it `bunx expo` / `npx react-native` resolves the bin first.
+ *
+ * Metro listens on loopback only (`--localhost` for Expo, `--host 127.0.0.1` for React Native): every device warden
+ * drives reaches it on `127.0.0.1` (a simulator directly, Android through `adb reverse`). Extra args that choose a
+ * host themselves (`--lan`, `--tunnel`, `--host …`) are left to decide.
  */
 export function metroArgv(
 	port: number,
@@ -80,10 +92,12 @@ export function metroArgv(
 	framework: AppFramework = "expo"
 ): string[] {
 	if (framework === "react-native") {
-		const start = ["start", "--port", String(port), ...extra];
+		const host = choosesHost(extra, REACT_NATIVE_HOST_FLAGS) ? [] : ["--host", "127.0.0.1"];
+		const start = ["start", "--port", String(port), ...host, ...extra];
 		return bin === undefined ? ["npx", "react-native", ...start] : [bin, ...start];
 	}
-	const start = ["start", "--dev-client", "--port", String(port), ...extra];
+	const host = choosesHost(extra, EXPO_HOST_FLAGS) ? [] : ["--localhost"];
+	const start = ["start", "--dev-client", "--port", String(port), ...host, ...extra];
 	return bin === undefined ? ["bunx", "expo", ...start] : [bin, ...start];
 }
 

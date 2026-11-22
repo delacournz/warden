@@ -421,7 +421,7 @@ describe("warden dev", () => {
 
 		const metro = h.spawned[0];
 		expect(metro?.cwd).toBe(c.cwd);
-		expect(metro?.cmd).toEqual(["bunx", "expo", "start", "--dev-client", "--port", "8081", "--clear"]);
+		expect(metro?.cmd).toEqual(["bunx", "expo", "start", "--dev-client", "--port", "8081", "--localhost", "--clear"]);
 		// Metro starts before the device is claimed: its env carries the port, not the udid
 		expect(metro?.env.WARDEN_PORT_0).toBe("8081");
 		expect(metro?.env.WARDEN_PORT).toBeUndefined();
@@ -667,6 +667,7 @@ describe("warden dev", () => {
 			"--dev-client",
 			"--port",
 			"8081",
+			"--localhost",
 			"--clear",
 		]);
 		h.finish(0);

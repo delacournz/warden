@@ -29,6 +29,8 @@ warden dev ios --json       # one line { udid, port, metroUrl, leaseIds } once M
 5. Starts Metro on the leased port.
 6. Opens the dev client once the port is verified to serve this checkout.
 
+Metro listens on `127.0.0.1` only (`expo start --localhost`, `react-native start --host 127.0.0.1`): a simulator reaches it directly and an Android device through `adb reverse`. To reach it from another machine or a phone on your network, pass a host yourself: `warden dev ios -- --lan` (or `--tunnel`, `--host <h>`).
+
 `warden dev` owns its Metro. A Metro left running by another worktree is refused, never attached to. It holds the device and the port until Metro exits; `q` or Ctrl-C in the dashboard (Ctrl-C in plain output), a kill or the terminal closing (SIGHUP) stops Metro and releases both. In the dashboard's interact mode Ctrl-C goes to Expo, which exits and ends the session. The simulator dev booted is shut down with the session and its Device Hub / Simulator.app window is closed, so nothing is left running or showing; one that was already booted when dev leased it, or one you passed with `--udid` / `--lease`, is left on. `--no-shutdown` keeps dev's own sim booted for the next run (a boot is 10-30 s). A hard kill (`kill -9`, a crashed terminal app) skips all of this; `warden gc` shuts the sim down once its lease has gone stale. The `--json` line is printed first, so an agent can read the `udid` and `metroUrl` and pass them to `warden ui open <bundleId> --metro <metroUrl>`.
 
 Metro gets `WARDEN_WORKTREE` (the checkout directory name) and `WARDEN_BRANCH` (absent on a detached HEAD) in its environment, so `app.config.ts` can name the dev server after the worktree. Native builds never see them, so the fingerprint is unchanged.
