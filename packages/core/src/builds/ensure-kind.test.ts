@@ -250,7 +250,7 @@ describe("a phone the provisioning profile does not list", () => {
 		"devicectl install app failed: device_not_in_profile: the app's provisioning profile does not list this phone";
 
 	/** the first install of each run answers `first`, the next ones succeed */
-	function flow(first: string[]) {
+	function flow(first: string[], deviceId: string = UDID) {
 		const c = calls();
 		const queue = [...first];
 		const d = deps(repacked, c);
@@ -264,7 +264,7 @@ describe("a phone the provisioning profile does not list", () => {
 		const commands: string[] = [];
 		const run = input("release", {
 			physical: true,
-			deviceId: UDID,
+			deviceId,
 			env: { WARDEN_IOS_TEAM_ID: TEAM, WARDEN_HOME: dir },
 			exec: async (cmd) => {
 				commands.push(cmd.join(" "));
@@ -273,6 +273,13 @@ describe("a phone the provisioning profile does not list", () => {
 		});
 		return { c, d, commands, run };
 	}
+
+	test("a device id that is not an id gets the original error and no registering build", async () => {
+		const { d, commands, run } = flow([NOT_IN_PROFILE], "0000 8140");
+		const res = await ensureKindApp(run.input, d);
+		expect(res).toEqual({ success: false, error: NOT_IN_PROFILE });
+		expect(commands).toEqual([]);
+	});
 
 	test("registers the phone with a build for its destination, rebuilds and installs once more", async () => {
 		const { c, d, commands, run } = flow([NOT_IN_PROFILE]);
