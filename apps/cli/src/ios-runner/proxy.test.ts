@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -196,5 +196,20 @@ describe("proxy", () => {
 		client.socket.write('{"id":"1"}\n');
 		await until(() => client.lines.length === 2);
 		expect(started.data.lastActivity()).toBe(500);
+	});
+});
+
+describe("startProxy socket permissions", () => {
+	test("the socket is 0600 in a directory made 0700", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "wdn-proxy-"));
+		cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
+		const run = join(dir, "run");
+		mkdirSync(run);
+		chmodSync(run, 0o755);
+		const started = await startProxy({ socketPath: join(run, "r.sock"), target: () => undefined, now: Date.now });
+		if (!started.success) throw new Error(started.error);
+		cleanups.push(() => started.data.close());
+		expect(statSync(run).mode & 0o777).toBe(0o700);
+		expect(statSync(join(run, "r.sock")).mode & 0o777).toBe(0o600);
 	});
 });

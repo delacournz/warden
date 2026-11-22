@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { brokerErr } from "./broker.types";
@@ -127,5 +127,16 @@ describe("serveBroker / callBroker", () => {
 		const result = await callBroker(path, { method: "x", params: {} });
 		expect(result.success).toBe(false);
 		if (!result.success) expect(result.error.message).toContain("boom");
+	});
+});
+
+describe("serveBroker socket permissions", () => {
+	test("the socket is 0600 in a directory made 0700", async () => {
+		const run = join(tempDir(), "run");
+		mkdirSync(run);
+		chmodSync(run, 0o755);
+		await serve(join(run, "b.sock"), async () => ({ success: true, data: 1 }));
+		expect(statSync(run).mode & 0o777).toBe(0o700);
+		expect(statSync(join(run, "b.sock")).mode & 0o777).toBe(0o600);
 	});
 });

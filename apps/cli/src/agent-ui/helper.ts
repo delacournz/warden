@@ -9,11 +9,11 @@ import {
 	statSync,
 	unlinkSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { installedBundleIds } from "@delacour/warden-core/builds/cache";
 import { parseDuration } from "@delacour/warden-core/duration";
 import { type PidAlive, processAlive } from "@delacour/warden-core/liveness";
+import { ensureSocketDir, privateTmpDir } from "@delacour/warden-core/private-fs";
 import { type Store, wardenHome } from "@delacour/warden-core/store";
 import type { Owner } from "@delacour/warden-core/types";
 import type { ClockRecorder } from "@delacour/warden-e2e/driver/clock-recorder";
@@ -267,21 +267,21 @@ export type HelperHost = Pick<CommandContext, "env" | "now"> & Partial<Pick<Comm
 
 /**
  * `$WARDEN_HOME/simd/<udid>.sock`. A unix socket path must fit in 104 bytes, so when `$WARDEN_HOME` is
- * deep (temp dirs) the socket goes to a short per-home path under `/tmp` instead; `state.json` records
- * whichever was used.
+ * deep (temp dirs) the socket goes to a short per-home path in the per-user socket directory
+ * (`/tmp/warden-<uid>`, owner-only) instead; `state.json` records whichever was used.
  */
 export function socketPathFor(host: Pick<CommandContext, "env">, udid: string): string {
 	return socketPathOf(SIMD_KIND, host, udid);
 }
 
-/** `socketPathFor` for any helper kind: `<kind dir>/<id>.sock`, or a short `/tmp` path when that is too long. */
+/** `socketPathFor` for any helper kind: `<kind dir>/<id>.sock`, or a short path in the per-user socket directory when that is too long. */
 export function socketPathOf(kind: HelperKind, host: Pick<CommandContext, "env">, id: string): string {
 	const preferred = join(kind.dir(host), `${fsSafeId(id)}.sock`);
 	if (Buffer.byteLength(preferred) < MAX_SOCKET_PATH) return preferred;
 	const tag = Bun.hash(wardenHome(host.env)).toString(36).slice(0, 8);
 	// the id's own hash, not just its first 8 characters: `192.168.*` / `adb-*` serials share those
 	const idTag = `${id.replace(/[^A-Za-z0-9]/g, "").slice(0, 8)}${id.length > 8 ? `-${Bun.hash(id).toString(36).slice(0, 8)}` : ""}`;
-	return join(process.platform === "darwin" ? "/tmp" : tmpdir(), `${kind.socketTag}-${tag}-${idTag}.sock`);
+	return join(privateTmpDir(), `${kind.socketTag}-${tag}-${idTag}.sock`);
 }
 
 export type HelperInfo<C extends HelperClient = SimdClient> = {
@@ -921,8 +921,9 @@ function attemptFor<C extends HelperClient>(
 	);
 	if (!timeout.success) return timeout;
 	const socketPath = opts.socketPath ?? socketPathOf(kind, host, udid);
-	mkdirSync(dirname(socketPath), { recursive: true });
-	mkdirSync(kind.dir(host), { recursive: true });
+	const socketDir = ensureSocketDir(socketPath);
+	if (!socketDir.success) return { success: false, error: uiError("engine_unavailable", socketDir.error) };
+	mkdirSync(kind.dir(host), { recursive: true, mode: 0o700 });
 	const logPath = join(kind.dir(host), `${udid}.log`);
 	return ok({
 		host,

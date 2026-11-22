@@ -1,5 +1,6 @@
 import { existsSync, unlinkSync } from "node:fs";
 import net from "node:net";
+import { ensureSocketDir, listenOwnerOnly, restrictSocket } from "@delacour/warden-core/private-fs";
 import type { Result } from "@delacour/warden-types/result";
 import type { RunnerAddress } from "./types";
 
@@ -94,29 +95,37 @@ export function startProxy(opts: ProxyOptions): Promise<Result<RunnerProxy, stri
 		server.once("error", (error) =>
 			resolve({ success: false, error: `cannot listen on ${opts.socketPath}: ${error.message}` })
 		);
+		const socketDir = ensureSocketDir(opts.socketPath);
+		if (!socketDir.success) {
+			resolve({ success: false, error: socketDir.error });
+			return;
+		}
 		unlinkQuietly(opts.socketPath);
-		server.listen(opts.socketPath, () => {
-			resolve({
-				success: true,
-				data: {
-					socketPath: opts.socketPath,
-					connections: () => clients.size,
-					lastActivity: () => activity,
-					broadcast: async (line) => {
-						await Promise.all(
-							[...clients].map((client) => new Promise<void>((done) => client.write(`${line}\n`, () => done())))
-						);
+		listenOwnerOnly(() =>
+			server.listen(opts.socketPath, () => {
+				restrictSocket(opts.socketPath);
+				resolve({
+					success: true,
+					data: {
+						socketPath: opts.socketPath,
+						connections: () => clients.size,
+						lastActivity: () => activity,
+						broadcast: async (line) => {
+							await Promise.all(
+								[...clients].map((client) => new Promise<void>((done) => client.write(`${line}\n`, () => done())))
+							);
+						},
+						close: () =>
+							new Promise<void>((done) => {
+								for (const client of clients) client.destroy();
+								server.close(() => {
+									unlinkQuietly(opts.socketPath);
+									done();
+								});
+							}),
 					},
-					close: () =>
-						new Promise<void>((done) => {
-							for (const client of clients) client.destroy();
-							server.close(() => {
-								unlinkQuietly(opts.socketPath);
-								done();
-							});
-						}),
-				},
-			});
-		});
+				});
+			})
+		);
 	});
 }

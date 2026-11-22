@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { canReadA11yEvents } from "../a11y-events";
 import { canReadA11y } from "../a11y-read";
 import { el, failWith, fakeDriver, snapshotOf } from "../driver.testing";
@@ -360,5 +360,16 @@ describe("remote driver", () => {
 	test("a driver without element actions offers none", async () => {
 		const remote = (await connect(await serve(fakeDriver({ screens: [screen], platform: "android" })))).driver();
 		expect(canActOnElements(remote)).toBe(false);
+	});
+});
+
+describe("serveDriver socket permissions", () => {
+	test("the socket is 0600 in a directory made 0700", async () => {
+		const run = join(dirname(socketPath()), "run");
+		mkdirSync(run);
+		chmodSync(run, 0o755);
+		await serve(fakeDriver({ screens: [], platform: "android" }), { socketPath: join(run, "d.sock") });
+		expect(statSync(run).mode & 0o777).toBe(0o700);
+		expect(statSync(join(run, "d.sock")).mode & 0o777).toBe(0o600);
 	});
 });

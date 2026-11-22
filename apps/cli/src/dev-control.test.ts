@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ok } from "@delacour/warden-types/result";
@@ -136,5 +136,24 @@ describe("parseDevControlResponse", () => {
 
 	test("a non-string metroUrl is dropped", () => {
 		expect(parseDevControlResponse({ ok: true, features, metroUrl: 1 })).toEqual({ ok: true, features });
+	});
+});
+
+describe("serveDevControl socket permissions", () => {
+	test("the socket is 0600 in a directory made 0700", async () => {
+		const run = join(tempDir(), "run");
+		mkdirSync(run);
+		chmodSync(run, 0o755);
+		const served = await serveDevControl(join(run, "control.sock"), async () => ({
+			ok: true,
+			features: { hud: false, devtools: false },
+		}));
+		if (!served.success) throw new Error(served.error);
+		try {
+			expect(statSync(run).mode & 0o777).toBe(0o700);
+			expect(statSync(join(run, "control.sock")).mode & 0o777).toBe(0o600);
+		} finally {
+			await served.data.close();
+		}
 	});
 });
