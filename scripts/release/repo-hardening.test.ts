@@ -132,7 +132,7 @@ describe("ci.yml signoff-sha", () => {
 		const asked = join(tmp, "asked");
 		writeFileSync(
 			join(bin, "gh"),
-			`#!/bin/sh\nprintf '%s\\n' "$*" >> "${asked}"\ncat <<'JSON' | jq -r "$4"\n${pulls}\nJSON\n`
+			`#!/bin/sh\nprintf '%s\\n' "$*" >> "${asked}"\ncat <<'JSON' | jq -r "$5"\n${pulls}\nJSON\n`
 		);
 		chmodSync(join(bin, "gh"), 0o755);
 		writeFileSync(join(bin, "sleep"), "#!/bin/sh\nexit 0\n");
@@ -152,11 +152,15 @@ describe("ci.yml signoff-sha", () => {
 			{ state: over.state ?? "open", base: { ref: over.base ?? "develop" }, head: { sha: over.head ?? SHA } },
 		]);
 
-	test("the head of an open pull request into develop passes", () => {
+	test("the head of an open pull request passes, whatever its base: a stacked pull request is signed off too", () => {
+		for (const base of ["develop", "feature/parent-of-a-stack"]) {
+			const stacked = run(SHA, pull({ base }));
+			expect(stacked.stderr).toBe("");
+			expect(stacked.code).toBe(0);
+		}
 		const ran = run(SHA, pull({}));
-		expect(ran.stderr).toBe("");
-		expect(ran.code).toBe(0);
-		expect(ran.asked).toContain(`repos/o/r/commits/${SHA}/pulls`);
+		// the repo's open pull requests, every page: a head that lives in a fork is listed there too
+		expect(ran.asked).toContain("--paginate repos/o/r/pulls?state=open&per_page=100");
 		expect(ran.asked.trim().split("\n")).toHaveLength(1);
 	});
 
@@ -168,18 +172,18 @@ describe("ci.yml signoff-sha", () => {
 		}
 	});
 
-	test("a commit that heads no open pull request into develop is refused", () => {
+	test("a commit that heads no open pull request is refused", () => {
 		const cases = [
 			"[]",
 			pull({ state: "closed" }),
-			pull({ base: "main" }),
 			// in the pull request, but no longer its head
 			pull({ head: "b".repeat(40) }),
 		];
 		for (const pulls of cases) {
 			const ran = run(SHA, pulls);
 			expect(ran.code).not.toBe(0);
-			expect(ran.stderr).toContain("open pull request into develop");
+			expect(ran.stderr).toContain("the head of an open pull request");
+			expect(ran.stderr).not.toContain("develop");
 			// asked again before giving up: a head pushed seconds ago can be listed late
 			expect(ran.asked.trim().split("\n")).toHaveLength(5);
 		}
