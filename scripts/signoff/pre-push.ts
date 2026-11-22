@@ -1,11 +1,11 @@
 #!/usr/bin/env bun
-import { gitCommonDir, turboCacheEnv } from "./signoff";
+import { checkEnv } from "./signoff";
 /**
  * The pre-push hook (`.pre-commit-config.yaml`): the always-on signoff checks, before anything leaves the machine.
  *
- * Same turbo tasks as `bun run signoff` (derived from `SIGNOFF_CHECKS`, so the two cannot drift) and the same
- * shared turbo cache (`turboCacheEnv`), so the signoff that follows the push replays these results instead of
- * running them a second time. Path-gated checks (`native`, `cpu-guard`) stay with signoff: they need the PR's
+ * Same turbo tasks as `bun run signoff` (derived from `SIGNOFF_CHECKS`, so the two cannot drift) under the same
+ * env (`checkEnv`: `.env.local` keys stripped, the shared turbo cache), so the signoff that follows the push
+ * replays these results instead of running them a second time. Path-gated checks (`native`, `cpu-guard`) stay with signoff: they need the PR's
  * diff base, which a push does not have.
  */
 import { SIGNOFF_CHECKS, type SignoffCheck } from "./signoff-checks";
@@ -24,11 +24,15 @@ export function prePushArgv(checks: readonly SignoffCheck[]): string[] {
 	return ["bunx", "turbo", "run", ...tasks];
 }
 
+/** The env the hook's turbo run gets: signoff's own, never this process's raw env (bun loaded `.env.local` into it). */
+export function prePushEnv(): Record<string, string | undefined> {
+	return checkEnv;
+}
+
 if (import.meta.main) {
-	const env = turboCacheEnv(process.env, await gitCommonDir());
 	const child = Bun.spawn(prePushArgv(SIGNOFF_CHECKS), {
 		cwd: `${import.meta.dir}/../..`,
-		env,
+		env: prePushEnv(),
 		stdio: ["inherit", "inherit", "inherit"],
 	});
 	process.exit(await child.exited);

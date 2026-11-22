@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { prePushArgv } from "./pre-push";
+import { prePushArgv, prePushEnv } from "./pre-push";
+import { checkEnv } from "./signoff";
 import { SIGNOFF_CHECKS, type SignoffCheck } from "./signoff-checks";
 
 const ROOT = join(import.meta.dir, "..", "..");
@@ -30,6 +31,10 @@ describe("prePushArgv", () => {
 });
 
 describe("the pre-push hook", () => {
+	test("runs under signoff's own env (`.env.local` keys stripped, shared turbo cache), so signoff replays what the push ran", () => {
+		expect(prePushEnv()).toBe(checkEnv);
+	});
+
 	test(".pre-commit-config.yaml runs this script at pre-push", async () => {
 		const config = Bun.YAML.parse(await Bun.file(join(ROOT, ".pre-commit-config.yaml")).text()) as {
 			default_install_hook_types?: string[];

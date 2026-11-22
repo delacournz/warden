@@ -312,7 +312,7 @@ export function turboCacheEnv(
 }
 
 /** The absolute git common dir (shared by all worktrees), or null outside a git checkout. */
-export async function gitCommonDir(): Promise<string | null> {
+async function gitCommonDir(): Promise<string | null> {
 	const child = Bun.spawn(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], {
 		cwd: REPO_ROOT,
 		stdout: "pipe",
@@ -322,8 +322,12 @@ export async function gitCommonDir(): Promise<string | null> {
 	return code === 0 ? out.trim() : null;
 }
 
-/** Resolved once: reading and parsing the file per spawned command would be pointless churn. */
-const checkEnv = turboCacheEnv(await ciLikeEnv(), await gitCommonDir());
+/**
+ * The env every check runs under, resolved once (reading and parsing the file per spawned command would be
+ * pointless churn). The pre-push hook spawns with this same object, so the cache entries it writes are the ones
+ * signoff replays.
+ */
+export const checkEnv = turboCacheEnv(await ciLikeEnv(), await gitCommonDir());
 
 /**
  * Run a command; returns its exit code. With no `sink` the user's stdio is attached. With one, stdout
