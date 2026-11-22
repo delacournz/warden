@@ -48,6 +48,14 @@ describe("permission", () => {
 		expect(h.driver.callsOf("permissions")[0]?.opts).toEqual({ bundleId: "other.app" });
 	});
 
+	test("--app that is not an app id is a usage error before anything is driven", async () => {
+		const h = setup();
+		expect(await h.run("permission", "set", "photos=granted", "--app", "other app", "--json")).toBe(1);
+		expect(doc(h.c).error.code).toBe("usage");
+		expect(doc(h.c).error.message).toContain("--app");
+		expect(h.driver.callsOf("permissions")).toEqual([]);
+	});
+
 	test("skipped names come back as warnings", async () => {
 		const h = setup("ios", (call) =>
 			call.method === "permissions"

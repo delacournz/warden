@@ -1,3 +1,4 @@
+import { checkAppId } from "@delacour/warden-core/builds/app-id";
 import { androidTools } from "@delacour/warden-core/providers/android";
 import type { Platform } from "@delacour/warden-core/types";
 import { parseIosRunningApps, parseResumedActivity, pickIosApp } from "@delacour/warden-perf/shared/app-detect";
@@ -52,7 +53,12 @@ export async function resolveApp(
 	device: DeviceRef,
 	flag: string | undefined
 ): Promise<Result<PerfAppRef, UiError>> {
-	if (flag !== undefined && flag !== "") return ok({ id: flag, source: "flag" });
+	if (flag !== undefined && flag !== "") {
+		const checked = checkAppId(flag, device.platform, "--app");
+		return checked.success
+			? ok({ id: flag, source: "flag" })
+			: { success: false, error: uiError("usage", checked.error) };
+	}
 	const found = await detect(ctx, device);
 	if (found.kind === "app") return ok({ id: found.id, source: "foreground" });
 	if (found.kind === "none") {

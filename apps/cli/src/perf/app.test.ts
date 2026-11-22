@@ -41,6 +41,17 @@ describe("foregroundApp", () => {
 });
 
 describe("resolveApp", () => {
+	test("--app that is not an app id for the device's platform is a usage error", async () => {
+		const { c, calls } = setup([]);
+		const r = await resolveApp(c, android, "com.acme shop");
+		expect(r.success).toBe(false);
+		if (!r.success) {
+			expect(r.error.code).toBe("usage");
+			expect(r.error.message).toContain("--app");
+		}
+		expect(calls).toEqual([]);
+	});
+
 	test("--app wins and skips detection", async () => {
 		const { c, calls } = setup([]);
 		const r = await resolveApp(c, ios, "com.acme.shop");

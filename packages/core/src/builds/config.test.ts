@@ -481,6 +481,26 @@ describe("loadProject", () => {
 		expect(loadProject({ start: dir, env, stopAt: dir }).success).toBe(false);
 	});
 
+	test("bundleIdFor: an id that is not an app id is an error naming where it was read", () => {
+		write("app.json", { expo: { name: "a", ios: { bundleIdentifier: "com.my app" }, android: { package: "app" } } });
+		const res = loadProject({ start: dir, env, stopAt: dir });
+		if (!res.success) throw new Error(res.error);
+		const ios = bundleIdFor(res.data, "ios");
+		expect(ios.success).toBe(false);
+		if (!ios.success) expect(ios.error).toContain("expo.ios.bundleIdentifier");
+		const android = bundleIdFor(res.data, "android");
+		expect(android.success).toBe(false);
+		if (!android.success) expect(android.error).toContain("expo.android.package");
+	});
+
+	test("--bundle-id that is not an app id for its platform is an error naming the flag", () => {
+		write("app.json", { expo: { name: "a" } });
+		const res = loadProject({ start: dir, env, stopAt: dir, bundleId: { android: "com.my-app" } });
+		expect(res.success).toBe(false);
+		if (!res.success) expect(res.error).toContain("--bundle-id");
+		expect(loadProject({ start: dir, env, stopAt: dir, bundleId: { ios: "com.my-app" } }).success).toBe(true);
+	});
+
 	test("bundleIdFor", () => {
 		write(JSON_CONFIG_FILE, { projects: [{ name: "a", bundleId: { ios: "x" } }] });
 		const res = loadProject({ start: dir, env });

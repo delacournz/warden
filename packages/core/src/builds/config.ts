@@ -3,6 +3,7 @@ import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } 
 import { err, ok, type Result } from "@delacour/warden-types/result";
 import type { z } from "zod";
 import type { Platform } from "../types";
+import { checkAppId } from "./app-id";
 import {
 	type BuildConfiguration,
 	DEFAULT_EAS_PROFILE,
@@ -409,6 +410,11 @@ function configuredProject(
 export function loadProject(input: LoadProjectInput): Result<Project> {
 	const start = resolve(input.start);
 	const override = input.bundleId ?? {};
+	for (const platform of ["ios", "android"] as const) {
+		const id = override[platform];
+		const checked = id === undefined ? undefined : checkAppId(id, platform, "--bundle-id");
+		if (checked && !checked.success) return checked;
+	}
 	const dirs = ancestors(start, input.stopAt ? resolve(input.stopAt) : undefined);
 	const found = findWardenConfig(start, input.stopAt, input.env, input.overlayDir);
 	if (!found.success) return found;
@@ -579,9 +585,17 @@ const NATIVE_BUNDLE_KEY: Record<Platform, string> = {
 	android: "applicationId in android/app/build.gradle",
 };
 
+/** Where a project's id for `platform` was read from, for an error about it. */
+function bundleIdSource(project: Project, platform: Platform): string {
+	if (project.origin === "config") return `bundleId.${platform} in ${CONFIG_FILE}`;
+	if (project.origin === "react-native") return NATIVE_BUNDLE_KEY[platform];
+	return `${APP_CONFIG_BUNDLE_KEY[platform]} in the app config`;
+}
+
+/** The project's id for `platform`: an error when it has none, or when the one it has is not an app id. */
 export function bundleIdFor(project: Project, platform: Platform): Result<string> {
 	const id = project.bundleId[platform];
-	if (id) return ok(id);
+	if (id) return checkAppId(id, platform, bundleIdSource(project, platform));
 	const fix =
 		project.origin === "config"
 			? `set bundleId.${platform} in ${CONFIG_FILE}`
