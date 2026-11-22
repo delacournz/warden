@@ -1,5 +1,16 @@
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import {
+	existsSync,
+	lstatSync,
+	mkdirSync,
+	readdirSync,
+	readFileSync,
+	realpathSync,
+	renameSync,
+	rmSync,
+	unlinkSync,
+	writeFileSync,
+} from "node:fs";
+import { dirname, join } from "node:path";
 import a11yMd from "../../../skills/warden/references/a11y.md" with { type: "text" };
 import authoringMd from "../../../skills/warden/references/authoring.md" with { type: "text" };
 import perfMd from "../../../skills/warden/references/perf.md" with { type: "text" };
@@ -65,4 +76,37 @@ export function staleSkillFiles(dir: string): { missing: SkillPath[]; outdated: 
 		else if (readFileSync(file, "utf8") !== SKILL_FILES[path]) outdated.push(path);
 	}
 	return { missing, outdated };
+}
+
+/** The folder the skill's files live in: `dir`, or the folder it links to. A link to nothing is removed, so `dir` becomes a real folder. */
+function skillTarget(dir: string): string {
+	try {
+		if (!lstatSync(dir).isSymbolicLink()) return dir;
+	} catch {
+		return dir;
+	}
+	if (existsSync(dir)) return realpathSync(dir);
+	unlinkSync(dir);
+	return dir;
+}
+
+const REFERENCES = "references";
+
+/**
+ * Write the embedded skill folder to `dir` (an agent's `skills/warden`), each file through a temp file + rename.
+ * A `references/*.md` the skill no longer has is removed; any other file there is left alone.
+ */
+export function writeSkillFolder(dir: string): void {
+	const target = skillTarget(dir);
+	for (const path of SKILL_PATHS) {
+		const file = join(target, path);
+		mkdirSync(dirname(file), { recursive: true });
+		const tmp = `${file}.tmp-${process.pid}`;
+		writeFileSync(tmp, SKILL_FILES[path]);
+		renameSync(tmp, file);
+	}
+	const kept = new Set<string>(SKILL_PATHS);
+	for (const name of readdirSync(join(target, REFERENCES))) {
+		if (name.endsWith(".md") && !kept.has(`${REFERENCES}/${name}`)) rmSync(join(target, REFERENCES, name));
+	}
 }

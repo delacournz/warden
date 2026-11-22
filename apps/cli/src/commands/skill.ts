@@ -7,9 +7,11 @@ import {
 	localSkillRoot,
 	realSkillDeps,
 	runner,
+	SKILLS_CLI,
 	type SkillDeps,
 	type SkillsAddOpts,
 	skillsAddArgs,
+	skillsCwd,
 	stageSkillFolder,
 } from "../skill-cli";
 import { releaseRepo } from "../update/release";
@@ -58,7 +60,8 @@ async function install(ctx: CommandContext, deps: SkillDeps, opts: SkillInstallO
 		stageSkillFolder(ctx);
 	}
 	note(ctx, `warden skill: ${cmd.join(" ")}`);
-	return deps.runInteractive(cmd, { stdout: opts.json ? "stderr" : "inherit" });
+	const cwd = skillsCwd(ctx, opts);
+	return deps.runInteractive(cmd, { stdout: opts.json ? "stderr" : "inherit", ...(cwd !== undefined ? { cwd } : {}) });
 }
 
 /** Show or install the warden agent skill. */
@@ -66,7 +69,7 @@ export function createSkillCommand(deps: SkillDeps): Command {
 	return defineCommand({
 		name: "skill",
 		group: "Setup",
-		summary: "the warden agent skill: show (copy/paste) | install (bunx/npx skills add)",
+		summary: "the warden agent skill: show (copy/paste) | install (pinned skills CLI via bunx/npx)",
 		register: (cmd, ctx, done) => {
 			cmd
 				.command("show")
@@ -76,7 +79,7 @@ export function createSkillCommand(deps: SkillDeps): Command {
 				.action((opts) => done(show(ctx, opts.json === true, opts.file)));
 			cmd
 				.command("install")
-				.description("install via `bunx skills add` (npx fallback)")
+				.description(`install via \`bunx ${SKILLS_CLI} add\` (npx fallback)`)
 				.addOption(
 					new Option("--from <source>", "local = this binary's embedded copy; github = the release repo (updatable)")
 						.choices(SOURCES)

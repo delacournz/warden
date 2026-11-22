@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { cpSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Chalk } from "chalk";
 import { RULE_MD, SKILL_FILES, SKILL_PATHS } from "../skill";
@@ -16,10 +16,6 @@ type Setup = {
 	deps: InstallDeps;
 	questions: string[];
 	ui: ScriptedUi;
-	/** argv of every skills CLI invocation */
-	runs: string[][];
-	/** the RunOpts each skills CLI invocation got */
-	runOpts: Array<{ stdout: string } | undefined>;
 };
 
 type SetupOpts = {
@@ -27,10 +23,6 @@ type SetupOpts = {
 	interactive?: boolean;
 	/** scripted confirm answers (undefined = cancelled); default: yes to everything */
 	confirm?: Array<boolean | undefined>;
-	/** `which` results for the skills runner (default: bunx and npx present) */
-	which?: Record<string, string>;
-	/** exit code of the fake skills CLI (default 0) */
-	skillExit?: number;
 };
 
 function setup(argv: string[], opts: SetupOpts = {}): Setup {
@@ -49,26 +41,8 @@ function setup(argv: string[], opts: SetupOpts = {}): Setup {
 		return ask(question, initial);
 	};
 	c.ui = ui;
-	const which = opts.which ?? { bunx: "/opt/bun/bin/bunx", npx: "/usr/bin/npx" };
-	const runs: string[][] = [];
-	const runOpts: Array<{ stdout: string } | undefined> = [];
-	const deps: InstallDeps = {
-		runtime: opts.runtime ?? { kind: "compiled", execPath: binary },
-		skill: {
-			which: (cmd) => which[cmd] ?? null,
-			runInteractive: async (cmd, runOptions) => {
-				runs.push(cmd);
-				runOpts.push(runOptions);
-				const code = opts.skillExit ?? 0;
-				const source = cmd[cmd.indexOf("add") + 1];
-				// the real skills CLI places the staged skill under ~/.claude/skills; do the same
-				if (code === 0 && source)
-					cpSync(join(source, "warden"), join(home, ".claude", "skills", "warden"), { recursive: true });
-				return code;
-			},
-		},
-	};
-	return { c, home, deps, questions, ui, runs, runOpts };
+	const deps: InstallDeps = { runtime: opts.runtime ?? { kind: "compiled", execPath: binary } };
+	return { c, home, deps, questions, ui };
 }
 
 const runInstall = (c: TestContext, deps: InstallDeps) => createInstallCommand(() => deps).run(c);
@@ -397,79 +371,85 @@ describe("warden install", () => {
 	});
 });
 
-describe("warden install (skill via the skills CLI + rule)", () => {
+describe("warden install (skill + rule)", () => {
 	const skillDir = (home: string) => claudeFile(home, "skills", "warden");
-	const stagedRoot = (c: TestContext) => join(c.env.WARDEN_HOME ?? "", "skill");
 	const stepsOf = (c: TestContext): Array<{ step: string; status: string; path: string; detail?: string }> =>
 		JSON.parse(c.stdout.join("\n")).steps;
+	const seedSkill = (dir: string) => {
+		for (const p of SKILL_PATHS) {
+			mkdirSync(join(dir, p, ".."), { recursive: true });
+			writeFileSync(join(dir, p), SKILL_FILES[p]);
+		}
+	};
 
-	test("--claude stages the folder and runs `skills add … -a claude-code`; the rule is written directly", async () => {
+	test("--claude writes the embedded skill folder and the rule itself, running no other program", async () => {
 		const s = setup(["--claude", "--yes", "--json"]);
 		seedClaude(s.home);
 		expect(await runInstall(s.c, s.deps)).toBe(0);
-		expect(s.runs).toEqual([
-			["bunx", "skills", "add", stagedRoot(s.c), "--skill", "warden", "-g", "-a", "claude-code", "-y"],
-		]);
-		for (const p of SKILL_PATHS) expect(read(join(stagedRoot(s.c), "warden", p))).toBe(SKILL_FILES[p]);
-		expect(read(join(skillDir(s.home), "SKILL.md"))).toBe(SKILL_FILES["SKILL.md"]);
+		for (const p of SKILL_PATHS) expect(read(join(skillDir(s.home), p))).toBe(SKILL_FILES[p]);
 		expect(read(claudeFile(s.home, "rules", "warden.md"))).toBe(RULE_MD);
+		expect(existsSync(join(s.c.env.WARDEN_HOME ?? "", "skill"))).toBe(false);
 		const steps = stepsOf(s.c);
 		expect(steps.map((x) => x.step)).toEqual(["binary", "skill", "rule", "settings"]);
 		expect(steps[1]).toMatchObject({ status: "written", path: skillDir(s.home) });
 		expect(steps[2]?.path).toBe(claudeFile(s.home, "rules", "warden.md"));
 	});
 
-	test("--json sends the skills CLI's stdout to stderr; human mode inherits it", async () => {
-		const json = setup(["--claude", "--yes", "--json"]);
-		seedClaude(json.home);
-		await runInstall(json.c, json.deps);
-		expect(json.runOpts).toEqual([{ stdout: "stderr" }]);
-		const human = setup(["--claude", "--yes"]);
-		seedClaude(human.home);
-		await runInstall(human.c, human.deps);
-		expect(human.runOpts).toEqual([{ stdout: "inherit" }]);
-	});
-
-	test("without --yes the command has no -y", async () => {
-		const s = setup(["--claude", "--json"]);
-		seedClaude(s.home);
-		await runInstall(s.c, s.deps);
-		expect(s.runs[0]).not.toContain("-y");
-	});
-
-	test("staging recreates the folder from scratch (drops stale files)", async () => {
+	test("an outdated file is rewritten and a reference the skill no longer has is removed", async () => {
 		const s = setup(["--claude", "--yes", "--json"]);
 		seedClaude(s.home);
-		const old = join(stagedRoot(s.c), "warden", "references", "old.md");
-		mkdirSync(join(old, ".."), { recursive: true });
-		writeFileSync(old, "old");
-		await runInstall(s.c, s.deps);
-		expect(existsSync(old)).toBe(false);
-	});
-
-	test("skill already current on disk → unchanged, skills CLI not run", async () => {
-		const s = setup(["--claude", "--yes", "--json"]);
-		seedClaude(s.home);
-		for (const p of SKILL_PATHS) {
-			mkdirSync(join(skillDir(s.home), p, ".."), { recursive: true });
-			writeFileSync(join(skillDir(s.home), p), SKILL_FILES[p]);
-		}
+		seedSkill(skillDir(s.home));
+		writeFileSync(join(skillDir(s.home), "references", "ui.md"), "old");
+		writeFileSync(join(skillDir(s.home), "references", "gone.md"), "old");
+		writeFileSync(join(skillDir(s.home), "notes.txt"), "mine");
 		expect(await runInstall(s.c, s.deps)).toBe(0);
-		expect(s.runs).toEqual([]);
+		expect(read(join(skillDir(s.home), "references", "ui.md"))).toBe(SKILL_FILES["references/ui.md"]);
+		expect(existsSync(join(skillDir(s.home), "references", "gone.md"))).toBe(false);
+		expect(read(join(skillDir(s.home), "notes.txt"))).toBe("mine");
+		expect(stepsOf(s.c)[1]).toMatchObject({ step: "skill", status: "written" });
+	});
+
+	test("a skill dir that links to a shared folder is updated in place, the link kept", async () => {
+		const s = setup(["--claude", "--yes", "--json"]);
+		seedClaude(s.home);
+		const shared = join(s.home, ".agents", "skills", "warden");
+		mkdirSync(shared, { recursive: true });
+		writeFileSync(join(shared, "SKILL.md"), "old");
+		mkdirSync(claudeFile(s.home, "skills"), { recursive: true });
+		symlinkSync(shared, skillDir(s.home));
+		expect(await runInstall(s.c, s.deps)).toBe(0);
+		expect(lstatSync(skillDir(s.home)).isSymbolicLink()).toBe(true);
+		for (const p of SKILL_PATHS) expect(read(join(shared, p))).toBe(SKILL_FILES[p]);
+	});
+
+	test("a skill dir link whose target is gone is replaced by a real folder", async () => {
+		const s = setup(["--claude", "--yes", "--json"]);
+		seedClaude(s.home);
+		mkdirSync(claudeFile(s.home, "skills"), { recursive: true });
+		symlinkSync(join(s.home, "nowhere"), skillDir(s.home));
+		expect(await runInstall(s.c, s.deps)).toBe(0);
+		expect(lstatSync(skillDir(s.home)).isSymbolicLink()).toBe(false);
+		expect(read(join(skillDir(s.home), "SKILL.md"))).toBe(SKILL_FILES["SKILL.md"]);
+		expect(existsSync(join(s.home, "nowhere"))).toBe(false);
+	});
+
+	test("skill already current on disk → unchanged", async () => {
+		const s = setup(["--claude", "--yes", "--json"]);
+		seedClaude(s.home);
+		seedSkill(skillDir(s.home));
+		expect(await runInstall(s.c, s.deps)).toBe(0);
 		expect(stepsOf(s.c)[1]).toMatchObject({ step: "skill", status: "unchanged" });
 	});
 
-	test("--dry-run runs and stages nothing; detail is the command", async () => {
+	test("--dry-run writes nothing; detail counts the files it would write", async () => {
 		const s = setup(["--claude", "--dry-run", "--json"]);
 		seedClaude(s.home);
 		expect(await runInstall(s.c, s.deps)).toBe(0);
-		expect(s.runs).toEqual([]);
-		expect(existsSync(stagedRoot(s.c))).toBe(false);
+		expect(existsSync(skillDir(s.home))).toBe(false);
 		expect(existsSync(claudeFile(s.home, "rules"))).toBe(false);
 		const step = stepsOf(s.c)[1];
 		expect(step?.status).toBe("dry-run");
-		expect(step?.detail).toContain("bunx skills add");
-		expect(step?.detail).toContain(stagedRoot(s.c));
+		expect(step?.detail).toBe(`would write ${SKILL_PATHS.length} files`);
 	});
 
 	test("--dry-run still diffs the rule", async () => {
@@ -479,32 +459,16 @@ describe("warden install (skill via the skills CLI + rule)", () => {
 		expect(s.c.stdout.join("\n")).toContain(`--- ${claudeFile(s.home, "rules", "warden.md")}`);
 	});
 
-	test("skills CLI failure → step failed with the exit code; other steps still run; exit 1", async () => {
-		const s = setup(["--claude", "--yes", "--json"], { skillExit: 3 });
+	test("a skill folder that cannot be written → step error; other steps still run; exit 1", async () => {
+		const s = setup(["--claude", "--yes", "--json"]);
 		seedClaude(s.home);
+		mkdirSync(claudeFile(s.home, "skills"), { recursive: true });
+		writeFileSync(skillDir(s.home), "a file, not a folder");
 		expect(await runInstall(s.c, s.deps)).toBe(1);
 		const steps = stepsOf(s.c);
-		expect(steps[1]).toMatchObject({ step: "skill", status: "failed" });
-		expect(steps[1]?.detail).toContain("3");
+		expect(steps[1]).toMatchObject({ step: "skill", status: "error" });
 		expect(steps[2]).toMatchObject({ step: "rule", status: "written" });
 		expect(steps[3]).toMatchObject({ step: "settings", status: "written" });
-	});
-
-	test("no bunx → npx --yes", async () => {
-		const s = setup(["--claude", "--yes", "--json"], { which: { npx: "/usr/bin/npx" } });
-		seedClaude(s.home);
-		await runInstall(s.c, s.deps);
-		expect(s.runs[0]?.slice(0, 4)).toEqual(["npx", "--yes", "skills", "add"]);
-	});
-
-	test("neither bunx nor npx → skill skipped with a hint; install carries on, exit 0", async () => {
-		const s = setup(["--claude", "--yes", "--json"], { which: {} });
-		seedClaude(s.home);
-		expect(await runInstall(s.c, s.deps)).toBe(0);
-		const steps = stepsOf(s.c);
-		expect(steps[1]).toMatchObject({ step: "skill", status: "skipped" });
-		expect(steps[1]?.detail).toContain("warden skill show");
-		expect(steps[2]).toMatchObject({ step: "rule", status: "written" });
 	});
 
 	test("second run → rule unchanged", async () => {

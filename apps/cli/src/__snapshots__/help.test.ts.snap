@@ -96,7 +96,7 @@ Setup:
   completion [shell]            print the tab-completion script for zsh / bash /
                                 fish (\`warden install\` sets it up)
   skill                         the warden agent skill: show (copy/paste) |
-                                install (bunx/npx skills add)
+                                install (pinned skills CLI via bunx/npx)
   doctor                        check warden's setup: home, db, device tools,
                                 simulator helper, install method, PATH,
                                 Claude/Codex hooks + skill, stale leases
@@ -4953,7 +4953,8 @@ exports[`help output warden skill --help (and nested subcommands) 1`] = `
 "$ warden skill --help
 Usage: warden skill [options] [command]
 
-the warden agent skill: show (copy/paste) | install (bunx/npx skills add)
+the warden agent skill: show (copy/paste) | install (pinned skills CLI via
+bunx/npx)
 
 Options:
   -h, --help      display help for command
@@ -4961,7 +4962,7 @@ Options:
 Commands:
   show            print SKILL.md to copy/paste (e.g. \`warden skill show |
                   pbcopy\`)
-  install         install via \`bunx skills add\` (npx fallback)
+  install         install via \`bunx skills@1.9.0 add\` (npx fallback)
   help [command]  display help for command
 
 $ warden skill show --help
@@ -4977,7 +4978,7 @@ Options:
 $ warden skill install --help
 Usage: warden skill install [options]
 
-install via \`bunx skills add\` (npx fallback)
+install via \`bunx skills@1.9.0 add\` (npx fallback)
 
 Options:
   --from <source>         local = this binary's embedded copy; github = the
