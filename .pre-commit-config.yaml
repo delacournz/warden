@@ -8,9 +8,11 @@ repos:
         pass_filenames: false
         stages: [pre-commit]
 
-      - id: typecheck
-        name: typecheck
+      # The always-on signoff checks (typecheck, check, test) on the shared turbo cache: the signoff after the
+      # push replays them. scripts/signoff/pre-push.ts derives the tasks from signoff-checks.ts.
+      - id: signoff-checks
+        name: signoff checks (typecheck, check, test)
         language: system
-        entry: bun run typecheck
+        entry: bun scripts/signoff/pre-push.ts
         pass_filenames: false
         stages: [pre-push]

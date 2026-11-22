@@ -8,7 +8,7 @@
 - Turborepo (task orchestration)
 - TypeScript (strict) via `@delacour/warden-tsconfig`
 - Biome (lint + format) via `@delacour/warden-biome-config`
-- prek (git hooks: biome check on commit, typecheck on push)
+- prek (git hooks: biome check on staged files at commit; the always-on signoff checks — typecheck, check, test — at push, on the shared turbo cache)
 
 ## Directory Structure
 
@@ -78,7 +78,7 @@ PostHog only, off unless `VITE_POSTHOG_TOKEN` (`phc_…`) and `VITE_POSTHOG_HOST
 5. TDD — failing test first, run `bun test <path>`
 6. No `any` — use discriminated unions
 7. Biome for lint + format
-8. prek hooks — biome on commit, typecheck on push
+8. prek hooks — biome on staged files at commit, the signoff checks (typecheck, check, test) at push
 
 ## Signoff (local CI)
 

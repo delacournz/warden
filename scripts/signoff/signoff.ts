@@ -312,7 +312,7 @@ export function turboCacheEnv(
 }
 
 /** The absolute git common dir (shared by all worktrees), or null outside a git checkout. */
-async function gitCommonDir(): Promise<string | null> {
+export async function gitCommonDir(): Promise<string | null> {
 	const child = Bun.spawn(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], {
 		cwd: REPO_ROOT,
 		stdout: "pipe",
