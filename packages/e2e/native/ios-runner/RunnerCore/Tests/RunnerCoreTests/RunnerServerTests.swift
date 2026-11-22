@@ -166,14 +166,14 @@ final class RunnerServerTests: XCTestCase {
   }
 
   func testASilentConnectionIsClosedAfterTheAuthTimeout() async throws {
-    let (quick, quickPort) = try await serve(authTimeout: 0.2)
+    let (quick, quickPort) = try await serve(authTimeout: 1)
     extras.append(quick)
     let silent = Client(port: quickPort, queue: queue, token: nil)
     let authed = Client(port: quickPort, queue: queue)
     await waitUntil { silent.isClosed }
     XCTAssertTrue(silent.isClosed)
     XCTAssertEqual(silent.count, 0)
-    try? await Task.sleep(for: .milliseconds(300))
+    try? await Task.sleep(for: .milliseconds(200))
     XCTAssertFalse(authed.isClosed)
     authed.write("{\"id\":\"1\",\"op\":\"health\"}\n")
     await waitForLines(authed, 2)

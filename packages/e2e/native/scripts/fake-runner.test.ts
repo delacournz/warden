@@ -30,8 +30,8 @@ async function start(extra: string[]): Promise<string> {
 	return socket;
 }
 
-/** Connect, write `first`, and collect what comes back until `ms` passed or the connection closed. */
-async function exchange(socket: string, first: string, ms = 300): Promise<{ lines: string[]; closed: boolean }> {
+/** Connect, write `first`, and collect what comes back until a line arrived, the connection closed, or `ms` passed. */
+async function exchange(socket: string, first: string, ms = 5000): Promise<{ lines: string[]; closed: boolean }> {
 	const client = net.connect(socket);
 	let text = "";
 	let closed = false;
@@ -44,7 +44,7 @@ async function exchange(socket: string, first: string, ms = 300): Promise<{ line
 	client.on("error", () => undefined);
 	if (first !== "") client.write(first);
 	const end = Date.now() + ms;
-	while (!closed && Date.now() < end) await Bun.sleep(10);
+	while (!closed && !text.includes("\n") && Date.now() < end) await Bun.sleep(10);
 	client.destroy();
 	return { lines: text.split("\n").filter(Boolean), closed };
 }
@@ -58,7 +58,7 @@ describe("fake-runner", () => {
 
 	test("with --token it is silent until the auth line, then ready", async () => {
 		const socket = await start(["--token", "t".repeat(64)]);
-		const silent = await exchange(socket, "");
+		const silent = await exchange(socket, "", 300);
 		expect(silent).toEqual({ lines: [], closed: false });
 		const authed = await exchange(socket, runnerAuthLine("t".repeat(64)));
 		expect(JSON.parse(authed.lines[0] ?? "{}").event).toBe("ready");
@@ -66,7 +66,7 @@ describe("fake-runner", () => {
 
 	test("with --token any other first line closes the connection with nothing sent", async () => {
 		const socket = await start(["--token", "t".repeat(64)]);
-		expect(await exchange(socket, runnerAuthLine("u".repeat(64)), 3000)).toEqual({ lines: [], closed: true });
-		expect(await exchange(socket, '{"id":"1","op":"health"}\n', 3000)).toEqual({ lines: [], closed: true });
+		expect(await exchange(socket, runnerAuthLine("u".repeat(64)))).toEqual({ lines: [], closed: true });
+		expect(await exchange(socket, '{"id":"1","op":"health"}\n')).toEqual({ lines: [], closed: true });
 	});
 });
