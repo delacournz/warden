@@ -4,16 +4,9 @@
 	"description": "Shared TypeScript configurations",
 	"files": [
 		"tsconfig.base.json",
-		"tsconfig.react.json",
-		"bin"
+		"tsconfig.react.json"
 	],
-	"bin": {
-		"tsc7": "./bin/tsc7.js"
-	},
 	"scripts": {
 		"check": "biome check ."
-	},
-	"dependencies": {
-		"typescript7": "npm:typescript@7.0.2"
 	}
 }

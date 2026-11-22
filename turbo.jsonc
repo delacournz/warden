@@ -28,7 +28,14 @@
 		// workspace dependencies (via `transit`) are covered by default. Anything else a task reads MUST
 		// be declared below as a `$TURBO_ROOT$/…` input or a `<pkg>#transit` dependency. A test that reads
 		// outside its workspace without one replays stale greens: AGENTS.md § Signoff.
-		"typecheck": { "dependsOn": ["transit"], "cache": true, "outputs": [] },
+		// `bun check` is the type checker and the TypeScript it embeds ships with bun, so the root package.json
+		// (`packageManager` pins bun) is an input: without it a bun bump replays greens from the old compiler.
+		"typecheck": {
+			"dependsOn": ["transit"],
+			"cache": true,
+			"outputs": [],
+			"inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/package.json"]
+		},
 		// Biome only reads its own package plus the shared config; no dependency can change its verdict,
 		// so no `transit` edge. `.gitignore` because the shared config sets `vcs.useIgnoreFile`. The
 		// config glob is `*.jsonc`, never `**`: `**` ignores .gitignore and would hash
@@ -43,7 +50,13 @@
 				"$TURBO_ROOT$/.gitignore"
 			]
 		},
-		"test": { "dependsOn": ["transit"], "cache": true, "outputs": [] },
+		// bun is the test runner too: a bun bump (root package.json `packageManager`) must rerun every test.
+		"test": {
+			"dependsOn": ["transit"],
+			"cache": true,
+			"outputs": [],
+			"inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/package.json"]
+		},
 
 		// ---- reads outside the workspace and its declared dependencies ----
 
@@ -54,7 +67,12 @@
 			"dependsOn": ["transit"],
 			"cache": true,
 			"outputs": [],
-			"inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/skills/**", "$TURBO_ROOT$/apps/docs/public/schemas/**"]
+			"inputs": [
+				"$TURBO_DEFAULT$",
+				"$TURBO_ROOT$/package.json",
+				"$TURBO_ROOT$/skills/**",
+				"$TURBO_ROOT$/apps/docs/public/schemas/**"
+			]
 		},
 
 		// ios-runner/stage.test packs the Swift sources `collectRunnerSources` walks (pack.ts) from
@@ -67,6 +85,7 @@
 			"outputs": [],
 			"inputs": [
 				"$TURBO_DEFAULT$",
+				"$TURBO_ROOT$/package.json",
 				"$TURBO_ROOT$/packages/e2e/native/ios-runner/Host/**",
 				"$TURBO_ROOT$/packages/e2e/native/ios-runner/RunnerTests/**",
 				"$TURBO_ROOT$/packages/e2e/native/ios-runner/WardenRunner.xcodeproj/project.pbxproj",
@@ -83,7 +102,11 @@
 			"dependsOn": ["transit"],
 			"cache": true,
 			"outputs": [],
-			"inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/packages/e2e/native/idb-libraries/.warden-idb.json"]
+			"inputs": [
+				"$TURBO_DEFAULT$",
+				"$TURBO_ROOT$/package.json",
+				"$TURBO_ROOT$/packages/e2e/native/idb-libraries/.warden-idb.json"
+			]
 		},
 
 		// landing.test checks each claim's proof file (apps/cli/src, packages/core/src, skills/warden)
@@ -93,26 +116,35 @@
 			"dependsOn": ["transit", "@delacour/warden#transit"],
 			"cache": true,
 			"outputs": [],
-			"inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/skills/**", "$TURBO_ROOT$/docs/bench/**", "$TURBO_ROOT$/turbo.jsonc"]
+			"inputs": [
+				"$TURBO_DEFAULT$",
+				"$TURBO_ROOT$/package.json",
+				"$TURBO_ROOT$/skills/**",
+				"$TURBO_ROOT$/docs/bench/**",
+				"$TURBO_ROOT$/turbo.jsonc"
+			]
 		},
 
 		// apps/example/demos/*.demo.ts import scripts/demo/demo.types, and tsc includes **/*.ts.
 		"@delacour/warden-example#typecheck": {
 			"dependsOn": ["transit", "@delacour/warden-demo#transit"],
 			"cache": true,
-			"outputs": []
+			"outputs": [],
+			"inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/package.json"]
 		},
 
 		// ui-bench.ts imports apps/cli/src/agent-ui/bench; its test imports ui-bench.ts.
 		"@delacour/warden-smoke#typecheck": {
 			"dependsOn": ["transit", "@delacour/warden#transit"],
 			"cache": true,
-			"outputs": []
+			"outputs": [],
+			"inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/package.json"]
 		},
 		"@delacour/warden-smoke#test": {
 			"dependsOn": ["transit", "@delacour/warden#transit"],
 			"cache": true,
-			"outputs": []
+			"outputs": [],
+			"inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/package.json"]
 		},
 
 		// changeset-config.test imports apps/cli/scripts/release and reads every workspace
@@ -121,7 +153,8 @@
 		"@delacour/warden-release#typecheck": {
 			"dependsOn": ["transit", "@delacour/warden#transit"],
 			"cache": true,
-			"outputs": []
+			"outputs": [],
+			"inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/package.json"]
 		},
 		"@delacour/warden-release#test": {
 			"dependsOn": ["transit", "@delacour/warden#transit"],

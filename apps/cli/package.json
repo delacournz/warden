@@ -17,7 +17,7 @@
 		"fmt": "biome format --write ./src ./scripts",
 		"lint": "biome lint --write ./src ./scripts",
 		"check": "biome check ./src ./scripts",
-		"typecheck": "tsc7 --noEmit",
+		"typecheck": "bun check --no-script",
 		"test": "bun test --parallel --timings=test-timings.json --timeout 20000",
 		"test:timings": "bun test --parallel --timings=test-timings.json --timeout 20000 --update-timings",
 		"build:release": "bun scripts/build.ts --channel release",

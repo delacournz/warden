@@ -9,7 +9,7 @@
 		"fmt": "biome format --write .",
 		"lint": "biome lint --write .",
 		"check": "biome check .",
-		"typecheck": "tsc7 --noEmit",
+		"typecheck": "bun check --no-script",
 		"test": "bun test"
 	},
 	"devDependencies": {
