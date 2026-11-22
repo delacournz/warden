@@ -94,6 +94,16 @@ describe("changedFiles git spawns", () => {
 		expect(spawns.map((s) => s.split(" ")[0])).toEqual(["merge-base", "diff", "ls-files"]);
 	});
 
+	test("a base that starts with `-` (or is empty) is not a ref: an error, and git is not run", async () => {
+		const { spawns, exec } = counting();
+		for (const base of ["--all", "-h", ""]) {
+			const res = await changedFiles(exec, dir, base, createGitFactsCache());
+			expect(res.success).toBe(false);
+			if (!res.success) expect(res.error).toContain("not a git ref");
+		}
+		expect(spawns).toEqual([]);
+	});
+
 	test("facts a caller already read are not asked for again", async () => {
 		const { spawns, exec } = counting();
 		const cache = createGitFactsCache();

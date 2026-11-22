@@ -49,6 +49,8 @@ export async function changedFiles(
 		const res = await exec(cmd, { cwd });
 		return res.exitCode === 0 ? ok(res.stdout) : err(execError(cmd, res));
 	};
+	// a ref never starts with `-`: git would read that as an option
+	if (base === "" || base.startsWith("-")) return err(`base "${base}" is not a git ref`);
 	const facts = await readGitFacts(exec, cwd, git);
 	if (!facts) return err(`not a git checkout: ${cwd}`);
 	const mergeBase = await run(["merge-base", base, "HEAD"]);
