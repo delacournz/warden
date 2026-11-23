@@ -1,6 +1,7 @@
 import type { Result } from "@delacour/warden-types/result";
 import { err, ok } from "@delacour/warden-types/result";
 import type { DevReady } from "../commands/dev-ui";
+import type { MenuArea, MenuItem } from "./conditions-menu";
 import type { ActionId, HudPerf } from "./model";
 
 /** Why an effect failed; `code` is set for the failures the actions explain in their own words. */
@@ -44,6 +45,8 @@ export type ActionEffects = {
 	perfMark(info: DevReady, label: string, log: (line: string) => void): FxResult<void>;
 	frames(info: DevReady, log: (line: string) => void): FxResult<void>;
 	report(info: DevReady, log: (line: string) => void): FxResult<void>;
+	/** `warden ui <argv>` on the session's device; resolves with its last output line */
+	condition(info: DevReady, argv: readonly string[], log: (line: string) => void): FxResult<string | undefined>;
 };
 
 /** How actions reach the dashboard: rows, the HUD's perf box and the footer prompt (all pure reducer events behind). */
@@ -433,8 +436,15 @@ export function createActions(deps: ActionDeps) {
 
 	const run = (action: ActionId): Promise<void> => handlers[action]();
 
+	/** A conditions-menu preset (`C`): one shared row, titled with what ran; recorded on the lease, undone on release. */
+	const runCondition = (item: MenuItem, area: MenuArea): Promise<void> =>
+		task("condition", `${area.label}: ${item.label}`, (info, log) => fx.condition(info, item.argv, log)).then(
+			() => undefined
+		);
+
 	return {
 		run,
+		runCondition,
 		submitMark,
 		restartMetro,
 		/** the session `p` is recording, if any */

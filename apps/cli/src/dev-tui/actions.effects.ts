@@ -111,6 +111,16 @@ export function createActionEffects(deps: EffectsDeps): ActionEffects {
 			return done.code === 0 ? ok(path) : failure(stripAnsi(done.err.at(-1) ?? `exit ${done.code}`));
 		},
 
+		async condition(info, argv, log) {
+			const { uiCommand } = await import("../commands/ui");
+			const argvWithDevice = [...argv, info.platform === "ios" ? "--udid" : "--serial", info.deviceId, "--force"];
+			const done = await captured(ctx, (c) => uiCommand.run({ ...c, argv: argvWithDevice }));
+			const lines = [...done.out, ...done.err].map(stripAnsi).filter((line) => line.trim() !== "");
+			if (done.code !== 0) return failure(lines.at(-1) ?? `warden ui ${argv.join(" ")}: exit ${done.code}`);
+			for (const line of lines.slice(0, -1)) log(line);
+			return ok(lines.at(-1));
+		},
+
 		openClient: (log) => deps.host()?.openClient(log).then(toFx) ?? Promise.resolve(needHost()),
 		reinstall: (log) => deps.host()?.reinstall(log).then(toFx) ?? Promise.resolve(needHost()),
 		restartSim: (log) => deps.host()?.restartSim(log).then(toFx) ?? Promise.resolve(needHost()),

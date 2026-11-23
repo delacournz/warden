@@ -1,5 +1,6 @@
 import type { DevReady } from "../commands/dev-ui";
 import { sanitizeLine } from "./ansi";
+import { MENU_ROOT, type MenuState } from "./conditions-menu";
 import { type Action, actionFor, type Key, type PromptEdit } from "./keys";
 import {
 	FLASH_MS,
@@ -35,6 +36,8 @@ export type TuiEvent =
 	| { type: "prompt:open"; label: string }
 	| { type: "prompt:edit"; edit: PromptEdit }
 	| { type: "prompt:close" }
+	/** the conditions menu moved (or closed: undefined) */
+	| { type: "menu"; menu: MenuState | undefined }
 	/** the clock moved: spinners, running durations and the footer flash follow `now` */
 	| { type: "tick"; at: number };
 
@@ -138,6 +141,8 @@ function applyAction(state: TuiState, action: Action): TuiState {
 			return { ...state, redraw: state.redraw + 1 };
 		case "run":
 			return state;
+		case "menu":
+			return { ...state, mode: "menu", menu: MENU_ROOT };
 		case "quit": {
 			if (state.quitting) return state;
 			const stopped = ensureTask({ ...state, quitting: true }, "session", "session");
@@ -241,6 +246,10 @@ export function reduce(state: TuiState, event: TuiEvent): TuiState {
 			return editPrompt(state, event.edit);
 		case "prompt:close":
 			return { ...state, mode: "list", prompt: undefined };
+		case "menu":
+			return event.menu === undefined
+				? { ...state, mode: "list", menu: undefined }
+				: { ...state, mode: "menu", menu: event.menu };
 		case "hud:sample":
 			return { ...state, now: event.at, hud: { ...state.hud, sample: event.sample, fps: event.fps } };
 		case "hud:bundle":

@@ -91,6 +91,7 @@ List mode:
 | `M` | restart Metro on the same port (cache kept) |
 | `c` | restart Metro with `--clear` on the same port |
 | `l` | start or stop streaming device logs into a row |
+| `C` | conditions menu: biometrics, network, location, clock, appearance, keyboard, accessibility, battery (see below) |
 | `p` | start a perf session on this device, or stop the one recording |
 | `P` | start a perf session recording every capture |
 | `m` | add a perf mark: asks for a label in the footer (`Enter` adds, `Esc` cancels) |
@@ -100,6 +101,23 @@ List mode:
 | `?` | key help |
 | `q` `Ctrl-C` | quit: stops Metro and releases the device and port |
 | `Ctrl-L` | redraw |
+
+### Conditions menu
+
+`C` opens a menu of device-condition presets for the session's device. Press an area's letter (or `↑` `↓` and `Enter`), then a preset's letter. Each preset runs the matching `warden ui` command (`b` `m` = `warden ui biometrics match`) with the same rules: network, location, clock and settings presets are recorded on the lease and undone when the session releases the device. On iOS, network and clock reach only an app launched with warden's dylib (see `warden ui network`). The menu stays open on that area, so `b` `e` then `m` enrols and then matches. `Esc` goes back a level, `q` closes it, `Ctrl-C` quits. Every preset has its own row, titled with what ran (`biometrics: match`), and the footer shows its outcome.
+
+| Area | Presets |
+|---|---|
+| `b` biometrics | `e` enroll, `m` match, `f` fail, `u` unenroll, `r` reenroll, `?` status (Android: match, fail and status only) |
+| `n` network | `o` offline, `e` edge, `3` 3g, `l` lte, `s` slow, `x` lossy, `f` flap (10 s up, 3 s down), `r` reset, `?` status |
+| `l` location | `r` city run, `b` city bike, `f` freeway, `x` clear, `?` status |
+| `t` clock | `h` +1 hour, `d` +1 day, `w` +1 week, `m` +30 days, `r` reset, `?` status |
+| `a` appearance | `d` dark, `l` light |
+| `k` keyboard | `s` software, `h` hardware, `t` toggle, `?` status |
+| `y` accessibility | `t` large text, `b` bold text, `c` increased contrast, `m` reduce motion, `r` reset, `?` status |
+| `p` battery | `l` low (10 %, unplugged), `c` charging, `r` reset, `?` status |
+
+Values the menu has no preset for (a point, an ISO time, a locale, a permission) are typed with `warden ui` from another terminal: add `--force` to drive the device the dashboard holds.
 
 Log pane (after `Tab`): `↑` `↓` scroll a line, `PgUp` `PgDn` a page, `g` `G` jump to the top or bottom, `Tab` or `Esc` go back to the list, `q` quits. Help overlay: `Esc`, `?`, `q` or `Enter` close it.
 

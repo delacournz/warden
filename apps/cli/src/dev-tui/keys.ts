@@ -135,6 +135,8 @@ export type Action =
 	| { type: "quit" }
 	| { type: "hud" }
 	| { type: "redraw" }
+	/** open the conditions menu (`C`); the key router walks it */
+	| { type: "menu" }
 	/** run a warden action; the host does the work (`actions.ts`), the reducer ignores it */
 	| { type: "run"; action: ActionId };
 
@@ -215,6 +217,7 @@ export const LIST_BINDINGS: readonly Binding[] = [
 	run("app", "R", "reinstall app", "reinstall"),
 	run("app", "x", "restart sim", "restart-sim"),
 	run("app", "l", "device logs", "logs"),
+	{ label: "C", desc: "conditions", group: "app", match: named("C"), action: { type: "menu" } },
 	run("metro", "M", "restart Metro", "metro-restart"),
 	run("metro", "c", "Metro --clear", "metro-clear"),
 	run("perf", "p", "perf on/off", "perf"),
@@ -269,6 +272,7 @@ const BINDINGS: Record<Mode, readonly Binding[]> = {
 	help: HELP_BINDINGS,
 	interact: INTERACT_BINDINGS,
 	prompt: [],
+	menu: [{ label: "ctrl-c", desc: "quit, release", match: ctrl("c"), action: { type: "quit" } }],
 };
 
 export function actionFor(mode: Mode, k: Key): Action | undefined {
@@ -305,7 +309,7 @@ export const EXPO_KEYS: ReadonlyArray<{ label: string; desc: string }> = [
 /** List-mode hint: the essentials always, the common action keys while they fit. */
 const LIST_HINT = {
 	core: ["↑↓ select", "enter interact"],
-	extras: ["r reload", "s shot", "M metro", "p perf"],
+	extras: ["C conditions", "r reload", "s shot", "M metro", "p perf"],
 	tail: ["? keys", "q quit"],
 };
 
@@ -326,5 +330,7 @@ export function footerHint(mode: Mode, width = Number.POSITIVE_INFINITY): string
 			return "esc close · ctrl-c quit";
 		case "prompt":
 			return "enter add · esc cancel";
+		case "menu":
+			return "letter or ↑↓ enter pick · esc back · q close · ctrl-c quit";
 	}
 }

@@ -240,3 +240,20 @@ describe("reduce: hud:bundle", () => {
 		expect(state.hud.bundle).toEqual({ ms: 1234, modules: 412 });
 	});
 });
+
+describe("conditions menu", () => {
+	test("C in list mode opens the menu at its areas", () => {
+		const state = run([press("C")]);
+		expect(state.mode).toBe("menu");
+		expect(state.menu).toEqual({ area: undefined, index: 0 });
+	});
+
+	test("a menu event moves it; undefined closes it back to list mode", () => {
+		const moved = run([press("C"), { type: "menu", menu: { area: "b", index: 1 } }]);
+		expect(moved.menu).toEqual({ area: "b", index: 1 });
+		expect(moved.mode).toBe("menu");
+		const closed = run([{ type: "menu", menu: undefined }], moved);
+		expect(closed.mode).toBe("list");
+		expect(closed.menu).toBeUndefined();
+	});
+});

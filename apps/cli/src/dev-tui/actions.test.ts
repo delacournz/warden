@@ -107,6 +107,7 @@ function setup(info: DevReady | null = IOS, overrides: Partial<ActionEffects> = 
 		perfMark: (_i, label) => done(`perfMark ${label}`, undefined),
 		frames: () => done("frames", undefined),
 		report: () => done("report", undefined),
+		condition: (_i, argv) => done(`condition ${argv.join(" ")}`, "biometrics: matched"),
 		...overrides,
 	};
 	const actions = createActions({
@@ -497,5 +498,38 @@ describe("dispose", () => {
 		t.actions.dispose();
 		expect(t.calls).toContain("logs stop");
 		expect(t.liveTickers()).toBe(0);
+	});
+});
+
+describe("conditions (C menu)", () => {
+	test("a preset runs as its own row titled with the area and preset; its output is the detail", async () => {
+		const h = setup();
+		await h.actions.runCondition(
+			{ key: "m", label: "match", argv: ["biometrics", "match"] },
+			{ key: "b", label: "biometrics", items: [] }
+		);
+		expect(h.calls).toEqual(["condition biometrics match"]);
+		expect(h.row("action:condition")).toMatchObject({ title: "biometrics: match", status: "ok" });
+		expect(h.row("action:condition")?.log).toContain("biometrics: matched");
+	});
+
+	test("a failed preset fails its row with the verb's error", async () => {
+		const h = setup(IOS, { condition: () => Promise.resolve(fail("E_NETWORK_RELAUNCH: relaunch the app")) });
+		await h.actions.runCondition(
+			{ key: "o", label: "offline", argv: ["network", "set", "offline"] },
+			{ key: "n", label: "network", items: [] }
+		);
+		expect(h.row("action:condition")).toMatchObject({ title: "network: offline", status: "fail" });
+		expect(h.row("action:condition")?.log).toContain("E_NETWORK_RELAUNCH: relaunch the app");
+	});
+
+	test("before the session is ready it is refused in its row", async () => {
+		const h = setup(null);
+		await h.actions.runCondition(
+			{ key: "m", label: "match", argv: ["biometrics", "match"] },
+			{ key: "b", label: "biometrics", items: [] }
+		);
+		expect(h.calls).toEqual([]);
+		expect(h.row("action:condition")?.status).toBe("fail");
 	});
 });

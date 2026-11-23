@@ -199,6 +199,7 @@ export function createDevTui(deps: DevTuiDeps): DevTui {
 		paneRows: () => paneSize().rows,
 		run: (action) => void actions.run(action),
 		submitPrompt: (text) => void actions.submitMark(text),
+		runCondition: (item, area) => void actions.runCondition(item, area),
 	});
 
 	const parser = createKeyParser(routeKey);
