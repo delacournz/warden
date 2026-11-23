@@ -59,6 +59,11 @@ jobs:
           case "$XCODE" in
             *.app) XCODE="$XCODE/Contents/Developer" ;;
           esac
+          # The value becomes a line of $GITHUB_ENV: one absolute path, nothing else.
+          path='^/[A-Za-z0-9._/ -]+$'
+          if [ -n "$XCODE" ] && ! [[ "$XCODE" =~ $path ]]; then
+            echo "xcode must be an absolute path to a developer dir or an Xcode.app" >&2; exit 1
+          fi
           if [ -n "$XCODE" ]; then echo "DEVELOPER_DIR=$XCODE" >> "$GITHUB_ENV"; export DEVELOPER_DIR="$XCODE"; fi
           xcodebuild -version
           xcrun simctl list runtimes

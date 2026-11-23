@@ -2,6 +2,7 @@
 	"name": "@delacour/warden-biome-config",
 	"version": "1.0.0",
 	"description": "Shared Biome configurations",
+	"private": true,
 	"exports": {
 		"./root.jsonc": "./root.jsonc",
 		"./react.jsonc": "./react.jsonc"

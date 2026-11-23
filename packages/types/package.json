@@ -2,6 +2,7 @@
   "name": "@delacour/warden-types",
   "version": "1.0.0",
   "description": "Shared TypeScript utility types",
+  "private": true,
   "type": "module",
   "main": "./src/index.ts",
   "scripts": {

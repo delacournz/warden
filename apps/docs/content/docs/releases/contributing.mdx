@@ -32,7 +32,9 @@ Read this page before you change warden itself: it covers the repo layout, conve
 
 ## Commands
 
-`bun install` needs no token. `@delacournz/otel*` (GitHub Packages, see `bunfig.toml`) is an optional dependency of the docs site: without a classic `read:packages` PAT in `NPM_TOKEN` it is skipped with a `401` warning, and the site builds and runs untraced. Export the token only to trace the docs locally; the Railway deploy has its own.
+`bun install` needs a classic `read:packages` PAT in `NPM_TOKEN`: `@delacournz/cli-telemetry` (GitHub Packages, see `bunfig.toml`) is a dependency of the CLI, and without the token the install stops on its `401`. The design systems and `@delacournz/otel-start` are optional: alone they only warn, and the site runs untraced.
+
+A pull request from a fork gets no registry token, so the `e2e` workflow skips it; a maintainer runs e2e for it after reading the change.
 
 ```bash
 bun run test        # turbo: every package with tests (incl. cross-process race tests)

@@ -38,26 +38,42 @@ permissions:
 # The cancelled run's `signoff` job still settles its pending status as failure, so the old SHA
 # never shows "in progress". Keyed on the ref, not the SHA: two dispatches on one branch with
 # different heads must share a group for the newer to cancel the older.
-# Except develop: a dispatch with `--ref develop` and another PR's SHA is valid (develop's workflow
-# file, the PR's code), so several unrelated PRs can be in flight there at once. Keying develop on
-# the SHA too stops one PR's dispatch from cancelling another's.
+# Except develop: every job skips there (`validate`, below), so a dispatch on develop tests nothing.
+# Keying develop on the SHA too keeps two such skipped runs from cancelling each other.
 concurrency:
   group: ci-${{ github.ref }}${{ github.ref == 'refs/heads/develop' && format('-{0}', inputs.signoff-sha) || '' }}
   cancel-in-progress: true
 
 jobs:
-  # The SHA ends up in API paths and checkout refs; refuse anything but a full hex SHA.
+  # The SHA ends up in API paths and checkout refs; refuse anything but a full hex SHA (the whole
+  # value, not one line of it), and then anything that is not the head of an open pull request in
+  # this repo: the statuses this run writes only ever mean something there. Any base: a stacked pull
+  # request (based on another feature branch, retargeted to develop later) keeps its SHA and its
+  # status through the retarget, so it is signed off here too. The open pull requests are listed
+  # rather than looked up by commit: that lookup leaves out a head that lives in a fork.
   # Skipped on develop/main (see the header), which skips every job after it.
   validate:
     if: github.ref != 'refs/heads/develop' && github.ref != 'refs/heads/main'
     runs-on: ubuntu-24.04
+    permissions:
+      pull-requests: read
     steps:
       - env:
+          GH_TOKEN: ${{ github.token }}
           SHA: ${{ inputs.signoff-sha }}
         run: |
-          if ! echo "$SHA" | grep -Eq '^[0-9a-f]{40}$'; then
-            echo "signoff-sha must be a full 40-char commit SHA, got: $SHA" >&2; exit 1
+          if ! [[ "$SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "signoff-sha must be a full 40-char commit SHA" >&2; exit 1
           fi
+          # Asked up to five times: a head pushed seconds ago (the version PR's) can take a moment to be listed,
+          # and a lookup that fails (the step runs under `bash -e`) is one more try, not the end of the step.
+          for attempt in 1 2 3 4 5; do
+            heads=$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls?state=open&per_page=100" \
+              --jq ".[] | select(.state == \"open\" and .head.sha == \"$SHA\") | .number") || heads=""
+            if [ -n "$heads" ]; then exit 0; fi
+            if [ "$attempt" != 5 ]; then sleep 5; fi
+          done
+          echo "signoff-sha must be the head of an open pull request: $SHA is not" >&2; exit 1
 
   # A dispatched run is bound to the ref it was started on, so the PR's Checks tab shows nothing
   # until the final status lands and the required `signoff` row reads "waiting for status". Post it

@@ -64,7 +64,7 @@ jobs:
           date +%s > "$HOME/job-start"
           echo "== warden job started $(date +%T), hard stop after ${{ inputs.max_minutes }} min"
           export PATH="$HOME/.bun/bin:$PATH"
-          bun --version || (curl -fsSL https://bun.sh/install | bash)
+          bun --version || (curl -fsSL https://bun.sh/install | bash -s "bun-v1.4.3")
       - uses: eas/download_build
         id: download_build
         with:
@@ -122,7 +122,7 @@ jobs:
           date +%s > "$HOME/job-start"
           echo "== argent job started $(date +%T), hard stop after ${{ inputs.max_minutes }} min"
           export PATH="$HOME/.bun/bin:$PATH"
-          bun --version || (curl -fsSL https://bun.sh/install | bash)
+          bun --version || (curl -fsSL https://bun.sh/install | bash -s "bun-v1.4.3")
       - uses: eas/download_build
         id: download_build
         with:
@@ -180,7 +180,7 @@ jobs:
           date +%s > "$HOME/job-start"
           echo "== agent-device job started $(date +%T), hard stop after ${{ inputs.max_minutes }} min"
           export PATH="$HOME/.bun/bin:$PATH"
-          bun --version || (curl -fsSL https://bun.sh/install | bash)
+          bun --version || (curl -fsSL https://bun.sh/install | bash -s "bun-v1.4.3")
       - uses: eas/download_build
         id: download_build
         with:
@@ -238,7 +238,7 @@ jobs:
           date +%s > "$HOME/job-start"
           echo "== tester-army job started $(date +%T), hard stop after ${{ inputs.max_minutes }} min"
           export PATH="$HOME/.bun/bin:$PATH"
-          bun --version || (curl -fsSL https://bun.sh/install | bash)
+          bun --version || (curl -fsSL https://bun.sh/install | bash -s "bun-v1.4.3")
       - uses: eas/download_build
         id: download_build
         with:

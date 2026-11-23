@@ -4,7 +4,10 @@
 #
 # Build context: repo root (the service's `dockerfilePath` in delacour-monorepo's
 # apps/warden/infra/railway.ts, trimmed by the root .dockerignore).
-FROM oven/bun:1.4.3 AS build
+#
+# Both stages are pinned by digest (the tag before the `@` is for the reader; the digest is what is
+# pulled). Dependabot's docker updates move tag and digest together (.github/dependabot.yml).
+FROM oven/bun:1.4.3@sha256:ec06c3b6cea04192ae6770c434f668ca41d343ad19fa6472216c7b48be39c598 AS build
 WORKDIR /repo
 COPY . .
 # The classic `read:packages` PAT bunfig.toml installs `@delacournz/*` with. Railway passes a
@@ -38,7 +41,7 @@ RUN OTEL=node_modules/@delacournz/otel-start && mkdir -p /vendor/node_modules \
 	fi \
 	&& bun build apps/docs/src/server/otel-preload.ts --target bun --outfile /vendor/otel-preload.js
 
-FROM oven/bun:1.4.3-slim
+FROM oven/bun:1.4.3-slim@sha256:14a223fa35747ec728bce300ef85888bc5f7958164d15bbba6a54b22b52a3288
 WORKDIR /app
 COPY --from=build --chown=bun:bun /vendor/node_modules ./node_modules
 COPY --from=build --chown=bun:bun /vendor/otel-preload.js ./otel-preload.js

@@ -1,0 +1,7 @@
+# Changes to what builds, checks and releases warden need a review from an owner.
+/.github/ @UrbanChrisy
+/.claude/ @UrbanChrisy
+/scripts/signoff/ @UrbanChrisy
+/scripts/release/ @UrbanChrisy
+/.changeset/config.json @UrbanChrisy
+/apps/cli/scripts/ @UrbanChrisy

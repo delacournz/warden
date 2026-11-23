@@ -2,6 +2,7 @@
 	"name": "@delacour/warden-tsconfig",
 	"version": "1.0.0",
 	"description": "Shared TypeScript configurations",
+	"private": true,
 	"files": [
 		"tsconfig.base.json",
 		"tsconfig.react.json"
