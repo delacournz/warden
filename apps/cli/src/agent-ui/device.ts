@@ -4,11 +4,11 @@ import { isEmulatorSerial } from "@delacour/warden-core/providers/android";
 import { DEVICE_LOCKED_HINT } from "@delacour/warden-core/providers/unlock-wait";
 import { PRIORITY } from "@delacour/warden-core/queue";
 import { wardenHome } from "@delacour/warden-core/store";
-import { isPhysicalIosId, type Lease, type Owner, type Platform } from "@delacour/warden-core/types";
+import { describeOwner, isPhysicalIosId, type Lease, type Owner, type Platform } from "@delacour/warden-core/types";
 import { err, ok, type Result } from "@delacour/warden-types/result";
 import { claimWithFlags, leasePidFor, parseClaimFlags, parsePlatform, resolveOwner } from "../claim-flags";
 import type { CommandContext } from "../context";
-import { type CallerLease, ensureCallerLease } from "../device-lease";
+import { type CallerLease, type DeviceLeaseError, ensureCallerLease } from "../device-lease";
 import { deviceTarget } from "../hooks/claude-pretool";
 import { awaitPhonesUnlocked, isLockedClaimError, lockedClaimMessage } from "../physical-lock";
 import { AMBIGUOUS_HINT, ambiguousMessage, pickPhysical } from "../physical-pick";
@@ -29,14 +29,14 @@ export type UiDeviceFlags = {
 	platform?: string;
 	profile?: string;
 	runtime?: string;
-	/** drive the device even while a live warden process holds the caller's lease on it */
+	/** drive the device even while a live warden process holds the caller's lease on it, or the user holds it from another shell */
 	force?: boolean;
 	/** with `--claim` and no device named: claim a connected phone (`warden claim --physical`) */
 	physical?: boolean;
 };
 
 /** How `resolveUiDevice` checks the lease: `exclusive` = refuse an own lease a live warden process holds. */
-export type UiLeaseCheck = { exclusive: boolean; pidAlive?: PidAlive };
+export type UiLeaseCheck = { exclusive: boolean; pidAlive?: PidAlive; borrow?: boolean };
 
 /** Where the device came from. */
 export type UiDeviceSource = "flag" | "WARDEN_UDID" | "WARDEN_UDIDS" | "lease" | "claim";
@@ -106,8 +106,15 @@ export function physicalDevice(device: UiDevice): boolean {
 	return (resource.kind === "device" && resource.physical !== undefined) || isPhysicalIosId(device.udid);
 }
 
-export function sharedNote(lease: Lease): string {
+export function sharedNote(device: Pick<UiDevice, "lease" | "action">): string {
+	const { lease } = device;
+	if (device.action === "borrowed") return `borrowing ${lease.id} from ${describeOwner(lease.owner)} (--force)`;
 	return `sharing ${lease.id} with warden dev${lease.pid === undefined ? "" : ` (pid ${lease.pid})`}`;
+}
+
+/** Used beside a holder that keeps the lease (`warden dev`'s shared lease, or one borrowed with `--force`). */
+export function beside(device: Pick<UiDevice, "action">): boolean {
+	return device.action === "attached" || device.action === "borrowed";
 }
 
 /** A shared (`warden dev`) lease whose holding process is alive: `warden ui` attaches to it. */
@@ -222,9 +229,18 @@ async function unlockPhysicalIosForClaim(
 	return unlocked.success ? ok(undefined) : fail(claimError(unlocked.error));
 }
 
-/** The `UiError` for a refused `ensureCallerLease`; only the non-busy/foreign codes hint at `--claim`. */
-function leaseError(error: { code: Parameters<typeof uiError>[0]; message: string }, platform: Platform): UiError {
+/**
+ * The `UiError` for a refused `ensureCallerLease`; only the non-busy/foreign codes hint at `--claim`. A foreign lease
+ * the user holds from another shell hints at `--force` (borrow it) or releasing it.
+ */
+function leaseError(error: DeviceLeaseError, platform: Platform): UiError {
 	const { code, message } = error;
+	if (code === "device_foreign" && error.borrowable) {
+		const release = error.leaseId === undefined ? "warden release <leaseId>" : `warden release ${error.leaseId}`;
+		return uiError(code, message, {
+			hint: `you hold it from another shell: re-run with --force to drive it beside that holder, or ${release} first`,
+		});
+	}
 	return code === "device_foreign" || code === "device_busy"
 		? uiError(code, message)
 		: uiError(code, message, { hint: `add --claim, or run warden claim ${platform} --json` });
@@ -235,6 +251,11 @@ async function undoLeftoverConditions(ctx: CommandContext, platform: Platform, i
 	const { undoOrphansWith } = await import("@delacour/warden-core/conditions/orphans");
 	const report = await undoOrphansWith(ctx.store(), { exec: ctx.exec, env: ctx.env, now: ctx.now }, { platform, id });
 	for (const e of report.errors) ctx.err(`warden: leftover condition on ${id} not undone — ${e}`);
+}
+
+/** The `ensureCallerLease` options a `UiLeaseCheck` sets. */
+function checkOptions(check: UiLeaseCheck): { exclusive: boolean; borrow?: true } {
+	return check.borrow === true ? { exclusive: check.exclusive, borrow: true } : { exclusive: check.exclusive };
 }
 
 /** Prove the caller may use `candidate` (heartbeat / refuse / take over with `--claim`). */
@@ -262,7 +283,7 @@ async function leaseCandidate(
 		home: wardenHome(ctx.env),
 		onNote: (note) => ctx.err(`warden: ${note}`),
 		...(pid !== undefined ? { pid } : {}),
-		exclusive: check.exclusive,
+		...checkOptions(check),
 		...(phone.kind === "phone" ? { physical: phone.physical } : {}),
 	});
 	if (!leased.success) return fail(leaseError(leased.error, platform.data));
@@ -293,7 +314,7 @@ async function leaseCandidate(
 export async function resolveUiDevice(
 	ctx: CommandContext,
 	flags: UiDeviceFlags,
-	check: UiLeaseCheck = { exclusive: flags.force !== true }
+	check: UiLeaseCheck = { exclusive: flags.force !== true, borrow: flags.force === true }
 ): Promise<Result<UiDevice, UiError>> {
 	const owner = resolveOwner(ctx);
 	const named = fromFlags(ctx, flags);

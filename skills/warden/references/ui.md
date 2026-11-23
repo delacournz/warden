@@ -51,7 +51,7 @@ warden ui snapshot -i --udid $U
 3. `WARDEN_UDIDS` with exactly one entry
 4. your single device lease. None: exit 2 (`no_device_leased`); `--claim` claims one (label `warden ui`, 30 m). Several: your live `warden dev` device if exactly one, else `ambiguous_device`.
 
-Every call heartbeats your lease. Another live session's lease: `device_foreign`. Stale or missing: `device_not_leased` unless `--claim`.
+Every call heartbeats your lease. Another live session's lease: `device_foreign` (one you hold from another shell: `--force` borrows it, see below). Stale or missing: `device_not_leased` unless `--claim`.
 
 ## Dev client
 
@@ -74,12 +74,12 @@ Every call heartbeats your lease. Another live session's lease: `device_foreign`
 | `--platform ios\|android` `--profile <slug>` `--runtime <rt>` | choose the device for a `--claim` with none named (default ios) |
 | `--physical` | with `--claim` and no device named: claim a connected phone (`warden claim --physical`) instead of an emulator |
 | `--timeout <ms>` | per-command deadline (default 5000); on iOS `snapshot` and `find` it also ends the wait for a cold accessibility bridge. A timeout fails `failed` (exit 1) with a hint: a cold simulator can need `--timeout 60000` |
-| `--force` | drive the device while your running `warden e2e` / `batch` / `run` holds it (else exit 2 `device_busy`); it disturbs that run. Not needed for your own `warden dev` |
+| `--force` | drive the device while your running `warden e2e` / `batch` / `run` holds it (else exit 2 `device_busy`); it disturbs that run. Not needed for your own `warden dev`. Also borrows a live lease a user holds from another shell (`device_foreign` hint says so): action `borrowed`, `attachedTo` in `--json`, no heartbeat, `close --release` keeps it (`not released: … belongs to user pid N`). Never borrows an agent's or CI's lease |
 | `--json` | one JSON document on stdout: `{ ok, schemaVersion, command, device, generation?, durationMs, result, warnings? }` or `{ ok: false, schemaVersion, command, error: { code, message, hint? } }`; `snapshot`, `press`/`tap`, `fill`, `wait`, `is`, `get`, `open`, `close` publish `https://warden.co.nz/schemas/warden.ui.<verb>/1.json` |
 
 Actions also take `--settle [ms]`: wait for a quiet screen (500 ms unchanged, budget 3000 ms), then print what changed.
 
-Every subcommand also takes `--no-record`: while a `record` is active, this call is not appended to it. `--overwrite` (record start/stop) replaces a file; `--force` is only the busy-device option.
+Every subcommand also takes `--no-record`: while a `record` is active, this call is not appended to it. `--overwrite` (record start/stop) replaces a file; `--force` is only the busy / borrow device option.
 
 ## Snapshot line and generations
 

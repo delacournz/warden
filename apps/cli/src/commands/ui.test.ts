@@ -280,6 +280,50 @@ describe("warden ui on a device a live warden process holds (refuse unless --for
 	const snap = () => snapshotOf(LOGIN);
 });
 
+describe("warden ui --force on a device the user holds from another shell (borrow, never steal)", () => {
+	afterEach(cleanupHarnesses);
+	const shell: Owner = { kind: "user", pid: 17759, cwd: "/m", repo: "app", worktree: "m@feat" };
+	const DEV = { pid: 17759, shared: true, owner: shell };
+	const leaseId = (h: ReturnType<typeof harness>) => h.c.db.listLeases()[0]?.id ?? "";
+
+	test("without --force: exit 2 device_foreign, hint names --force and warden release", async () => {
+		const h = harness(() => snap(), { lease: DEV, pidAlive: () => true });
+		expect(await h.run("snapshot", "--json")).toBe(2);
+		const out = doc(h.c);
+		expect(out.error.code).toBe("device_foreign");
+		expect(out.error.hint).toContain("--force");
+		expect(out.error.hint).toContain(`warden release ${leaseId(h)}`);
+		expect(h.opens.count).toBe(0);
+	});
+
+	test("--force: drives it; --json carries attachedTo; the lease stays the holder's", async () => {
+		const h = harness(() => snap(), { lease: DEV, pidAlive: () => true });
+		const id = leaseId(h);
+		expect(await h.run("snapshot", "--force", "--json")).toBe(0);
+		expect(doc(h.c)).toMatchObject({ ok: true, attachedTo: id });
+		expect(h.c.db.getLease(id)?.owner).toEqual(shell);
+		expect(h.opens.count).toBe(1);
+	});
+
+	test("--force close --release keeps the holder's lease and says so", async () => {
+		const h = harness(() => snap(), { lease: DEV, pidAlive: () => true });
+		const id = leaseId(h);
+		expect(await h.run("close", "--release", "--force", "--json")).toBe(0);
+		const out = doc(h.c);
+		expect(out.result.released).toBe(false);
+		expect(out.warnings.join("\n")).toContain(`not released: ${id} belongs to user pid 17759`);
+		expect(h.c.db.getLease(id)).toBeDefined();
+	});
+
+	test("an agent's lease is never borrowed, even with --force", async () => {
+		const h = harness(() => snap(), { lease: { pid: 4242, owner: other }, pidAlive: () => true });
+		expect(await h.run("snapshot", "--force")).toBe(2);
+		expect(h.opens.count).toBe(0);
+	});
+
+	const snap = () => snapshotOf(LOGIN);
+});
+
 describe("warden ui on the caller's own `warden dev` device (shared lease: attach, don't steal)", () => {
 	afterEach(cleanupHarnesses);
 	const DEV = { pid: 4242, shared: true };

@@ -8,7 +8,7 @@ import type { CommandContext } from "../context";
 import { adbReverseArgv, DEV_CLIENT_ARGS, devClientLaunchArgs } from "../metro";
 import { type ActionOptionValues, finishAction, parseSettle } from "./act";
 import { deviceFacade, viaFacade } from "./controls";
-import { sharedNote, type UiDevice } from "./device";
+import { beside, sharedNote, type UiDevice } from "./device";
 import { fromDriver, type UiDeps } from "./driver";
 import { type UiError, type UiResultOf, type UiSuccess, uiError } from "./output";
 import { runUi, type UiRunEnv } from "./run";
@@ -169,7 +169,7 @@ function bundleText(run: OpenRun, attached: boolean, installed?: KindInstall): s
 	const hint = attached ? " (already running: attached, state kept; --relaunch starts it fresh)" : "";
 	return [
 		`${launchVerb(opts.relaunch === true, attached)} ${what}${metro}${build}${hint}`,
-		...(device.action === "attached" ? [sharedNote(device.lease)] : []),
+		...(beside(device) ? [sharedNote(device)] : []),
 	].join("\n");
 }
 
