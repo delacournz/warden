@@ -65,10 +65,11 @@ jobs:
           if ! [[ "$SHA" =~ ^[0-9a-f]{40}$ ]]; then
             echo "signoff-sha must be a full 40-char commit SHA" >&2; exit 1
           fi
-          # Asked up to five times: a head pushed seconds ago (the version PR's) can take a moment to be listed.
+          # Asked up to five times: a head pushed seconds ago (the version PR's) can take a moment to be listed,
+          # and a lookup that fails (the step runs under `bash -e`) is one more try, not the end of the step.
           for attempt in 1 2 3 4 5; do
             heads=$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls?state=open&per_page=100" \
-              --jq ".[] | select(.state == \"open\" and .head.sha == \"$SHA\") | .number")
+              --jq ".[] | select(.state == \"open\" and .head.sha == \"$SHA\") | .number") || heads=""
             if [ -n "$heads" ]; then exit 0; fi
             if [ "$attempt" != 5 ]; then sleep 5; fi
           done

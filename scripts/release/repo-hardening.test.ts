@@ -124,15 +124,18 @@ describe("ci.yml signoff-sha", () => {
 	const validate = workflow(WORKFLOWS, "ci.yml").jobs.validate;
 	const script = validate?.steps[0]?.run ?? "";
 
-	/** Runs the validate step against a stub `gh` that answers the pulls lookup with `pulls`. */
-	function run(sha: string, pulls: string): Ran & { asked: string } {
+	/**
+	 * Runs the validate step against a stub `gh` that answers the pulls lookup with `pulls`. Its first `failures`
+	 * calls exit 1 with nothing on stdout, as an API error does.
+	 */
+	function run(sha: string, pulls: string, failures = 0): Ran & { asked: string } {
 		const bin = join(tmp, "bin");
 		mkdirSync(bin, { recursive: true });
 		rmSync(join(tmp, "asked"), { force: true });
 		const asked = join(tmp, "asked");
 		writeFileSync(
 			join(bin, "gh"),
-			`#!/bin/sh\nprintf '%s\\n' "$*" >> "${asked}"\ncat <<'JSON' | jq -r "$5"\n${pulls}\nJSON\n`
+			`#!/bin/sh\nprintf '%s\\n' "$*" >> "${asked}"\nif [ "$(wc -l < "${asked}")" -le ${failures} ]; then echo "HTTP 502" >&2; exit 1; fi\ncat <<'JSON' | jq -r "$5"\n${pulls}\nJSON\n`
 		);
 		chmodSync(join(bin, "gh"), 0o755);
 		writeFileSync(join(bin, "sleep"), "#!/bin/sh\nexit 0\n");
@@ -187,6 +190,17 @@ describe("ci.yml signoff-sha", () => {
 			// asked again before giving up: a head pushed seconds ago can be listed late
 			expect(ran.asked.trim().split("\n")).toHaveLength(5);
 		}
+	});
+
+	test("a lookup that fails is asked again, and never counts as an answer", () => {
+		const recovered = run(SHA, pull({}), 2);
+		expect(recovered.code).toBe(0);
+		expect(recovered.asked.trim().split("\n")).toHaveLength(3);
+
+		const down = run(SHA, pull({}), 5);
+		expect(down.code).not.toBe(0);
+		expect(down.asked.trim().split("\n")).toHaveLength(5);
+		expect(down.stderr).toContain("the head of an open pull request");
 	});
 
 	test("the job that asks holds only pull-requests: read", () => {
