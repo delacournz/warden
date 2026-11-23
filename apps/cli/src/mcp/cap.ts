@@ -34,26 +34,43 @@ function cutStrings(value: unknown, max: number, cut: Cut): unknown {
 	return value;
 }
 
+const jsonLength = (value: unknown): number => JSON.stringify(value)?.length ?? 0;
+
 type Holder = Record<string, unknown> | unknown[];
 
 /** One list inside the value: where it hangs, so it can be swapped for a shorter one. */
-type ListRef = { name: string; holder: Holder; key: string | number; list: unknown[] };
+type ListRef = { name: string; holder: Holder; key: string | number; list: unknown[]; depth: number; size: number };
 
-function collectLists(value: unknown, name: string, holder: Holder, key: string | number, into: ListRef[]): void {
+/** Where a value hangs: the name its list gets in a note, what holds it, and how many lists enclose it. */
+type Place = { name: string; holder: Holder; key: string | number; depth: number };
+
+function collectLists(value: unknown, place: Place, into: ListRef[]): void {
 	if (Array.isArray(value)) {
-		if (value.length > 0) into.push({ name, holder, key, list: value });
+		if (value.length > 0) into.push({ ...place, list: value, size: jsonLength(value) });
 		value.forEach((item, index) => {
-			collectLists(item, name, value, index, into);
+			collectLists(item, { name: place.name, holder: value, key: index, depth: place.depth + 1 }, into);
 		});
 		return;
 	}
 	if (value !== null && typeof value === "object") {
 		const record = value as Record<string, unknown>;
-		for (const [childKey, item] of Object.entries(record)) collectLists(item, childKey, record, childKey, into);
+		for (const [key, item] of Object.entries(record)) {
+			collectLists(item, { name: key, holder: record, key, depth: place.depth }, into);
+		}
 	}
 }
 
-const jsonLength = (value: unknown): number => JSON.stringify(value)?.length ?? 0;
+/**
+ * The list to shorten next. A list encloses the lists inside it, so the largest is always the outermost: cutting it
+ * can drop a whole element for the sake of one long list inside. So of the lists able to shed `excess` alone, the
+ * innermost is cut (the largest, between equals); when none can, the largest overall.
+ */
+function pickList(lists: readonly ListRef[], excess: number): ListRef | undefined {
+	const bySize = (a: ListRef, b: ListRef): number => b.size - a.size;
+	const enough = lists.filter((ref) => ref.size >= excess);
+	if (enough.length === 0) return [...lists].sort(bySize)[0];
+	return enough.sort((a, b) => b.depth - a.depth || bySize(a, b))[0];
+}
 
 /** How many elements to drop from the `keep`-opposite end of `list` to shed `excess` characters (all, if it must). */
 function dropCount(list: readonly unknown[], excess: number, keep: Keep): number {
@@ -90,7 +107,7 @@ function markTruncated(value: unknown): void {
 
 /**
  * Bound a tool's data without changing its shape. Data within the limit is returned untouched. Over it, long strings
- * are cut in place, then the largest lists lose elements from the end `keep` does not name until the JSON fits. Keys, scalars and the nesting stay, so the reply still parses
+ * are cut in place, then lists (`pickList`) lose elements from the end `keep` does not name until the JSON fits. Keys, scalars and the nesting stay, so the reply still parses
  * as the tool's result.
  */
 export function capValue(value: unknown, options: CapOptions): Capped {
@@ -107,10 +124,10 @@ export function capValue(value: unknown, options: CapOptions): Capped {
 		const excess = jsonLength(root.value) - maxChars;
 		if (excess <= 0) break;
 		const lists: ListRef[] = [];
-		collectLists(root.value, ROOT, root as Record<string, unknown>, "value", lists);
-		const largest = lists.sort((a, b) => jsonLength(b.list) - jsonLength(a.list))[0];
-		if (largest === undefined) return { fits: false, value: root.value, notes };
-		shorten(largest, excess, options.keep, lengths, notes);
+		collectLists(root.value, { name: ROOT, holder: root as Record<string, unknown>, key: "value", depth: 0 }, lists);
+		const next = pickList(lists, excess);
+		if (next === undefined) return { fits: false, value: root.value, notes };
+		shorten(next, excess, options.keep, lengths, notes);
 	}
 	if (lengths.size > 0) markTruncated(root.value);
 	return { fits: true, value: root.value, notes };

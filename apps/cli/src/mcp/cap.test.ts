@@ -69,6 +69,26 @@ describe("capValue", () => {
 		expect(out.big.length).toBeLessThan(400);
 	});
 
+	test("a list inside a one-element list is the one shortened; the outer element stays", () => {
+		const items = Array.from({ length: 400 }, (_, i) => `${i}:${"t".repeat(500)}`);
+		const capped = capValue({ value: [{ name: "todos", items }] }, { keep: "last" });
+		const out = capped.value as { value: { name: string; items: string[] }[] };
+		expect(capped.fits).toBe(true);
+		expect(out.value).toHaveLength(1);
+		expect(out.value[0]?.name).toBe("todos");
+		expect(out.value[0]?.items.at(-1)).toStartWith("399:");
+		expect(out.value[0]?.items.length).toBeGreaterThan(50);
+		expect(capped.notes).toEqual([`items: the last ${out.value[0]?.items.length} of 400 kept`]);
+	});
+
+	test("rows that each hold a small list lose rows, not their small lists", () => {
+		const lines = Array.from({ length: 400 }, (_, i) => ({ ts: i, text: "y".repeat(500), args: ["a", "b"] }));
+		const capped = capValue({ lines }, { keep: "last" });
+		const out = capped.value as { lines: { args: string[] }[] };
+		expect(out.lines.length).toBeLessThan(400);
+		expect(out.lines.every((line) => line.args.length === 2)).toBe(true);
+	});
+
 	test("nothing left to drop and still too large → does not fit", () => {
 		const value: Record<string, string> = {};
 		for (let i = 0; i < 400; i++) value[`key${i}`] = "u".repeat(500);
