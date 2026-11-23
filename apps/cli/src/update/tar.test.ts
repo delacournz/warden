@@ -34,7 +34,23 @@ describe("extractFile", () => {
 		const result = extractFile(new TextEncoder().encode("nope"), "package/bin/warden");
 		expect(result.success).toBe(false);
 	});
+
+	test("an archive that cannot be read to its end is an error, not a missing file", () => {
+		const tgz = makeTgz([{ name: "package/package.json", content: "{}", sizeField: base256(2) }]);
+		const result = extractFile(tgz, "package/bin/warden");
+		if (result.success) throw new Error("expected an error");
+		expect(result.error).toContain("package/package.json");
+		expect(result.error).toContain("size");
+	});
 });
+
+/** A GNU base-256 size field: the high bit of the first byte set, the value in the bytes after it. */
+function base256(size: number): Uint8Array {
+	const field = new Uint8Array(12);
+	field[0] = 0x80;
+	field[11] = size;
+	return field;
+}
 
 describe("checkPlainTarball", () => {
 	const fail = (tgz: Uint8Array): string => {
@@ -142,6 +158,36 @@ describe("checkPlainTarball", () => {
 				expect(fail(tgz)).toBe(`tarball entry ${name} is outside the archive root`);
 			}
 		}
+	});
+
+	test("an entry whose size is not plain octal is refused, with everything after it unread", () => {
+		const evil = { name: "evil", content: "", type: "2" as const, link: "/etc" };
+		const binary = fail(makeTgz([{ name: "first", content: "xx", sizeField: base256(2) }, evil]));
+		expect(binary).toBe("tarball entry first has a size field that is not octal");
+		const garbage = fail(
+			makeTgz([{ name: "first", content: "xx", sizeField: new TextEncoder().encode("0000002x\0") }, evil])
+		);
+		expect(garbage).toBe("tarball entry first has a size field that is not octal");
+	});
+
+	test("a pax size record is refused", () => {
+		const error = fail(
+			makeTgz([
+				{ name: "PaxHeader", content: paxPath("1024", "size"), type: "x" },
+				{ name: "file", content: "x" },
+			])
+		);
+		expect(error).toBe("tarball entry PaxHeader carries a pax size record");
+	});
+
+	test("an archive cut short, or without its end-of-archive blocks, is refused", () => {
+		expect(fail(makeTgz([{ name: "file", content: "x" }], { end: false }))).toBe(
+			"tarball ends without its end-of-archive blocks"
+		);
+		const long = new TextEncoder().encode(`${(4096).toString(8).padStart(11, "0")}\0`);
+		expect(fail(makeTgz([{ name: "file", content: "x", sizeField: long }]))).toBe(
+			"tarball entry file is longer than the archive"
+		);
 	});
 
 	test("not gzip → error", () => {

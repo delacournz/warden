@@ -30,8 +30,18 @@ function entryName(header: Uint8Array): string {
 
 type Pending = { name?: string; link?: string };
 
-/** Take a header that describes the next entry (pax `x`, GNU `L` / `K`) or none (pax global `g`); false for a real entry. */
-function takeMeta(type: string, body: Uint8Array, pending: Pending): boolean {
+/** An archive this reader cannot follow to its end; `read` turns it into an error result. */
+class TarFormatError extends Error {}
+
+/**
+ * Take a header that describes the next entry (pax `x`, GNU `L` / `K`) or none (pax global `g`); false for a real
+ * entry. A pax `size=` record would move where the next entry starts, so it is an error.
+ */
+function takeMeta(name: string, type: string, body: Uint8Array, pending: Pending): boolean {
+	if (type === "x" || type === "g") {
+		if (paxValue(body, "size") !== undefined)
+			throw new TarFormatError(`tarball entry ${name} carries a pax size record`);
+	}
 	if (type === "x") {
 		pending.name = paxValue(body, "path") ?? pending.name;
 		pending.link = paxValue(body, "linkpath") ?? pending.link;
@@ -40,9 +50,18 @@ function takeMeta(type: string, body: Uint8Array, pending: Pending): boolean {
 	return type === "x" || type === "L" || type === "K" || type === "g";
 }
 
+/** An entry's length from its octal size field. Anything else (a GNU base-256 size, stray bytes) is an error. */
+function entrySize(header: Uint8Array): number {
+	const text = field(header, 124, 12).trim();
+	if (!/^[0-7]*$/.test(text))
+		throw new TarFormatError(`tarball entry ${entryName(header)} has a size field that is not octal`);
+	return text === "" ? 0 : Number.parseInt(text, 8);
+}
+
 /**
  * Every entry of an ustar archive. A pax header's `path=` / `linkpath=` and a GNU long name (`L`) / long link (`K`)
- * apply to the entry after them, as they do when `tar` unpacks it.
+ * apply to the entry after them, as they do when `tar` unpacks it. Throws `TarFormatError` when the archive cannot be
+ * followed to its end-of-archive block: a size that is not octal, an entry longer than the archive, no end block.
  */
 function* entries(tar: Uint8Array): Generator<Entry> {
 	let offset = 0;
@@ -50,13 +69,29 @@ function* entries(tar: Uint8Array): Generator<Entry> {
 	while (offset + BLOCK <= tar.length) {
 		const header = tar.subarray(offset, offset + BLOCK);
 		if (header.every((byte) => byte === 0)) return;
-		const size = Number.parseInt(field(header, 124, 12).trim() || "0", 8);
+		const size = entrySize(header);
 		const type = field(header, 156, 1);
-		const body = tar.subarray(offset + BLOCK, offset + BLOCK + size);
-		offset += BLOCK + Math.ceil(size / BLOCK) * BLOCK;
-		if (takeMeta(type, body, pending)) continue;
+		const start = offset + BLOCK;
+		if (start + size > tar.length)
+			throw new TarFormatError(`tarball entry ${entryName(header)} is longer than the archive`);
+		const body = tar.subarray(start, start + size);
+		offset = start + Math.ceil(size / BLOCK) * BLOCK;
+		if (takeMeta(entryName(header), type, body, pending)) continue;
 		yield { name: pending.name ?? entryName(header), type, link: pending.link ?? field(header, 157, 100), body };
 		pending = {};
+	}
+	throw new TarFormatError("tarball ends without its end-of-archive blocks");
+}
+
+/** Run `work` over a gzipped archive's entries; not gzip, or an archive `entries` cannot follow, is the error. */
+function read<T>(tgz: Uint8Array, work: (entries: Iterable<Entry>) => Result<T>): Result<T> {
+	const tar = gunzip(tgz);
+	if (!tar.success) return tar;
+	try {
+		return work(entries(tar.data));
+	} catch (error) {
+		if (error instanceof TarFormatError) return err(error.message);
+		throw error;
 	}
 }
 
@@ -70,12 +105,12 @@ function gunzip(tgz: Uint8Array): Result<Uint8Array> {
 
 /** One regular file's bytes from a gzipped ustar tarball (what the npm registry serves). */
 export function extractFile(tgz: Uint8Array, path: string): Result<Uint8Array> {
-	const tar = gunzip(tgz);
-	if (!tar.success) return tar;
-	for (const entry of entries(tar.data)) {
-		if ((entry.type === "0" || entry.type === "") && entry.name === path) return ok(entry.body.slice());
-	}
-	return err(`${path} not found in tarball`);
+	return read(tgz, (all) => {
+		for (const entry of all) {
+			if ((entry.type === "0" || entry.type === "") && entry.name === path) return ok(entry.body.slice());
+		}
+		return err(`${path} not found in tarball`);
+	});
 }
 
 const TYPE_NAMES: Record<string, string> = {
@@ -118,14 +153,16 @@ function linkAbove(name: string[], links: ReadonlySet<string>): string | undefin
  * Ok when a gzipped tarball holds only regular files, directories and symbolic links that stay inside it (a macOS
  * framework's `Versions/Current` layout), each at a relative path with no `..` segment and none below a link: what
  * `tar -x` may then unpack without writing, or pointing, outside its target directory. Hard links, devices and FIFOs
- * are refused.
+ * are refused, and so is an archive that cannot be read through to its end-of-archive block.
  */
 export function checkPlainTarball(tgz: Uint8Array): Result<void> {
-	const tar = gunzip(tgz);
-	if (!tar.success) return tar;
+	return read(tgz, checkEntries);
+}
+
+function checkEntries(all: Iterable<Entry>): Result<void> {
 	const names: string[][] = [];
 	const links = new Set<string>();
-	for (const entry of entries(tar.data)) {
+	for (const entry of all) {
 		if (escapes(entry.name)) return err(`tarball entry ${entry.name} is outside the archive root`);
 		const name = segments(entry.name);
 		names.push(name);
