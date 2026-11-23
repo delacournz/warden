@@ -2,7 +2,7 @@ import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { err, ok, type Result } from "@delacour/warden-types/result";
 import type { z } from "zod";
-import { readGitFactsFromDisk } from "../git-facts";
+import { readGitFactsSync } from "../git-facts";
 import type { Platform } from "../types";
 import { checkAppId } from "./app-id";
 import {
@@ -588,8 +588,9 @@ function real(path: string): string {
  * is never picked up.
  */
 function ancestors(start: string, stop: string | undefined, env?: Record<string, string | undefined>): string[] {
-	// read from the checkout's files, no spawn; a setup only git itself can answer for counts as no checkout here
-	const top = stop === undefined ? readGitFactsFromDisk(start, env)?.toplevel : undefined;
+	// read from the checkout's files; git itself is asked only for what they cannot say (`GIT_DIR`-style env,
+	// `core.worktree`, a `config.worktree`, no `.git` found), so a plain checkout spawns nothing
+	const top = stop === undefined ? readGitFactsSync(start, env ? { env } : {})?.toplevel : undefined;
 	if (stop === undefined && top === undefined) return [start];
 	const out: string[] = [];
 	for (let dir = start; ; dir = dirname(dir)) {

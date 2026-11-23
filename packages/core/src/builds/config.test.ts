@@ -524,6 +524,15 @@ describe("the config search without a stopAt", () => {
 		write(JSON_CONFIG_FILE, { projects: [{ name: "b", bundleId: { ios: "com.b" } }] });
 		expect(findWardenConfig(join(repo, "deep", "er"))).toEqual({ success: true, data: undefined });
 	});
+	test("a checkout only git can describe (GIT_DIR set) is still searched up to its root", () => {
+		const repo = join(dir, "repo");
+		mkdirSync(join(repo, "deep", "er"), { recursive: true });
+		expect(Bun.spawnSync(["git", "init", "-q", repo]).exitCode).toBe(0);
+		write(join("repo", JSON_CONFIG_FILE), { projects: [{ name: "a", bundleId: { ios: "com.a" } }] });
+		// the checkout's files are not read with a discovery variable set: git itself answers
+		const found = findWardenConfig(join(repo, "deep", "er"), undefined, { GIT_DIR: join(repo, ".git") });
+		expect(found).toMatchObject({ success: true, data: { rootDir: repo } });
+	});
 });
 
 describe("findWardenConfig: warden.config.ts", () => {
