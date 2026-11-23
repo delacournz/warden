@@ -1,3 +1,4 @@
+import "./zod-jitless";
 import type { LoaderPlugin } from "fumadocs-core/source";
 import { pageSchema } from "fumadocs-core/source/schema";
 
@@ -8,7 +9,7 @@ import { pageSchema } from "fumadocs-core/source/schema";
  */
 export const docsSchema = pageSchema.extend({
 	sidebarTitle: pageSchema.shape.title.optional(),
-	/** fumadocs' `full` is an optional boolean: reused so the docs app needs no direct zod dependency */
+	/** fumadocs' `full` is an optional boolean: reused rather than built from zod's own boolean */
 	simulatorOnly: pageSchema.shape.full,
 });
 

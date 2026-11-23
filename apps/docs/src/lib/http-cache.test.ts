@@ -1,5 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { compressResponse, hostRobotsTag, routeRules, shouldCompress } from "./http-cache";
+import { analyticsConfig } from "./analytics/config";
+import {
+	compressResponse,
+	hostRobotsTag,
+	reportOnlyPolicy,
+	routeRules,
+	routeRulesFor,
+	shouldCompress,
+} from "./http-cache";
 
 const base = {
 	acceptEncoding: "gzip, br",
@@ -69,6 +77,74 @@ describe("routeRules", () => {
 		expect(all["Permissions-Policy"]).toContain("camera=()");
 		expect("Cache-Control" in all).toBe(false);
 		expect("X-Robots-Tag" in all).toBe(false);
+	});
+});
+
+describe("the report-only content security policy", () => {
+	const proxy = "https://i.delacour.co.nz";
+	const header = reportOnlyPolicy(proxy);
+	const parse = (policy: string) =>
+		new Map(
+			policy.split("; ").map((directive) => {
+				const [name, ...sources] = directive.split(" ");
+				return [name, sources] as const;
+			})
+		);
+	const directives = parse(header);
+
+	test("is sent on every response beside the enforced policy, which is unchanged", () => {
+		const headers = routeRulesFor({ VITE_POSTHOG_HOST: proxy })["/**"].headers;
+
+		expect(headers["Content-Security-Policy-Report-Only"]).toBe(header);
+		expect(headers["Content-Security-Policy"]).toBe("frame-ancestors 'self'");
+		expect(routeRules["/**"].headers["Content-Security-Policy"]).toBe("frame-ancestors 'self'");
+	});
+
+	test("allows scripts from the site itself and the inline ones its HTML carries, and nowhere else", () => {
+		expect(directives.get("script-src")).toEqual(["'self'", "'unsafe-inline'"]);
+	});
+
+	test("allows requests to the site and the analytics host only", () => {
+		expect(directives.get("connect-src")).toEqual(["'self'", proxy]);
+	});
+
+	/** The browser SDK posts to `VITE_POSTHOG_HOST`; the policy is built from the same variable, read the same way. */
+	test("allows the host this build's browser SDK is given, whatever it is", () => {
+		for (const host of [proxy, "https://ph.example.test", "https://ph.example.test/ingest/"]) {
+			const env = { VITE_POSTHOG_TOKEN: "phc_test", VITE_POSTHOG_HOST: host };
+			const sdk = analyticsConfig(env).posthog;
+			const policy = parse(routeRulesFor(env)["/**"].headers["Content-Security-Policy-Report-Only"]);
+
+			expect(sdk.kind).toBe("on");
+			expect(policy.get("connect-src")).toEqual(["'self'", sdk.kind === "on" ? sdk.host : ""]);
+		}
+	});
+
+	test("allows requests to the site alone when the build has no analytics host, or one that is not https", () => {
+		for (const env of [
+			{},
+			{ VITE_POSTHOG_HOST: "" },
+			{ VITE_POSTHOG_HOST: "http://i.delacour.co.nz" },
+			{ VITE_POSTHOG_HOST: "not a url; script-src *" },
+		]) {
+			const policy = routeRulesFor(env)["/**"].headers["Content-Security-Policy-Report-Only"];
+
+			expect(parse(policy).get("connect-src")).toEqual(["'self'"]);
+			expect(policy).toBe(reportOnlyPolicy(null));
+		}
+	});
+
+	test("allows the replay recorder's worker, no plugins and no foreign base", () => {
+		expect(directives.get("worker-src")).toEqual(["'self'", "blob:"]);
+		expect(directives.get("object-src")).toEqual(["'none'"]);
+		expect(directives.get("base-uri")).toEqual(["'self'"]);
+	});
+
+	test("names nothing it does not need: no wildcard, no eval, no default-src", () => {
+		expect(header).not.toContain("*");
+		expect(header).not.toContain("unsafe-eval");
+		expect(directives.has("default-src")).toBe(false);
+		expect([...directives.keys()]).toEqual(["script-src", "connect-src", "worker-src", "object-src", "base-uri"]);
 	});
 });
 

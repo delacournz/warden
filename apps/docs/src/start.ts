@@ -4,6 +4,7 @@ import { isMarkdownPreferred } from "fumadocs-core/negotiation";
 import { reportAgentFetch } from "@/lib/analytics/server";
 import { markdownTwinTarget, trailingSlashTarget } from "@/lib/redirects";
 import { docsRoute } from "@/lib/shared";
+import { source } from "@/lib/source";
 
 /** An agent asking for `Accept: text/markdown` on a docs URL is redirected to that page's `.md` twin. */
 const llmMiddleware = createMiddleware().server(({ next, request }) => {
@@ -33,12 +34,14 @@ const csrfMiddleware = createCsrfMiddleware({
 
 /**
  * Counts reads of the Markdown the site serves to agents, see
- * `src/lib/analytics/server.ts`. `llmMiddleware`'s `Accept: text/markdown`
+ * `src/lib/analytics/server.ts`, once the read has been answered: only a `200`
+ * for a page the site has is counted. `llmMiddleware`'s `Accept: text/markdown`
  * redirect is not counted here; the `.md` request it redirects to is.
  */
-const analyticsMiddleware = createMiddleware().server(({ next, request }) => {
-	reportAgentFetch(request);
-	return next();
+const analyticsMiddleware = createMiddleware().server(async ({ next, request }) => {
+	const result = await next();
+	reportAgentFetch(request, result.response, { pageSlugs: (slugs) => source.getPage(slugs)?.slugs ?? null });
+	return result;
 });
 
 export const startInstance = createStart(() => {

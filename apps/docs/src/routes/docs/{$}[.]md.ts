@@ -1,4 +1,4 @@
-import { createFileRoute, notFound } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { redirectSlugs } from "@/lib/redirects";
 import { markdownHeaders } from "@/lib/seo";
 import { decodeMarkdownUrl, encodeMarkdownUrl } from "@/lib/shared";
@@ -13,7 +13,10 @@ export const Route = createFileRoute("/docs/{$}.md")({
 				if (!page) {
 					const moved = redirectSlugs(slugs);
 					if (moved) return Response.redirect(new URL(encodeMarkdownUrl(moved), request.url), 301);
-					throw notFound();
+					return new Response("Not found\n", {
+						status: 404,
+						headers: { "Content-Type": "text/plain; charset=utf-8" },
+					});
 				}
 
 				return new Response(await getLLMText(page), { headers: markdownHeaders(page.slugs) });

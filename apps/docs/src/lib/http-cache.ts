@@ -1,3 +1,4 @@
+import { httpsOrigin } from "./analytics/origin.ts";
 import { siteUrl } from "./shared.ts";
 
 /** Edge-cacheable page policy: browsers revalidate, Railway's edge may serve a shared copy for 5 min then stale for a day. */
@@ -7,38 +8,75 @@ const pageCache = "public, max-age=0, s-maxage=300, stale-while-revalidate=86400
 const staticCache = "public, max-age=86400, s-maxage=604800, stale-while-revalidate=86400";
 
 /**
- * Sent on every response (nitro merges `/**` under each matching rule). Only `frame-ancestors` from
- * CSP: a full policy would have to track PostHog, the demo video and Fumadocs' inline scripts.
+ * The policy the site is being held to before it is enforced, sent as `Content-Security-Policy-Report-Only`:
+ * a browser logs what it would have refused and refuses nothing.
+ *
+ * - `script-src`: the bundled chunks, plus `'unsafe-inline'` for the scripts the HTML carries (the theme
+ *   script, the router's scroll restoration and TanStack Start's hydration stream, whose body is the page's
+ *   own data, so no fixed hash covers it). A nonce is the way to drop it, and needs a header written per
+ *   response rather than here: pages are cached at the edge, and `routeRules` headers are static.
+ * - `connect-src`: the site's own search and server functions, and `analyticsOrigin`, the host the browser
+ *   SDK posts to (`i.delacour.co.nz` on Railway); the site alone in a build with no analytics. External
+ *   script loading is off in `posthog.ts`, so PostHog needs no `script-src` entry.
+ * - `worker-src`: session replay's recorder starts its worker from a `blob:`.
+ * - `object-src` / `base-uri`: the site embeds no plugins and sets no `<base>`.
+ *
+ * No `report-to`: there is no collector, so a violation shows in the browser console only.
  */
-const securityHeaders = {
-	"Strict-Transport-Security": "max-age=63072000; includeSubDomains",
-	"X-Content-Type-Options": "nosniff",
-	"X-Frame-Options": "SAMEORIGIN",
-	"Content-Security-Policy": "frame-ancestors 'self'",
-	"Referrer-Policy": "strict-origin-when-cross-origin",
-	"Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
-} as const;
+export function reportOnlyPolicy(analyticsOrigin: string | null): string {
+	return [
+		"script-src 'self' 'unsafe-inline'",
+		["connect-src 'self'", ...(analyticsOrigin ? [analyticsOrigin] : [])].join(" "),
+		"worker-src 'self' blob:",
+		"object-src 'none'",
+		"base-uri 'self'",
+	].join("; ");
+}
+
+/**
+ * Sent on every response (nitro merges `/**` under each matching rule). The enforced policy is
+ * `frame-ancestors` alone; the rest of a policy is `reportOnlyPolicy`, observed and not yet enforced.
+ */
+function securityHeaders(analyticsOrigin: string | null) {
+	return {
+		"Strict-Transport-Security": "max-age=63072000; includeSubDomains",
+		"X-Content-Type-Options": "nosniff",
+		"X-Frame-Options": "SAMEORIGIN",
+		"Content-Security-Policy": "frame-ancestors 'self'",
+		"Content-Security-Policy-Report-Only": reportOnlyPolicy(analyticsOrigin),
+		"Referrer-Policy": "strict-origin-when-cross-origin",
+		"Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+	} as const;
+}
 
 /**
  * Nitro `routeRules`: security headers everywhere, Cache-Control per route family. `X-Robots-Tag: noindex`
  * keeps the agent-facing text dumps and the raw bench logs, archives and JSON
  * out of search results; crawlers and agents still fetch them. Hashed
  * `/assets/**` already ship `immutable` from nitro.
+ *
+ * `env` is the build's: `connect-src` names the origin of `VITE_POSTHOG_HOST`, the variable `config.ts` gives
+ * the browser SDK, read through the same `httpsOrigin`, so the policy allows the host the SDK posts to.
  */
-export const routeRules = {
-	"/**": { headers: securityHeaders },
-	"/": { headers: { "Cache-Control": pageCache } },
-	"/docs/**": { headers: { "Cache-Control": pageCache, Vary: "Accept" } },
-	"/privacy": { headers: { "Cache-Control": pageCache } },
-	"/llms.txt": { headers: { "Cache-Control": pageCache, "X-Robots-Tag": "noindex" } },
-	"/llms-full.txt": { headers: { "Cache-Control": pageCache, "X-Robots-Tag": "noindex" } },
-	"/robots.txt": { headers: { "Cache-Control": staticCache } },
-	"/sitemap.xml": { headers: { "Cache-Control": staticCache } },
-	"/bench/**": { headers: { "Cache-Control": staticCache, "X-Robots-Tag": "noindex" } },
-	"/demos/**": { headers: { "Cache-Control": staticCache } },
-	"/og/**": { headers: { "Cache-Control": staticCache } },
-	"/favicon.svg": { headers: { "Cache-Control": staticCache } },
-} as const;
+export function routeRulesFor(env: { VITE_POSTHOG_HOST?: string }) {
+	return {
+		"/**": { headers: securityHeaders(httpsOrigin(env.VITE_POSTHOG_HOST)) },
+		"/": { headers: { "Cache-Control": pageCache } },
+		"/docs/**": { headers: { "Cache-Control": pageCache, Vary: "Accept" } },
+		"/privacy": { headers: { "Cache-Control": pageCache } },
+		"/llms.txt": { headers: { "Cache-Control": pageCache, "X-Robots-Tag": "noindex" } },
+		"/llms-full.txt": { headers: { "Cache-Control": pageCache, "X-Robots-Tag": "noindex" } },
+		"/robots.txt": { headers: { "Cache-Control": staticCache } },
+		"/sitemap.xml": { headers: { "Cache-Control": staticCache } },
+		"/bench/**": { headers: { "Cache-Control": staticCache, "X-Robots-Tag": "noindex" } },
+		"/demos/**": { headers: { "Cache-Control": staticCache } },
+		"/og/**": { headers: { "Cache-Control": staticCache } },
+		"/favicon.svg": { headers: { "Cache-Control": staticCache } },
+	} as const;
+}
+
+/** This build's rules, as `vite.config.ts` hands them to nitro. `VITE_*` is in the build's environment (`turbo.jsonc`, the Dockerfile's `ARG`s). */
+export const routeRules = routeRulesFor({ VITE_POSTHOG_HOST: process.env.VITE_POSTHOG_HOST });
 
 /**
  * `noindex` for every host but production: staging (and a local server) serve the same pages, and a crawler that
