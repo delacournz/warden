@@ -2,6 +2,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { Command as Commander } from "@commander-js/extra-typings";
 import { androidTools } from "@delacour/warden-core/providers/android";
+import { adbShellArgv } from "@delacour/warden-core/shell-words";
 import { type Anchor, analyzeFrames, type FramesReport, jankFinding } from "@delacour/warden-perf/frames/analyze";
 import { type GfxInfo, parseGfxinfo } from "@delacour/warden-perf/frames/gfxinfo";
 import type { Finding } from "@delacour/warden-perf/shared/findings.types";
@@ -24,13 +25,8 @@ export type PerfFramesOptions = PerfOptionValues & { reset?: boolean };
 const IOS_UNSUPPORTED_HINT =
 	"the iOS simulator has no frame API; hitches and hangs come from the native trace: warden perf start --native";
 
-const adb = (ctx: CommandContext, serial: string, ...args: string[]): string[] => [
-	androidTools(ctx.env).adb,
-	"-s",
-	serial,
-	"shell",
-	...args,
-];
+const adb = (ctx: CommandContext, serial: string, ...args: string[]): string[] =>
+	adbShellArgv([androidTools(ctx.env).adb, "-s", serial], args);
 
 /** `dumpsys gfxinfo <pkg> framestats`, parsed; undefined when the call fails or the app has no render stats. */
 async function readGfxinfo(ctx: CommandContext, serial: string, pkg: string): Promise<GfxInfo | undefined> {

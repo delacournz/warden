@@ -1,8 +1,10 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { err, ok, type Result } from "@delacour/warden-types/result";
 import type { z } from "zod";
+import { readGitFactsSync } from "../git-facts";
 import type { Platform } from "../types";
+import { checkAppId } from "./app-id";
 import {
 	type BuildConfiguration,
 	DEFAULT_EAS_PROFILE,
@@ -365,7 +367,7 @@ export function findWardenConfig(
 	env: Record<string, string | undefined> = process.env,
 	overlayDir?: string
 ): Result<FoundConfig | undefined> {
-	for (const dir of ancestors(resolve(start), stopAt ? resolve(stopAt) : undefined)) {
+	for (const dir of ancestors(resolve(start), stopAt ? resolve(stopAt) : undefined, env)) {
 		const read = readConfigIn(dir, env);
 		if (!read.success) return read;
 		if (read.data) return ok({ dir, config: read.data.config, source: "repo", rootDir: dir });
@@ -403,13 +405,27 @@ function configuredProject(
 }
 
 /**
+ * A `--bundle-id` override must be an app id for the platform it is given for. Checked where the flag is read
+ * (`projectContext`), not in `loadProject`: ids Expo resolved arrive there the same way, and those are judged per
+ * platform by `bundleIdFor`, which names the app config.
+ */
+export function checkBundleIdFlag(override: Project["bundleId"] = {}): Result<undefined> {
+	for (const platform of ["ios", "android"] as const) {
+		const id = override[platform];
+		const checked = id === undefined ? undefined : checkAppId(id, platform, "--bundle-id");
+		if (checked && !checked.success) return checked;
+	}
+	return ok(undefined);
+}
+
+/**
  * Find the project for `start`: nearest warden config walking up (to `stopAt`), else the
  * `overlayDir` config, else the nearest Expo app (`app.json` / `app.config.*`). `--bundle-id` overrides the configured id.
  */
 export function loadProject(input: LoadProjectInput): Result<Project> {
 	const start = resolve(input.start);
 	const override = input.bundleId ?? {};
-	const dirs = ancestors(start, input.stopAt ? resolve(input.stopAt) : undefined);
+	const dirs = ancestors(start, input.stopAt ? resolve(input.stopAt) : undefined, input.env);
 	const found = findWardenConfig(start, input.stopAt, input.env, input.overlayDir);
 	if (!found.success) return found;
 	const projects = found.data?.config.projects;
@@ -558,12 +574,29 @@ function dynamicConfigVerdict(dir: string): string | undefined | "continue" {
 	return ids.ios === undefined && ids.android === undefined ? dir : undefined;
 }
 
-/** `start` and its parents, up to and including `stop` (or the filesystem root). */
-function ancestors(start: string, stop: string | undefined): string[] {
+function real(path: string): string {
+	try {
+		return realpathSync(path);
+	} catch {
+		return path;
+	}
+}
+
+/**
+ * `start` and its parents, up to and including `stop`. Without a `stop` the search ends at the root of the git
+ * checkout `start` is in, and outside a checkout it is `start` alone: a config in some unrelated parent directory
+ * is never picked up.
+ */
+function ancestors(start: string, stop: string | undefined, env?: Record<string, string | undefined>): string[] {
+	// read from the checkout's files; git itself is asked only for what they cannot say (`GIT_DIR`-style env,
+	// `core.worktree`, a `config.worktree`, no `.git` found), so a plain checkout spawns nothing
+	const top = stop === undefined ? readGitFactsSync(start, env ? { env } : {})?.toplevel : undefined;
+	if (stop === undefined && top === undefined) return [start];
 	const out: string[] = [];
 	for (let dir = start; ; dir = dirname(dir)) {
 		out.push(dir);
-		if (dir === stop || dirname(dir) === dir) return out;
+		// git prints a realpath'd toplevel; `start` may reach it through a link
+		if (dir === stop || (top !== undefined && real(dir) === top) || dirname(dir) === dir) return out;
 	}
 }
 
@@ -579,9 +612,17 @@ const NATIVE_BUNDLE_KEY: Record<Platform, string> = {
 	android: "applicationId in android/app/build.gradle",
 };
 
+/** Where a project's id for `platform` was read from, for an error about it. */
+function bundleIdSource(project: Project, platform: Platform): string {
+	if (project.origin === "config") return `bundleId.${platform} in ${CONFIG_FILE}`;
+	if (project.origin === "react-native") return NATIVE_BUNDLE_KEY[platform];
+	return `${APP_CONFIG_BUNDLE_KEY[platform]} in the app config`;
+}
+
+/** The project's id for `platform`: an error when it has none, or when the one it has is not an app id. */
 export function bundleIdFor(project: Project, platform: Platform): Result<string> {
 	const id = project.bundleId[platform];
-	if (id) return ok(id);
+	if (id) return checkAppId(id, platform, bundleIdSource(project, platform));
 	const fix =
 		project.origin === "config"
 			? `set bundleId.${platform} in ${CONFIG_FILE}`

@@ -5,6 +5,7 @@ import { PENDING_PREFIX } from "../claim";
 import { type Exec, execError } from "../exec";
 import type { PidAlive } from "../liveness";
 import { androidTools, forgetAndroidEmulator } from "../providers/android";
+import { adbShellArgv } from "../shell-words";
 import { type Store, wardenHome } from "../store";
 import type { Lease, Platform } from "../types";
 import {
@@ -95,8 +96,8 @@ function resetCommands(
 			return [
 				[...base, "shell", "settings", "put", "system", "font_scale", "1.0"],
 				[...base, "shell", "settings", "put", "secure", "font_weight_adjustment", "0"],
-				...androidA11yResets(record.value).map((argv) => [...base, "shell", ...argv]),
-				...androidScreenReaderResets(record.value).map((argv) => [...base, "shell", ...argv]),
+				...androidA11yResets(record.value).map((argv) => adbShellArgv(base, argv)),
+				...androidScreenReaderResets(record.value).map((argv) => adbShellArgv(base, argv)),
 			];
 		case "locale":
 			return androidLocaleResets(base, record, deps);
@@ -122,7 +123,7 @@ function androidPasskeyResets(base: string[], previous: PasskeyProviderSettings 
 	const restore = (key: string, value: string | null) =>
 		value === null
 			? [...base, "shell", "settings", "delete", "secure", key]
-			: [...base, "shell", "settings", "put", "secure", key, `'${value}'`];
+			: adbShellArgv(base, ["settings", "put", "secure", key, value]);
 	return [
 		uninstall,
 		restore("credential_service", previous.service),
@@ -153,15 +154,21 @@ function androidKeyboardResets(base: string[], record: ConditionRecord): string[
 	return [
 		...(previous.enabled === ""
 			? []
-			: [[...base, "shell", "settings", "put", "secure", "enabled_input_methods", `'${previous.enabled}'`]]),
+			: [adbShellArgv(base, ["settings", "put", "secure", "enabled_input_methods", previous.enabled])]),
 		...(previous.default === ""
 			? []
-			: [[...base, "shell", "settings", "put", "secure", "default_input_method", previous.default]]),
+			: [adbShellArgv(base, ["settings", "put", "secure", "default_input_method", previous.default])]),
 		...drop,
 	];
 }
 
-/** Android: the timezone back to what it was (or the host's), and the app's locale override removed. */
+/** An IANA timezone id (`Pacific/Auckland`, `Etc/GMT+12`). */
+const TIMEZONE_ID = /^[A-Za-z0-9_/+-]+$/;
+
+/**
+ * Android: the timezone back to what it was (the host's when none was recorded, or the recorded value is not a
+ * timezone id), and the app's locale override removed.
+ */
 function androidLocaleResets(
 	base: readonly string[],
 	record: Extract<ConditionRecord, { area: "locale" }>,
@@ -171,10 +178,11 @@ function androidLocaleResets(
 	const { timezone, previousTimezone, locale, bundleId } = record.value;
 	if (timezone !== undefined) {
 		const host = deps.hostTimezone?.() ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
-		cmds.push([...base, "shell", "cmd", "alarm", "set-timezone", previousTimezone ?? host]);
+		const back = previousTimezone !== undefined && TIMEZONE_ID.test(previousTimezone) ? previousTimezone : host;
+		cmds.push(adbShellArgv(base, ["cmd", "alarm", "set-timezone", back]));
 	}
 	if (locale !== undefined && bundleId !== undefined) {
-		cmds.push([...base, "shell", "cmd", "locale", "set-app-locales", bundleId, "--locales", "''"]);
+		cmds.push(adbShellArgv(base, ["cmd", "locale", "set-app-locales", bundleId, "--locales", ""]));
 	}
 	return cmds;
 }

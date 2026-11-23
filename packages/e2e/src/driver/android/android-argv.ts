@@ -1,4 +1,5 @@
 import type { LatLon } from "@delacour/warden-core/conditions/conditions.types";
+import { shellCommand, shellQuote } from "@delacour/warden-core/shell-words";
 import type { Result } from "@delacour/warden-types/result";
 import { formatCoord } from "../../conditions/geo";
 import type { DriverError, HardwareButton, KeyName, Point } from "../driver.types";
@@ -7,23 +8,9 @@ import type { GesturePlan } from "../gesture-geometry";
 
 /**
  * Pure argv builders for the Android driver. The `string[]` ones run INSIDE the persistent
- * `adb shell` session (joined by `shellCommand`, which quotes every word); `screencapArgv` is a HOST
+ * `adb shell` session (joined by core's `shellCommand`, which quotes every word); `screencapArgv` is a HOST
  * argv: PNG bytes must never go through the text session (use `adb exec-out`, like `batch/screenshot.ts`).
  */
-
-const SAFE_WORD = /^[A-Za-z0-9_@%+=:,./-]+$/;
-
-/** POSIX single-quote a word for the device shell (`'` becomes `'\''`). Safe words stay bare. */
-export function shellQuote(word: string): string {
-	if (word === "") return "''";
-	if (SAFE_WORD.test(word)) return word;
-	return `'${word.replace(/'/g, "'\\''")}'`;
-}
-
-/** One shell command line from an argv. */
-export function shellCommand(argv: readonly string[]): string {
-	return argv.map(shellQuote).join(" ");
-}
 
 const px = (value: number): string => String(Math.round(value));
 

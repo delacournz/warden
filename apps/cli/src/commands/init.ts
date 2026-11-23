@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { DEFAULT_SPECS_DIR } from "@delacour/warden-core/affected/affected.defaults";
+import { checkAppId } from "@delacour/warden-core/builds/app-id";
 import { err, ok, type Result } from "@delacour/warden-types/result";
 import { z } from "zod";
 import { type Command, defineCommand } from "../command";
@@ -76,6 +77,36 @@ function withBundleId(appJson: AppJson, id: string | undefined): AppJson | undef
 	};
 }
 
+/** What to do when `--bundle-id` does not fit a platform init would fill it in for. */
+const FLAG_ID_FIX: Record<InitPlatform, string> = {
+	android:
+		"init fills it in for Android too: pass an id that fits both platforms (com.example.app), or set expo.android.package in app.json first",
+	ios: "init fills it in for iOS too: pass an id that fits both platforms (com.example.app), or set expo.ios.bundleIdentifier in app.json first",
+};
+
+/** `--bundle-id` must be an app id for each platform it would be used for (the ones the app has no id for yet). */
+function checkFlagId(appJson: AppJson | undefined, id: string | undefined): Result<undefined> {
+	if (id === undefined) return ok(undefined);
+	const expo = appJson?.expo ?? {};
+	const missing: InitPlatform[] = [
+		...(expo.ios?.bundleIdentifier ? [] : (["ios"] as const)),
+		...(expo.android?.package ? [] : (["android"] as const)),
+	];
+	for (const platform of missing) {
+		const checked = checkAppId(id, platform, "--bundle-id");
+		if (!checked.success) return err(`${checked.error}. ${FLAG_ID_FIX[platform]}`);
+	}
+	return ok(undefined);
+}
+
+/** The app's `app.json` (if any), once `--bundle-id` is known to fit the platforms it would fill. */
+function readForInit(root: string, id: string | undefined): ReturnType<typeof readAppJson> {
+	const read = readAppJson(root);
+	if (!read.success) return read;
+	const flag = checkFlagId(read.data, id);
+	return flag.success ? read : flag;
+}
+
 type Plan = {
 	app: InitApp;
 	/** relative path → content, in write order */
@@ -91,7 +122,7 @@ const hasSpecs = (dir: string): boolean =>
 
 /** What init would write for the app in `root`. */
 function plan(root: string, opts: InitOpts, platform: InitPlatform): Result<Plan> {
-	const read = readAppJson(root);
+	const read = readForInit(root, opts.bundleId);
 	if (!read.success) return read;
 	const updated = read.data ? withBundleId(read.data, opts.bundleId) : undefined;
 	const expo = (updated ?? read.data)?.expo;

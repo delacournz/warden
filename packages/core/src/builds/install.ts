@@ -5,6 +5,7 @@ import { basename, join } from "node:path";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import { type Exec, execError } from "../exec";
 import { androidTools } from "../providers/android";
+import { adbShellArgv } from "../shell-words";
 import type { Platform } from "../types";
 import { type DeviceIo, installOnPhone, probePhone, uninstallFromPhone } from "./install-device";
 import type { InstalledApp } from "./resolve";
@@ -84,7 +85,7 @@ export function installArgv(target: InstallTarget, appPath: string, env: Install
 export function probeArgv(target: InstallTarget, bundleId: string, env: InstallerDeps["env"]): string[] {
 	return target.platform === "ios"
 		? ["xcrun", "simctl", "get_app_container", target.deviceId, bundleId]
-		: [androidTools(env).adb, "-s", target.deviceId, "shell", "pm", "path", bundleId];
+		: adbShellArgv([androidTools(env).adb, "-s", target.deviceId], ["pm", "path", bundleId]);
 }
 
 /**
@@ -181,7 +182,7 @@ async function androidMatchesArtifact(
 		.find((line) => line.endsWith(".apk"));
 	if (!apk) return ok(false);
 	const [onDevice, cached] = await Promise.all([
-		out(deps, [androidTools(deps.env).adb, "-s", target.deviceId, "shell", "sha256sum", apk]),
+		out(deps, adbShellArgv([androidTools(deps.env).adb, "-s", target.deviceId], ["sha256sum", apk])),
 		(deps.fileDigest ?? nodeFileDigest)(artifactPath),
 	]);
 	const installed = onDevice?.split(/\s+/)[0];
@@ -338,7 +339,7 @@ const DATA_SUBDIRS = ["Documents", "Library/Caches", "Library/Preferences", "tmp
 export function resetArgv(target: InstallTarget, bundleId: string, env: InstallerDeps["env"]): string[] {
 	return target.platform === "ios"
 		? ["xcrun", "simctl", "privacy", target.deviceId, "reset", "all", bundleId]
-		: [androidTools(env).adb, "-s", target.deviceId, "shell", "pm", "clear", bundleId];
+		: adbShellArgv([androidTools(env).adb, "-s", target.deviceId], ["pm", "clear", bundleId]);
 }
 
 /** Remove every entry of `dir` except the container metadata plist. */

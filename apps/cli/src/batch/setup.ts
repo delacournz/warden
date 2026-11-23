@@ -1,11 +1,12 @@
 import { join } from "node:path";
 import type { BatchWorker } from "@delacour/warden-core/batch/schedule";
+import { shellQuote } from "@delacour/warden-core/shell-words";
 import type { SlimProfile } from "@delacour/warden-core/sims/slim.profile";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 
 /** What `warden e2e` runs on each leased device before its first spec. */
 export type DeviceSetupSpec = {
-	/** `sh -c`, `{udid}` substituted */
+	/** `sh -c`, `{udid}` substituted as one shell word */
 	command?: string;
 	/** iOS: switch off the simulator daemons specs never need, before `command`; a profile keeps categories / labels running */
 	slim?: boolean | SlimProfile;
@@ -69,7 +70,9 @@ export async function setupDevices(run: SetupRun): Promise<DeviceSetup[]> {
 			const log = join(run.logDir, `setup-${device.worker}.log`);
 			let proc: Proc;
 			try {
-				proc = run.spawn(["sh", "-c", command.replaceAll("{udid}", device.udid)], {
+				// one shell word, substituted as written (a function: no `$&`-style patterns in the replacement)
+				const udid = shellQuote(device.udid);
+				proc = run.spawn(["sh", "-c", command.replaceAll("{udid}", () => udid)], {
 					env: { ...run.env, WARDEN_UDID: device.udid, WARDEN_WORKER: String(device.worker) },
 					log,
 					cwd: run.cwd,

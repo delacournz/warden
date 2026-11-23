@@ -1,9 +1,10 @@
 import type { Exec } from "@delacour/warden-core/exec";
+import { shellCommand } from "@delacour/warden-core/shell-words";
 import type { DriverError, DriverResult, Logger } from "../driver.types";
 import { driverErr } from "../errors";
 import { addSpanDetail, noteSpanDetail } from "../span-detail";
 import type { AdbSession } from "./adb-session";
-import { dumpFileCommand, dumpStdoutArgv, dumpTtyHostArgv, shellCommand } from "./android-argv";
+import { dumpFileCommand, dumpStdoutArgv, dumpTtyHostArgv } from "./android-argv";
 
 /**
  * Fetching a `uiautomator dump`. Images disagree on where the XML may go (on the Pixel 10 AVD

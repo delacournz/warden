@@ -1,3 +1,4 @@
+import { checkAppId } from "@delacour/warden-core/builds/app-id";
 import type { Driver } from "@delacour/warden-e2e/driver/driver.types";
 import type { Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
@@ -78,7 +79,7 @@ export async function runUi<C extends string>(
 	ctx: CommandContext,
 	deps: UiDeps,
 	command: C,
-	opts: UiOptionValues,
+	opts: UiOptionValues & { app?: string | boolean },
 	work: (device: UiDevice, env: UiRunEnv) => Promise<Result<UiSuccess<UiResultOf<C>>, UiError>>
 ): Promise<UiExitCode> {
 	const report = { command, json: opts.json === true, startedAt: ctx.now() };
@@ -93,6 +94,9 @@ export async function runUi<C extends string>(
 		});
 		if (!device.success) return reportError(ctx, report, device.error);
 		const info = { udid: device.data.udid, platform: device.data.platform, name: device.data.name };
+		// a subcommand's `--app <id>` names an app on this device: checked once here, for every subcommand
+		const app = typeof opts.app === "string" ? checkAppId(opts.app, device.data.platform, "--app") : undefined;
+		if (app && !app.success) return reportError(ctx, report, uiError("usage", app.error), info);
 		let opened: Promise<Result<Driver, UiError>> | undefined;
 		const udid = device.data.udid;
 		const driver = () => {

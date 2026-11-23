@@ -76,16 +76,17 @@ export function androidA11yResets(record: A11yCondition): string[][] {
 	return resets;
 }
 
-/** `'…'` for a remote shell: an Android service component can hold `$` (inner classes). */
-const shellQuote = (value: string): string => `'${value.replaceAll("'", `'\\''`)}'`;
-
 /** Android setting names TalkBack mode writes. */
 export const ANDROID_SERVICES_KEY = "enabled_accessibility_services";
 export const ANDROID_A11Y_ENABLED_KEY = "accessibility_enabled";
 
-/** The `settings` argv (no `adb shell` prefix) that sets a secure key to `value`, or deletes it when it was unset. */
+/**
+ * The `settings` words (no `adb shell` prefix, unquoted) that set a secure key to `value`, or delete it when it was
+ * unset. A service component can hold `$` (inner classes): the caller quotes the words for the device's shell
+ * (`adbShellArgv`, or `shellCommand` inside a session).
+ */
 export function androidSecureRestoreArgv(key: string, value: string | null): string[] {
-	return value === null ? ["settings", "delete", "secure", key] : ["settings", "put", "secure", key, shellQuote(value)];
+	return value === null ? ["settings", "delete", "secure", key] : ["settings", "put", "secure", key, value];
 }
 
 /**

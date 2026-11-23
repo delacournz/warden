@@ -921,6 +921,8 @@ describe("warden batch", () => {
 					},
 				},
 			});
+			// a checkout: the preset is found from a subdirectory up to its root
+			expect(Bun.spawnSync(["git", "init", "-q", configDir]).exitCode).toBe(0);
 			c.cwd = join(configDir, "sub");
 			mkdirSync(c.cwd);
 			c.argv = ["p", "--retry", "0", "--jobs", "bad", "--serve-ready", "file:cli-ready", "--", "cli", "{job}"];

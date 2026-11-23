@@ -89,7 +89,7 @@ Claim devices, run a command with `WARDEN_UDIDS` set, release on exit. Takes eve
 | `--app` | install the project's app on each device first |
 | `--project <dir>` | `--app`: project directory (default: cwd) |
 | `--variant <name>` | `--app`: install this `projects[].variants` build (`dev`, `e2e`…) |
-| `--bundle-id <id>` | `--app`: override the bundle id / package |
+| `--bundle-id <id>` | `--app`: override the bundle id / package. Must be an app id for the platform (Android: `com.example.app`, two or more dot-separated segments of letters, digits and `_`, each starting with a letter; iOS: letters, digits, `.` and `-`) |
 | `--variant <name>` | `--app`: install this `projects[].variants` build (`dev`, `e2e`…) |
 | `--no-eas` / `--no-build` | `--app`: skip EAS downloads / local builds |
 | `--install-mode <clean\|reinstall>` | `--app`: `clean` = fresh app data each run without reinstalling an unchanged build (falls back to reinstall if the reset fails); `reinstall` = uninstall + install each run. Default: install only when the build differs |
@@ -143,7 +143,7 @@ List the specs of `e2e.<suite>` (optional with one suite) that the changes since
 
 | Flag | |
 |---|---|
-| `--base <ref>` | compare against this ref (default: the suite's `base`, `main`) |
+| `--base <ref>` | compare against this ref (default: the suite's `base`, `main`); a value starting with `-` is not a ref |
 | `--platform <platform>` | `ios \| android` (default: the suite's `platform`, else both) |
 | `--files <list>` | comma-separated changed files (relative to cwd) instead of git |
 | `--required-only` | only `required` specs |
@@ -377,7 +377,7 @@ The worktree-friendly `expo run:*`; the platform defaults to `ios`. Before leasi
 
 Metro counts as ready (`--ready-timeout`, default `2m`) only once `/status` on that port is proven to serve **this** project root (the `X-React-Native-Project-Root` header, else the listening process's cwd). Another checkout's Metro on the port fails the command with `port <p> is served by <dir>, not this worktree` instead of being attached to.
 
-Then the dev client is opened on the device: iOS relaunches the app with `--initialUrl <metroUrl>` (no "Open in …?" alert); Android runs `adb reverse` and opens `exp+<slug>://expo-development-client/?url=…` (`--scheme` to override). `--no-open` skips this. `--json` prints one line `{ udid, port, metroUrl, leaseIds }` on stdout once Metro is ready (Metro's own output goes to stderr). The device and port stay leased (heartbeat every 30 s) until Metro exits; Ctrl-C stops Metro and releases what it leased. `--no-eas`, `--no-build`, `--install-mode`, `--reset-keychain`, `--project`, `--bundle-id`. `--headless` closes the claimed sim's window and gives Metro `WARDEN_HEADLESS=1`; dev is headless only with the flag (config `headless` and `WARDEN_HEADLESS` don't apply).
+Then the dev client is opened on the device: iOS relaunches the app with `--initialUrl <metroUrl>` (no "Open in …?" alert); Android runs `adb reverse` and opens `exp+<slug>://expo-development-client/?url=…` (`--scheme` to override; a scheme is a letter, then letters, digits, `+`, `.`, `-` or `_`). `--no-open` skips this. `--json` prints one line `{ udid, port, metroUrl, leaseIds }` on stdout once Metro is ready (Metro's own output goes to stderr). The device and port stay leased (heartbeat every 30 s) until Metro exits; Ctrl-C stops Metro and releases what it leased. `--no-eas`, `--no-build`, `--install-mode`, `--reset-keychain`, `--project`, `--bundle-id`. `--headless` closes the claimed sim's window and gives Metro `WARDEN_HEADLESS=1`; dev is headless only with the flag (config `headless` and `WARDEN_HEADLESS` don't apply).
 
 On an interactive terminal it draws a dashboard (task rows, live output, Metro's terminal, a perf HUD and action keys; [guide](/docs/sims/dev#dashboard)). `--no-tui` or `WARDEN_TUI=0` prints plain lines with Metro on the terminal instead; `--json` and non-terminal output are always plain. The HUD and the devtools broker are off by default: `--hud` / `--devtools` start them, and `warden dev enable|disable <hud|perf|devtools|all>` flips them on a running session (`warden dev status` reads them). `--hud-interval <duration>` sets the HUD's sampling interval (default `1s`, at least `200ms`). `--no-shutdown` leaves the simulator dev booted running when dev ends. Session logs go to `$WARDEN_HOME/dev/<leaseId>/`, which `warden gc` sweeps once the lease is gone and the files are 24 h old.
 
@@ -495,7 +495,7 @@ Device-bound subcommands take the `warden ui` options (`--udid`, `--serial`, `--
 
 | Option | Effect |
 |---|---|
-| `--app <id>` | bundle id (iOS) / package (Android). Default: the foreground app (iOS: the one running non-Apple app), then the app in `warden.config.ts` |
+| `--app <id>` | bundle id (iOS) / package (Android). Default: the foreground app (iOS: the one running non-Apple app), then the app in `warden.config.ts`. An id that is not an app id for the device's platform is a `usage` error |
 | `--allow-mutate-foreign` | let a mutating step act on a device someone else holds. Refused (`device_busy`) while a live warden process (`e2e`, `batch`, `run`, `dev`) holds the lease |
 
 Which device: `--udid\|--serial\|--lease`, `WARDEN_UDID`, a single `WARDEN_UDIDS`, your only device lease, then the only booted device warden knows (created by warden, or leased). Several candidates exit 2 with `ambiguous_device` and list them (udid, name, holder, foreground app). A device warden does not know exits 2 with `device_unknown`: perf never attaches to foreign devices.

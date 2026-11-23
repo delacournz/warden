@@ -1,4 +1,5 @@
 import type { Exec } from "@delacour/warden-core/exec";
+import { shellCommand } from "@delacour/warden-core/shell-words";
 import type { AppCommands, DriverResult, Logger } from "../driver.types";
 import { driverErr } from "../errors";
 import { noteSpanDetail } from "../span-detail";
@@ -11,7 +12,6 @@ import {
 	pmClearArgv,
 	pmPathArgv,
 	resolveLauncherArgv,
-	shellCommand,
 	startComponentArgv,
 	startUrlArgv,
 	uninstallArgv,

@@ -2,6 +2,7 @@ import { copyFileSync, mkdirSync, readdirSync, statSync, writeFileSync } from "n
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { Exec, ExecResult } from "@delacour/warden-core/exec";
+import { adbShellArgv } from "@delacour/warden-core/shell-words";
 import { androidTail, iosTail, unresolvedShare } from "./native-log-tail";
 
 export const NATIVE_LOG = "native.log";
@@ -184,7 +185,7 @@ async function androidNativeLog(
 ): Promise<NativeCapture> {
 	const capture: NativeCapture = { files: [], problems: [], tail: [] };
 	const adb = (...args: string[]) => deps.exec([deps.adb, "-s", target.serial, ...args], { timeoutMs });
-	const pid = await adb("shell", "pidof", target.pkg);
+	const pid = await deps.exec(adbShellArgv([deps.adb, "-s", target.serial], ["pidof", target.pkg]), { timeoutMs });
 	const pidArg =
 		pid.exitCode === 0 && /^\d+/.test(pid.stdout.trim()) ? [`--pid=${pid.stdout.trim().split(/\s+/)[0]}`] : [];
 	const since = ((win.sinceMs - SLACK_S * 1000) / 1000).toFixed(3);

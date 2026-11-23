@@ -9,6 +9,7 @@ import { e2eSuiteSchema, perfConfigSchema } from "../affected/affected.schema";
 import { batchPresetSchema, RESERVED_PRESET_NAMES, reclaimSchema, slimConfigSchema } from "../batch/preset.schema";
 import { conditionsConfigSchema } from "../conditions/conditions.config";
 import { validateProfile } from "../sims/slim.profile";
+import { IOS_BUNDLE_ID } from "./app-id";
 import type { AppOption } from "./app-option.schema";
 import { DEFAULT_EAS_PROFILE } from "./builds.defaults";
 
@@ -96,7 +97,7 @@ export const projectConfigSchema = z
 						/** replaces the bundle id on a phone (the project's own may belong to another Apple team); also what specs see as `WARDEN_BUNDLE_ID` there */
 						bundleIdentifier: z
 							.string()
-							.regex(/^[A-Za-z0-9][A-Za-z0-9.-]*$/, "a bundle id is letters, digits, dots and hyphens")
+							.regex(IOS_BUNDLE_ID, "a bundle id is letters, digits, dots and hyphens")
 							.optional(),
 					})
 					.strict()
@@ -214,10 +215,7 @@ export const wardenConfigSchema = z
 					.regex(/^[A-Z0-9]{10}$/, "a team id is 10 uppercase letters or digits")
 					.optional(),
 				/** bundle id of the runner app; default `nz.co.delacour.warden.runner.<team id, lower case>` */
-				runnerBundleId: z
-					.string()
-					.regex(/^[A-Za-z0-9][A-Za-z0-9.-]*$/, "a bundle id is letters, digits, dots and hyphens")
-					.optional(),
+				runnerBundleId: z.string().regex(IOS_BUNDLE_ID, "a bundle id is letters, digits, dots and hyphens").optional(),
 			})
 			.strict()
 			.optional(),

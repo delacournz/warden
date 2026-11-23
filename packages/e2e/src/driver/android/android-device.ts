@@ -1,7 +1,8 @@
+import { shellCommand } from "@delacour/warden-core/shell-words";
 import type { DriverResult, Logger, Orientation, ScreenInfo } from "../driver.types";
 import { driverErr } from "../errors";
 import type { AdbSession } from "./adb-session";
-import { getpropArgv, type RotationValue, shellCommand, WM_DENSITY_ARGV, WM_SIZE_ARGV } from "./android-argv";
+import { getpropArgv, type RotationValue, WM_DENSITY_ARGV, WM_SIZE_ARGV } from "./android-argv";
 import { PHONE_PROBE_TAIL, type PhoneFacts, parsePhoneFacts } from "./android-phone";
 
 /** Device facts read once at open: boot flag, screen size/density. Pure parsers + small session helpers. */

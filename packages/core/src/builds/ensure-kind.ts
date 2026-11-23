@@ -199,6 +199,9 @@ function writeRegistered(file: string, udids: readonly string[]): void {
 	}
 }
 
+/** A device identifier (an iPhone's udid, a simulator's, an Android serial). */
+const DEVICE_ID = /^[A-Za-z0-9._:-]+$/;
+
 /**
  * An install that failed because the build's provisioning profile does not list the phone: build once for that
  * phone (`-destination id=<udid>` under `-allowProvisioningUpdates` registers the UDID with the team and regenerates
@@ -217,8 +220,11 @@ async function registerPhone(
 	if (known.includes(input.deviceId)) return err(failure);
 	const build = projectForKind(input.project, app.kind, app.device).build.ios;
 	if (!build.includes(GENERIC_DESTINATION)) return err(failure);
+	// the id goes into the build command line: only what a device identifier is made of
+	if (!DEVICE_ID.test(input.deviceId)) return err(failure);
 	input.log(`${input.deviceId} is not in the app's provisioning profile: registering it with a build for this phone`);
-	const command = build.replaceAll(GENERIC_DESTINATION, `-destination id=${input.deviceId}`);
+	const destination = `-destination id=${input.deviceId}`;
+	const command = build.replaceAll(GENERIC_DESTINATION, () => destination);
 	const res = await input.exec(["sh", "-c", command], {
 		cwd: input.project.root,
 		env: { ...input.project.buildEnv, EXPO_NO_TELEMETRY: "1" },

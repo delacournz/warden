@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { openImportCache } from "./cache";
@@ -196,9 +196,47 @@ describe("resolveTypescript", () => {
 		try {
 			mkdirSync(join(root, "node_modules", "typescript"), { recursive: true });
 			expect(resolveTypescript(root, none)).toBeUndefined();
-			writeFileSync(join(root, "node_modules", "typescript", "package.json"), "{}");
+			writeFileSync(join(root, "node_modules", "typescript", "package.json"), JSON.stringify({ name: "typescript" }));
 			writeFileSync(join(root, "node_modules", "typescript", "index.js"), "module.exports = {};\n");
 			expect(resolveTypescript(root, none)).toBe(join(root, "node_modules", "typescript", "index.js"));
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	test("a package that is not named typescript, or whose entry is outside the package, is not a compiler", () => {
+		const root = realpathSync(mkdtempSync(join(tmpdir(), "warden-ts-")));
+		try {
+			const pkgDir = join(root, "node_modules", "typescript");
+			mkdirSync(pkgDir, { recursive: true });
+			writeFileSync(join(pkgDir, "index.js"), "module.exports = {};\n");
+			writeFileSync(join(root, "elsewhere.js"), "module.exports = {};\n");
+			writeFileSync(join(pkgDir, "package.json"), JSON.stringify({ name: "other" }));
+			expect(resolveTypescript(root, none)).toBeUndefined();
+			writeFileSync(join(pkgDir, "package.json"), JSON.stringify({ name: "typescript", main: "../../elsewhere.js" }));
+			expect(resolveTypescript(root, none)).toBeUndefined();
+			symlinkSync(join(root, "elsewhere.js"), join(pkgDir, "linked.js"));
+			writeFileSync(join(pkgDir, "package.json"), JSON.stringify({ name: "typescript", main: "linked.js" }));
+			expect(resolveTypescript(root, none)).toBeUndefined();
+			writeFileSync(join(pkgDir, "package.json"), JSON.stringify({ name: "typescript" }));
+			expect(resolveTypescript(root, none)).toBe(join(pkgDir, "index.js"));
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	test("a typescript package linked in from a store (bun, pnpm) still resolves", () => {
+		const root = realpathSync(mkdtempSync(join(tmpdir(), "warden-ts-")));
+		try {
+			const store = join(root, "store", "typescript@5");
+			mkdirSync(join(store, "lib"), { recursive: true });
+			writeFileSync(join(store, "package.json"), JSON.stringify({ name: "typescript", main: "./lib/typescript.js" }));
+			writeFileSync(join(store, "lib", "typescript.js"), "module.exports = {};\n");
+			mkdirSync(join(root, "app", "node_modules"), { recursive: true });
+			symlinkSync(store, join(root, "app", "node_modules", "typescript"));
+			expect(resolveTypescript(join(root, "app"), none)).toBe(
+				join(root, "app", "node_modules", "typescript", "lib", "typescript.js")
+			);
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}

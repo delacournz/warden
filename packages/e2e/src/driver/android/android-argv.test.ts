@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { shellCommand, shellQuote } from "@delacour/warden-core/shell-words";
 import {
 	animationReadArgvs,
 	animationRestoreArgvs,
@@ -33,8 +34,6 @@ import {
 	SELECT_ALL_MIN_SDK,
 	screencapArgv,
 	selectAllArgv,
-	shellCommand,
-	shellQuote,
 	sleepArgv,
 	startComponentArgv,
 	startUrlArgv,

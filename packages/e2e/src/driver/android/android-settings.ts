@@ -8,12 +8,12 @@ import {
 	type TextSize,
 } from "@delacour/warden-core/conditions/conditions.types";
 import { androidFontScale, resolveTextSize } from "@delacour/warden-core/conditions/text-size";
+import { shellCommand } from "@delacour/warden-core/shell-words";
 import type { ScreenReaderState } from "../../a11y/a11y.types";
 import { badRequest, batteryProblem, localeProblem, timezoneProblem } from "../device-settings";
 import type { A11yOp, A11yState, BatteryOp, BatteryState, Driver, DriverResult, KeyboardResult } from "../driver.types";
 import { driverErr } from "../errors";
 import type { AdbSession } from "./adb-session";
-import { shellCommand } from "./android-argv";
 import { createTalkBack, type TalkBackControl } from "./android-talkback";
 
 /**

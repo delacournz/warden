@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { androidTools } from "@delacour/warden-core/providers/android";
+import { adbShellArgv } from "@delacour/warden-core/shell-words";
 import type { Platform } from "@delacour/warden-core/types";
 import {
 	type AmStart,
@@ -48,12 +49,11 @@ export type LaunchOptions = {
 	component?: string;
 };
 
-const adb = (ctx: CommandContext, device: AppDevice, args: readonly string[]): string[] => [
-	androidTools(ctx.env).adb,
-	"-s",
-	device.id,
-	...args,
-];
+/** `adb -s <serial> <args>`; after a leading `shell` every word is quoted for the device's shell. */
+const adb = (ctx: CommandContext, device: AppDevice, args: readonly string[]): string[] => {
+	const prefix = [androidTools(ctx.env).adb, "-s", device.id];
+	return args[0] === "shell" ? adbShellArgv(prefix, args.slice(1)) : [...prefix, ...args];
+};
 
 const failed = (message: string, hint?: string): UiError =>
 	uiError("failed", message, hint === undefined ? {} : { hint });

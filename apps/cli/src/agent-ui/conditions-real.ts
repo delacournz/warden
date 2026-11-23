@@ -88,9 +88,10 @@ export async function androidUiPasskeys(o: {
 	exec: Exec;
 	session: Pick<AdbSession, "run">;
 }): Promise<Driver["passkeys"]> {
-	const [{ createAndroidPasskeys }, { installArgv, shellCommand }] = await Promise.all([
+	const [{ createAndroidPasskeys }, { installArgv }, { shellCommand }] = await Promise.all([
 		import("@delacour/warden-e2e/driver/android/passkeys"),
 		import("@delacour/warden-e2e/driver/android/android-argv"),
+		import("@delacour/warden-core/shell-words"),
 	]);
 	const { adb } = androidTools(o.env);
 	const shell = async (argv: readonly string[]) => {
