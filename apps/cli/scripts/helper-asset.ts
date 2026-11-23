@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 /**
- * Release assets for `warden doctor --fetch-helper` (run after `native:build`):
+ * Release assets for `warden doctor --fetch-helper` (run after `native:build` and before `build:release`, whose
+ * binaries carry the tarball's sha256):
  *   dist/warden-simd-darwin-arm64.tgz   tarball of packages/e2e/native/dist
  *   dist/SHA256SUMS                     its sha256
  * `WARDEN_E2E_NATIVE_DIST` overrides the helper dist dir.

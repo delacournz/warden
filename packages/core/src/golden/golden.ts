@@ -14,6 +14,12 @@ import type { SimctlSim } from "../sims/list";
  * 2: `AutomationEnabled` written in the golden (16-7).
  */
 export const GOLDEN_RECIPE = 2;
+/**
+ * Bump when an archive `warden golden export` wrote before can no longer be imported, so a CI cache keyed on it
+ * (`warden ci cache`) starts a fresh entry instead of restoring one that is skipped on every run.
+ * 2: the manifest carries a summary of the archived tree, and import requires it.
+ */
+export const GOLDEN_ARCHIVE_FORMAT = 2;
 export const GOLDEN_PREFIX = "warden-golden";
 
 export type GoldenInputs = { xcodeBuild: string; runtimeId: string; runtimeBuild: string; deviceType: string };

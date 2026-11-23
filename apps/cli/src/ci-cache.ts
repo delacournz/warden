@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { CCACHE_DIR_NAME, METRO_CACHE_DIR_NAME } from "@delacour/warden-core/builds/builds.defaults";
 import type { Exec } from "@delacour/warden-core/exec";
+import { GOLDEN_ARCHIVE_FORMAT } from "@delacour/warden-core/golden/golden";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 
 /** The cache-key prefix the e2e action uses; bump it to throw every cache away. */
@@ -32,7 +33,8 @@ export type CacheGroup = PathsGroup | ArchiveGroup;
  * What a CI job caches between runs to skip warden's slow steps: `builds` (the native simulator base), `repack` (the
  * JS bundled into it), `golden` (the first-booted simulator new devices are cloned from), `ccache` (compiled objects
  * a cold native build reuses after a native change) and `metro` (Metro's transform cache, which a repack reuses after
- * a JS change). `ccache` and `metro` are restored from the newest older key and saved under the new one.
+ * a JS change). `ccache` and `metro` are restored from the newest older key and saved under the new one. The golden's
+ * key ends with the archive format (`-a<n>`): an archive this warden would not import is never restored under it.
  */
 export type CacheGroups = {
 	builds: PathsGroup;
@@ -83,7 +85,7 @@ export function cacheGroups(input: CacheGroupsInput): CacheGroups {
 		},
 		golden: {
 			kind: "archive",
-			key: `${prefix}-${runner}-${golden}`,
+			key: `${prefix}-${runner}-${golden}-a${GOLDEN_ARCHIVE_FORMAT}`,
 			paths: [goldenDir],
 			afterRestore: `warden golden import ${dir}`,
 			beforeSave: `warden golden export ${dir} --allow-unsettled${profileArgs}`,

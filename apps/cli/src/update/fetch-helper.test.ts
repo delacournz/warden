@@ -1,6 +1,20 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	existsSync,
+	linkSync,
+	mkdirSync,
+	mkdtempSync,
+	readdirSync,
+	readFileSync,
+	readlinkSync,
+	realpathSync,
+	rmSync,
+	statSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { bunExec } from "@delacour/warden-core/exec";
@@ -13,8 +27,10 @@ import {
 	helperBaseUrl,
 	helperHomeDir,
 	latestHelperBaseUrl,
+	sealExtracted,
 	tarExtractHelper,
 } from "./fetch-helper";
+import { makeTgz } from "./tar.testing";
 
 const sha = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 const TGZ = new TextEncoder().encode("pretend tarball");
@@ -90,12 +106,96 @@ describe("fetchHelper", () => {
 				url: `${BASE}/warden-simd-darwin-arm64.tgz`,
 				sha256: sha(TGZ),
 				release: "version",
+				checksum: "published",
 			},
 		});
 		expect(asked).toEqual([`${BASE}/SHA256SUMS`, `${BASE}/warden-simd-darwin-arm64.tgz`]);
 		expect(calls).toHaveLength(1);
 		expect(calls[0]?.dir).toBe(helperHomeDir("/home/.warden", "0.3.0"));
 		expect(calls[0]?.bytes).toEqual(TGZ);
+	});
+
+	describe("a build that carries the helper's sha256", () => {
+		const TARBALL = `${BASE}/warden-simd-darwin-arm64.tgz`;
+
+		test("checks the tarball against it and never asks for SHA256SUMS", async () => {
+			const asked: string[] = [];
+			const calls: Array<{ bytes: Uint8Array; dir: string }> = [];
+			const result = await fetchHelper(
+				input({ pinnedSha256: sha(TGZ), fetch: serve({ [TARBALL]: TGZ }, asked), extract: extractor(calls) })
+			);
+			expect(result).toEqual({
+				success: true,
+				data: {
+					dir: "/home/.warden/simd/0.3.0",
+					url: TARBALL,
+					sha256: sha(TGZ),
+					release: "version",
+					checksum: "embedded",
+				},
+			});
+			expect(asked).toEqual([TARBALL]);
+			expect(calls).toHaveLength(1);
+		});
+
+		test("a tarball that differs is refused, whatever the release's SHA256SUMS says", async () => {
+			const other = new TextEncoder().encode("another tarball");
+			const calls: Array<{ bytes: Uint8Array; dir: string }> = [];
+			const result = await fetchHelper(
+				input({
+					pinnedSha256: sha(TGZ),
+					fetch: serve({
+						[`${BASE}/SHA256SUMS`]: `${sha(other)}  warden-simd-darwin-arm64.tgz\n`,
+						[TARBALL]: other,
+					}),
+					extract: extractor(calls),
+				})
+			);
+			if (result.success) throw new Error("expected failure");
+			expect(result.error).toContain("checksum mismatch");
+			expect(result.error).toContain("this binary expects");
+			expect(calls).toEqual([]);
+		});
+
+		test("never takes the latest release's helper", async () => {
+			const asked: string[] = [];
+			const result = await fetchHelper(
+				input({
+					pinnedSha256: sha(TGZ),
+					fallbackToLatest: true,
+					fetch: serve({ [`${LATEST}/warden-simd-darwin-arm64.tgz`]: TGZ }, asked),
+				})
+			);
+			expect(result.success).toBe(false);
+			expect(asked).toEqual([TARBALL]);
+		});
+
+		test("a WARDEN_HELPER_URL mirror has to serve the same bytes", async () => {
+			const mirror = "https://mirror.example/h";
+			const env = { WARDEN_HELPER_URL: mirror };
+			const good = await fetchHelper(
+				input({ pinnedSha256: sha(TGZ), env, fetch: serve({ [`${mirror}/warden-simd-darwin-arm64.tgz`]: TGZ }) })
+			);
+			expect(good.success).toBe(true);
+			const bad = await fetchHelper(
+				input({
+					pinnedSha256: sha(TGZ),
+					env,
+					fetch: serve({ [`${mirror}/warden-simd-darwin-arm64.tgz`]: "something else" }),
+				})
+			);
+			expect(bad.success).toBe(false);
+		});
+	});
+
+	test("WARDEN_HELPER_URL must be https, on this machine, or a file: URL; nothing is fetched otherwise", async () => {
+		const asked: string[] = [];
+		const result = await fetchHelper(
+			input({ env: { WARDEN_HELPER_URL: "http://mirror.example/h" }, fetch: serve({}, asked) })
+		);
+		if (result.success) throw new Error("expected failure");
+		expect(result.error).toContain("WARDEN_HELPER_URL must be an https: URL");
+		expect(asked).toEqual([]);
 	});
 
 	test("WARDEN_HELPER_URL replaces the release URL", async () => {
@@ -167,6 +267,7 @@ describe("fetchHelper", () => {
 				url: `${LATEST}/warden-simd-darwin-arm64.tgz`,
 				sha256: sha(TGZ),
 				release: "latest",
+				checksum: "published",
 			},
 		});
 		expect(asked).toEqual([`${BASE}/SHA256SUMS`, `${LATEST}/SHA256SUMS`, `${LATEST}/warden-simd-darwin-arm64.tgz`]);
@@ -251,6 +352,94 @@ describe("tarExtractHelper", () => {
 		expect(readdirSync(join(root, "home", "simd"))).toEqual(["0.3.0"]);
 	});
 
+	test("extracted files are 0755 when executable and 0644 otherwise, directories 0755", async () => {
+		fakeHelperDist(join(root, "dist"));
+		chmodSync(join(root, "dist", "warden-simd"), 0o4777);
+		chmodSync(join(root, "dist", "manifest.json"), 0o666);
+		chmodSync(join(root, "dist", "Resources"), 0o777);
+		const packed = await packHelper({ distDir: join(root, "dist"), outDir: join(root, "out"), exec: bunExec });
+		if (!packed.success) throw new Error(packed.error);
+		const dest = join(root, "home", "simd", "0.3.0");
+		const extracted = await tarExtractHelper(bunExec)(readFileSync(packed.data.tgz), dest);
+		expect(extracted).toEqual({ success: true, data: undefined });
+		const mode = (path: string) => statSync(join(dest, path)).mode & 0o7777;
+		expect(mode("warden-simd")).toBe(0o755);
+		expect(mode("manifest.json")).toBe(0o644);
+		expect(mode("Resources")).toBe(0o755);
+		expect(mode("Resources/SimulatorFrameworkBridge-iOS")).toBe(0o644);
+	});
+
+	/** The layout `native:build` stages for a stub framework: the real files under `Versions/A`, links above them. */
+	function frameworkShaped(dist: string): void {
+		fakeHelperDist(dist, { frameworks: [] });
+		const framework = join(dist, "CoreSimulatorStub.framework");
+		mkdirSync(join(framework, "Versions", "A", "Resources"), { recursive: true });
+		writeFileSync(join(framework, "Versions", "A", "CoreSimulatorStub"), "macho", { mode: 0o755 });
+		writeFileSync(join(framework, "Versions", "A", "Resources", "Info.plist"), "plist");
+		symlinkSync("A", join(framework, "Versions", "Current"));
+		symlinkSync("Versions/Current/CoreSimulatorStub", join(framework, "CoreSimulatorStub"));
+		symlinkSync("Versions/Current/Resources", join(framework, "Resources"));
+	}
+
+	test("a framework's own links (Versions/Current, the binary, Resources) are unpacked as links", async () => {
+		frameworkShaped(join(root, "dist"));
+		const packed = await packHelper({ distDir: join(root, "dist"), outDir: join(root, "out"), exec: bunExec });
+		if (!packed.success) throw new Error(packed.error);
+		const dest = join(root, "home", "simd", "0.3.0");
+		const extracted = await tarExtractHelper(bunExec)(readFileSync(packed.data.tgz), dest);
+		expect(extracted).toEqual({ success: true, data: undefined });
+		const framework = join(dest, "CoreSimulatorStub.framework");
+		expect(readlinkSync(join(framework, "Versions", "Current"))).toBe("A");
+		expect(readlinkSync(join(framework, "CoreSimulatorStub"))).toBe("Versions/Current/CoreSimulatorStub");
+		expect(readlinkSync(join(framework, "Resources"))).toBe("Versions/Current/Resources");
+		expect(readFileSync(join(framework, "CoreSimulatorStub"), "utf8")).toBe("macho");
+		expect(readFileSync(join(framework, "Resources", "Info.plist"), "utf8")).toBe("plist");
+		expect(statSync(join(framework, "Versions", "A", "CoreSimulatorStub")).mode & 0o7777).toBe(0o755);
+		expect(statSync(join(framework, "Versions", "A", "Resources", "Info.plist")).mode & 0o7777).toBe(0o644);
+	});
+
+	test("a tarball holding a link out of the archive or a hard link is refused before anything is unpacked", async () => {
+		const dest = join(root, "simd", "0.3.0");
+		mkdirSync(dest, { recursive: true });
+		writeFileSync(join(dest, "keep"), "x");
+		const ran: string[][] = [];
+		const exec: typeof bunExec = (cmd, opts) => {
+			ran.push([...cmd]);
+			return bunExec(cmd, opts);
+		};
+		for (const plant of [
+			(dist: string) => symlinkSync("/etc", join(dist, "Resources", "etc")),
+			(dist: string) => symlinkSync("../../outside", join(dist, "Resources", "out")),
+			(dist: string) => linkSync(join(dist, "warden-simd"), join(dist, "warden-simd-2")),
+		]) {
+			const dist = mkdtempSync(join(root, "dist-"));
+			fakeHelperDist(dist);
+			plant(dist);
+			const tgz = join(dist, "..", "planted.tgz");
+			await bunExec(["tar", "-czf", tgz, "-C", dist, "."]);
+			const result = await tarExtractHelper(exec)(readFileSync(tgz), dest);
+			if (result.success) throw new Error("expected failure");
+			expect(result.error).toMatch(/links outside the archive|only files, directories and links inside the archive/);
+		}
+		expect(ran).toEqual([]);
+		expect(existsSync(join(dest, "keep"))).toBe(true);
+		expect(readdirSync(join(root, "simd"))).toEqual(["0.3.0"]);
+	});
+
+	test("an entry that names a path outside the archive is refused", async () => {
+		const dest = join(root, "simd", "0.3.0");
+		for (const name of ["../escaped", "/tmp/escaped", "Resources/../../escaped"]) {
+			const tgz = makeTgz([
+				{ name: "warden-simd", content: "bin" },
+				{ name, content: "x" },
+			]);
+			const result = await tarExtractHelper(bunExec)(tgz, dest);
+			if (result.success) throw new Error("expected failure");
+			expect(result.error).toContain(name);
+		}
+		expect(existsSync(dest)).toBe(false);
+	});
+
 	test("garbage or helper-less tarballs are rejected without touching the old dir", async () => {
 		const dest = join(root, "simd", "0.3.0");
 		mkdirSync(dest, { recursive: true });
@@ -267,5 +456,79 @@ describe("tarExtractHelper", () => {
 		if (!noBinary.success) expect(noBinary.error).toContain("no warden-simd");
 		expect(existsSync(join(dest, "keep"))).toBe(true);
 		expect(readdirSync(join(root, "simd"))).toEqual(["0.3.0"]);
+	});
+});
+
+describe("sealExtracted", () => {
+	let root: string;
+	beforeEach(() => {
+		root = mkdtempSync(join(tmpdir(), "warden-seal-"));
+	});
+	afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+	test("links that stay inside the tree pass, and are not followed to change a mode", () => {
+		const tree = join(root, "ok");
+		mkdirSync(join(tree, "a", "b"), { recursive: true });
+		writeFileSync(join(tree, "a", "target"), "x", { mode: 0o600 });
+		symlinkSync("../target", join(tree, "a", "b", "file-link"));
+		symlinkSync("b", join(tree, "a", "dir-link"));
+		symlinkSync("dir-link/file-link", join(tree, "a", "chained"));
+		expect(sealExtracted(tree)).toEqual({ success: true, data: undefined });
+		expect(readlinkSync(join(tree, "a", "b", "file-link"))).toBe("../target");
+		expect(statSync(join(tree, "a", "target")).mode & 0o7777).toBe(0o644);
+		expect(realpathSync(join(tree, "a", "chained"))).toBe(realpathSync(join(tree, "a", "target")));
+	});
+
+	test("an absolute link, one that leaves the tree, one that leaves it through another link, or a dangling one is an error", () => {
+		const cases: Array<{ plant: (tree: string) => void; shown: string; target: string }> = [
+			{
+				plant: (tree) => symlinkSync("/etc/hosts", join(tree, "sub", "hosts")),
+				shown: "sub/hosts",
+				target: "/etc/hosts",
+			},
+			{
+				plant: (tree) => symlinkSync("../../outside", join(tree, "sub", "out")),
+				shown: "sub/out",
+				target: "../../outside",
+			},
+			{
+				plant: (tree) => {
+					symlinkSync("..", join(tree, "sub", "up"));
+					symlinkSync("up/..", join(tree, "sub", "zz-through"));
+				},
+				shown: "sub/zz-through",
+				target: "up/..",
+			},
+			{
+				plant: (tree) => symlinkSync("nothing-here", join(tree, "sub", "dangling")),
+				shown: "sub/dangling",
+				target: "nothing-here",
+			},
+		];
+		writeFileSync(join(root, "outside"), "x");
+		for (const [index, { plant, shown, target }] of cases.entries()) {
+			const tree = join(root, `link-${index}`);
+			mkdirSync(join(tree, "sub"), { recursive: true });
+			plant(tree);
+			expect(sealExtracted(tree)).toEqual({
+				success: false,
+				error: `${shown} links outside the helper (${target})`,
+			});
+		}
+	});
+
+	test("a hard link or a special file anywhere in the tree is an error naming it", async () => {
+		mkdirSync(join(root, "hard"));
+		writeFileSync(join(root, "hard", "a"), "x");
+		linkSync(join(root, "hard", "a"), join(root, "hard", "b"));
+		const hard = sealExtracted(join(root, "hard"));
+		if (hard.success) throw new Error("expected failure");
+		expect(hard.error).toContain("is a hard link");
+
+		mkdirSync(join(root, "fifo"));
+		await bunExec(["mkfifo", join(root, "fifo", "pipe")]);
+		const fifo = sealExtracted(join(root, "fifo"));
+		if (fifo.success) throw new Error("expected failure");
+		expect(fifo.error).toContain("pipe is not a regular file");
 	});
 });

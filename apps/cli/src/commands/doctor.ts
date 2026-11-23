@@ -269,6 +269,8 @@ export type DoctorDeps = {
 	leases?: LeaseDoctorDeps;
 	/** `--fetch-helper` may take the latest release's helper when this version has no release (builds from a checkout) */
 	fallbackToLatest?: boolean;
+	/** the sha256 of this version's helper tarball that a release binary carries: `--fetch-helper` accepts no other */
+	pinnedHelperSha256?: string;
 };
 
 /** `fetched`: downloaded into `$WARDEN_HOME/simd/<version>`; `present`: a helper that wins over that one was already there. */
@@ -311,8 +313,16 @@ async function fetchHelperFor(
 		version: deps.helper.version,
 		wardenHome: wardenHome(ctx.env),
 		fallbackToLatest: deps.fallbackToLatest === true,
+		...(deps.pinnedHelperSha256 !== undefined ? { pinnedSha256: deps.pinnedHelperSha256 } : {}),
 	});
 	if (!result.success) return result;
+	if (result.data.checksum === "published") {
+		ctx.err(
+			ctx.ui.color.yellow(
+				"warden doctor: --fetch-helper: this build carries no warden-simd checksum: the download was checked against the SHA256SUMS served with it"
+			)
+		);
+	}
 	if (result.data.release === "latest") {
 		ctx.err(
 			ctx.ui.color.yellow(
@@ -393,8 +403,12 @@ export function createDoctorCommand(deps: DoctorDeps): Command {
 	});
 }
 
+const build = currentBuild();
+const pinnedHelperSha256 = build.channel === "release" ? build.helperSha256 : undefined;
+
 export const doctorCommand: Command = createDoctorCommand({
 	helper: realHelperDeps(),
 	fetch: (url) => fetch(url),
-	fallbackToLatest: currentBuild().channel !== "release",
+	fallbackToLatest: build.channel !== "release",
+	...(pinnedHelperSha256 !== undefined ? { pinnedHelperSha256 } : {}),
 });

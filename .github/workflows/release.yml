@@ -90,13 +90,14 @@ jobs:
           bun run --cwd packages/e2e native:deps
           bun run --cwd packages/e2e native:build
 
-      - name: Build release binaries
-        run: bun run --cwd apps/cli build:release
-
       # warden-simd-darwin-arm64.tgz + SHA256SUMS: what `warden doctor --fetch-helper` downloads into
-      # $WARDEN_HOME/simd/<version>/ (a self-updated or standalone binary has no helper next to it).
+      # $WARDEN_HOME/simd/<version>/ (a self-updated or standalone binary has no helper next to it). Packed before
+      # the binaries, which carry the tarball's sha256 and hold the download to it.
       - name: Pack warden-simd release asset
         run: bun run --cwd apps/cli build:helper-asset
+
+      - name: Build release binaries
+        run: bun run --cwd apps/cli build:release --require-helper-asset
 
       # Repository / homepage / bugs links go into the manifests only once the repo is public.
       - name: Stage npm packages

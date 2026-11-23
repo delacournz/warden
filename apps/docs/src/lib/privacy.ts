@@ -140,7 +140,7 @@ export const PRIVACY_SECTIONS: readonly PrivacySection[] = [
 			{
 				what: "A download of the simulator helper: your IP address and the release asset requested",
 				to: "GitHub, `github.com/delacournz/warden/releases`",
-				why: "`warden update` and `warden doctor --fetch-helper` fetch the native helper that drives iOS simulators, and check it against the release's published checksum.",
+				why: "`warden update` and `warden doctor --fetch-helper` fetch the native helper that drives iOS simulators, and check it against the checksum the warden binary carries (a build from source uses the release's published checksum).",
 			},
 			{
 				what: "Simulator, emulator and app traffic",

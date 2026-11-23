@@ -65,7 +65,7 @@ For source builds and one-shot installs, `~/.local/bin` must be on `PATH`. Set `
 | **release**: copied by `npx`/`bunx @delacour/warden install` | npm registry: `@delacour/warden/latest` → newer? download `@delacour/warden-<os>-<arch>` → verify sha512 `dist.integrity` → self-check → swap in place |
 | **npm**: `@delacour/warden` via npm / bun / pnpm / npx / bunx | prints the package manager's upgrade command (e.g. `npm i -g @delacour/warden@latest`, `npx @delacour/warden@latest install`) and leaves `node_modules` alone; `--to <path>` still installs a standalone release binary |
 
-The binary is swapped atomically at the same path, so the next `warden` in your current shell runs the new version. No new shell or `source` is needed; if `PATH` resolves `warden` elsewhere, update warns you. Flags: `--check` (report only), `--release` (install the latest GitHub release; also switches a dev/local build to it), `--force`, `--to <path>`, `--json`. Releases come from the public `delacournz/warden` repo through `gh`. Set `WARDEN_RELEASE_REPO` to use another repo, and `WARDEN_NPM_REGISTRY` to use another npm registry.
+The binary is swapped atomically at the same path, so the next `warden` in your current shell runs the new version. No new shell or `source` is needed; if `PATH` resolves `warden` elsewhere, update warns you. Flags: `--check` (report only), `--release` (install the latest GitHub release; also switches a dev/local build to it), `--force`, `--allow-downgrade` (needed to install a release older than the running binary), `--to <path>`, `--json`. Releases come from the public `delacournz/warden` repo through `gh`. Set `WARDEN_RELEASE_REPO` to use another repo, and `WARDEN_NPM_REGISTRY` to use another npm registry.
 
 ### Releasing
 

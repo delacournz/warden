@@ -5020,13 +5020,15 @@ update warden: rebuild from source (dev/local builds) or install the latest
 release
 
 Options:
-  --check      only report whether an update is available
-  --release    install the latest GitHub release (also switches a dev/local
-               build to it)
-  --force      reinstall even when up to date
-  --to <path>  install the binary here instead
-  --json       machine-readable output
-  -h, --help   display help for command"
+  --check            only report whether an update is available
+  --release          install the latest GitHub release (also switches a
+                     dev/local build to it)
+  --force            reinstall even when up to date
+  --allow-downgrade  install the latest release even when it is older than this
+                     warden
+  --to <path>        install the binary here instead
+  --json             machine-readable output
+  -h, --help         display help for command"
 `;
 
 exports[`help output warden version --help (and nested subcommands) 1`] = `
