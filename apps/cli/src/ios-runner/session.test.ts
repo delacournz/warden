@@ -25,6 +25,7 @@ function harness(route: Parameters<typeof fakeRoute>[0], opts: { ignoreTerm?: bo
 	const timers = manualTimers();
 	const logs: string[] = [];
 	const r = fakeRoute(route);
+	let tokens = 0;
 	const deps = {
 		spawn: (cmd: readonly string[], env: Readonly<Record<string, string>>) => {
 			const p = fakeProc(cmd, env, opts.ignoreTerm);
@@ -35,6 +36,7 @@ function harness(route: Parameters<typeof fakeRoute>[0], opts: { ignoreTerm?: bo
 		route: r.deps,
 		after: timers.after,
 		log: (line: string) => logs.push(line),
+		token: () => `token-${++tokens}`,
 	};
 	return { deps, procs, spawned, timers, logs, route: r };
 }
@@ -53,10 +55,12 @@ describe("xcodebuild line parsing", () => {
 			"-only-testing:WardenRunnerUITests/RunnerTests/testServe",
 		]);
 		expect(TEST_FILTER).toContain("testServe");
-		expect(runnerEnv(input)).toEqual({
+		expect(runnerEnv(input, "tok")).toEqual({
 			TEST_RUNNER_WARDEN_RUNNER_UDID: UDID,
 			TEST_RUNNER_WARDEN_RUNNER_IDLE_SECONDS: "660",
+			TEST_RUNNER_WARDEN_RUNNER_TOKEN: "tok",
 		});
+		expect(xcodebuildCommand(ARTIFACTS, UDID).join(" ")).not.toContain("TOKEN");
 	});
 
 	test("a result bundle path is passed as -resultBundlePath", () => {
@@ -105,10 +109,11 @@ describe("startSession", () => {
 		const started = await startSession(h.deps, input);
 		if (!started.success) throw new Error(started.error.message);
 		expect(h.procs).toHaveLength(1);
-		expect(h.procs[0]?.env).toEqual(runnerEnv(input));
+		expect(h.procs[0]?.env).toEqual(runnerEnv(input, "token-1"));
 		expect(h.procs[0]?.cmd[0]).toBe("xcodebuild");
 		expect(h.route.reads()).toBe(3);
-		expect(started.data.address).toEqual({ host: "fd00::1", port: 50123 });
+		expect(started.data.address).toEqual({ host: "fd00::1", port: 50123, token: "token-1" });
+		expect(h.logs.join("\n")).not.toContain("token-1");
 	});
 
 	test("the address is the one read after the install, not the one read before it", async () => {

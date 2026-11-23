@@ -1,13 +1,16 @@
 import { existsSync, unlinkSync } from "node:fs";
 import net from "node:net";
 import { ensureSocketDir, listenOwnerOnly, restrictSocket, type SocketScope } from "@delacour/warden-core/private-fs";
+import { runnerAuthLine } from "@delacour/warden-e2e/driver/ios/device/runner-protocol";
 import type { Result } from "@delacour/warden-types/result";
 import type { RunnerAddress } from "./types";
 
 /**
  * A unix socket in front of the runner's TCP listener, so the TS side keeps `socketTransport` / `connectSimd`
  * and never learns about tunnel addresses. One upstream TCP connection per client, bytes copied both ways with
- * backpressure (a slow reader pauses the writer instead of buffering a screenshot in memory).
+ * backpressure (a slow reader pauses the writer instead of buffering a screenshot in memory). Each upstream
+ * connection opens with the session's auth line, written here: clients of the socket (owner-only) never hold the
+ * token, and the runner's `ready` event, its answer to the auth line, is the first thing they read.
  */
 export type RunnerProxy = {
 	socketPath: string;
@@ -76,6 +79,7 @@ export function startProxy(opts: ProxyOptions): Promise<Result<RunnerProxy, stri
 			upstream.destroy();
 		};
 		upstream.once("connect", () => {
+			upstream.write(runnerAuthLine(address.token));
 			forward(client, upstream, touch);
 			forward(upstream, client, touch);
 			client.resume();

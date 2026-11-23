@@ -1,6 +1,7 @@
 import type { Result } from "@delacour/warden-types/result";
 import type { DriverError, DriverResult, Logger } from "../driver.types";
 import { driverError } from "../errors";
+import { newRunnerToken, RUNNER_TOKEN_ENV, runnerAuthLine } from "./device/runner-protocol";
 import { type ClientOptions, createSimdClient, type RequestOptions, type SimdClient } from "./simd-client";
 import { createLineSplitter } from "./simd-protocol";
 import { bunSpawn, type SimdProcess, type SimdSpawn, socketTransport } from "./simd-transport";
@@ -11,6 +12,9 @@ import { bunSpawn, type SimdProcess, type SimdSpawn, socketTransport } from "./s
  *
  *   build (cached, no signing)  ->  `xcodebuild test-without-building -xctestrun … -destination id=<udid>
  *   -only-testing:…/testServe`  ->  wait for `WARDEN_RUNNER_READY {json}` (the port)  ->  NDJSON over TCP on this Mac
+ *
+ * The runner listens on `127.0.0.1` and serves a connection only after the auth line with this start's token, which
+ * it gets through `xcodebuild`'s environment (`RUNNER_TOKEN_ENV`), never the command line.
  *
  * The runner outlives the request (the next audit costs the audit only, about 2 s) and is shut down by `close()`.
  * Anything that stops it from starting is a {@link DriverError} the caller turns into a skipped audit, never a failure.
@@ -33,7 +37,10 @@ export function parseRunnerReady(line: string): number | undefined {
 	}
 }
 
-/** The argv that serves the runner on `udid`; `env` carries the `TEST_RUNNER_*` variables `xcodebuild` forwards. */
+/**
+ * The argv that serves the runner on `udid`; `env` carries the `TEST_RUNNER_*` variables `xcodebuild` forwards.
+ * The session token is not one of them: it goes through the spawn's environment.
+ */
 export function simRunnerArgv(o: {
 	xctestrun: string;
 	udid: string;
@@ -65,8 +72,10 @@ export type SimRunnerDeps = {
 	/** the test failures a finished result bundle recorded, as one line; undefined for none or unreadable */
 	readFailures?: (bundle: string) => Promise<string | undefined>;
 	spawn?: SimdSpawn;
-	/** connect to the runner's port (tests inject a fake) */
-	connect?: (port: number, options: ClientOptions) => Promise<Result<SimdClient, DriverError>>;
+	/** connect to the runner's port and open with the auth line for `token` (tests inject a fake) */
+	connect?: (port: number, options: ClientOptions, token: string) => Promise<Result<SimdClient, DriverError>>;
+	/** a fresh token per start */
+	token?: () => string;
 	readyTimeoutMs?: number;
 	log?: Logger;
 };
@@ -76,8 +85,8 @@ export type SimRunner = {
 	close(): Promise<void>;
 };
 
-const tcpConnect: NonNullable<SimRunnerDeps["connect"]> = (port, options) =>
-	createSimdClient(socketTransport({ tcp: { hostname: "127.0.0.1", port } }), {
+const tcpConnect: NonNullable<SimRunnerDeps["connect"]> = (port, options, token) =>
+	createSimdClient(socketTransport({ tcp: { hostname: "127.0.0.1", port }, firstLine: runnerAuthLine(token) }), {
 		...options,
 		maxRespawns: 0,
 		shutdownOnClose: true,
@@ -134,12 +143,14 @@ export function createSimRunner(deps: SimRunnerDeps): SimRunner {
 		}
 		const { derivedData } = built.data;
 		const resultBundle = derivedData === undefined ? undefined : deps.resultBundle?.(derivedData);
+		const token = (deps.token ?? newRunnerToken)();
 		const proc = spawn(
 			simRunnerArgv({
 				xctestrun: built.data.xctestrun,
 				udid: deps.udid,
 				...(resultBundle === undefined ? {} : { resultBundle }),
-			})
+			}),
+			{ [RUNNER_TOKEN_ENV]: token }
 		);
 		const tail: string[] = [];
 		let onPort: (port: number) => void = () => undefined;
@@ -166,7 +177,7 @@ export function createSimRunner(deps: SimRunnerDeps): SimRunner {
 			proc.kill();
 			return { success: false, error: await notReady(first, resultBundle, tail) };
 		}
-		const client = await connect(first, { ...(deps.log ? { log: deps.log } : {}), defaultTimeoutMs: 30_000 });
+		const client = await connect(first, { ...(deps.log ? { log: deps.log } : {}), defaultTimeoutMs: 30_000 }, token);
 		if (!client.success) {
 			proc.kill();
 			return client;

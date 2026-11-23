@@ -17,6 +17,7 @@
  * Only ever pass a simulator you own (a claimed lease, or a throwaway CI VM): `--freeze` stops its processes.
  */
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import { homedir } from "node:os";
@@ -151,7 +152,14 @@ function startRunner(
 	logFile: string,
 	readySeconds: number
 ): { xcodebuild: ChildProcess; ready: Promise<Runner> } {
-	const env = { ...process.env, TEST_RUNNER_WARDEN_RUNNER_UDID: udid, TEST_RUNNER_WARDEN_RUNNER_IDLE_SECONDS: "3600" };
+	// the runner serves only connections that open with this session token (`RunnerAuth`, ios-runner/AGENTS.md)
+	const token = randomBytes(32).toString("hex");
+	const env = {
+		...process.env,
+		TEST_RUNNER_WARDEN_RUNNER_UDID: udid,
+		TEST_RUNNER_WARDEN_RUNNER_IDLE_SECONDS: "3600",
+		TEST_RUNNER_WARDEN_RUNNER_TOKEN: token,
+	};
 	const xcodebuild = spawn(
 		"xcodebuild",
 		xcodebuildArgs("test-without-building", udid, derivedData, [
@@ -192,6 +200,7 @@ function startRunner(
 				fail(error);
 			});
 			socket.on("connect", () => {
+				socket.write(`${JSON.stringify({ op: "auth", token })}\n`);
 				if (settled) return;
 				settled = true;
 				resolveRunner({ xcodebuild, socket, client });

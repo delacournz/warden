@@ -20,6 +20,7 @@ import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFile
 import net from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { newRunnerToken, RUNNER_TOKEN_ENV, runnerAuthLine } from "../../src/driver/ios/device/runner-protocol";
 import {
 	alertButtonsDataSchema,
 	frontmostDataSchema,
@@ -125,9 +126,12 @@ class RunnerClient {
 	constructor(
 		host: string,
 		port: number,
+		token: string,
 		private record?: string
 	) {
 		this.socket = net.connect({ host, port });
+		// the runner serves a connection only after this line (never part of a `--record` recording)
+		this.socket.write(runnerAuthLine(token));
 		let resolveReady: (event: Record<string, unknown>) => void = () => {};
 		let rejectReady: (error: Error) => void = () => {};
 		this.ready = new Promise((resolve, reject) => {
@@ -429,10 +433,12 @@ async function serve(
 	record: string | undefined,
 	report: Report
 ): Promise<void> {
+	const token = newRunnerToken();
 	const runnerEnv = {
 		...env,
 		TEST_RUNNER_WARDEN_RUNNER_UDID: target.udid,
 		TEST_RUNNER_WARDEN_RUNNER_IDLE_SECONDS: "900",
+		[RUNNER_TOKEN_ENV]: token,
 	};
 	const test = ["-only-testing:WardenRunnerUITests/RunnerTests/testServe"];
 	const xcodebuild = spawn("xcodebuild", xcodebuildArgs("test-without-building", target, test), { env: runnerEnv });
@@ -458,7 +464,7 @@ async function serve(
 		const ip = tunnelIpFor(devicectlJson(["list", "devices"]), target.udid);
 		if (!ip) throw new Error("no tunnelIPAddress for the device (tunnelState disconnected?)");
 		console.log(`      tunnel [${ip}]:${port}`);
-		client = new RunnerClient(ip, port, record);
+		client = new RunnerClient(ip, port, token, record);
 		const checks = new Checks(client, target, report);
 		await checks.ready(await client.ready);
 		const search = await checks.snapshot();

@@ -1,3 +1,4 @@
+import { newRunnerToken, RUNNER_TOKEN_ENV } from "@delacour/warden-e2e/driver/ios/device/runner-protocol";
 import type { AsyncResult } from "@delacour/warden-types/result";
 import { type RouteDeps, readTunnelIp, waitTunnelConnected } from "./route";
 import type { RunnerAddress, RunnerArtifacts, RunnerFault, RunnerProcess, SpawnRunner } from "./types";
@@ -6,7 +7,8 @@ import type { RunnerAddress, RunnerArtifacts, RunnerFault, RunnerProcess, SpawnR
  * One `xcodebuild test-without-building ... testServe` run: the process that keeps the runner alive on the phone.
  * It classifies what `xcodebuild` prints (a locked phone makes it block forever on "Unlock … to Continue"), retries
  * the install once on `IXRemoteErrorDomain` 6 (a tunnel that was not up yet), and re-reads the tunnel address after
- * the install because it changes every time the runner is reinstalled.
+ * the install because it changes every time the runner is reinstalled. Every launch gets a fresh session token,
+ * handed to the runner through `xcodebuild`'s environment; the runner serves only connections that open with it.
  */
 
 export const READY_PREFIX = "WARDEN_RUNNER_READY";
@@ -30,6 +32,8 @@ export type SessionDeps = {
 	resultBundle?: () => string | undefined;
 	/** the test failures recorded in a finished bundle, as one line; undefined when none or unreadable */
 	readFailures?: (bundle: string) => Promise<string | undefined>;
+	/** a fresh session token per launch */
+	token?: () => string;
 };
 
 export type SessionInput = {
@@ -97,11 +101,15 @@ export function xcodebuildCommand(artifacts: RunnerArtifacts, udid: string, resu
 	];
 }
 
-/** `TEST_RUNNER_<NAME>` is how `xcodebuild` passes env to the UI-test runner. No port: the runner picks a free one and says which. */
-export function runnerEnv(input: SessionInput): Record<string, string> {
+/**
+ * `TEST_RUNNER_<NAME>` is how `xcodebuild` passes env to the UI-test runner. No port: the runner picks a free one and
+ * says which. `token` is this launch's session token.
+ */
+export function runnerEnv(input: SessionInput, token: string): Record<string, string> {
 	return {
 		TEST_RUNNER_WARDEN_RUNNER_UDID: input.udid,
 		TEST_RUNNER_WARDEN_RUNNER_IDLE_SECONDS: String(input.runnerIdleSeconds),
+		[RUNNER_TOKEN_ENV]: token,
 	};
 }
 
@@ -220,12 +228,17 @@ async function launch(
 	deps: SessionDeps,
 	input: SessionInput,
 	attempt: 1 | 2
-): AsyncResult<{ watch: Watch; port: number }, RunnerFault> {
+): AsyncResult<{ watch: Watch; port: number; token: string }, RunnerFault> {
 	const connected = await waitTunnelConnected(deps.route, input.udid, deps.tunnelWaitMs);
 	if (!connected.success) return { success: false, error: { kind: "tunnel_down", message: connected.error.message } };
 	deps.log(`xcodebuild: starting the runner on ${input.udid} (attempt ${attempt})`);
 	const bundle = deps.resultBundle?.();
-	const w = watch(deps.spawn(xcodebuildCommand(input.artifacts, input.udid, bundle), runnerEnv(input)), deps, bundle);
+	const token = (deps.token ?? newRunnerToken)();
+	const w = watch(
+		deps.spawn(xcodebuildCommand(input.artifacts, input.udid, bundle), runnerEnv(input, token)),
+		deps,
+		bundle
+	);
 	let cancelTimer: () => void = () => undefined;
 	const timeoutMs = deps.readyTimeoutMs ?? READY_TIMEOUT_MS;
 	const timedOut = new Promise<Outcome>((resolve) => {
@@ -235,7 +248,7 @@ async function launch(
 	cancelTimer();
 	switch (first.kind) {
 		case "ready":
-			return { success: true, data: { watch: w, port: first.port } };
+			return { success: true, data: { watch: w, port: first.port, token } };
 		case "install_race": {
 			await terminate(w, deps);
 			if (attempt === 1) {
@@ -279,7 +292,7 @@ async function launch(
 export async function startSession(deps: SessionDeps, input: SessionInput): AsyncResult<Session, RunnerFault> {
 	const launched = await launch(deps, input, 1);
 	if (!launched.success) return launched;
-	const { watch: w, port } = launched.data;
+	const { watch: w, port, token } = launched.data;
 	const ip = await readTunnelIp(deps.route, input.udid);
 	if (!ip.success) {
 		await terminate(w, deps);
@@ -297,7 +310,7 @@ export async function startSession(deps: SessionDeps, input: SessionInput): Asyn
 	return {
 		success: true,
 		data: {
-			address: { host: ip.data, port },
+			address: { host: ip.data, port, token },
 			ended,
 			stop: async () => {
 				stopping = true;
