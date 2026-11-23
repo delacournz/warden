@@ -11,7 +11,9 @@ updates:
       actions:
         patterns: ["*"]
   # The docs image's base images are pinned by digest (apps/docs/Dockerfile); this moves tag and
-  # digest together.
+  # digest together. A new bun tag is meant to fail scripts/release/repo-hardening.test.ts until the
+  # same pull request also moves the root `packageManager` and the `bun-v…` installs in
+  # apps/example/.eas/workflows/bench-baseline.yml: one bun version everywhere, bumped in one change.
   - package-ecosystem: docker
     directory: /apps/docs
     schedule:
