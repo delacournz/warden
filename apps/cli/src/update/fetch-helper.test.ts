@@ -439,6 +439,24 @@ describe("tarExtractHelper", () => {
 		}
 		expect(existsSync(dest)).toBe(false);
 	});
+
+	test("garbage or helper-less tarballs are rejected without touching the old dir", async () => {
+		const dest = join(root, "simd", "0.3.0");
+		mkdirSync(dest, { recursive: true });
+		writeFileSync(join(dest, "keep"), "x");
+		const garbage = await tarExtractHelper(bunExec)(new TextEncoder().encode("not a tarball"), dest);
+		expect(garbage.success).toBe(false);
+
+		mkdirSync(join(root, "empty"));
+		writeFileSync(join(root, "empty", "readme"), "hi");
+		const emptyTgz = join(root, "empty.tgz");
+		await bunExec(["tar", "-czf", emptyTgz, "-C", join(root, "empty"), "."]);
+		const noBinary = await tarExtractHelper(bunExec)(readFileSync(emptyTgz), dest);
+		expect(noBinary.success).toBe(false);
+		if (!noBinary.success) expect(noBinary.error).toContain("no warden-simd");
+		expect(existsSync(join(dest, "keep"))).toBe(true);
+		expect(readdirSync(join(root, "simd"))).toEqual(["0.3.0"]);
+	});
 });
 
 describe("sealExtracted", () => {
@@ -512,23 +530,5 @@ describe("sealExtracted", () => {
 		const fifo = sealExtracted(join(root, "fifo"));
 		if (fifo.success) throw new Error("expected failure");
 		expect(fifo.error).toContain("pipe is not a regular file");
-	});
-
-	test("garbage or helper-less tarballs are rejected without touching the old dir", async () => {
-		const dest = join(root, "simd", "0.3.0");
-		mkdirSync(dest, { recursive: true });
-		writeFileSync(join(dest, "keep"), "x");
-		const garbage = await tarExtractHelper(bunExec)(new TextEncoder().encode("not a tarball"), dest);
-		expect(garbage.success).toBe(false);
-
-		mkdirSync(join(root, "empty"));
-		writeFileSync(join(root, "empty", "readme"), "hi");
-		const emptyTgz = join(root, "empty.tgz");
-		await bunExec(["tar", "-czf", emptyTgz, "-C", join(root, "empty"), "."]);
-		const noBinary = await tarExtractHelper(bunExec)(readFileSync(emptyTgz), dest);
-		expect(noBinary.success).toBe(false);
-		if (!noBinary.success) expect(noBinary.error).toContain("no warden-simd");
-		expect(existsSync(join(dest, "keep"))).toBe(true);
-		expect(readdirSync(join(root, "simd"))).toEqual(["0.3.0"]);
 	});
 });
