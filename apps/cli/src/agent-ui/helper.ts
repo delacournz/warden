@@ -665,8 +665,9 @@ function staleReason(
 
 /**
  * Start the helper for `udid` (the caller holds the spawn row) and remember `{pid, socket, owner, binary, env, lease}`
- * in `state.json`. Refuses while the helper recorded on this socket is alive, unless it is `stopped` (the pid the
- * caller just stopped): two helpers on one simulator fight over its quiescence stream.
+ * in `state.json`. Refuses while the recorded helper is alive, on this socket or another (a socket path an older
+ * warden chose), unless it is `stopped` (the pid the caller just stopped): two helpers on one simulator fight over
+ * its quiescence stream.
  */
 function spawnHelper(
 	host: HelperHost & Required<Pick<HelperHost, "store">>,
@@ -680,9 +681,9 @@ function spawnHelper(
 ): Result<SpawnResult, UiError> {
 	const previous = readState(host, udid)[kind.field];
 	if (
-		previous?.socket === socketPath &&
+		previous !== undefined &&
 		previous.pid !== stopped &&
-		mayBeRecorded(deps, previous.pid, kind.marks(udid, socketPath))
+		mayBeRecorded(deps, previous.pid, kind.marks(udid, previous.socket))
 	) {
 		return unavailable(`${kind.label} (pid ${previous.pid}) is still running for ${udid}; not starting a second one`);
 	}
@@ -810,14 +811,18 @@ function runnerBusy<C extends HelperClient>(a: Attempt<C>): UiError {
 	);
 }
 
-/** The recorded helper's pid when it is alive (and not reused by another program), else undefined. */
-function liveRecordedPid<C extends HelperClient>(a: Attempt<C>): number | undefined {
+/** The recorded helper when it is alive (and not reused by another program), whichever socket it serves. */
+function liveRecorded<C extends HelperClient>(a: Attempt<C>): HelperRecord | undefined {
 	const record = readState(a.host, a.udid)[a.kind.field];
-	return record !== undefined &&
-		record.socket === a.socketPath &&
-		mayBeRecorded(a.deps, record.pid, a.kind.marks(a.udid, record.socket))
-		? record.pid
+	return record !== undefined && mayBeRecorded(a.deps, record.pid, a.kind.marks(a.udid, record.socket))
+		? record
 		: undefined;
+}
+
+/** The pid of the live recorded helper serving this call's socket, else undefined. */
+function liveRecordedPid<C extends HelperClient>(a: Attempt<C>): number | undefined {
+	const record = liveRecorded(a);
+	return record?.socket === a.socketPath ? record.pid : undefined;
 }
 
 /**
@@ -849,11 +854,12 @@ async function onSilence<C extends HelperClient>(a: Attempt<C>): Promise<Step<C>
 			if (busy !== undefined) return onBusy(a, busy);
 		}
 	}
-	// a recorded helper whose pid is alive but that refuses (or has no socket file) is stopped before another starts
-	const recorded = liveRecordedPid(a);
-	if (recorded !== undefined && recorded !== a.stopped) {
-		const stop = await stopRecorded(a.host, a.kind, a.udid, { socketPath: a.socketPath, deps: a.deps });
-		if (stop.warning === undefined) a.stopped = recorded;
+	// a recorded helper whose pid is alive but that refuses (or has no socket file) is stopped before another starts,
+	// on the socket it was recorded with: a helper an older warden started may serve another path than this call's
+	const recorded = liveRecorded(a);
+	if (recorded !== undefined && recorded.pid !== a.stopped) {
+		const stop = await stopRecorded(a.host, a.kind, a.udid, { socketPath: recorded.socket, deps: a.deps });
+		if (stop.warning === undefined) a.stopped = recorded.pid;
 	}
 	return spawn(a);
 }
