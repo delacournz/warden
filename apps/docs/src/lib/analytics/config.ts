@@ -1,4 +1,5 @@
 import { siteUrl, stagingHost } from "@/lib/shared";
+import { httpsOrigin } from "./origin";
 
 /**
  * Which analytics provider this build talks to, read from the environment.
@@ -28,16 +29,6 @@ export type AnalyticsEnv = {
 
 /** A public project token. A personal API key (`phx_`) is a secret and is refused. */
 const POSTHOG_TOKEN = /^phc_[A-Za-z0-9]+$/;
-
-function httpsOrigin(value: string | undefined): string | null {
-	if (!value) return null;
-	try {
-		const url = new URL(value);
-		return url.protocol === "https:" ? url.origin : null;
-	} catch {
-		return null;
-	}
-}
 
 export function analyticsConfig(env: AnalyticsEnv): AnalyticsConfig {
 	const token = env.VITE_POSTHOG_TOKEN;
