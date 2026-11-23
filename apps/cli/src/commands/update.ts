@@ -86,7 +86,8 @@ function defaultTarget(ctx: CommandContext, deps: UpdateDeps): string {
 }
 
 /**
- * `up-to-date` / `available` when there's nothing to install (or `--check`); `undefined` = go ahead. A `latest`
+ * `up-to-date` / `available` when there's nothing to install (or `--check`, which says `available` for whatever the
+ * same run without it installs: a newer `latest`, or an older one with `--allow-downgrade`); `undefined` = go ahead. A `latest`
  * older than the running version is installed only with `--allow-downgrade`: `--force` and a switch to the release
  * channel reinstall the same version or a newer one, and are refused for an older one.
  */
@@ -97,7 +98,7 @@ function skipInstall(deps: UpdateDeps, flags: Flags, latest: string): Result<Upd
 	const downgrade = order < 0 && flags.allowDowngrade === true;
 	const switching = deps.build.channel !== "release";
 	if (!newer && !downgrade && !switching && !flags.force) return ok({ status: "up-to-date", ...base });
-	if (flags.check) return ok({ status: newer ? "available" : "up-to-date", ...base });
+	if (flags.check) return ok({ status: newer || downgrade ? "available" : "up-to-date", ...base });
 	if (order < 0 && !downgrade) {
 		return err(
 			`latest is ${latest}, which is older than the running ${deps.build.version}: pass --allow-downgrade to install it`
@@ -307,8 +308,11 @@ function reportText(ctx: CommandContext, report: UpdateReport): string {
 	switch (report.status) {
 		case "up-to-date":
 			return `${color.green(`warden ${report.current} is up to date`)} ${color.dim(`(latest ${report.latest})`)}`;
-		case "available":
-			return `${color.yellow(`update available: ${report.current} → ${report.latest}`)} ${color.dim("(run `warden update`)")}`;
+		case "available": {
+			const older = compareVersions(report.latest, report.current) < 0;
+			const headline = `${older ? "older release" : "update"} available: ${report.current} → ${report.latest}`;
+			return `${color.yellow(headline)} ${color.dim(`(run \`warden update${older ? " --allow-downgrade" : ""}\`)`)}`;
+		}
 		case "managed":
 			return `${color.yellow(`warden ${report.current} (${describePackageInstall(report.install)}) — upgrade it with:`)}\n  ${report.command}`;
 		case "updated": {

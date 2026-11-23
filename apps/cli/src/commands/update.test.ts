@@ -207,6 +207,19 @@ describe("warden update (release binary)", () => {
 		expect(JSON.parse(check.c.stdout.join("\n"))).toMatchObject({ status: "up-to-date", latest: "0.3.0" });
 	});
 
+	test("--check --allow-downgrade reports the older latest as available, as the run without --check installs it", async () => {
+		const { c, calls, deps, execPath } = setup(["--check", "--allow-downgrade", "--json"], release("0.4.0"));
+		expect(await createUpdateCommand(deps).run(c)).toBe(0);
+		expect(JSON.parse(c.stdout.join("\n"))).toMatchObject({ status: "available", current: "0.4.0", latest: "0.3.0" });
+		expect(calls.some((cmd) => cmd.includes("download"))).toBe(false);
+		expect(readFileSync(execPath, "utf8")).toBe("OLD-BINARY");
+
+		const text = setup(["--check", "--allow-downgrade"], release("0.4.0"));
+		expect(await createUpdateCommand(text.deps).run(text.c)).toBe(0);
+		expect(text.c.stdout.join("\n")).toContain("older release available: 0.4.0 → 0.3.0");
+		expect(text.c.stdout.join("\n")).toContain("warden update --allow-downgrade");
+	});
+
 	test("--allow-downgrade installs the older latest release", async () => {
 		const { c, calls, deps, execPath } = setup(["--allow-downgrade"], release("0.4.0"));
 		expect(await createUpdateCommand(deps).run(c)).toBe(0);
