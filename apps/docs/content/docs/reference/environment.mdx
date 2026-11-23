@@ -12,7 +12,7 @@ warden's environment is the one its caller passes: the shell's, the CI job's or 
 
 | Variable | Effect |
 |---|---|
-| `WARDEN_HOME` | state directory (default `~/.warden`): `warden.db`, `builds`, `batches`, `ccache`, `metro-cache`, `affected`, `dev`, `logs`, `skill`, `ui`, `simd`, `android`, `perf`, `tools` |
+| `WARDEN_HOME` | state directory (default `~/.warden`): `warden.db`, `builds`, `batches`, `ccache`, `metro-cache`, `affected`, `dev`, `logs`, `skill`, `ui`, `simd`, `android`, `perf`, `tools`. Owner-only: warden creates it `0700` and its database `0600`, tightens one that group or others can reach, and stops with an error when another user owns it. Without `HOME` the default is the user's home directory |
 | `WARDEN_SESSION_ID`, `CLAUDE_CODE_SESSION_ID`, `CLAUDE_SESSION_ID` | treat the caller as this agent session (first one set wins; a CI owner outranks them) |
 | `CI` (`true` / `1`), `GITHUB_ACTIONS=true` | detected as a CI owner; run id from `GITHUB_RUN_ID`, `CI_PIPELINE_ID` or `BUILDKITE_BUILD_ID`. Either also flips the e2e `shutdown` default to `idle` (devices stay booted after a pass) |
 | `WARDEN_TRACE_PROCESSOR` | path to a `trace_processor_shell` for `warden perf` Android native analysis, instead of the pinned copy in `$WARDEN_HOME/tools/` ([profile an app](/docs/sims/perf)) |

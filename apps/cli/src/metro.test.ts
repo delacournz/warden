@@ -317,6 +317,7 @@ describe("metroArgv", () => {
 			"--dev-client",
 			"--port",
 			"8081",
+			"--localhost",
 			"--clear",
 		]);
 	});
@@ -328,8 +329,26 @@ describe("metroArgv", () => {
 			"--dev-client",
 			"--port",
 			"8081",
+			"--localhost",
 			"--clear",
 		]);
+	});
+
+	test("binds loopback unless the caller's args choose a host themselves", () => {
+		expect(metroArgv(8081)).toContain("--localhost");
+		for (const own of [
+			["--lan"],
+			["--tunnel"],
+			["--offline"],
+			["--localhost"],
+			["--host", "lan"],
+			["--host=lan"],
+			["-m", "tunnel"],
+		]) {
+			const argv = metroArgv(8081, own);
+			expect(argv.slice(-own.length)).toEqual(own);
+			expect(argv.filter((arg) => arg === "--localhost")).toHaveLength(own[0] === "--localhost" ? 1 : 0);
+		}
 	});
 });
 
@@ -341,6 +360,8 @@ describe("metroArgv for a bare React Native app", () => {
 			"start",
 			"--port",
 			"8082",
+			"--host",
+			"127.0.0.1",
 			"--reset-cache",
 		]);
 		expect(metroArgv(8082, [], "/p/node_modules/.bin/react-native", "react-native")).toEqual([
@@ -348,7 +369,22 @@ describe("metroArgv for a bare React Native app", () => {
 			"start",
 			"--port",
 			"8082",
+			"--host",
+			"127.0.0.1",
 		]);
+	});
+
+	test("the caller's own --host wins", () => {
+		expect(metroArgv(8082, ["--host", "0.0.0.0"], undefined, "react-native")).toEqual([
+			"npx",
+			"react-native",
+			"start",
+			"--port",
+			"8082",
+			"--host",
+			"0.0.0.0",
+		]);
+		expect(metroArgv(8082, ["--host=0.0.0.0"], undefined, "react-native")).not.toContain("127.0.0.1");
 	});
 
 	test("resolveNodeBin finds the react-native bin the same way", () => {
@@ -396,6 +432,7 @@ describe("startMetro spawn command", () => {
 			"--dev-client",
 			"--port",
 			"8081",
+			"--localhost",
 			"--clear",
 		]);
 	});
@@ -406,7 +443,7 @@ describe("startMetro spawn command", () => {
 		h.deps.probe = async () => ({ kind: "ours" });
 		h.deps.expoBin = () => undefined;
 		await startMetro(h.deps, { projectRoot: root, port: 8081, env: {}, readyTimeoutMs: 5_000 });
-		expect(h.spawned[0]?.cmd).toEqual(["bunx", "expo", "start", "--dev-client", "--port", "8081"]);
+		expect(h.spawned[0]?.cmd).toEqual(["bunx", "expo", "start", "--dev-client", "--port", "8081", "--localhost"]);
 	});
 });
 

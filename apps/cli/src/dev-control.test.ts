@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { nodePrivateFs } from "@delacour/warden-core/private-fs";
 import { ok } from "@delacour/warden-types/result";
 import {
 	callDevControl,
@@ -136,5 +137,65 @@ describe("parseDevControlResponse", () => {
 
 	test("a non-string metroUrl is dropped", () => {
 		expect(parseDevControlResponse({ ok: true, features, metroUrl: 1 })).toEqual({ ok: true, features });
+	});
+});
+
+describe("serveDevControl socket permissions", () => {
+	test("under the warden home the socket is 0600 in a directory made 0700", async () => {
+		const home = tempDir();
+		const run = join(home, "run");
+		mkdirSync(run);
+		chmodSync(run, 0o755);
+		const served = await serveDevControl(
+			join(run, "control.sock"),
+			async () => ({ ok: true, features: { hud: false, devtools: false } }),
+			{ env: { WARDEN_HOME: home } }
+		);
+		if (!served.success) throw new Error(served.error);
+		try {
+			expect(statSync(run).mode & 0o777).toBe(0o700);
+			expect(statSync(join(run, "control.sock")).mode & 0o777).toBe(0o600);
+		} finally {
+			await served.data.close();
+		}
+	});
+
+	test("a socket path given elsewhere: its directory is left as it is, the socket is still 0600", async () => {
+		const shared = join(tempDir(), "shared");
+		mkdirSync(shared);
+		chmodSync(shared, 0o755);
+		const served = await serveDevControl(
+			join(shared, "control.sock"),
+			async () => ({ ok: true, features: { hud: false, devtools: false } }),
+			{ env: { WARDEN_HOME: join(tempDir(), "home") } }
+		);
+		if (!served.success) throw new Error(served.error);
+		try {
+			expect(statSync(shared).mode & 0o777).toBe(0o755);
+			expect(statSync(join(shared, "control.sock")).mode & 0o777).toBe(0o600);
+		} finally {
+			await served.data.close();
+		}
+	});
+
+	test("a client refuses a socket in a per-user temp directory another user owns, before connecting", async () => {
+		const tmp = join(tempDir(), "warden-501");
+		const path = join(tmp, "control.sock");
+		const scope = { env: { WARDEN_HOME: join(tempDir(), "home") }, tmp: () => tmp };
+		const served = await serveDevControl(
+			path,
+			async () => ({ ok: true, features: { hud: true, devtools: true } }),
+			scope
+		);
+		if (!served.success) throw new Error(served.error);
+		try {
+			expect((await callDevControl(path, { op: "status" }, 2_000, scope)).success).toBe(true);
+			const other = { ...nodePrivateFs, uid: () => statSync(tmp).uid + 1 };
+			const refused = await callDevControl(path, { op: "status" }, 2_000, { ...scope, fs: other });
+			expect(refused.success).toBe(false);
+			if (!refused.success) expect(refused.error).toContain("is owned by uid");
+		} finally {
+			await served.data.close();
+		}
 	});
 });

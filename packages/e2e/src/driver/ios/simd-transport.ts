@@ -1,3 +1,4 @@
+import { type SocketScope, verifySocketDir } from "@delacour/warden-core/private-fs";
 import type { Result } from "@delacour/warden-types/result";
 import type { DriverError } from "../driver.types";
 import { driverError } from "../errors";
@@ -147,7 +148,7 @@ type SocketLike = {
 
 /** Where a socket transport connects: the daemon's unix socket, or a TCP port on this Mac (the Simulator runner). */
 export type SocketTarget =
-	| { socketPath: string; tcp?: undefined }
+	| { socketPath: string; tcp?: undefined; socketScope?: SocketScope }
 	| { tcp: { hostname: string; port: number }; socketPath?: undefined };
 
 export function socketTransport(opts: SocketTarget): TransportFactory {
@@ -189,6 +190,10 @@ export function socketTransport(opts: SocketTarget): TransportFactory {
 					notifyClosed();
 				},
 			};
+			if (!opts.tcp) {
+				const socketDir = verifySocketDir(opts.socketPath, opts.socketScope);
+				if (!socketDir.success) throw new Error(socketDir.error);
+			}
 			const connected = opts.tcp
 				? await Bun.connect({ hostname: opts.tcp.hostname, port: opts.tcp.port, socket: socketHandlers })
 				: await Bun.connect({ unix: opts.socketPath, socket: socketHandlers });

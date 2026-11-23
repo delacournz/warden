@@ -1,7 +1,14 @@
 import { createHash } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
+import {
+	ensureSocketDir,
+	listenOwnerOnly,
+	privateTmpDir,
+	restrictSocket,
+	type SocketScope,
+	verifySocketDir,
+} from "@delacour/warden-core/private-fs";
 import type { Socket, SocketListener } from "bun";
 import { z } from "zod";
 import { wireRequestSchema } from "./broker.schema";
@@ -23,8 +30,8 @@ const PROBE_TIMEOUT_MS = 500;
 /** headroom a call keeps over the handler's own `timeoutMs` */
 const TIMEOUT_MARGIN_MS = 5_000;
 
-/** `<logDir>/broker.sock`, else a short path under the temp dir (sockets have a path length limit). */
-export function chooseSocketPath(logDir: string, tmp: () => string = tmpdir): string {
+/** `<logDir>/broker.sock`, else a short path in the per-user socket directory (sockets have a path length limit). */
+export function chooseSocketPath(logDir: string, tmp: () => string = privateTmpDir): string {
 	const preferred = join(logDir, "broker.sock");
 	if (Buffer.byteLength(preferred) <= MAX_SOCKET_PATH_BYTES) return preferred;
 	const hash = createHash("sha1").update(logDir).digest("hex").slice(0, 12);
@@ -111,7 +118,13 @@ function listening(path: string): Promise<boolean> {
  * `{id, success, data | error}`, in completion order, so requests on one connection may overlap. A socket file
  * left behind by a dead process is removed; one that is live is an error.
  */
-export async function serveBroker(socketPath: string, handle: RequestHandler): Promise<BrokerResult<BrokerServer>> {
+export async function serveBroker(
+	socketPath: string,
+	handle: RequestHandler,
+	scope: SocketScope = {}
+): Promise<BrokerResult<BrokerServer>> {
+	const socketDir = ensureSocketDir(socketPath, scope);
+	if (!socketDir.success) return brokerErr("io_failed", socketDir.error);
 	if (existsSync(socketPath)) {
 		if (await listening(socketPath)) {
 			return brokerErr("devtools_unavailable", `a broker is already listening on ${socketPath}`);
@@ -125,40 +138,43 @@ export async function serveBroker(socketPath: string, handle: RequestHandler): P
 	const open = new Set<ServerSocket>();
 	let listener: SocketListener<ServerData>;
 	try {
-		listener = Bun.listen<ServerData>({
-			unix: socketPath,
-			socket: {
-				open(socket) {
-					socket.data = { buffer: "", decoder: new TextDecoder(), pending: Buffer.alloc(0), closed: false };
-					open.add(socket);
+		listener = listenOwnerOnly(() =>
+			Bun.listen<ServerData>({
+				unix: socketPath,
+				socket: {
+					open(socket) {
+						socket.data = { buffer: "", decoder: new TextDecoder(), pending: Buffer.alloc(0), closed: false };
+						open.add(socket);
+					},
+					data(socket, chunk) {
+						const data = socket.data;
+						data.buffer += data.decoder.decode(chunk, { stream: true });
+						if (data.buffer.length > MAX_REQUEST_BYTES) {
+							reply(socket, { id: "", ...brokerErr("bad_request", "request line is too long") });
+							socket.end();
+							return;
+						}
+						for (let nl = data.buffer.indexOf("\n"); nl >= 0; nl = data.buffer.indexOf("\n")) {
+							const line = data.buffer.slice(0, nl).trim();
+							data.buffer = data.buffer.slice(nl + 1);
+							if (line !== "") void answer(socket, line, handle);
+						}
+					},
+					drain(socket) {
+						flush(socket);
+					},
+					close(socket) {
+						socket.data.closed = true;
+						open.delete(socket);
+					},
+					error(socket) {
+						socket.data.closed = true;
+						open.delete(socket);
+					},
 				},
-				data(socket, chunk) {
-					const data = socket.data;
-					data.buffer += data.decoder.decode(chunk, { stream: true });
-					if (data.buffer.length > MAX_REQUEST_BYTES) {
-						reply(socket, { id: "", ...brokerErr("bad_request", "request line is too long") });
-						socket.end();
-						return;
-					}
-					for (let nl = data.buffer.indexOf("\n"); nl >= 0; nl = data.buffer.indexOf("\n")) {
-						const line = data.buffer.slice(0, nl).trim();
-						data.buffer = data.buffer.slice(nl + 1);
-						if (line !== "") void answer(socket, line, handle);
-					}
-				},
-				drain(socket) {
-					flush(socket);
-				},
-				close(socket) {
-					socket.data.closed = true;
-					open.delete(socket);
-				},
-				error(socket) {
-					socket.data.closed = true;
-					open.delete(socket);
-				},
-			},
-		});
+			})
+		);
+		restrictSocket(socketPath);
 	} catch (error) {
 		return brokerErr("io_failed", `cannot listen on ${socketPath}: ${String(error)}`);
 	}
@@ -186,6 +202,8 @@ export async function serveBroker(socketPath: string, handle: RequestHandler): P
 export type CallOptions = {
 	/** give up after this long (default 15 s, or the request's own `timeoutMs` plus 5 s) */
 	timeoutMs?: number;
+	/** where the per-user socket directory is (tests) */
+	socketScope?: SocketScope;
 };
 
 const replySchema = z.looseObject({ id: z.string(), success: z.boolean() });
@@ -210,6 +228,9 @@ export function callBroker<R extends BrokerRequest>(
 	request: R,
 	options: CallOptions = {}
 ): Promise<BrokerResult<ResponseOf<R>>> {
+	const socketDir = verifySocketDir(socketPath, options.socketScope);
+	if (!socketDir.success)
+		return Promise.resolve(brokerErr("broker_unreachable", socketDir.error) as BrokerResult<ResponseOf<R>>);
 	const id = `${process.pid}-${++callCounter}`;
 	const timeoutMs = timeoutOf(request, options);
 	return new Promise((resolve) => {

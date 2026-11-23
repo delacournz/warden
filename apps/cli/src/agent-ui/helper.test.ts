@@ -436,6 +436,34 @@ describe("ensureHelper: silence vs a busy helper (14-2)", () => {
 		expect(s.kills).toEqual([]);
 		expect(readState(c, UDID).helper?.pid).toBe(4242);
 	});
+
+	test("a live helper recorded on another socket path is stopped on its own socket before the one replacement is spawned", async () => {
+		const { s, socketPath, host, c } = setup();
+		const oldSocket = join(c.cwd, "old.sock");
+		writeFileSync(oldSocket, "");
+		s.alive.add(777);
+		writeState(c, UDID, { generation: 0, updatedAt: 0, helper: { pid: 777, socket: oldSocket } });
+		const res = await ensureHelper(host, UDID, { socketPath, helperPath: "/h/w", deps: s.deps });
+		expect(res).toEqual({ success: true, data: { socketPath, spawned: true, pid: 4242 } });
+		expect(s.kills).toEqual([[777, "SIGTERM"]]);
+		expect(existsSync(oldSocket)).toBe(false);
+		expect(s.spawns).toHaveLength(1);
+		expect(readState(c, UDID).helper).toMatchObject({ pid: 4242, socket: socketPath });
+	});
+
+	test("a helper recorded on another socket path that cannot be stopped: no second helper is spawned beside it", async () => {
+		const { s, socketPath, host, c } = setup();
+		const oldSocket = join(c.cwd, "old.sock");
+		writeFileSync(oldSocket, "");
+		s.alive.add(777);
+		writeState(c, UDID, { generation: 0, updatedAt: 0, helper: { pid: 777, socket: oldSocket } });
+		const deps: HelperDeps = { ...s.deps, command: () => undefined };
+		const res = await ensureHelper(host, UDID, { socketPath, helperPath: "/h/w", deps });
+		expect(res.success).toBe(false);
+		expect(s.spawns).toEqual([]);
+		expect(s.kills).toEqual([]);
+		expect(readState(c, UDID).helper?.pid).toBe(777);
+	});
 });
 
 const agentA: Owner = { kind: "agent", sessionId: "A", cwd: "/w" };

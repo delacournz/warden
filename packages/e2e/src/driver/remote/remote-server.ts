@@ -1,4 +1,5 @@
 import { unlinkSync } from "node:fs";
+import { ensureSocketDir, listenOwnerOnly, restrictSocket, type SocketScope } from "@delacour/warden-core/private-fs";
 import type { Driver, DriverError, DriverResult, Logger } from "../driver.types";
 import { driverError } from "../errors";
 import { createLineSplitter } from "../ios/simd-protocol";
@@ -25,6 +26,8 @@ import {
 export type ServeDriverOptions = {
 	driver: Driver;
 	socketPath: string;
+	/** where warden's own socket directories are (tests) */
+	socketScope?: SocketScope;
 	/** call `onIdle` once no client has been connected and no op has run for this long; absent or 0 = never */
 	idleMs?: number;
 	onIdle?: () => void;
@@ -216,40 +219,45 @@ export async function serveDriver(options: ServeDriverOptions): Promise<RemoteSe
 		});
 	};
 
+	const socketDir = ensureSocketDir(socketPath, options.socketScope);
+	if (!socketDir.success) throw new Error(socketDir.error);
 	try {
 		unlinkSync(socketPath);
 	} catch {
 		// not there
 	}
 	const splitters = new WeakMap<object, ReturnType<typeof createLineSplitter>>();
-	const listener = Bun.listen({
-		unix: socketPath,
-		socket: {
-			open(socket) {
-				conns.add(socket);
-				outboxes.set(socket, { queued: new Uint8Array(0) });
-				splitters.set(socket, createLineSplitter());
-				armIdle();
-				send(socket, ready());
+	const listener = listenOwnerOnly(() =>
+		Bun.listen({
+			unix: socketPath,
+			socket: {
+				open(socket) {
+					conns.add(socket);
+					outboxes.set(socket, { queued: new Uint8Array(0) });
+					splitters.set(socket, createLineSplitter());
+					armIdle();
+					send(socket, ready());
+				},
+				data(socket, chunk) {
+					const splitter = splitters.get(socket);
+					if (splitter === undefined) return;
+					for (const line of splitter.push(chunk)) onLine(socket, line);
+				},
+				drain(socket) {
+					flush(socket);
+				},
+				close(socket) {
+					conns.delete(socket);
+					armIdle();
+				},
+				error(socket) {
+					conns.delete(socket);
+					armIdle();
+				},
 			},
-			data(socket, chunk) {
-				const splitter = splitters.get(socket);
-				if (splitter === undefined) return;
-				for (const line of splitter.push(chunk)) onLine(socket, line);
-			},
-			drain(socket) {
-				flush(socket);
-			},
-			close(socket) {
-				conns.delete(socket);
-				armIdle();
-			},
-			error(socket) {
-				conns.delete(socket);
-				armIdle();
-			},
-		},
-	});
+		})
+	);
+	restrictSocket(socketPath);
 	armIdle();
 
 	const drop = () => {

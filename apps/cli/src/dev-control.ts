@@ -1,7 +1,14 @@
 import { createHash } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
+import {
+	ensureSocketDir,
+	listenOwnerOnly,
+	privateTmpDir,
+	restrictSocket,
+	type SocketScope,
+	verifySocketDir,
+} from "@delacour/warden-core/private-fs";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import type { Socket } from "bun";
 
@@ -82,8 +89,8 @@ export function parseDevControlResponse(value: unknown): DevControlResponse | un
 	return undefined;
 }
 
-/** `<logDir>/control.sock`, else a short path under the temp dir (sockets have a path length limit). */
-export function controlSocketPath(logDir: string, tmp: () => string = tmpdir): string {
+/** `<logDir>/control.sock`, else a short path in the per-user socket directory (sockets have a path length limit). */
+export function controlSocketPath(logDir: string, tmp: () => string = privateTmpDir): string {
 	const preferred = join(logDir, "control.sock");
 	if (Buffer.byteLength(preferred) <= MAX_SOCKET_PATH_BYTES) return preferred;
 	const hash = createHash("sha1").update(logDir).digest("hex").slice(0, 12);
@@ -108,7 +115,13 @@ function parseJson(text: string): unknown {
  * (a toggle waits for the one before it), so two agents flipping devtools never start two brokers. The `warden dev`
  * that serves it is the only writer, so a leftover socket file is removed rather than probed.
  */
-export async function serveDevControl(socketPath: string, handle: DevControlHandler): AsyncResult<DevControlServer> {
+export async function serveDevControl(
+	socketPath: string,
+	handle: DevControlHandler,
+	scope: SocketScope = {}
+): AsyncResult<DevControlServer> {
+	const socketDir = ensureSocketDir(socketPath, scope);
+	if (!socketDir.success) return socketDir;
 	if (existsSync(socketPath)) {
 		try {
 			unlinkSync(socketPath);
@@ -127,26 +140,29 @@ export async function serveDevControl(socketPath: string, handle: DevControlHand
 		socket.end();
 	};
 	try {
-		const listener = Bun.listen<ConnData>({
-			unix: socketPath,
-			socket: {
-				open(socket) {
-					socket.data = { buffer: "" };
+		const listener = listenOwnerOnly(() =>
+			Bun.listen<ConnData>({
+				unix: socketPath,
+				socket: {
+					open(socket) {
+						socket.data = { buffer: "" };
+					},
+					data(socket, chunk) {
+						socket.data.buffer += chunk.toString();
+						if (socket.data.buffer.length > MAX_LINE_BYTES) {
+							socket.end();
+							return;
+						}
+						const newline = socket.data.buffer.indexOf("\n");
+						if (newline === -1) return;
+						const line = socket.data.buffer.slice(0, newline);
+						socket.data.buffer = "";
+						queue = queue.then(() => answer(socket, line));
+					},
 				},
-				data(socket, chunk) {
-					socket.data.buffer += chunk.toString();
-					if (socket.data.buffer.length > MAX_LINE_BYTES) {
-						socket.end();
-						return;
-					}
-					const newline = socket.data.buffer.indexOf("\n");
-					if (newline === -1) return;
-					const line = socket.data.buffer.slice(0, newline);
-					socket.data.buffer = "";
-					queue = queue.then(() => answer(socket, line));
-				},
-			},
-		});
+			})
+		);
+		restrictSocket(socketPath);
 		return ok({
 			socketPath,
 			close: async () => {
@@ -168,8 +184,11 @@ export async function serveDevControl(socketPath: string, handle: DevControlHand
 export function callDevControl(
 	socketPath: string,
 	request: DevControlRequest,
-	timeoutMs = DEFAULT_CALL_TIMEOUT_MS
+	timeoutMs = DEFAULT_CALL_TIMEOUT_MS,
+	scope: SocketScope = {}
 ): AsyncResult<DevControlResponse> {
+	const socketDir = verifySocketDir(socketPath, scope);
+	if (!socketDir.success) return Promise.resolve(socketDir);
 	return new Promise((resolve) => {
 		let buffer = "";
 		let settled = false;

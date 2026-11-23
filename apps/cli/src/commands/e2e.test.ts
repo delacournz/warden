@@ -289,7 +289,7 @@ describe("warden e2e", () => {
 			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
 			const root = join(dir, "packages/ui");
 			const metro = h.metro();
-			expect(metro?.cmd).toEqual(["bunx", "expo", "start", "--dev-client", "--port", "8081"]);
+			expect(metro?.cmd).toEqual(["bunx", "expo", "start", "--dev-client", "--port", "8081", "--localhost"]);
 			expect(metro?.opts).toMatchObject({ cwd: root, group: true });
 			expect(metro?.opts.log).toBe(join(c.env.WARDEN_HOME ?? "", "batches", "b1", "metro.log"));
 			expect(metro?.opts.env).toMatchObject({ CI: "1", EXPO_PUBLIC_E2E: "1", WARDEN_PORT: "8081" });
@@ -342,12 +342,13 @@ describe("warden e2e", () => {
 				"--dev-client",
 				"--port",
 				"8081",
+				"--localhost",
 			]);
 			ctx?.cleanup();
 
 			const noNode = harness();
 			expect(await createE2eCommand(noNode.deps).run(setup(["--files", "src/chat/lazy.tsx"]))).toBe(0);
-			expect(noNode.metro()?.cmd).toEqual(["bunx", "expo", "start", "--dev-client", "--port", "8081"]);
+			expect(noNode.metro()?.cmd).toEqual(["bunx", "expo", "start", "--dev-client", "--port", "8081", "--localhost"]);
 		});
 
 		test("iOS: opening the dev client and closing a late simulator window run side by side", async () => {
