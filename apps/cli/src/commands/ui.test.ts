@@ -288,6 +288,7 @@ describe("warden ui --force on a device the user holds from another shell (borro
 
 	test("without --force: exit 2 device_foreign, hint names --force and warden release", async () => {
 		const h = harness(() => snap(), { lease: DEV, pidAlive: () => true });
+		h.c.env = { ...h.c.env, WARDEN_SESSION_ID: "", CLAUDE_CODE_SESSION_ID: "", CLAUDE_SESSION_ID: "", CI: "" };
 		expect(await h.run("snapshot", "--json")).toBe(2);
 		const out = doc(h.c);
 		expect(out.error.code).toBe("device_foreign");
@@ -313,6 +314,15 @@ describe("warden ui --force on a device the user holds from another shell (borro
 		expect(out.result.released).toBe(false);
 		expect(out.warnings.join("\n")).toContain(`not released: ${id} belongs to user pid 17759`);
 		expect(h.c.db.getLease(id)).toBeDefined();
+	});
+
+	test("an agent caller is told to borrow only when the user asked", async () => {
+		const c = setup(["snapshot", "--udid", UDID, "--json"]);
+		lease(c, UDID, shell);
+		expect(await uiCommand.run(c)).toBe(2);
+		const out = json(c);
+		expect(out.error.code).toBe("device_foreign");
+		expect(out.error.hint).toContain("only if the user asked");
 	});
 
 	test("an agent's lease is never borrowed, even with --force", async () => {

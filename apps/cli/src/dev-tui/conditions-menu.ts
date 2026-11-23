@@ -31,6 +31,12 @@ const item = (key: string, label: string, argv: readonly string[], platforms?: r
 	...(platforms ? { platforms } : {}),
 });
 
+/**
+ * Network and clock reach an iOS app only through warden's dylib, and `warden dev` launches the dev client without it:
+ * on iOS they would only be staged (a ✓ that changes nothing), so the menu offers them on Android only.
+ */
+const ANDROID: readonly Platform[] = ["android"];
+
 const status = (verb: readonly string[]): MenuItem => item("?", "status", [...verb, "status"]);
 
 /**
@@ -54,15 +60,15 @@ export const CONDITION_AREAS: readonly MenuArea[] = [
 		key: "n",
 		label: "network",
 		items: [
-			item("o", "offline", ["network", "set", "offline"]),
-			item("e", "edge", ["network", "set", "edge"]),
-			item("3", "3g", ["network", "set", "3g"]),
-			item("l", "lte", ["network", "set", "lte"]),
-			item("s", "slow", ["network", "set", "slow"]),
-			item("x", "lossy", ["network", "set", "lossy"]),
-			item("f", "flap (10s up, 3s down)", ["network", "flap", "--up", "10s", "--down", "3s"]),
-			item("r", "reset (online)", ["network", "reset"]),
-			status(["network"]),
+			item("o", "offline", ["network", "set", "offline"], ANDROID),
+			item("e", "edge", ["network", "set", "edge"], ANDROID),
+			item("3", "3g", ["network", "set", "3g"], ANDROID),
+			item("l", "lte", ["network", "set", "lte"], ANDROID),
+			item("s", "slow", ["network", "set", "slow"], ANDROID),
+			item("x", "lossy", ["network", "set", "lossy"], ANDROID),
+			item("f", "flap (10s up, 3s down)", ["network", "flap", "--up", "10s", "--down", "3s"], ANDROID),
+			item("r", "reset (online)", ["network", "reset"], ANDROID),
+			item("?", "status", ["network", "status"], ANDROID),
 		],
 	},
 	{
@@ -80,12 +86,12 @@ export const CONDITION_AREAS: readonly MenuArea[] = [
 		key: "t",
 		label: "clock",
 		items: [
-			item("h", "+1 hour", ["clock", "advance", "1h"]),
-			item("d", "+1 day", ["clock", "advance", "1d"]),
-			item("w", "+1 week", ["clock", "advance", "7d"]),
-			item("m", "+30 days", ["clock", "advance", "30d"]),
-			item("r", "reset (real time)", ["clock", "reset"]),
-			status(["clock"]),
+			item("h", "+1 hour", ["clock", "advance", "1h"], ANDROID),
+			item("d", "+1 day", ["clock", "advance", "1d"], ANDROID),
+			item("w", "+1 week", ["clock", "advance", "7d"], ANDROID),
+			item("m", "+30 days", ["clock", "advance", "30d"], ANDROID),
+			item("r", "reset (real time)", ["clock", "reset"], ANDROID),
+			item("?", "status", ["clock", "status"], ANDROID),
 		],
 	},
 	{
@@ -140,6 +146,11 @@ function itemsOf(area: MenuArea, platform: Platform): MenuItem[] {
 	return area.items.filter(onPlatform(platform));
 }
 
+/** The areas with at least one preset on `platform`. */
+export function areasFor(platform: Platform): MenuArea[] {
+	return CONDITION_AREAS.filter((a) => itemsOf(a, platform).length > 0);
+}
+
 const clamp = (index: number, count: number): number => Math.max(0, Math.min(count - 1, index));
 
 const move = (menu: MenuState, delta: number, count: number): MenuStep => ({
@@ -149,21 +160,22 @@ const move = (menu: MenuState, delta: number, count: number): MenuStep => ({
 
 const open = (area: MenuArea): MenuStep => ({ kind: "move", menu: { area: area.key, index: 0 } });
 
-function rootKey(menu: MenuState, key: Key): MenuStep {
+function rootKey(menu: MenuState, key: Key, platform: Platform): MenuStep {
+	const areas = areasFor(platform);
 	if (key.name === "escape" || key.name === "q" || key.name === "C") return { kind: "close" };
-	if (key.name === "up" || key.name === "down") return move(menu, key.name === "up" ? -1 : 1, CONDITION_AREAS.length);
+	if (key.name === "up" || key.name === "down") return move(menu, key.name === "up" ? -1 : 1, areas.length);
 	if (key.name === "enter" || key.name === "right") {
-		const selected = CONDITION_AREAS[menu.index];
+		const selected = areas[menu.index];
 		return selected ? open(selected) : { kind: "none" };
 	}
-	const area = CONDITION_AREAS.find((a) => a.key === key.name);
+	const area = areas.find((a) => a.key === key.name);
 	return area ? open(area) : { kind: "none" };
 }
 
 function areaKey(menu: MenuState, area: MenuArea, key: Key, platform: Platform): MenuStep {
 	if (key.name === "q" || key.name === "C") return { kind: "close" };
 	if (key.name === "escape" || key.name === "left" || key.name === "backspace")
-		return { kind: "move", menu: { area: undefined, index: CONDITION_AREAS.indexOf(area) } };
+		return { kind: "move", menu: { area: undefined, index: Math.max(0, areasFor(platform).indexOf(area)) } };
 	const items = itemsOf(area, platform);
 	if (key.name === "up" || key.name === "down") return move(menu, key.name === "up" ? -1 : 1, items.length);
 	const chosen = key.name === "enter" ? items[menu.index] : items.find((i) => i.key === key.name);
@@ -174,7 +186,7 @@ function areaKey(menu: MenuState, area: MenuArea, key: Key, platform: Platform):
 export function menuKey(menu: MenuState, key: Key, platform: Platform): MenuStep {
 	if (key.ctrl) return { kind: "none" };
 	const area = areaOf(menu);
-	return area ? areaKey(menu, area, key, platform) : rootKey(menu, key);
+	return area ? areaKey(menu, area, key, platform) : rootKey(menu, key, platform);
 }
 
 export type MenuRow = { key: string; label: string; selected: boolean; hint?: string };
@@ -185,7 +197,7 @@ export function menuView(menu: MenuState, platform: Platform): { title: string; 
 	if (area === undefined) {
 		return {
 			title: "conditions",
-			rows: CONDITION_AREAS.map((a, i) => ({
+			rows: areasFor(platform).map((a, i) => ({
 				key: a.key,
 				label: a.label,
 				selected: i === menu.index,

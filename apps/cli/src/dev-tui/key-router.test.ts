@@ -67,7 +67,7 @@ describe("key router: conditions menu", () => {
 	});
 
 	test("arrows + enter walk to a preset", () => {
-		const h = setup();
+		const h = setup({ ...READY, platform: "android", deviceId: "emulator-5554" });
 		h.route(press("C", { shift: true }));
 		h.route(press("down"));
 		h.route(press("enter"));
@@ -77,7 +77,7 @@ describe("key router: conditions menu", () => {
 	});
 
 	test("esc backs out an area, then closes the menu", () => {
-		const h = setup();
+		const h = setup({ ...READY, platform: "android", deviceId: "emulator-5554" });
 		h.route(press("C", { shift: true }));
 		h.route(press("n"));
 		h.route(press("escape"));

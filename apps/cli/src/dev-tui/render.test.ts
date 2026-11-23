@@ -210,17 +210,18 @@ describe("render", () => {
 			const rootText = text(root);
 			expect(rootText).toContain("conditions");
 			expect(rootText).toContain("b  biometrics");
-			expect(rootText).toContain("n  network");
+			expect(rootText).toContain("l  location");
+			expect(rootText).not.toContain("network");
 			expect(rootText.split("\n").at(-1)).toContain("esc");
 			const area = render(
-				stateAt(cols, rows, [press("C"), { type: "menu", menu: { area: "n", index: 0 } }]),
+				stateAt(cols, rows, [press("C"), { type: "menu", menu: { area: "l", index: 0 } }]),
 				cols,
 				rows
 			);
 			expectExactWidth(area, cols, rows);
 			const areaText = text(area);
-			expect(areaText).toContain("conditions › network");
-			expect(areaText).toContain("o  offline");
+			expect(areaText).toContain("conditions › location");
+			expect(areaText).toContain("r  city run");
 		}
 	});
 

@@ -229,18 +229,22 @@ async function unlockPhysicalIosForClaim(
 	return unlocked.success ? ok(undefined) : fail(claimError(unlocked.error));
 }
 
+/** A user's shell holds the device: a person is told `--force` borrows it; an agent only when the user asked. */
+function borrowHint(error: DeviceLeaseError, platform: Platform, caller: Owner): string {
+	const release = error.leaseId === undefined ? "warden release <leaseId>" : `warden release ${error.leaseId}`;
+	return caller.kind === "user"
+		? `you hold it from another shell: re-run with --force to drive it beside that holder, or ${release} first`
+		: `a user's shell holds it: add --force only if the user asked you to drive their device, else run warden claim ${platform} --json`;
+}
+
 /**
  * The `UiError` for a refused `ensureCallerLease`; only the non-busy/foreign codes hint at `--claim`. A foreign lease
  * the user holds from another shell hints at `--force` (borrow it) or releasing it.
  */
-function leaseError(error: DeviceLeaseError, platform: Platform): UiError {
+function leaseError(error: DeviceLeaseError, platform: Platform, caller: Owner): UiError {
 	const { code, message } = error;
-	if (code === "device_foreign" && error.borrowable) {
-		const release = error.leaseId === undefined ? "warden release <leaseId>" : `warden release ${error.leaseId}`;
-		return uiError(code, message, {
-			hint: `you hold it from another shell: re-run with --force to drive it beside that holder, or ${release} first`,
-		});
-	}
+	if (code === "device_foreign" && error.borrowable)
+		return uiError(code, message, { hint: borrowHint(error, platform, caller) });
 	return code === "device_foreign" || code === "device_busy"
 		? uiError(code, message)
 		: uiError(code, message, { hint: `add --claim, or run warden claim ${platform} --json` });
@@ -286,7 +290,7 @@ async function leaseCandidate(
 		...checkOptions(check),
 		...(phone.kind === "phone" ? { physical: phone.physical } : {}),
 	});
-	if (!leased.success) return fail(leaseError(leased.error, platform.data));
+	if (!leased.success) return fail(leaseError(leased.error, platform.data, owner));
 	const { lease, action } = leased.data;
 	// the lease is kept: the user fixes the phone (accept the prompt, replug) and retries
 	const notReady = phone.kind === "phone" ? phoneStateError(candidate.id, phone.adbState) : undefined;
