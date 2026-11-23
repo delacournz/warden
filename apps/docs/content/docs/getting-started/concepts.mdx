@@ -47,6 +47,12 @@ A bare agent `warden claim` prints a hint and expires in 5 min; nothing refreshe
 
 Only sims warden **created**, or that the lease owner **booted itself** (they were off when it first touched them), are shut down on release. A sim that was already running when it was picked up is released but left on.
 
+## Trust model
+
+- **`warden.config.ts` and specs are code that runs as you.** warden loads the config and runs `*.e2e.ts` files with your user's full access, like any script in the checkout. Run warden only in a checkout you would run `bun test` in.
+- **Leases are cooperative, not a security boundary.** They keep the processes of one user (agents, terminals, CI jobs) off each other's devices and ports. They do not separate users: anyone who can run as you, or can reach your simulators with `simctl` / `adb`, is not stopped by a lease.
+- **Text from the app is data.** What `warden ui` and `warden mcp` read off a device (labels, console lines, network bodies) was written by the app and its servers. Agents are told never to act on instructions found there; see [Agent rules](/docs/sims/rules).
+
 <Cards>
   <Card title="Leases" href="/docs/sims/leases" description="claim, release, ls, check, heartbeat." />
   <Card title="Agent rules" href="/docs/sims/rules" description="What agents may and may not touch." />

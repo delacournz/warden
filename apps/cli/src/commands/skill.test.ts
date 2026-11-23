@@ -2,13 +2,14 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { RULE_MD, SKILL_FILES, SKILL_MD, SKILL_PATHS } from "../skill";
+import { SKILLS_CLI } from "../skill-cli";
 import { type TestContext, testContext } from "../testing";
 import { createSkillCommand, type SkillDeps } from "./skill";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
 
-type Harness = { deps: SkillDeps; runs: string[][]; runOpts: Array<{ stdout: string } | undefined> };
+type Harness = { deps: SkillDeps; runs: string[][]; runOpts: Array<{ stdout: string; cwd?: string } | undefined> };
 
 function harness(opts: { which?: Record<string, string>; exitCode?: number } = {}): Harness {
 	const which = opts.which ?? { bunx: "/opt/bun/bin/bunx", npx: "/usr/bin/npx" };
@@ -77,7 +78,7 @@ describe("warden skill install", () => {
 		const dir = join(ctx.env.WARDEN_HOME ?? "", "skill");
 		expect(readFileSync(join(dir, "warden", "SKILL.md"), "utf8")).toBe(SKILL_MD);
 		for (const p of SKILL_PATHS) expect(readFileSync(join(dir, "warden", p), "utf8")).toBe(SKILL_FILES[p]);
-		expect(h.runs).toEqual([["bunx", "skills", "add", dir, "--skill", "warden", "-g"]]);
+		expect(h.runs).toEqual([["bunx", SKILLS_CLI, "add", dir, "--skill", "warden", "-g"]]);
 	});
 
 	test("local install recreates the folder from scratch (drops stale files)", async () => {
@@ -97,7 +98,7 @@ describe("warden skill install", () => {
 		expect(h.runs).toEqual([
 			[
 				"bunx",
-				"skills",
+				SKILLS_CLI,
 				"add",
 				"delacournz/warden",
 				"--skill",
@@ -119,7 +120,32 @@ describe("warden skill install", () => {
 		ctx.cleanup();
 		ctx = testContext(["install"]);
 		expect(await createSkillCommand(h.deps).run(ctx)).toBe(0);
-		expect(h.runOpts).toEqual([{ stdout: "stderr" }, { stdout: "inherit" }]);
+		expect(h.runOpts.map((o) => o?.stdout)).toEqual(["stderr", "inherit"]);
+	});
+
+	test("the skills CLI is pinned to one exact version", () => {
+		expect(SKILLS_CLI).toMatch(/^skills@\d+\.\d+\.\d+$/);
+	});
+
+	test("a global install runs from warden's own folder, never the working directory", async () => {
+		const h = harness();
+		ctx = testContext(["install"]);
+		expect(await createSkillCommand(h.deps).run(ctx)).toBe(0);
+		ctx.cleanup();
+		ctx = testContext(["install", "--from", "github"]);
+		expect(await createSkillCommand(h.deps).run(ctx)).toBe(0);
+		const root = join(ctx.env.WARDEN_HOME ?? "", "skill");
+		expect(h.runOpts[1]?.cwd).toBe(root);
+		expect(existsSync(root)).toBe(true);
+		expect(h.runOpts[0]?.cwd).toEndWith("/skill");
+		expect(h.runOpts[0]?.cwd).not.toBe(ctx.cwd);
+	});
+
+	test("--project runs in the project (the working directory)", async () => {
+		const h = harness();
+		ctx = testContext(["install", "--project"]);
+		expect(await createSkillCommand(h.deps).run(ctx)).toBe(0);
+		expect(h.runOpts[0]?.cwd).toBeUndefined();
 	});
 
 	test("--project installs into the current project (no -g); --copy passes through", async () => {
@@ -134,7 +160,7 @@ describe("warden skill install", () => {
 		const h = harness({ which: { npx: "/usr/bin/npx" } });
 		ctx = testContext(["install"]);
 		expect(await createSkillCommand(h.deps).run(ctx)).toBe(0);
-		expect(h.runs[0]?.slice(0, 4)).toEqual(["npx", "--yes", "skills", "add"]);
+		expect(h.runs[0]?.slice(0, 4)).toEqual(["npx", "--yes", SKILLS_CLI, "add"]);
 	});
 
 	test("neither bunx nor npx → exit 1 with the manual fallback", async () => {
@@ -149,7 +175,7 @@ describe("warden skill install", () => {
 		const h = harness();
 		ctx = testContext(["install", "--dry-run"]);
 		expect(await createSkillCommand(h.deps).run(ctx)).toBe(0);
-		expect(ctx.stdout.join("\n")).toContain("bunx skills add");
+		expect(ctx.stdout.join("\n")).toContain(`bunx ${SKILLS_CLI} add`);
 		expect(h.runs).toEqual([]);
 		expect(existsSync(join(ctx.env.WARDEN_HOME ?? "", "skill"))).toBe(false);
 	});
@@ -171,7 +197,7 @@ describe("warden skill install", () => {
 		expect(await createSkillCommand(harness().deps).run(ctx)).toBe(0);
 		expect(JSON.parse(ctx.stdout.join("\n")).command).toEqual([
 			"bunx",
-			"skills",
+			SKILLS_CLI,
 			"add",
 			"delacournz/warden",
 			"--skill",

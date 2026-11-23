@@ -785,9 +785,9 @@ Every tab asks `warden __complete -- <words…>`, which walks the same command t
 
 ### `warden skill show | install`
 
-`show [--file <name>] [--json]` prints SKILL.md, or one file of the skill folder such as `references/ui.md`. `warden install --claude` stages the embedded skill in `$WARDEN_HOME/skill/warden/` and installs it with the same `skills add` command.
+`show [--file <name>] [--json]` prints SKILL.md, or one file of the skill folder such as `references/ui.md`. `warden install --claude` does not use this command: it writes the embedded skill folder straight to `~/.claude/skills/warden`.
 
-`install` runs `bunx skills add` (npx fallback): `--from local|github` (default `local`: this binary's embedded copy; `github` is the updatable release repo), `--project` (default: global), `-a/--agent <agent...>`, `--copy` (copy instead of symlink), `-y`, `--dry-run` (print the command, run nothing), `--json`.
+`install` runs the `skills` CLI at one exact version compiled into warden (`bunx skills@1.9.0 add`, npx fallback; `--dry-run` prints it). A global install starts it in `$WARDEN_HOME/skill/`, so the package it runs never comes from the directory you are in; `--project` runs it in the project. Options: `--from local|github` (default `local`: this binary's embedded copy; `github` is the updatable release repo), `--project` (default: global), `-a/--agent <agent...>`, `--copy` (copy instead of symlink), `-y`, `--dry-run` (print the command, run nothing), `--json`.
 
 ### `warden hook session-end`
 

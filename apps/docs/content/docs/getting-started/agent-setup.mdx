@@ -33,14 +33,14 @@ Set up warden for mobile device work in this repo.
 
 The skill loads into Claude Code, Codex, Cursor, GitHub Copilot, Gemini CLI, OpenCode, Windsurf, Zed and the other agents the `skills` CLI supports. Hooks exist only for Claude Code and Codex.
 
-Agents are detected from `~/.claude` / `claude` on `PATH` and `$CODEX_HOME` (`~/.codex`) / `codex` on `PATH`; with none found, only the binary is installed. The skill is placed by the `skills` CLI, which may prompt (`--yes` is passed through).
+Agents are detected from `~/.claude` / `claude` on `PATH` and `$CODEX_HOME` (`~/.codex`) / `codex` on `PATH`; with none found, only the binary is installed. For Claude Code, `warden install` writes the skill folder itself to `~/.claude/skills/warden`. For the other agents, `warden skill install` runs the `skills` CLI at one pinned version, which may prompt.
 
 ## Per agent
 
 ```bash
-warden install --claude   # Claude Code only: skill (via `skills add`) + rule + SessionEnd hook
+warden install --claude   # Claude Code only: skill + rule + SessionEnd hook, written by warden itself
 warden install --codex    # Codex only: hooks in $CODEX_HOME/hooks.json
-warden skill install      # the skill, into any agent the skills CLI offers
+warden skill install      # the skill, into any agent the (pinned) skills CLI offers
 ```
 
 Every agent-config change shows a diff and asks first. `--yes` skips the prompt, `--dry-run` only prints, and a non-TTY without `--yes` skips.

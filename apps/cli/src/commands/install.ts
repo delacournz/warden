@@ -11,16 +11,7 @@ import { codexConfigPath, codexHooksPath, codexTomlHasWardenHook, mergeCodexHook
 import { errorMessage } from "../hooks/json";
 import { lineDiff } from "../hooks/text-diff";
 import { heading, reportError } from "../output";
-import { RULE_MD, SKILL_NAME, staleSkillFiles } from "../skill";
-import {
-	CLAUDE_AGENT,
-	localSkillRoot,
-	realSkillDeps,
-	runner,
-	type SkillDeps,
-	skillsAddArgs,
-	stageSkillFolder,
-} from "../skill-cli";
+import { RULE_MD, staleSkillFiles, writeSkillFolder } from "../skill";
 import { type InstallOrigin, recordInstallOrigin } from "../update/install-origin";
 import {
 	describePackageInstall,
@@ -36,7 +27,7 @@ export const HOOK_BINARY = "$HOME/.local/bin/warden";
 export type Runtime = { kind: "compiled"; execPath: string } | { kind: "dev"; cliPath: string };
 
 /** Outside world for `warden install` beyond `CommandContext` (prompts come from `ctx.ui`). */
-export type InstallDeps = { runtime: Runtime; skill: SkillDeps };
+export type InstallDeps = { runtime: Runtime };
 
 export type StepName = "binary" | "skill" | "rule" | "settings" | "codex-hooks" | "completion";
 export type StepStatus = "written" | "unchanged" | "skipped" | "declined" | "dry-run" | "failed" | "error";
@@ -141,25 +132,16 @@ function binarySource(runtime: Runtime): BinarySource {
 }
 
 /**
- * Claude Code skill: stage the embedded folder under `$WARDEN_HOME/skill/warden` and let the `skills` CLI
- * (`skills add … -a claude-code`) place it in `~/.claude/skills/warden`. Already-current on disk → unchanged.
+ * Claude Code skill: the embedded folder written straight to `~/.claude/skills/warden` (`writeSkillFolder`), no other
+ * program involved. Already-current on disk → unchanged.
  */
-async function installSkill(ctx: CommandContext, deps: SkillDeps, dir: string, flags: Flags): Promise<StepReport> {
+function installSkill(dir: string, flags: Flags): StepReport {
 	const { missing, outdated } = staleSkillFiles(dir);
-	if (missing.length === 0 && outdated.length === 0) return report("skill", "unchanged", dir);
-	const prefix = runner(deps);
-	if (!prefix)
-		return report("skill", "skipped", dir, "neither bunx nor npx found — install bun or node, or `warden skill show`");
-	const root = localSkillRoot(ctx);
-	const cmd = [...prefix, ...skillsAddArgs(root, { agent: [CLAUDE_AGENT], yes: flags.yes })];
-	if (flags.dryRun)
-		return report("skill", "dry-run", dir, `would stage ${join(root, SKILL_NAME)} and run ${cmd.join(" ")}`);
-	stageSkillFolder(ctx);
-	ctx.err(flags.json ? `warden install: ${cmd.join(" ")}` : ctx.ui.color.dim(`warden install: ${cmd.join(" ")}`));
-	const code = await deps.runInteractive(cmd, { stdout: flags.json ? "stderr" : "inherit" });
-	return code === 0
-		? report("skill", "written", dir, cmd.join(" "))
-		: report("skill", "failed", dir, `skills CLI exited ${code}`);
+	const stale = missing.length + outdated.length;
+	if (stale === 0) return report("skill", "unchanged", dir);
+	if (flags.dryRun) return report("skill", "dry-run", dir, `would write ${stale} file${stale === 1 ? "" : "s"}`);
+	writeSkillFolder(dir);
+	return report("skill", "written", dir);
 }
 
 /** `~/.claude/rules/warden.md`: the always-loaded rule. */
@@ -354,7 +336,7 @@ async function install(
 		const skillDir = join(claude, "skills", "warden");
 		const rulePath = join(claude, "rules", "warden.md");
 		const settingsPath = join(claude, "settings.json");
-		steps.push(await step("skill", skillDir, () => installSkill(ctx, deps.skill, skillDir, flags)));
+		steps.push(await step("skill", skillDir, () => installSkill(skillDir, flags)));
 		steps.push(await step("rule", rulePath, () => installRule(ctx, rulePath, flags)));
 		steps.push(await step("settings", settingsPath, () => installSettings(ctx, flags, settingsPath)));
 	}
@@ -471,5 +453,4 @@ export function createInstallCommand(deps: () => InstallDeps): Command {
 
 export const installCommand: Command = createInstallCommand(() => ({
 	runtime: detectRuntime(),
-	skill: realSkillDeps(),
 }));

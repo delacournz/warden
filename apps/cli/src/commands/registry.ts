@@ -271,7 +271,7 @@ export const COMMANDS: readonly CommandEntry[] = [
 	{
 		name: "skill",
 		group: "Setup",
-		summary: "the warden agent skill: show (copy/paste) | install (bunx/npx skills add)",
+		summary: "the warden agent skill: show (copy/paste) | install (pinned skills CLI via bunx/npx)",
 		load: async () => (await import("./skill")).skillCommand,
 	},
 	{

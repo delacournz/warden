@@ -44,8 +44,8 @@ Agent skill only, for Claude Code, Codex, Cursor and others via the [`skills`](h
 ```bash
 warden skill show | pbcopy                 # raw SKILL.md to paste by hand
 warden skill show --file references/ui.md  # print one file of the skill folder
-warden skill install                       # bunx skills add ~/.warden/skill --skill warden -g (this binary's copy)
-warden skill install --from github         # bunx skills add delacournz/warden --skill warden -g (updatable via `skills update`)
+warden skill install                       # bunx skills@1.9.0 add ~/.warden/skill --skill warden -g (this binary's copy, pinned skills CLI)
+warden skill install --from github         # bunx skills@1.9.0 add delacournz/warden --skill warden -g (updatable via `skills update`)
 warden skill install --project -a claude-code -y   # into the current project, one agent, no prompts
 ```
 
@@ -264,7 +264,7 @@ To create an e2e spec, drive the journey between `warden ui record start <id>` a
 
 - a **SessionEnd** hook, which **shuts down the session's sims** and releases its leases, so nothing is left running. Only sims warden created, or that the session booted itself (they were off when it first touched them), are shut down. A sim that was already running when the agent picked it up, such as your own Simulator.app one, is released but left on. On `/clear` (reason `clear`) sims keep running: the conversation restarts, the work usually continues, and the new session re-claims the sim with its next `warden claim`. Leases a still-running `warden e2e` / `batch` / `run` / `dev` holds are kept too; a run whose leases are released under it stops and says so.
 - **Sessions that die without SessionEnd** (killed or terminal closed): their leases go stale after their TTL (30 min; 5 min for a bare agent claim). `warden gc` then shuts those sims down under the same rule, but only 10+ min after the lease went stale and never while a non-Apple app is running on the sim. gc runs automatically in the background at most every 10 min, triggered by `claim`/`run` (`WARDEN_AUTO_GC=0` turns this off), as well as on demand.
-- the skill folder (`SKILL.md` + `references/`), staged in `$WARDEN_HOME/skill/warden/` and installed with the vercel skills CLI (`bunx skills add <dir> --skill warden -g -a claude-code -y`, `npx` fallback; `--dry-run` prints the command), which places it at `~/.agents/skills/warden` and symlinks `~/.claude/skills/warden`. Without bun or node this step is skipped; use `warden skill show`. It also writes, directly, the rule `~/.claude/rules/warden.md`. A leftover `~/.claude/rules/agent-device.md` or `argent.md` from the retired setup is reported but never deleted.
+- the skill folder (`SKILL.md` + `references/`), written by warden itself to `~/.claude/skills/warden` (no other program runs; a link there to a shared `~/.agents/skills/warden` is kept and the files updated in it), and the rule `~/.claude/rules/warden.md`. `warden skill install` (other agents) runs the `skills` CLI at one pinned version. A leftover `~/.claude/rules/agent-device.md` or `argent.md` from the retired setup is reported but never deleted.
 
 It also removes the `PreToolUse` device-lease hook older versions installed (`warden hook pretool` stays a no-op, so an old config keeps working).
 

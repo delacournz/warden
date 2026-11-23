@@ -117,8 +117,14 @@ export async function androidKeepsSigner(
 }
 
 /** Run a tool; a non-zero exit is an error naming the tool and its stderr (or stdout). */
-async function run(exec: Exec, cmd: readonly string[], cwd?: string): AsyncResult<ExecResult> {
-	const res = await exec(cmd, cwd === undefined ? undefined : { cwd });
+async function run(
+	exec: Exec,
+	cmd: readonly string[],
+	cwd?: string,
+	env?: Record<string, string>
+): AsyncResult<ExecResult> {
+	const opts = { ...(cwd === undefined ? {} : { cwd }), ...(env === undefined ? {} : { env }) };
+	const res = await exec(cmd, cwd === undefined && env === undefined ? undefined : opts);
 	if (res.exitCode === 0) return ok(res);
 	const detail = (res.stderr.trim() || res.stdout.trim()).split("\n").slice(-6).join("\n");
 	return err(`${basename(cmd[0] ?? "")} failed (exit ${res.exitCode}): ${detail}`);
@@ -270,23 +276,35 @@ function signerMismatch(swap: Swap, tried: string[]): RepackFallback {
 	};
 }
 
-/** Sign the aligned apk with one keystore (v2/v3) to `signed`. */
+/** The variables `apksigner` reads the keystore and key passwords from (`env:<name>`), set on its process only. */
+const KS_PASS_ENV = "WARDEN_KS_PASS";
+const KEY_PASS_ENV = "WARDEN_KEY_PASS";
+
+/**
+ * Sign the aligned apk with one keystore (v2/v3) to `signed`. The passwords reach `apksigner` through its
+ * environment, never its arguments (`exec` adds them to the caller's env).
+ */
 function signWith(exec: Exec, apksigner: string, ks: AndroidKeystore, aligned: string, signed: string) {
-	return run(exec, [
-		apksigner,
-		"sign",
-		"--ks",
-		ks.path,
-		"--ks-key-alias",
-		ks.alias,
-		"--ks-pass",
-		`pass:${ks.storePass}`,
-		"--key-pass",
-		`pass:${ks.keyPass}`,
-		"--out",
-		signed,
-		aligned,
-	]);
+	return run(
+		exec,
+		[
+			apksigner,
+			"sign",
+			"--ks",
+			ks.path,
+			"--ks-key-alias",
+			ks.alias,
+			"--ks-pass",
+			`env:${KS_PASS_ENV}`,
+			"--key-pass",
+			`env:${KEY_PASS_ENV}`,
+			"--out",
+			signed,
+			aligned,
+		],
+		undefined,
+		{ [KS_PASS_ENV]: ks.storePass, [KEY_PASS_ENV]: ks.keyPass }
+	);
 }
 
 /**
