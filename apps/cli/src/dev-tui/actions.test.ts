@@ -502,6 +502,35 @@ describe("dispose", () => {
 });
 
 describe("conditions (C menu)", () => {
+	test("a preset pressed while one runs is queued, not dropped: they run in order, one at a time", async () => {
+		const gates: Array<() => void> = [];
+		const order: string[] = [];
+		const h = setup(IOS, {
+			condition: (_i, argv) => {
+				order.push(`start ${argv.join(" ")}`);
+				return new Promise((resolve) => {
+					gates.push(() => {
+						order.push(`end ${argv.join(" ")}`);
+						resolve(ok(argv.join(" ")));
+					});
+				});
+			},
+		});
+		const bio = { key: "b", label: "biometrics", items: [] };
+		const enroll = h.actions.runCondition({ key: "e", label: "enroll", argv: ["biometrics", "enroll"] }, bio);
+		const match = h.actions.runCondition({ key: "m", label: "match", argv: ["biometrics", "match"] }, bio);
+		await Bun.sleep(0);
+		expect(order).toEqual(["start biometrics enroll"]);
+		gates.shift()?.();
+		await enroll;
+		await Bun.sleep(0);
+		expect(order).toEqual(["start biometrics enroll", "end biometrics enroll", "start biometrics match"]);
+		gates.shift()?.();
+		await match;
+		expect(h.row("action:condition")).toMatchObject({ title: "biometrics: match", status: "ok" });
+		expect(h.row("action:condition")?.log).toEqual(["biometrics enroll", "biometrics match"]);
+	});
+
 	test("a preset runs as its own row titled with the area and preset; its output is the detail", async () => {
 		const h = setup();
 		await h.actions.runCondition(

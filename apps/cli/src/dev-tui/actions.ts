@@ -436,11 +436,22 @@ export function createActions(deps: ActionDeps) {
 
 	const run = (action: ActionId): Promise<void> => handlers[action]();
 
-	/** A conditions-menu preset (`C`): one shared row, titled with what ran; recorded on the lease, undone on release. */
-	const runCondition = (item: MenuItem, area: MenuArea): Promise<void> =>
-		task("condition", `${area.label}: ${item.label}`, (info, log) => fx.condition(info, item.argv, log)).then(
-			() => undefined
+	/** the presets picked so far, run one after another so device writes never overlap */
+	let conditionQueue: Promise<void> = Promise.resolve();
+
+	/**
+	 * A conditions-menu preset (`C`): one shared row, titled with the preset running now, its log keeping every one.
+	 * A preset picked while another runs waits its turn (`b e m` enrols, then matches); none is dropped.
+	 */
+	const runCondition = (item: MenuItem, area: MenuArea): Promise<void> => {
+		const next = conditionQueue.then(() =>
+			task("condition", `${area.label}: ${item.label}`, (info, log) => fx.condition(info, item.argv, log)).then(
+				() => undefined
+			)
 		);
+		conditionQueue = next;
+		return next;
+	};
 
 	return {
 		run,
