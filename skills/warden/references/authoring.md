@@ -164,4 +164,4 @@ Do not wrap a recorded `tap` in a retry (`tap({ until })`, a loop, `retry` on th
 | `verify_failed` | the spec failed on the device: evidence paths in `details.evidence`; file and journal kept |
 | `verify_unavailable` | verify could not run (no/ambiguous suite, runner error): fix, or `--suite <name>`, or `--no-verify`; journal kept |
 
-`--force` is the shared `ui` option for a device held by your own `warden e2e`/`batch`/`run`; replacing a file is `--overwrite`.
+`--force` is the shared `ui` option for a device held by your own `warden e2e`/`batch`/`run` (or borrowed from a user's shell, ui.md); replacing a file is `--overwrite`.

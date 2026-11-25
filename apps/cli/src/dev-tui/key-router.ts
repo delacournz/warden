@@ -1,4 +1,5 @@
 import type { MetroTerminal } from "../metro";
+import { type MenuArea, type MenuItem, menuKey } from "./conditions-menu";
 import { actionFor, type Key, promptEdit } from "./keys";
 import type { MetroPane } from "./metro-pane";
 import type { ActionId, TuiState } from "./model";
@@ -22,6 +23,8 @@ export type KeyRouterDeps = {
 	run(action: ActionId): void;
 	/** the footer prompt was submitted with this text */
 	submitPrompt(text: string): void;
+	/** a conditions-menu preset was picked */
+	runCondition(item: MenuItem, area: MenuArea): void;
 };
 
 /**
@@ -80,10 +83,28 @@ export function createKeyRouter(deps: KeyRouterDeps): (key: Key) => void {
 		deps.dispatch({ type: "key", key, at });
 	};
 
+	/** The conditions menu: Ctrl-C quits as everywhere, every other key walks the menu or picks a preset (it stays open). */
+	const menuModeKey = (key: Key): void => {
+		const state = deps.state();
+		if (actionFor("menu", key)?.type === "quit") {
+			deps.dispatch({ type: "key", key, at: deps.now() });
+			return;
+		}
+		if (state.menu === undefined) return;
+		const step = menuKey(state.menu, key, state.ready?.platform ?? "ios");
+		if (step.kind === "move") deps.dispatch({ type: "menu", menu: step.menu });
+		else if (step.kind === "close") deps.dispatch({ type: "menu", menu: undefined });
+		else if (step.kind === "run") deps.runCondition(step.item, step.area);
+	};
+
 	return (key: Key): void => {
 		const { mode } = deps.state();
 		if (mode === "prompt") {
 			promptKey(key);
+			return;
+		}
+		if (mode === "menu") {
+			menuModeKey(key);
 			return;
 		}
 		const action = mode === "list" ? actionFor("list", key) : undefined;

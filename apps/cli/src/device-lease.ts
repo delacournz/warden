@@ -21,13 +21,22 @@ import { hasConditions, undoLeaseConditions } from "./lease-conditions";
  * Why a caller may not use a device: someone else holds it (`device_foreign`), a live warden process holds the
  * caller's own lease (`device_busy`, only for `exclusive` callers) or nobody does (`device_not_leased`).
  */
-export type DeviceLeaseError = { code: "device_foreign" | "device_busy" | "device_not_leased"; message: string };
+export type DeviceLeaseError = {
+	code: "device_foreign" | "device_busy" | "device_not_leased";
+	message: string;
+	/** `device_foreign` on a lease a user (a shell, not an agent or CI) holds: `borrow` would have passed it */
+	borrowable?: true;
+	/** the refusing lease's id, when there is one */
+	leaseId?: string;
+};
 
 /**
  * `own` = already the caller's (heartbeat); `attached` = the caller's shared lease a live `warden dev` holds (used
- * beside it: no heartbeat, never released by the caller); `reclaimed` = a stale lease was replaced; `leased` = was free.
+ * beside it: no heartbeat, never released by the caller); `borrowed` = a live lease the user holds from another shell,
+ * used with `borrow` (same rules as `attached`: the holder keeps it); `reclaimed` = a stale lease was replaced;
+ * `leased` = was free.
  */
-export type CallerLease = { lease: Lease; action: "own" | "attached" | "reclaimed" | "leased" };
+export type CallerLease = { lease: Lease; action: "own" | "attached" | "borrowed" | "reclaimed" | "leased" };
 
 export type EnsureLeaseOptions = {
 	now: number;
@@ -48,6 +57,11 @@ export type EnsureLeaseOptions = {
 	 * (`warden dev`) is never busy: the caller attaches to it, exclusive or not.
 	 */
 	exclusive?: boolean;
+	/**
+	 * Use a live lease a `user` owner holds (the user's other shell, e.g. its `warden dev`) as is: no heartbeat, no
+	 * takeover, never released by the caller → `borrowed`. Agent and CI leases stay `device_foreign`. `warden ui --force`.
+	 */
+	borrow?: boolean;
 	/** a real phone: stamped on a lease this call creates (an existing lease keeps what it has) */
 	physical?: DeviceResource["physical"];
 	/** warden's home (`wardenHome(env)`): a takeover switches the Keychain ACL shim off in the device's inject state */
@@ -95,9 +109,7 @@ export function ensureCallerLease(
 	const result = store.transaction((): Result<CallerLease, DeviceLeaseError> => {
 		const existing = store.findLeaseByResource(probe);
 		if (existing && sameOwner(existing.owner, owner)) return ownLease(store, existing, opts);
-		if (existing && isLeaseAlive(existing, opts.now, opts.pidAlive)) {
-			return { success: false, error: { code: "device_foreign", message: blockMessage(id, platform, existing.owner) } };
-		}
+		if (existing && isLeaseAlive(existing, opts.now, opts.pidAlive)) return foreignLease(existing, id, platform, opts);
 		if (!opts.claim) {
 			return {
 				success: false,
@@ -118,6 +130,25 @@ export function ensureCallerLease(
 		if (failed) opts.onNote?.(failed);
 	}
 	return result;
+}
+
+/** A live lease another owner holds: borrowed when a user holds it and `borrow` is set, else `device_foreign`. */
+function foreignLease(
+	existing: Lease,
+	id: string,
+	platform: Platform,
+	opts: EnsureLeaseOptions
+): Result<CallerLease, DeviceLeaseError> {
+	const userHeld = existing.owner.kind === "user";
+	if (userHeld && opts.borrow) return ok({ lease: existing, action: "borrowed" });
+	return {
+		success: false,
+		error: {
+			code: "device_foreign",
+			message: blockMessage(id, platform, existing.owner),
+			...(userHeld ? { borrowable: true as const, leaseId: existing.id } : {}),
+		},
+	};
 }
 
 /**

@@ -201,6 +201,49 @@ describe("ensureCallerLease", () => {
 		});
 	});
 
+	describe("borrow (warden ui --force): a live lease another of the user's shells holds", () => {
+		const shell: Owner = { kind: "user", pid: 17759, cwd: "/m", repo: "app", worktree: "m@feat" };
+		const otherShell: Owner = { kind: "user", pid: 23001, cwd: "/m" };
+
+		test("user-held: borrowed as is, no heartbeat, owner and pid untouched", () => {
+			const held = store.insertLease({ resource, owner: shell, ttlMs: DEFAULT_TTL_MS, pid: 17759, shared: true }, now);
+			alive = true;
+			now += 5000;
+			const res = ensureCallerLease(store, otherShell, "ios", UDID, { ...opts(false), borrow: true });
+			expect(res.success && res.data.action).toBe("borrowed");
+			expect(res.success && res.data.lease.id).toBe(held.id);
+			const after = store.getLease(held.id);
+			expect(after?.owner).toEqual(shell);
+			expect(after?.heartbeatAt).toBe(held.heartbeatAt);
+			expect(store.listLeases()).toHaveLength(1);
+		});
+
+		test("an agent caller may borrow a user's lease too", () => {
+			store.insertLease({ resource, owner: shell, ttlMs: DEFAULT_TTL_MS, pid: 17759 }, now);
+			alive = true;
+			const res = ensureCallerLease(store, me, "ios", UDID, { ...opts(false), borrow: true });
+			expect(res.success && res.data.action).toBe("borrowed");
+		});
+
+		test("agent- or CI-held: still device_foreign", () => {
+			store.insertLease({ resource, owner: other, ttlMs: DEFAULT_TTL_MS }, now);
+			const res = ensureCallerLease(store, otherShell, "ios", UDID, { ...opts(true), borrow: true });
+			expect(!res.success && res.error.code).toBe("device_foreign");
+		});
+
+		test("without borrow: device_foreign, marked borrowable with the lease id", () => {
+			const held = store.insertLease({ resource, owner: shell, ttlMs: DEFAULT_TTL_MS, pid: 17759 }, now);
+			alive = true;
+			const res = ensureCallerLease(store, otherShell, "ios", UDID, opts(false));
+			expect(!res.success && res.error).toEqual({
+				code: "device_foreign",
+				message: blockMessage(UDID, "ios", shell),
+				borrowable: true,
+				leaseId: held.id,
+			});
+		});
+	});
+
 	test("bootedByOwner and pid land on a new lease", () => {
 		ensureCallerLease(store, me, "ios", UDID, { ...opts(true), bootedByOwner: true, pid: 7 });
 		const lease = store.findLeaseByResource(resource);

@@ -1,5 +1,6 @@
 import { SYMBOLS } from "../ui";
 import { fit, sliceColumns, stripAnsi, truncate, visibleWidth, wrap } from "./ansi";
+import { menuView } from "./conditions-menu";
 import { type Binding, EXPO_KEYS, footerHint, KEY_GROUP_TITLES, type KeyGroup, LIST_BINDINGS } from "./keys";
 import { FLASH_MS, MIN_COLS, MIN_ROWS, type Task, type TuiState } from "./model";
 
@@ -270,7 +271,7 @@ function footer(state: TuiState, cols: number): string {
 			`${bold(`${state.prompt.label}:`)} ${state.prompt.text}${cyan("▏")}  ${dim(footerHint("prompt"))}`,
 			cols
 		);
-	const flash = state.mode === "list" || state.mode === "log" ? flashText(state) : undefined;
+	const flash = state.mode === "list" || state.mode === "log" || state.mode === "menu" ? flashText(state) : undefined;
 	const room = flash ? cols - visibleWidth(flash) - 2 : cols;
 	const hint = dim(footerHint(state.mode, room));
 	return fit(flash ? `${flash}  ${hint}` : hint, cols);
@@ -290,7 +291,10 @@ function column(sections: HelpSection[]): string[] {
 	return sections.flatMap((s, i) => [...(i > 0 ? [""] : []), bold(s.title), ...s.entries]);
 }
 
-function helpBox(cols: number, bodyHeight: number): { rows: string[]; x: number; y: number } {
+/** An overlay box: its rows and where its top-left corner sits in the body. */
+type Box = { rows: string[]; x: number; y: number };
+
+function helpBox(cols: number, bodyHeight: number): Box {
 	const boxWidth = Math.min(cols - 2, 96);
 	const inner = boxWidth - 2;
 	const gap = 2;
@@ -310,6 +314,32 @@ function helpBox(cols: number, bodyHeight: number): { rows: string[]; x: number;
 	const top = `┌${title}${"─".repeat(Math.max(0, inner - title.length))}┐`;
 	const rows = [top, ...body.map((line) => `│${line}│`), `└${"─".repeat(inner)}┘`].map((line) => fit(line, boxWidth));
 	return { rows, x: Math.floor((cols - boxWidth) / 2), y: Math.max(0, Math.floor((bodyHeight - rows.length) / 2)) };
+}
+
+/** The conditions menu (`C`): the areas with what each offers, or the open area's presets; the selection inverted. */
+function menuBox(state: TuiState, cols: number, bodyHeight: number): Box | undefined {
+	if (state.menu === undefined) return undefined;
+	const view = menuView(state.menu, state.ready?.platform ?? "ios");
+	const boxWidth = Math.min(cols - 2, 72);
+	const inner = boxWidth - 2;
+	const body = view.rows.map((row) => {
+		const line = fit(` ${row.key}  ${row.label}${row.hint ? `  ${dim(row.hint)}` : ""}`, inner);
+		return row.selected ? highlight(line) : line;
+	});
+	const title = ` ${view.title} `;
+	const top = `┌${title}${"─".repeat(Math.max(0, inner - visibleWidth(title)))}┐`;
+	const rows = [top, ...body.map((line) => `│${line}│`), `└${"─".repeat(inner)}┘`].map((line) => fit(line, boxWidth));
+	return { rows, x: Math.floor((cols - boxWidth) / 2), y: Math.max(0, Math.floor((bodyHeight - rows.length) / 2)) };
+}
+
+/** `body` with `box` drawn over it. */
+function overlay(body: string[], box: Box, cols: number): string[] {
+	return body.map((line, y) => {
+		const boxRow = box.rows[y - box.y];
+		if (boxRow === undefined) return line;
+		const end = box.x + visibleWidth(boxRow);
+		return `${sliceColumns(line, 0, box.x - 1)} ${boxRow} ${sliceColumns(line, end + 1, cols)}`;
+	});
 }
 
 /** Pure: the whole frame as `rows` strings of exactly `cols` visible columns. */
@@ -338,14 +368,8 @@ export function render(state: TuiState, cols: number, rows: number, pane?: Rende
 			return boxRow === undefined ? line : `${sliceColumns(line, 0, x)}${boxRow}`;
 		});
 	}
-	if (state.mode === "help") {
-		const box = helpBox(cols, bodyHeight);
-		body = body.map((line, y) => {
-			const boxRow = box.rows[y - box.y];
-			if (boxRow === undefined) return line;
-			const end = box.x + visibleWidth(boxRow);
-			return `${sliceColumns(line, 0, box.x - 1)} ${boxRow} ${sliceColumns(line, end + 1, cols)}`;
-		});
-	}
+	if (state.mode === "help") body = overlay(body, helpBox(cols, bodyHeight), cols);
+	const menu = state.mode === "menu" ? menuBox(state, cols, bodyHeight) : undefined;
+	if (menu) body = overlay(body, menu, cols);
 	return [header(state, cols), ...body.map((line) => fit(line, cols)), footer(state, cols)];
 }

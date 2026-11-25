@@ -36,7 +36,7 @@ function withDeviceFlags<Args extends unknown[], Opts extends OptionValues, Glob
 		.option("--runtime <runtime>", "runtime for --claim with no device named")
 		.option(
 			"--force",
-			"drive the device even while a live warden process (e2e, batch, run) holds your lease on it; your own warden dev device is shared without it"
+			"drive the device even while a live warden process (e2e, batch, run) holds your lease on it, or you hold it from another shell (borrowed, never released); your own warden dev device is shared without it"
 		)
 		.option("--timeout <ms>", `deadline in milliseconds (default ${DEFAULT_UI_TIMEOUT_MS})`);
 }

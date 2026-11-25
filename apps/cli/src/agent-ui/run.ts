@@ -2,7 +2,7 @@ import type { Driver } from "@delacour/warden-e2e/driver/driver.types";
 import type { Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import { errorMessage } from "../hooks/json";
-import { resolveUiDevice, type UiDevice, type UiDeviceFlags } from "./device";
+import { beside, resolveUiDevice, type UiDevice, type UiDeviceFlags } from "./device";
 import type { UiDeps } from "./driver";
 import { watchInputs } from "./inputs";
 import {
@@ -89,6 +89,7 @@ export async function runUi<C extends string>(
 		const exclusive = opts.force !== true && !READ_ONLY.has(command);
 		const device = await resolveUiDevice(ctx, opts, {
 			exclusive,
+			borrow: opts.force === true,
 			...(deps.pidAlive ? { pidAlive: deps.pidAlive } : {}),
 		});
 		if (!device.success) return reportError(ctx, report, device.error);
@@ -106,7 +107,7 @@ export async function runUi<C extends string>(
 		try {
 			const done = await work(device.data, { timeoutMs: timeout.data, record: opts.record, deps, driver });
 			if (!done.success) return reportError(ctx, report, done.error, info);
-			const attachedTo = device.data.action === "attached" ? device.data.lease.id : undefined;
+			const attachedTo = beside(device.data) ? device.data.lease.id : undefined;
 			return reportOk(ctx, report, attachedTo === undefined ? done.data : { ...done.data, attachedTo });
 		} finally {
 			const used = opened === undefined ? undefined : await opened;

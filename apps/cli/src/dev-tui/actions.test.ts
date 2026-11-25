@@ -107,6 +107,7 @@ function setup(info: DevReady | null = IOS, overrides: Partial<ActionEffects> = 
 		perfMark: (_i, label) => done(`perfMark ${label}`, undefined),
 		frames: () => done("frames", undefined),
 		report: () => done("report", undefined),
+		condition: (_i, argv) => done(`condition ${argv.join(" ")}`, "biometrics: matched"),
 		...overrides,
 	};
 	const actions = createActions({
@@ -497,5 +498,67 @@ describe("dispose", () => {
 		t.actions.dispose();
 		expect(t.calls).toContain("logs stop");
 		expect(t.liveTickers()).toBe(0);
+	});
+});
+
+describe("conditions (C menu)", () => {
+	test("a preset pressed while one runs is queued, not dropped: they run in order, one at a time", async () => {
+		const gates: Array<() => void> = [];
+		const order: string[] = [];
+		const h = setup(IOS, {
+			condition: (_i, argv) => {
+				order.push(`start ${argv.join(" ")}`);
+				return new Promise((resolve) => {
+					gates.push(() => {
+						order.push(`end ${argv.join(" ")}`);
+						resolve(ok(argv.join(" ")));
+					});
+				});
+			},
+		});
+		const bio = { key: "b", label: "biometrics", items: [] };
+		const enroll = h.actions.runCondition({ key: "e", label: "enroll", argv: ["biometrics", "enroll"] }, bio);
+		const match = h.actions.runCondition({ key: "m", label: "match", argv: ["biometrics", "match"] }, bio);
+		await Bun.sleep(0);
+		expect(order).toEqual(["start biometrics enroll"]);
+		gates.shift()?.();
+		await enroll;
+		await Bun.sleep(0);
+		expect(order).toEqual(["start biometrics enroll", "end biometrics enroll", "start biometrics match"]);
+		gates.shift()?.();
+		await match;
+		expect(h.row("action:condition")).toMatchObject({ title: "biometrics: match", status: "ok" });
+		expect(h.row("action:condition")?.log).toEqual(["biometrics enroll", "biometrics match"]);
+	});
+
+	test("a preset runs as its own row titled with the area and preset; its output is the detail", async () => {
+		const h = setup();
+		await h.actions.runCondition(
+			{ key: "m", label: "match", argv: ["biometrics", "match"] },
+			{ key: "b", label: "biometrics", items: [] }
+		);
+		expect(h.calls).toEqual(["condition biometrics match"]);
+		expect(h.row("action:condition")).toMatchObject({ title: "biometrics: match", status: "ok" });
+		expect(h.row("action:condition")?.log).toContain("biometrics: matched");
+	});
+
+	test("a failed preset fails its row with the verb's error", async () => {
+		const h = setup(IOS, { condition: () => Promise.resolve(fail("E_NETWORK_RELAUNCH: relaunch the app")) });
+		await h.actions.runCondition(
+			{ key: "o", label: "offline", argv: ["network", "set", "offline"] },
+			{ key: "n", label: "network", items: [] }
+		);
+		expect(h.row("action:condition")).toMatchObject({ title: "network: offline", status: "fail" });
+		expect(h.row("action:condition")?.log).toContain("E_NETWORK_RELAUNCH: relaunch the app");
+	});
+
+	test("before the session is ready it is refused in its row", async () => {
+		const h = setup(null);
+		await h.actions.runCondition(
+			{ key: "m", label: "match", argv: ["biometrics", "match"] },
+			{ key: "b", label: "biometrics", items: [] }
+		);
+		expect(h.calls).toEqual([]);
+		expect(h.row("action:condition")?.status).toBe("fail");
 	});
 });

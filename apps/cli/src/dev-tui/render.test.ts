@@ -195,6 +195,47 @@ describe("render", () => {
 			expect(frame).toContain(desc);
 	});
 
+	test("the help overlay names the conditions menu key", () => {
+		const frame = text(render(stateAt(120, 40, [press("?")]), 120, 40));
+		expect(frame).toContain("C        conditions");
+	});
+
+	test("the conditions menu box lists the areas, then an area's presets; the footer says how to walk it", () => {
+		for (const [cols, rows] of [
+			[80, 24],
+			[120, 40],
+		] as const) {
+			const root = render(stateAt(cols, rows, [press("C")]), cols, rows);
+			expectExactWidth(root, cols, rows);
+			const rootText = text(root);
+			expect(rootText).toContain("conditions");
+			expect(rootText).toContain("b  biometrics");
+			expect(rootText).toContain("l  location");
+			expect(rootText).not.toContain("network");
+			expect(rootText.split("\n").at(-1)).toContain("esc");
+			const area = render(
+				stateAt(cols, rows, [press("C"), { type: "menu", menu: { area: "l", index: 0 } }]),
+				cols,
+				rows
+			);
+			expectExactWidth(area, cols, rows);
+			const areaText = text(area);
+			expect(areaText).toContain("conditions › location");
+			expect(areaText).toContain("r  city run");
+		}
+	});
+
+	test("an Android session hides the iOS-only presets", () => {
+		const state = stateAt(120, 40, [
+			{ type: "ready", info: { ...READY, platform: "android", deviceId: "emulator-5554" }, at: 0 },
+			press("C"),
+			{ type: "menu", menu: { area: "b", index: 0 } },
+		]);
+		const frame = text(render(state, 120, 40));
+		expect(frame).toContain("m  match");
+		expect(frame).not.toContain("e  enroll");
+	});
+
 	test("long text never overflows a row", () => {
 		const state = stateAt(60, 16, [
 			{ type: "ready", info: { ...READY, metroUrl: `http://${"x".repeat(200)}` }, at: 0 },

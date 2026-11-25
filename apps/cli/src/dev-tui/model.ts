@@ -1,4 +1,5 @@
 import type { DevReady } from "../commands/dev-ui";
+import type { MenuState } from "./conditions-menu";
 
 export type TaskStatus = "pending" | "running" | "ok" | "fail";
 
@@ -15,7 +16,7 @@ export type Task = {
 };
 
 /** list: warden's keys; log: the log pane has focus; interact: every key goes to Metro; help: overlay; prompt: the footer takes a line of text (`m` asks for a mark label). */
-export type Mode = "list" | "log" | "interact" | "help" | "prompt";
+export type Mode = "list" | "log" | "interact" | "help" | "prompt" | "menu";
 
 /** What a list-mode key runs (`actions.ts`); each has its own task row, except `reload` which logs on the Metro row. */
 export type ActionId =
@@ -88,6 +89,8 @@ export type TuiState = {
 	mode: Mode;
 	/** set while `mode` is `prompt` */
 	prompt: Prompt | undefined;
+	/** the conditions menu (`C`), set while `mode` is `menu` */
+	menu: MenuState | undefined;
 	/** the last action's outcome, shown in the footer until `FLASH_MS` after `at` */
 	flash: Flash | undefined;
 	size: Size;
@@ -124,6 +127,7 @@ export function initialState(size: Size, now: number): TuiState {
 		autoFollow: true,
 		mode: "list",
 		prompt: undefined,
+		menu: undefined,
 		flash: undefined,
 		size,
 		ready: undefined,

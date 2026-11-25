@@ -1,5 +1,6 @@
 import { expect } from "bun:test";
 import type { PidAlive } from "@delacour/warden-core/liveness";
+import type { Owner } from "@delacour/warden-core/types";
 import {
 	type DriverCall,
 	type ElementSpec,
@@ -58,7 +59,7 @@ export type HarnessOptions = {
 	capabilities?: Partial<DriverCapabilities>;
 	video?: UiDeps["video"];
 	/** the device lease's holder pid + label (a running `warden e2e` / `batch` / `run` sets both) */
-	lease?: { pid?: number; label?: string; shared?: boolean; physical?: { transport: string } };
+	lease?: { pid?: number; label?: string; shared?: boolean; physical?: { transport: string }; owner?: Owner };
 	/** the pid liveness probe `warden ui` uses (default: the real one) */
 	pidAlive?: PidAlive;
 	/** what `open --kind` installs with (default: the real ensure) */
@@ -76,6 +77,11 @@ const live: TestContext[] = [];
 /** Call from `afterEach`: removes every temp `WARDEN_HOME` the harnesses made. */
 export function cleanupHarnesses(): void {
 	for (const c of live.splice(0)) c.cleanup();
+}
+
+/** The harness lease's owner: `options.lease.owner`, else the caller's own agent session. */
+function leaseOwner(options: HarnessOptions): Owner {
+	return options.lease?.owner ?? { kind: "agent", sessionId: "me", cwd: "/w" };
 }
 
 /** A leased device, a fake clock that `sleep` advances, a fake driver over `screens`, and a recording sink. */
@@ -124,7 +130,7 @@ export function harness(screens: Snapshot[] | (() => Snapshot), options: Harness
 				name: "sim",
 				...(options.lease?.physical ? { physical: options.lease.physical } : {}),
 			},
-			owner: { kind: "agent", sessionId: "me", cwd: "/w" },
+			owner: leaseOwner(options),
 			ttlMs: 10 * 60 * 60_000,
 			...(options.lease?.pid !== undefined ? { pid: options.lease.pid } : {}),
 			...(options.lease?.label !== undefined ? { label: options.lease.label } : {}),

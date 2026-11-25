@@ -160,6 +160,13 @@ describe("actionFor", () => {
 		expect(actionFor("list", press("l", { ctrl: true }))).toEqual({ type: "redraw" });
 	});
 
+	test("C opens the conditions menu; the menu mode has no bindings of its own (the router walks it)", () => {
+		expect(actionFor("list", press("C", { shift: true }))).toEqual({ type: "menu" });
+		expect(actionFor("menu", press("b"))).toBeUndefined();
+		expect(actionFor("menu", press("c", { ctrl: true }))).toEqual({ type: "quit" });
+		expect(footerHint("menu")).toContain("esc");
+	});
+
 	test("enter and i interact with Metro", () => {
 		for (const name of ["enter", "i"]) expect(actionFor("list", press(name))).toEqual({ type: "interact" });
 	});

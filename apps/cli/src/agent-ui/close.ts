@@ -1,9 +1,9 @@
-import { isPhysicalIosId, type Lease } from "@delacour/warden-core/types";
+import { describeOwner, isPhysicalIosId, type Lease } from "@delacour/warden-core/types";
 import { ok, type Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import { releaseDevices } from "../device-lease";
 import { releaseAfter } from "../perf/release-after";
-import type { UiDevice } from "./device";
+import { beside, type UiDevice } from "./device";
 import { fromDriver, type UiDeps } from "./driver";
 import { stopAndroidHost, stopHelper, stopIosRunner } from "./helper";
 import { type UiError, uiError } from "./output";
@@ -17,7 +17,11 @@ export type CloseOptionValues = UiOptionValues & {
 };
 
 /** Why `close --release` left an attached `warden dev` lease alone. */
-function keptWarning(lease: Lease): string {
+function keptWarning(lease: Lease, action: UiDevice["action"]): string {
+	if (action === "borrowed") {
+		const holder = describeOwner(lease.owner);
+		return `not released: ${lease.id} belongs to ${holder}; release it from that shell (or warden release ${lease.id})`;
+	}
 	const holder = lease.pid === undefined ? "warden dev" : `warden dev (pid ${lease.pid})`;
 	return `not released: ${lease.id} belongs to ${holder}; stop warden dev (Ctrl-C) to release it`;
 }
@@ -81,7 +85,7 @@ export function uiClose(ctx: CommandContext, deps: UiDeps, opts: CloseOptionValu
 		if (!terminatedResult.success) return terminatedResult;
 		const terminated = terminatedResult.data;
 
-		const keep = opts.release === true && device.action === "attached";
+		const keep = opts.release === true && beside(device);
 		const released = opts.release === true && !keep;
 		const helper = await endHelper(ctx, device, released);
 		const text = [
@@ -97,7 +101,7 @@ export function uiClose(ctx: CommandContext, deps: UiDeps, opts: CloseOptionValu
 			text,
 			warnings: [
 				...(helper.warning === undefined ? [] : [helper.warning]),
-				...(keep ? [keptWarning(device.lease)] : []),
+				...(keep ? [keptWarning(device.lease, device.action)] : []),
 			],
 		});
 	});

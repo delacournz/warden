@@ -24,7 +24,7 @@ exports[`render three tasks at 80x24 1`] = `
                           │
                           │
                           │
-↑↓ select · enter interact · r reload · s shot · M metro · ? keys · q quit"
+↑↓ select · enter interact · C conditions · r reload · s shot · ? keys · q quit"
 `;
 
 exports[`render session ready with the header filled at 80x24 1`] = `
@@ -51,7 +51,7 @@ exports[`render session ready with the header filled at 80x24 1`] = `
                           │
                           │
                           │
-↑↓ select · enter interact · r reload · s shot · M metro · ? keys · q quit"
+↑↓ select · enter interact · C conditions · r reload · s shot · ? keys · q quit"
 `;
 
 exports[`render help overlay at 80x24 1`] = `
@@ -68,11 +68,11 @@ exports[`render help overlay at 80x24 1`] = `
  │ q ctrl-c quit, release   R        reinstall app   r        reload app      │
  │ ctrl-l   redraw          x        restart sim     m        dev menu        │
  │                          l        device logs     shift+m  more tools      │
- │ perf                                              o        open in editor  │
- │ p        perf on/off     Metro                    ?        all commands    │
- │ P        perf all        M        restart Metro                            │
- │ m        perf mark       c        Metro --clear                            │
- │ f        frames                                                            │
+ │ perf                     C        conditions      o        open in editor  │
+ │ p        perf on/off                              ?        all commands    │
+ │ P        perf all        Metro                                             │
+ │ m        perf mark       M        restart Metro                            │
+ │ f        frames          c        Metro --clear                            │
  │ g        perf report                                                       │
  └────────────────────────────────────────────────────────────────────────────┘
                           │
@@ -121,7 +121,7 @@ exports[`render three tasks at 120x40 1`] = `
                                 │
                                 │
                                 │
-↑↓ select · enter interact · r reload · s shot · M metro · p perf · ? keys · q quit"
+↑↓ select · enter interact · C conditions · r reload · s shot · M metro · p perf · ? keys · q quit"
 `;
 
 exports[`render session ready with the header filled at 120x40 1`] = `
@@ -164,7 +164,7 @@ exports[`render session ready with the header filled at 120x40 1`] = `
                                 │
                                 │
                                 │
-↑↓ select · enter interact · r reload · s shot · M metro · p perf · ? keys · q quit"
+↑↓ select · enter interact · C conditions · r reload · s shot · M metro · p perf · ? keys · q quit"
 `;
 
 exports[`render help overlay at 120x40 1`] = `
@@ -189,11 +189,11 @@ exports[`render help overlay at 120x40 1`] = `
             │ q ctrl-c quit, release         R        reinstall app         r        reload app            │
             │ ctrl-l   redraw                x        restart sim           m        dev menu              │
             │                                l        device logs           shift+m  more tools            │
-            │ perf                                                          o        open in editor        │
-            │ p        perf on/off           Metro                          ?        all commands          │
-            │ P        perf all              M        restart Metro                                        │
-            │ m        perf mark             c        Metro --clear                                        │
-            │ f        frames                                                                              │
+            │ perf                           C        conditions            o        open in editor        │
+            │ p        perf on/off                                          ?        all commands          │
+            │ P        perf all              Metro                                                         │
+            │ m        perf mark             M        restart Metro                                        │
+            │ f        frames                c        Metro --clear                                        │
             │ g        perf report                                                                         │
             └──────────────────────────────────────────────────────────────────────────────────────────────┘
                                 │
@@ -265,7 +265,7 @@ exports[`Metro pane the selected metro row shows the pane's rows at 120x40 1`] =
                                 │ No apps connected. Sending "reload" to all React Native apps failed. Make sure your a
                                 │ pp is running in the simulator or on a phone connected via USB.
                                 │ › Stopped server
-↑↓ select · enter interact · r reload · s shot · M metro · p perf · ? keys · q quit"
+↑↓ select · enter interact · C conditions · r reload · s shot · M metro · p perf · ? keys · q quit"
 `;
 
 exports[`HUD 120x40 with the HUD on 1`] = `
@@ -308,7 +308,7 @@ exports[`HUD 120x40 with the HUD on 1`] = `
                                 │
                                 │
                                 │
-↑↓ select · enter interact · r reload · s shot · M metro · p perf · ? keys · q quit"
+↑↓ select · enter interact · C conditions · r reload · s shot · M metro · p perf · ? keys · q quit"
 `;
 
 exports[`HUD 120x40 with the HUD off 1`] = `
@@ -351,5 +351,5 @@ exports[`HUD 120x40 with the HUD off 1`] = `
                                 │
                                 │
                                 │
-↑↓ select · enter interact · r reload · s shot · M metro · p perf · ? keys · q quit"
+↑↓ select · enter interact · C conditions · r reload · s shot · M metro · p perf · ? keys · q quit"
 `;
