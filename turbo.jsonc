@@ -141,7 +141,8 @@
 
 		// The drift guard reads .github/workflows/ci.yml; the cpu-guard tests spawn `bun run bench`
 		// from the repo root (root package.json -> packages/e2e-bench and its baselines);
-		// turbo-cache.test.ts reads turbo.jsonc and every workspace package.json.
+		// turbo-cache.test.ts reads turbo.jsonc and every workspace package.json; pre-push.test.ts reads
+		// .pre-commit-config.yaml.
 		"@delacour/warden-signoff#test": {
 			"dependsOn": ["transit", "@delacour/warden-e2e-bench#transit"],
 			"cache": true,
@@ -153,7 +154,8 @@
 				"$TURBO_ROOT$/apps/*/package.json",
 				"$TURBO_ROOT$/packages/*/package.json",
 				"$TURBO_ROOT$/scripts/*/package.json",
-				"$TURBO_ROOT$/.github/workflows/ci.yml"
+				"$TURBO_ROOT$/.github/workflows/ci.yml",
+				"$TURBO_ROOT$/.pre-commit-config.yaml"
 			]
 		}
 	}
