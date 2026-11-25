@@ -532,6 +532,7 @@ static CVPixelBufferRef wc_convert(CVPixelBufferRef pb, OSType format) {
 @property (nonatomic, readonly) BOOL still;
 @property (nonatomic, readonly) double fps;
 - (instancetype)initWithFeed:(WCFeed *)feed;
+- (void)prime;                                        // a video decodes its first frame now, not on first use
 - (CVPixelBufferRef)copyFrameAt:(CFTimeInterval)now;  // +1, NULL when the asset cannot be read
 - (CGImageRef)copyStillImage;                         // +1, only for a still
 @end
@@ -547,6 +548,7 @@ static CVPixelBufferRef wc_convert(CVPixelBufferRef pb, OSType format) {
   double _base;
   double _duration;
   CFTimeInterval _start;
+  BOOL _clockStarted;            // the video's clock starts at the first frame asked for, not when it was primed
   AVAssetReader *_reader;
   AVAssetReaderTrackOutput *_out;
   AVAssetTrack *_track;
@@ -646,12 +648,22 @@ static size_t wc_even(size_t n) { return n < 2 ? 2 : n & ~(size_t)1; }
   if (_next) _nextPts = 0;
 }
 
+/** Open the reader and decode the first frame now. Called when the feed is staged, before the state is acked, so a
+ * session started after the ack has a frame on its first tick: done lazily on that tick it cost the asset load, the
+ * reader start and a decode, and on a 3-vCPU host the first frame came more than 0.8 s after `startRunning`. */
+- (void)prime {
+  [_lock lock];
+  if (!_still && _track && !_reader) [self openReader];
+  [_lock unlock];
+}
+
 - (CVPixelBufferRef)copyFrameAt:(CFTimeInterval)now {
   [_lock lock];
   CVPixelBufferRef result = NULL;
   if (_still) {
     result = _frame ? CVPixelBufferRetain(_frame) : NULL;
   } else if (_track) {
+    if (!_clockStarted) { _start = now; _clockStarted = YES; }
     double elapsed = now - _start;
     if (_duration > 0) elapsed = _feed.loop ? fmod(elapsed, _duration) : MIN(elapsed, _duration);
     if (!_reader || elapsed < _framePts) [self openReader];
@@ -2062,8 +2074,10 @@ static void camera_install(void) {
 static void camera_apply(NSDictionary *camera) {
   if (!g_camera_enabled) return;
   BOOL presence[2] = { NO, NO };
+  BOOL before[2] = { NO, NO };
   @synchronized (g_cam_lock) {
-    BOOL before[2] = { g_feed[0] != nil, g_feed[1] != nil };
+    before[0] = g_feed[0] != nil;
+    before[1] = g_feed[1] != nil;
     NSArray *names = @[ @"back", @"front" ];
     for (int i = 0; i < 2; i++) {
       NSDictionary *d = [camera[names[i]] isKindOfClass:[NSDictionary class]] ? camera[names[i]] : nil;
@@ -2080,8 +2094,12 @@ static void camera_apply(NSDictionary *camera) {
       if (!same) { g_feed[i] = next; g_source[i] = nil; }
       presence[i] = next != nil;
     }
-    if (before[0] == presence[0] && before[1] == presence[1]) return;
   }
+  // Decode a new video's first frame before the caller acks this state (`write_ack` runs after us), so the ack means
+  // the feed is ready and the first pump tick after `startRunning` delivers a frame. Outside the lock: an asset load
+  // must not hold up the pump (the decode runs outside g_cam_lock).
+  for (int i = 0; i < 2; i++) if (presence[i]) [(WCSource *)wc_source(i) prime];
+  if (before[0] == presence[0] && before[1] == presence[1]) return;
   BOOL backNow = presence[0], frontNow = presence[1];
   // devices appeared or went away: tell the KVO observers of every discovery session, and the connect notifications
   dispatch_async(dispatch_get_main_queue(), ^{
