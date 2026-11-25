@@ -82,6 +82,51 @@ describe("pipeline wiring", () => {
 		expect(workflow.concurrency?.group).toContain("inputs.signoff-sha");
 	});
 
+	// Signoff and every other ci.yml run replay turbo's cache: a task whose hash misses a file it reads
+	// replays a stale green. The version PR's run is the last check before main, so it runs everything
+	// from scratch: no turbo cache restored or read, and native whatever the diff touched.
+	describe("the version PR's run is full and uncached", () => {
+		type Step = { uses?: string; run?: string; if?: string; env?: Record<string, string> };
+		type Job = { env?: Record<string, string>; steps: Step[]; outputs?: Record<string, string> };
+		type CiWorkflow = {
+			on: { workflow_dispatch: { inputs: Record<string, { type?: string; default?: unknown }> } };
+			jobs: Record<string, Job>;
+		};
+		async function ci(): Promise<{ text: string; workflow: CiWorkflow }> {
+			const text = await Bun.file(join(WORKFLOWS, "ci.yml")).text();
+			return { text, workflow: Bun.YAML.parse(text) as CiWorkflow };
+		}
+
+		test("ci.yml takes a boolean `full` input, off by default", async () => {
+			const { workflow } = await ci();
+			expect(workflow.on.workflow_dispatch.inputs.full).toEqual(
+				expect.objectContaining({ type: "boolean", default: false })
+			);
+		});
+
+		test("a full run forces every turbo task and restores no turbo cache", async () => {
+			const { workflow } = await ci();
+			const checks = workflow.jobs.checks;
+			expect(checks.env?.TURBO_FORCE).toBe("${{ inputs.full && 'true' || 'false' }}");
+			const turboCache = checks.steps.find(
+				(step) => step.uses?.startsWith("actions/cache") && step.uses && JSON.stringify(step).includes(".turbo/cache")
+			);
+			expect(turboCache?.if).toBe("${{ !inputs.full }}");
+		});
+
+		test("a full run builds and tests native whatever the diff touched", async () => {
+			const { text } = await ci();
+			expect(text).toContain('if [ "$FULL" = "true" ]; then echo "native=true" >> "$GITHUB_OUTPUT"; exit 0; fi');
+		});
+
+		test("version.yml dispatches the version PR's signoff run as full", async () => {
+			const { text } = await load("version.yml");
+			expect(text).toContain(
+				'gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$ref" -f "signoff-sha=$sha" -f full=true'
+			);
+		});
+	});
+
 	test("release.yml refuses a tag that is not on main", async () => {
 		const { text } = await load("release.yml");
 		expect(text).toContain("merge-base --is-ancestor");

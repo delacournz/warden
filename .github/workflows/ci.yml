@@ -26,6 +26,10 @@ on:
         description: Full commit SHA to test and sign off (the PR head)
         required: true
         type: string
+      full:
+        description: Run everything from scratch (no turbo cache, native whatever the diff touched). version.yml sets it for the version PR, the last check before main.
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -80,6 +84,10 @@ jobs:
   checks:
     needs: validate
     runs-on: xcode-27
+    # A full run reads no turbo cache: a task whose hash misses a file it reads replays a stale green, and the
+    # version PR's run is the last check before main.
+    env:
+      TURBO_FORCE: ${{ inputs.full && 'true' || 'false' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -99,8 +107,10 @@ jobs:
             bun-${{ runner.os }}-${{ runner.arch }}-
 
       # turbo's local cache (.turbo/cache): same task hashes as a local signoff, so a re-dispatch replays
-      # untouched greens. One entry per commit, restored from the branch's newest (else develop's).
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      # untouched greens. One entry per commit, restored from the branch's newest (else develop's). Never on a
+      # full run, which also saves none.
+      - if: ${{ !inputs.full }}
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .turbo/cache
           key: turbo-ci-${{ runner.os }}-${{ runner.arch }}-${{ inputs.signoff-sha }}
@@ -130,7 +140,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           SHA: ${{ inputs.signoff-sha }}
+          FULL: ${{ inputs.full }}
         run: |
+          if [ "$FULL" = "true" ]; then echo "native=true" >> "$GITHUB_OUTPUT"; exit 0; fi
           # An unreadable compare runs native rather than skipping it.
           files=$(gh api "repos/$GITHUB_REPOSITORY/compare/develop...$SHA" --jq '.files[].filename' 2>/dev/null || echo "packages/e2e/native/")
           if echo "$files" | grep -q '^packages/e2e/native/'; then
