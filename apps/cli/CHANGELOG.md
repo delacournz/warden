@@ -1,5 +1,18 @@
 # @delacour/warden
 
+## 0.20.1
+
+### Patch Changes
+
+- [#313](https://github.com/delacournz/warden/pull/313) [`8099e2a`](https://github.com/delacournz/warden/commit/8099e2aee78879bb246083605a6cce0300556dbb) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - A simulated camera with a video feed delivers its first frame as soon as the app's capture session starts. The clip is opened and its first frame decoded when the feed is set (`device.camera.set`, `warden ui camera set`), so an app on a slow host no longer sees a black camera for the first second, and the state ack now means the feed is ready.
+
+- [#305](https://github.com/delacournz/warden/pull/305) [`e28cf80`](https://github.com/delacournz/warden/commit/e28cf80a0164430d7dad18081a3103960d82e2eb) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - iOS claims, `warden golden ensure` and `warden golden import` now wait up to 60 s when `xcrun simctl create` refuses a listed runtime with `Invalid runtime` (seen on freshly booted CI images), asking again every 3 s and logging the wait. The error after the wait says how long the runtime refused.
+  - The `e2e` GitHub Action creates and deletes one iPhone on each available iOS runtime before the first claim, within 120 s, and only warns when a runtime still refuses.
+
+- [#308](https://github.com/delacournz/warden/pull/308) [`9aa1876`](https://github.com/delacournz/warden/commit/9aa18768b1c510ef16ed6d925f3653f67a2b4ecc) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - On CI (`CI` or `GITHUB_ACTIONS` set), iOS sims cloned from a golden boot once and shut down before the claim boots them, so the claim's boot is the clone's second. A clone's first boot left the accessibility service silent on the e2e driver's first read, which cost ~100 s of backboardd restart or sim reboot on a 3-vCPU CI runner. The claim logs `primed the clone (first boot) in <s> s`; a failed prime logs `clone not primed (…)` and the claim boots the clone as before. Local claims are unchanged.
+- Updated dependencies []:
+  - @delacour/warden-e2e@0.20.1
+
 ## 0.20.0
 
 ### Minor Changes
