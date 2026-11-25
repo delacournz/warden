@@ -8,7 +8,7 @@
 		"type": "git",
 		"url": "git+https://github.com/delacournz/warden.git"
 	},
-	"packageManager": "bun@1.4.3",
+	"packageManager": "bun@1.4.5",
 	"scripts": {
 		"postinstall": "git rev-parse --git-dir > /dev/null 2>&1 && prek install || true",
 		"dev": "turbo dev --ui tui",

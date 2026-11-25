@@ -4,9 +4,9 @@
 
 ## Stack / Dependencies
 
-- Bun (package manager, runtime, test runner)
+- Bun (package manager, runtime, test runner, type checker: `bun check`)
 - Turborepo (task orchestration)
-- TypeScript (strict) via `@delacour/warden-tsconfig`
+- TypeScript (strict) via `@delacour/warden-tsconfig`. `typecheck` is `bun check --no-script` (bun's built-in checker, TypeScript 7 embedded; needs bun ≥ 1.4.5, pinned by `packageManager`; `--no-script` because every workspace's `check` script is Biome). TypeScript 5/6 stays installed for its JavaScript API (npm declarations, `warden affected`) and editors. Root `package.json` is a turbo input of every `typecheck` and `test`, so a bun bump reruns them
 - Biome (lint + format) via `@delacour/warden-biome-config`
 - prek (git hooks: biome check on commit, typecheck on push)
 

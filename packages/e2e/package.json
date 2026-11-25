@@ -13,7 +13,7 @@
 		"fmt": "biome format --write ./src ./native/scripts ./native/android/scripts",
 		"lint": "biome lint --write ./src ./native/scripts ./native/android/scripts",
 		"check": "biome check ./src ./native/scripts ./native/android/scripts",
-		"typecheck": "tsc --noEmit",
+		"typecheck": "bun check --no-script",
 		"test": "bun test --parallel --timings=test-timings.json",
 		"test:timings": "bun test --parallel --timings=test-timings.json --update-timings",
 		"native:deps": "bun native/scripts/deps.ts",

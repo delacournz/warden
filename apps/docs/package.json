@@ -14,7 +14,7 @@
 		"fmt": "biome format --write ./src ./scripts",
 		"lint": "biome lint --write ./src ./scripts",
 		"check": "biome check ./src ./scripts",
-		"typecheck": "tsc --noEmit",
+		"typecheck": "bun check --no-script",
 		"test": "bun test"
 	},
 	"dependencies": {

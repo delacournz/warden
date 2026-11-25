@@ -9,7 +9,7 @@
 		"fmt": "biome format --write ./src ./suites ./scripts",
 		"lint": "biome lint --write ./src ./suites ./scripts",
 		"check": "biome check ./src ./suites ./scripts",
-		"typecheck": "tsc --noEmit",
+		"typecheck": "bun check --no-script",
 		"test": "bun test src suites/warden/helpers"
 	},
 	"dependencies": {

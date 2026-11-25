@@ -61,7 +61,7 @@
     "check": "biome check ./src ./scripts ./e2e",
     "fmt": "biome format --write ./src ./scripts ./e2e",
     "lint": "biome lint --write ./src ./scripts ./e2e",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "bun check --no-script",
     "test": "bun test src e2e/helpers scripts",
     "e2e": "bun ../cli/src/cli.ts e2e example",
     "e2e:dev": "bun ../cli/src/cli.ts e2e example --dev",
