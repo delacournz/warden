@@ -47,10 +47,6 @@ on:
         description: Simulators in parallel (empty = 1)
         type: string
         default: ""
-      retry:
-        description: Reruns of a failed spec
-        type: string
-        default: "1"
       args:
         description: Extra `warden e2e` arguments
         type: string
@@ -179,7 +175,8 @@ jobs:
           suite: example
           # 1 until the iOS accessibility bridge stops stalling on a second sim (count 2 stalled the second sim's warm-up).
           count: ${{ inputs.count || '1' }}
-          retry: ${{ inputs.retry || '1' }}
+          # No reruns of a failed spec: one that only passes on a second attempt is a bug to find, and a rerun hid it.
+          retry: '0'
           args: ${{ github.event_name == 'workflow_dispatch' && inputs.args || '--specs app/onboarding,app/settings,app/auth' }}
           warden-version: ${{ (inputs.warden-version || 'source') == 'source' && 'none' || inputs.warden-version }}
           save-cache: ${{ github.event_name != 'workflow_dispatch' && 'true' || (inputs.save-cache && 'true') || 'false' }}
