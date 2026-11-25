@@ -11,7 +11,14 @@ export const FAKE_HELPER_MANIFEST = {
 /** A tree shaped like `packages/e2e/native/dist` (what `native:build` stages), with placeholder contents. */
 export function fakeHelperDist(
 	dir: string,
-	opts: { frameworks?: string[]; guest?: boolean; manifest?: boolean; binary?: boolean; inject?: boolean } = {}
+	opts: {
+		frameworks?: string[];
+		guest?: boolean;
+		manifest?: boolean;
+		binary?: boolean;
+		inject?: boolean;
+		emud?: boolean;
+	} = {}
 ): void {
 	const { frameworks = ["CoreSimulatorStub.framework", "AccessibilityPlatformTranslationStub.framework"] } = opts;
 	mkdirSync(dir, { recursive: true });
@@ -26,5 +33,6 @@ export function fakeHelperDist(
 		writeFileSync(join(dir, framework, "Info.plist"), "plist");
 	}
 	if (opts.inject) writeFileSync(join(dir, "libwarden-inject.dylib"), "dylib");
+	if (opts.emud) writeFileSync(join(dir, "warden-emud"), "#!/bin/sh\n", { mode: 0o644 });
 	if (opts.manifest !== false) writeFileSync(join(dir, "manifest.json"), `${JSON.stringify(FAKE_HELPER_MANIFEST)}\n`);
 }

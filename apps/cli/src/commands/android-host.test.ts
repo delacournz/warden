@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { el, failWith, fakeDriver, snapshotOf } from "@delacour/warden-e2e/driver/driver.testing";
 import type { Driver } from "@delacour/warden-e2e/driver/driver.types";
 import { connectRemoteDriver } from "@delacour/warden-e2e/driver/remote/remote-client";
+import type { StreamService } from "@delacour/warden-e2e/driver/remote/remote-server";
 import { ok, type Result } from "@delacour/warden-types/result";
 import { type TestContext, testContext } from "../testing";
 import { createAndroidHostCommand } from "./android-host";
@@ -23,16 +24,50 @@ async function waitFor<T>(read: () => T | undefined, ms = 2000): Promise<T> {
 	}
 }
 
-function run(open: () => Promise<Result<Driver, string>>, extra: string[] = []) {
+function run(open: () => Promise<Result<Driver, string>>, extra: string[] = [], stream?: StreamService) {
 	const c = testContext([]);
 	ctx = c;
 	const socket = join(c.cwd, "h.sock");
 	c.argv.splice(0, c.argv.length, "--serial", SERIAL, "--socket", socket, ...extra);
-	const done = createAndroidHostCommand({ openDriver: async () => open() }).run(c);
+	const done = createAndroidHostCommand({ openDriver: async () => open(), openStream: () => stream }).run(c);
 	return { c, socket, done };
 }
 
 describe("warden __android-host", () => {
+	test("serves stream.* from the device's stream service and stops it on shutdown (STRM-2)", async () => {
+		const driver = fakeDriver({ screens: [screen], platform: "android", id: SERIAL });
+		const calls: string[] = [];
+		const stream: StreamService = {
+			start: async (params) => {
+				calls.push(`start ${JSON.stringify(params)}`);
+				return ok({ path: "/t/s.sock", width: 570, height: 1280, source: "grpc" });
+			},
+			keyframe: async () => {
+				calls.push("keyframe");
+				return ok({});
+			},
+			stats: async () => ok({ sent: 1 }),
+			stop: async () => {
+				calls.push("stop");
+				return ok({ stopped: true });
+			},
+		};
+		const { socket, done } = run(async () => ok(driver), [], stream);
+		await waitFor(() => (ctx?.stdout[0] !== undefined ? true : undefined));
+		const client = await connectRemoteDriver({ socketPath: socket });
+		if (!client.success) throw new Error(client.error.message);
+		expect(client.data.ready.stream).toBe(true);
+		expect(await client.data.request("stream.start", { fps: 30 })).toEqual({
+			success: true,
+			data: { path: "/t/s.sock", width: 570, height: 1280, source: "grpc" },
+		});
+		expect((await client.data.request("stream.keyframe")).success).toBe(true);
+		await client.data.request("shutdown");
+		await client.data.close();
+		expect(await done).toBe(0);
+		expect(calls).toEqual(['start {"fps":30}', "keyframe", "stop"]);
+	});
+
 	test("prints one ready line naming its socket, serves the driver, and exits 0 on shutdown", async () => {
 		const driver = fakeDriver({ screens: [screen], platform: "android", id: SERIAL });
 		const { c, socket, done } = run(async () => ok(driver));

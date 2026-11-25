@@ -15,6 +15,8 @@ export type ScriptedUi = Ui & {
 	confirmAnswers: Array<boolean | undefined>;
 	selectAnswers: Array<string | undefined>;
 	multiselectAnswers: Array<string[] | undefined>;
+	/** answers to `text`, in order; an answer `validate` refuses is logged (`invalid: <why>`) and the next one is tried */
+	textAnswers: Array<string | undefined>;
 };
 
 export function scriptedUi(
@@ -25,6 +27,7 @@ export function scriptedUi(
 		confirm?: Array<boolean | undefined>;
 		select?: Array<string | undefined>;
 		multiselect?: Array<string[] | undefined>;
+		text?: Array<string | undefined>;
 	} = {}
 ): ScriptedUi {
 	const ui: ScriptedUi = {
@@ -36,6 +39,7 @@ export function scriptedUi(
 		confirmAnswers: [...(opts.confirm ?? [])],
 		selectAnswers: [...(opts.select ?? [])],
 		multiselectAnswers: [...(opts.multiselect ?? [])],
+		textAnswers: [...(opts.text ?? [])],
 		spinner: (text): Spinner => {
 			ui.events.push(`spin: ${text}`);
 			return {
@@ -49,6 +53,16 @@ export function scriptedUi(
 		confirm: async (message) => {
 			ui.events.push(`confirm: ${message}`);
 			return ui.confirmAnswers.shift();
+		},
+		text: async (message, prompt = {}) => {
+			ui.events.push(`text: ${message}${prompt.initialValue !== undefined ? ` [${prompt.initialValue}]` : ""}`);
+			for (;;) {
+				const answer = ui.textAnswers.shift();
+				if (answer === undefined) return undefined;
+				const why = prompt.validate?.(answer);
+				if (why === undefined) return answer;
+				ui.events.push(`invalid: ${why}`);
+			}
 		},
 		select: async <T extends string>(message: string, choices: Choice<T>[]): Promise<T | undefined> => {
 			ui.events.push(`select: ${message}`);

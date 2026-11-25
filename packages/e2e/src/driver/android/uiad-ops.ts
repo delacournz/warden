@@ -2,6 +2,7 @@ import { type A11yEventsRead, parseUiadA11yEvents } from "../a11y-events";
 import type { DriverError, DriverResult, Element, Logger, Point, ScreenInfo, Snapshot } from "../driver.types";
 import { driverErr } from "../errors";
 import type { GesturePlan } from "../gesture-geometry";
+import type { TouchPointer } from "../live-touch";
 import type { SettleDetail } from "../settle";
 import { noteSpanDetail } from "../span-detail";
 import { DEFAULT_LONG_PRESS_MS, DEFAULT_SWIPE_MS, DRAG_STEPS } from "./android-argv";
@@ -32,6 +33,11 @@ import { parseUiadNodes } from "./uiautomator";
  *   surfaced, because it may have happened and doing it twice is worse than a failed step;
  * - the request never left (the server had already gone): started again and sent again, once.
  */
+
+export type TouchOpName = "down" | "move" | "up" | "cancel";
+
+/** One live touch event is one injection (~1-3 ms); a slower answer means the server is stuck. */
+const TOUCH_TIMEOUT_MS = 2_000;
 
 /** A settled `DriverResult`. */
 type Res<T> = Awaited<DriverResult<T>>;
@@ -70,6 +76,12 @@ export type UiadOps = {
 	actionClick(point: Point): Maybe<void>;
 	/** `ACTION_SCROLL_FORWARD|BACKWARD` on the scrollable at a point, else the largest on screen; answers whether it moved (`actionScroll`, 0.6.0+) */
 	actionScroll(dir: "forward" | "backward", point?: Point): Maybe<boolean>;
+	/**
+	 * one live touch event (`touch.down|move|up|cancel`, server 0.7.0+), points in pixels. A state error
+	 * (`E_BAD_REQUEST`) or a refusal is the answer and the server stays up; a server that predates the ops is
+	 * `E_UNSUPPORTED` `helper_outdated`, remembered. `undefined` = no server.
+	 */
+	touch(op: TouchOpName, point?: Point, pointer?: TouchPointer): Maybe<void>;
 	/** run the Accessibility Test Framework on the active window (`audit` op, server 0.5.0+); `undefined` = no server */
 	audit(opts: { contrast: boolean }): Maybe<unknown>;
 	stop(): Promise<void>;
@@ -227,8 +239,39 @@ export function createUiadOps(deps: UiadOpsDeps): UiadOps {
 		};
 	}
 
+	let touchOutdated = false;
+	const touchOutdatedError = (): Res<never> => ({
+		success: false,
+		error: {
+			code: "E_UNSUPPORTED",
+			message:
+				"this warden-uiad predates live touch (touch.* ops, server 0.7.0): it is restarted with the driver, or update warden on the host",
+			retryable: false,
+			detail: { reason: "helper_outdated" },
+		},
+	});
+	async function touch(op: TouchOpName, point?: Point, pointer?: TouchPointer): Maybe<void> {
+		if (touchOutdated) return touchOutdatedError();
+		const server = await backend.server();
+		if (server === undefined) return blocked();
+		const params = op === "cancel" ? {} : { ...(point ? { x: point.x, y: point.y } : {}), pointer: pointer ?? 0 };
+		const res = await server.request(`touch.${op}`, params, { timeoutMs: TOUCH_TIMEOUT_MS });
+		return res.success ? ok : touchFailed(res.error);
+	}
+	/** Unknown op: an old server (remembered). A state error or refusal: the answer. Anything else: the server is gone. */
+	async function touchFailed(error: DriverError): Promise<Res<never>> {
+		if (error.code === "E_BAD_REQUEST" && /unknown op/.test(error.message)) {
+			touchOutdated = true;
+			log?.(`uiad: ${error.message}; live touch is off for this server`);
+			return touchOutdatedError();
+		}
+		if (error.code !== "E_BAD_REQUEST" && !REFUSALS.has(error.code)) await backend.failed(error);
+		return { success: false, error };
+	}
+
 	return {
 		enabled: backend.wanted,
+		touch,
 		status: backend.status,
 		snapshot,
 		settle,

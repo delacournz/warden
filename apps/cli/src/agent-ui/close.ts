@@ -30,12 +30,26 @@ export function stopperFor(
 	return isPhysicalIosId(device.udid) ? stopIosRunner : stopHelper;
 }
 
+/** A host's device: its helper is the host's (idle timeout there); `--release` releases the lease on the host too. */
+async function endOnHost(
+	ctx: CommandContext,
+	lease: UiDevice["lease"],
+	release: boolean
+): Promise<{ stopped: boolean; how: string; warning?: string }> {
+	if (!release) return { stopped: false, how: "host" };
+	const { releaseHostLeases } = await import("../hosts/claim");
+	const { notes } = await releaseHostLeases(ctx, [lease], { shutdown: false });
+	await releaseDevices(ctx, [lease.id]);
+	return { stopped: true, how: "release", ...(notes[0] !== undefined ? { warning: notes[0] } : {}) };
+}
+
 /** Release the lease (its `after` stops the helper) or just stop the helper. */
 async function endHelper(
 	ctx: CommandContext,
 	device: UiDevice,
 	release: boolean
 ): Promise<{ stopped: boolean; how: string; warning?: string }> {
+	if (device.lease.resource.kind === "host-device") return endOnHost(ctx, device.lease, release);
 	if (!release) return stopperFor(device)(ctx, device.udid);
 	await releaseDevices(ctx, [device.lease.id], { after: releaseAfter(ctx, { helper: true }) });
 	return { stopped: true, how: "release" };

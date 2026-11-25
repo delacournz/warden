@@ -16,7 +16,12 @@ function check(ctx: CommandContext, opts: CheckOpts): number {
 	const lease = ctx
 		.store()
 		.listLeases()
-		.find((l) => l.resource.kind === "device" && l.resource.id === udid && isLeaseAlive(l, now, processAlive));
+		.find(
+			(l) =>
+				(l.resource.kind === "device" || l.resource.kind === "host-device") &&
+				l.resource.id === udid &&
+				isLeaseAlive(l, now, processAlive)
+		);
 	const json = opts.json === true;
 	if (!lease) {
 		emit(ctx, json, { udid, free: true, mine: false }, color.green(`device ${udid} is free`));

@@ -432,7 +432,11 @@
 								"REQUESTER_LIMIT",
 								"RUNTIME_MISSING",
 								"HEALTH_FAILED",
-								"LEASE_LOST"
+								"LEASE_LOST",
+								"HOST_UNREACHABLE",
+								"HOST_AUTH",
+								"HOST_VERSION_SKEW",
+								"HOST_UNKNOWN"
 							]
 						},
 						"message": {

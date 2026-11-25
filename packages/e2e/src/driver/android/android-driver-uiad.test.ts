@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { canReadA11yEvents, type ReadsA11yEvents } from "../a11y-events";
 import type { Driver, DriverResult } from "../driver.types";
+import { canLiveTouch } from "../live-touch";
 import { canDetectAlerts } from "../observation-cache";
 import { settleDetailOf } from "../settle";
 import { canRepeatKeys, canSelectAll, canSetText } from "../typing";
@@ -433,5 +434,28 @@ describe("a11yEvents", () => {
 	test("without the server there is no capability and no fake answer", async () => {
 		const { driver } = await setup({ uiad: false });
 		expect(canReadA11yEvents(driver)).toBe(false);
+	});
+});
+
+describe("live touch", () => {
+	test("is offered with the server and streams each event as one request, no input commands", async () => {
+		const { driver, host, uiad } = await setup({
+			uiad: { handle: (r) => (r.op.startsWith("touch.") ? { data: { down: 1 } } : undefined) },
+		});
+		if (!canLiveTouch(driver)) throw new Error("no live touch");
+		await value(driver.touchDown({ x: 100, y: 200 }));
+		await value(driver.touchMove({ x: 100, y: 260 }));
+		await value(driver.touchUp({ x: 100, y: 300 }));
+		expect(uiad.requests.filter((r) => r.op.startsWith("touch.")).map((r) => r.op)).toEqual([
+			"touch.down",
+			"touch.move",
+			"touch.up",
+		]);
+		expect(inputs(host)).toEqual([]);
+	});
+
+	test("is not offered without the server", async () => {
+		const { driver } = await setup({ uiad: false });
+		expect(canLiveTouch(driver)).toBe(false);
 	});
 });

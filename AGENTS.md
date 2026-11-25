@@ -16,6 +16,7 @@
 apps/
   cli/                # @delacour/warden — the `warden` binary (commands, Claude hook)
   docs/               # @delacour/warden-docs — Fumadocs + TanStack Start docs site (content/docs/*.mdx), :3210
+  viewer/             # @delacour/warden-viewer — Tauri v2 window for one hosted device (`warden view`); Rust holds the scoped token; see apps/viewer/AGENTS.md
   example/            # @delacour/warden-example — Expo + Delacour UI demo app; `@delacour/warden-e2e` specs run via `warden e2e example`
 packages/
   core/               # @delacour/warden-core — lease store, allocation, device providers, build cache
@@ -24,6 +25,9 @@ packages/
   biome-config/       # shared Biome config (root.jsonc, react.jsonc)
   tsconfig/           # shared tsconfig (tsconfig.base.json, tsconfig.react.json)
   types/              # shared utility types (Result, AsyncResult, ok, err)
+crates/
+  warden-rtc/         # Rust: H.264 RTP packetize/depacketize, reorder buffer, codec params; shared by apps/viewer and the stream publisher (WDN-STRM)
+  warden-stream/      # Rust bin: the device stream publisher (helper AU socket → H.264 over WebRTC, NDJSON signalling on stdio); see crates/warden-stream/AGENTS.md
 scripts/              # repo scripts (pre-commit biome, signoff/ = local CI gate)
 ```
 
@@ -86,7 +90,7 @@ PRs into `develop` are gated on local signoff, not GitHub Actions. Branch protec
 
 - Agents: `.claude/rules/signoff.md` is the always-on rule (sign off after `gh pr create` and after every push to an open PR), the `signoff` skill (`.claude/skills/signoff`) is the procedure, and a `PostToolUse` hook in `.claude/settings.json` reminds after a PR is opened or a head moves.
 - One-off per machine: `gh extension install basecamp/gh-signoff`.
-- With the PR open, a clean tree and HEAD pushed: `bun run signoff` (`-- --dry-run` previews the plan). It diffs against the PR base, runs every applicable check from `scripts/signoff/signoff-checks.ts` (typecheck, check, test always; `native` when `packages/e2e/native/**` changed), writes `signoff/<check>` per pass, then the `signoff` umbrella, and posts one report comment naming the actor and runner (agents show as agents).
+- With the PR open, a clean tree and HEAD pushed: `bun run signoff` (`-- --dry-run` previews the plan). It diffs against the PR base, runs every applicable check from `scripts/signoff/signoff-checks.ts` (typecheck, check, test always; `native` when `packages/e2e/native/**` changed, `viewer` for `apps/viewer/**`, `stream` for `crates/warden-stream/**`; both for `crates/warden-rtc/**`), writes `signoff/<check>` per pass, then the `signoff` umbrella, and posts one report comment naming the actor and runner (agents show as agents).
 - A status binds to a SHA: every push (or **Update branch**) drops it, so re-run.
 - Turbo caches `typecheck`, `check` and `test` (logs only), so a re-run or a one-workspace diff replays the untouched workspaces' greens. A workspace's own files and its declared workspace dependencies (the `transit` node) are hashed by default. **A test (or tsc) that reads outside its workspace must declare it in `turbo.jsonc`**: a `$TURBO_ROOT$/…` entry in `inputs` on `"<pkg>#<task>"` (keep `$TURBO_DEFAULT$`; never a bare `**` over a dir with build outputs, `**` ignores `.gitignore`), or `dependsOn: ["<pkg>#transit"]` for another package's whole source. Otherwise a stale green is replayed. Prove it: append a byte to the file, `bunx turbo run test --dry=json` must show a new hash for the task. `scripts/signoff/turbo-cache.test.ts` guards the config's shape.
 - Signoff points `TURBO_CACHE_DIR` at `$(git rev-parse --git-common-dir)/turbo-cache` so every worktree shares one cache (a caller's own `TURBO_CACHE_DIR` wins). The report marks replayed tasks `(cached)`. Never use `turbo --affected`.
@@ -103,6 +107,7 @@ PRs into `develop` are gated on local signoff, not GitHub Actions. Branch protec
 - Merging the version PR triggers `promote.yml`: fast-forward `main`, push tag `v<version>`. Railway production builds `main`, staging builds `develop`.
 - The docs deploy as a Docker image from `apps/docs/Dockerfile` (repo-root context, root `.dockerignore`): Nitro's `.output` plus a vendored `@delacournz/otel-start` bundle on `oven/bun:*-slim`, no workspace `node_modules`. The Railway service (`warden-docs`: builder, `dockerfilePath`, watch patterns, variables, domains) is declared in `delacournz/delacour-monorepo`'s `apps/warden/infra/railway.ts`. A Dockerfile build sees a variable only when it is an `ARG`, so a new `VITE_*` needs one there; a new workspace dependency of `apps/docs` needs adding to that service's `watchPatterns`, or pushes touching it are skipped.
 - The tag triggers `release.yml`: GitHub Release with binaries + npm publish via OIDC trusted publishing (`release` environment, no token, no reviewer click).
+- The same tag builds the desktop viewer (`apps/viewer`, `viewer` job: darwin-arm64, darwin-x64 on the Mac runner, win32-x64 on `windows-latest`). `warden-viewer-<target>.tgz` assets ride the GitHub Release and are merged into `SHA256SUMS`; they are not npm packages. macOS is signed with the hardened runtime and notarized when the `APPLE_*` secrets are set, Windows is Authenticode-signed when `WINDOWS_CERTIFICATE*` are set; without them the build is unsigned with a `::warning::`. Secret list: `apps/viewer/AGENTS.md` § Release.
 - `bun run release <version>` (`apps/cli/scripts/release.ts`) is break-glass only, for when CI is down. It bypasses changesets.
 
 ## Checklists

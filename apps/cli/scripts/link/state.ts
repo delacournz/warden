@@ -51,7 +51,23 @@ const entryKind = (path: string): "absent" | "symlink" | "real" => {
 	return stats.isSymbolicLink() ? "symlink" : "real";
 };
 
-const SHIM = /^#!\/bin\/sh\nexec bun "(.+)" "\$@"\n$/;
+const SHIM = /^#!\/bin\/sh\n(?:: "\$\{[A-Z0-9_]+:=[^\n]*\}"\nexport [A-Z0-9_]+\n)*exec bun "(.+)" "\$@"\n$/;
+
+/** Env the shim sets unless the caller's env already does, e.g. `WARDEN_VIEWER_PATH` to a local viewer build. */
+export type ShimEnv = Record<string, string>;
+
+const SAFE_VALUE = /^[^"$`\\\n]*$/;
+
+/** `devShim` with each key defaulted (`: "${KEY:=value}"`), so a value from the caller's env still wins. */
+export function shimContent(cliPath: string, env: ShimEnv = {}): string {
+	const lines = Object.entries(env).map(([key, value]) => {
+		if (!/^[A-Z_][A-Z0-9_]*$/.test(key)) throw new Error(`not an env name: ${key}`);
+		if (!SAFE_VALUE.test(value)) throw new Error(`${key} has a character the shell would expand: ${value}`);
+		return `: "\${${key}:=${value}}"\nexport ${key}\n`;
+	});
+	const shim = devShim(cliPath);
+	return lines.length === 0 ? shim : shim.replace("#!/bin/sh\n", `#!/bin/sh\n${lines.join("")}`);
+}
 
 /** The `cli.ts` a source shim at `path` runs; `undefined` when `path` is anything else. */
 export function shimTarget(path: string): string | undefined {
@@ -81,10 +97,11 @@ export function snapshotLink(paths: LinkPaths): Snapshot {
 }
 
 /** Point the entry at `cliPath`. Written beside it and renamed, so a hook never runs half a file. */
-export function writeShim(paths: LinkPaths, cliPath: string): void {
+export function writeShim(paths: LinkPaths, cliPath: string, env: ShimEnv = {}): void {
+	const content = shimContent(cliPath, env);
 	mkdirSync(dirname(paths.bin), { recursive: true });
 	const staged = `${paths.bin}.tmp-${process.pid}`;
-	writeFileSync(staged, devShim(cliPath));
+	writeFileSync(staged, content);
 	chmodSync(staged, 0o755);
 	renameSync(staged, paths.bin);
 }

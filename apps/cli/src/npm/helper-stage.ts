@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { err, ok, type Result } from "@delacour/warden-types/result";
 import {
 	HELPER_BINARY,
+	HELPER_EMUD,
 	HELPER_GUEST,
 	HELPER_INJECT,
 	HELPER_MANIFEST,
@@ -55,6 +56,13 @@ export function stageHelper(input: {
 		);
 	}
 
+	const emud = existsSync(join(distDir, HELPER_EMUD));
+	if (required && !emud) {
+		return err(
+			`--require-helper: no ${HELPER_EMUD} in ${distDir} — run \`bun run --cwd packages/e2e native:build\` (it builds the Android stream encoder beside the helper)`
+		);
+	}
+
 	mkdirSync(binDir, { recursive: true });
 	const copy = (name: string) =>
 		cpSync(join(distDir, name), join(binDir, name), { recursive: true, verbatimSymlinks: true });
@@ -63,6 +71,10 @@ export function stageHelper(input: {
 	copy(HELPER_MANIFEST);
 	for (const framework of frameworks) copy(framework);
 	if (inject) copy(HELPER_INJECT);
+	if (emud) {
+		copy(HELPER_EMUD);
+		chmodSync(join(binDir, HELPER_EMUD), 0o755);
+	}
 	chmodSync(join(binDir, HELPER_BINARY), 0o755);
-	return ok({ ...info.data, frameworks, inject });
+	return ok({ ...info.data, frameworks, inject, emud });
 }

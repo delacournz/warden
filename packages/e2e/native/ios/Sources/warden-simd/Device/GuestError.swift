@@ -193,6 +193,9 @@ extension WireError {
   /// there" `E_NO_ELEMENT`.
   static func from(_ error: any Error) -> WireError {
     if let wire = error as? WireError { return wire }
+    if let stream = error as? StreamError {
+      return WireError(ErrorCode(rawValue: stream.code.rawValue) ?? .internal, stream.message)
+    }
     if let both = error as? AXReadersFailed {
       let host = from(both.host)
       var fields = host.detail?.objectValue ?? [:]

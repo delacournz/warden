@@ -205,6 +205,32 @@ export const MIGRATIONS: readonly string[] = [
 		xcode_version TEXT NOT NULL
 	);
 	CREATE INDEX pods_cache_last_used ON pods_cache(last_used_at);`,
+	// IF NOT EXISTS + pods_cache again: a store migrated by a pre-merge warden-hosts build reached this version with
+	// `hosts` at the previous slot and no `pods_cache`; develop stores reach it the other way round. Both converge here.
+	`CREATE TABLE IF NOT EXISTS hosts (
+		name TEXT PRIMARY KEY,
+		json TEXT NOT NULL,
+		added_at INTEGER NOT NULL
+	);
+	CREATE TABLE IF NOT EXISTS host_grants (
+		fingerprint TEXT PRIMARY KEY,
+		machine_id TEXT NOT NULL,
+		user TEXT NOT NULL,
+		public_key TEXT NOT NULL,
+		added_at INTEGER NOT NULL
+	);
+	CREATE TABLE IF NOT EXISTS pods_cache (
+		key TEXT PRIMARY KEY,
+		mode TEXT NOT NULL,
+		root TEXT NOT NULL,
+		project_rel TEXT NOT NULL,
+		size_bytes INTEGER NOT NULL,
+		created_at INTEGER NOT NULL,
+		last_used_at INTEGER NOT NULL,
+		pod_version TEXT NOT NULL,
+		xcode_version TEXT NOT NULL
+	);
+	CREATE INDEX IF NOT EXISTS pods_cache_last_used ON pods_cache(last_used_at);`,
 ];
 
 /** A queued claim that has not refreshed within this long is dead (its waiter polls every few seconds). */
@@ -218,6 +244,8 @@ export function ownerKey(owner: Owner): string {
 			return `user:${owner.pid}`;
 		case "ci":
 			return `ci:${owner.runId}`;
+		case "host":
+			return `host:${owner.machineId}`;
 	}
 }
 

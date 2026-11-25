@@ -19,4 +19,5 @@ bun run check     # Biome lint + format
 bun run test      # Tests
 bun run cli:link   # ~/.local/bin/warden → this checkout's source (shim)
 bun run cli:unlink # put back whatever warden was before cli:link
+bun run cli:link:viewer # build apps/viewer (debug; -- --release), then link with WARDEN_VIEWER_PATH set in the shim; -- --login <api-url> [--account <name>] logs in after
 ```

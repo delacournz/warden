@@ -148,6 +148,18 @@ public final class Main {
 				case "gesture":
 					data = uia.gesture(req.getJSONArray("paths"), req.optDouble("frameMs", 16), req.optLong("holdMs", 0), req.optLong("releaseMs", 0));
 					break;
+				case "touch.down":
+					data = uia.liveTouch.down(LiveTouch.pointer(req.optInt("pointer", 0)), (float) req.getDouble("x"), (float) req.getDouble("y"));
+					break;
+				case "touch.move":
+					data = uia.liveTouch.move(LiveTouch.pointer(req.optInt("pointer", 0)), (float) req.getDouble("x"), (float) req.getDouble("y"));
+					break;
+				case "touch.up":
+					data = uia.liveTouch.up(LiveTouch.pointer(req.optInt("pointer", 0)), req.has("x") && req.has("y"), (float) req.optDouble("x", 0), (float) req.optDouble("y", 0));
+					break;
+				case "touch.cancel":
+					data = uia.liveTouch.cancel();
+					break;
 				case "key":
 					data = uia.key(req.getInt("keyCode"), req.optInt("metaState", 0), req.optInt("times", 1), req.optLong("gapMs", 30), req.optBoolean("sync", true));
 					break;

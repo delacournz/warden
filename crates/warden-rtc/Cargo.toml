@@ -1,0 +1,11 @@
+[package]
+name = "warden-rtc"
+description = "H.264 over RTP and WebRTC pieces shared by the warden viewer and the stream publisher"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+rtc = "0.21"
+bytes = "1.12.1"
+log = "0.4"

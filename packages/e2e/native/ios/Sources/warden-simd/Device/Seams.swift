@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import IOSurface
 
 // The seams between warden-simd's ops and policy code and the simulator backend (today idb's FBSimulatorControl /
 // FBSimulatorAX). Ops and policy are typed against the values and protocols in this file and in `Model/RawNode.swift`;
@@ -50,8 +51,18 @@ protocol HIDSender: Sendable {
   func send(_ event: HIDEvent) async throws
   /// Delivers each event as the sequence yields it and drains once at the end (one HID operation).
   func send(stream: PacedKeyEvents) async throws
+  /// One open-ended HID operation: each event is delivered as the sequence yields it, and the backend asks for the
+  /// next only once the one before was delivered (live touch, `StreamingHIDSink`). Ends when the sequence does.
+  func send<Events: AsyncSequence & Sendable>(events: Events) async throws where Events.Element == HIDEvent
   func shake() async throws
   func close() async
+}
+
+extension HIDSender {
+  /// One operation per event: for senders with no open-ended operation (test fakes).
+  func send<Events: AsyncSequence & Sendable>(events: Events) async throws where Events.Element == HIDEvent {
+    for try await event in events { try await send(event) }
+  }
 }
 
 // MARK: - Screen
@@ -64,6 +75,29 @@ struct ScreenCapture: Sendable {
 protocol ScreenCapturer: Sendable {
   /// A PNG of the framebuffer; `scale` is a factor in (0, 1] of the native capture (1 = native).
   func capture(scale: Double) async throws -> ScreenCapture
+}
+
+// MARK: - Display stream
+
+/// What the main display's framebuffer reports while a stream is attached (`stream.*`).
+enum DisplayEvent: @unchecked Sendable {
+  /// The surface frames are drawn into was replaced (a rotation or resize); nil = no surface for now.
+  case surfaceChanged(IOSurface?)
+  /// The simulator drew a frame into the current surface.
+  case frameRendered
+  /// The display went away; the events end after this.
+  case ended(String)
+}
+
+/// One attachment to the main display's framebuffer: held for the stream's life, `cancel()` ends `events`.
+protocol DisplayAttachment: Sendable {
+  var initialSurface: IOSurface? { get }
+  var events: AsyncStream<DisplayEvent> { get }
+  func cancel()
+}
+
+protocol DisplaySource: Sendable {
+  func attach() async throws -> any DisplayAttachment
 }
 
 // MARK: - Orientation
@@ -130,6 +164,8 @@ struct DeviceBackend: Sendable {
   var screenshots: any ScreenCapturer
   var apps: any AppLifecycle
   var orientation: any OrientationControl
+  /// The main display's framebuffer for `stream.*`; nil when the backend cannot attach one.
+  var display: (any DisplaySource)? = nil
   /// The in-guest reader (`axbridge`); nil when it could not be built.
   var axBridge: (any AXReader)?
   /// The host-side reader (`ax`); nil when it could not be built.

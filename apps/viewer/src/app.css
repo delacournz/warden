@@ -1,0 +1,49 @@
+@import "@delacournz/apogee/styles.css";
+@source "./**/*.{ts,tsx}";
+
+html,
+body {
+	background: transparent;
+}
+
+@keyframes tap-ripple {
+	from {
+		opacity: 1;
+		transform: translate(-50%, -50%) scale(0.3);
+	}
+	to {
+		opacity: 0;
+		transform: translate(-50%, -50%) scale(1.4);
+	}
+}
+
+.tap-ripple {
+	animation: tap-ripple 420ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.tap-ripple {
+		display: none;
+	}
+}
+
+.touch-fx {
+	transition:
+		opacity 180ms ease-out,
+		transform 180ms ease-out,
+		width 120ms ease-out,
+		height 120ms ease-out;
+}
+
+.finger-fx {
+	transition:
+		background 90ms ease-out,
+		transform 90ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.touch-fx,
+	.finger-fx {
+		transition: none;
+	}
+}

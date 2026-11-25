@@ -27,6 +27,7 @@ describe("stageHelper", () => {
 				xcode: "26.6 (17F113)",
 				frameworks: ["AccessibilityPlatformTranslationStub.framework", "CoreSimulatorStub.framework"],
 				inject: false,
+				emud: false,
 			},
 		});
 		for (const path of [
@@ -42,7 +43,7 @@ describe("stageHelper", () => {
 	});
 
 	test("the injected dylib is staged when built, and a release build requires it", () => {
-		fakeHelperDist(dist, { inject: true });
+		fakeHelperDist(dist, { inject: true, emud: true });
 		const staged = stageHelper({ distDir: dist, binDir: bin, required: true });
 		expect(staged.success && staged.data?.inject).toBe(true);
 		expect(existsSync(join(bin, "libwarden-inject.dylib"))).toBe(true);
@@ -53,6 +54,19 @@ describe("stageHelper", () => {
 		expect(missing.success).toBe(false);
 		if (!missing.success) expect(missing.error).toContain("libwarden-inject.dylib");
 		expect(stageHelper({ distDir: bare, binDir: join(root, "pkg3", "bin"), required: false }).success).toBe(true);
+	});
+
+	test("warden-emud (the Android emulator stream encoder) is staged executable when built, and a release build requires it", () => {
+		fakeHelperDist(dist, { inject: true, emud: true });
+		const staged = stageHelper({ distDir: dist, binDir: bin, required: true });
+		expect(staged.success && staged.data?.emud).toBe(true);
+		expect(statSync(join(bin, "warden-emud")).mode & 0o111).toBe(0o111);
+
+		const bare = join(root, "bare-emud");
+		fakeHelperDist(bare, { inject: true });
+		const missing = stageHelper({ distDir: bare, binDir: join(root, "pkg4", "bin"), required: true });
+		expect(missing.success).toBe(false);
+		if (!missing.success) expect(missing.error).toContain("warden-emud");
 	});
 
 	test("no helper built: skipped, unless required", () => {

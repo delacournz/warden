@@ -4,6 +4,7 @@ import FBSimulatorAX
 import FBSimulatorBridgeProtocol
 import FBSimulatorControl
 import Foundation
+import IOSurface
 
 /// Opens one booted simulator through idb's FBSimulatorControl and wraps what the ops use behind the seams in
 /// `Seams.swift`. This file, `IdbAdapterAX.swift` and `IdbAdapterErrors.swift` are the only ones that import idb.
@@ -64,7 +65,7 @@ enum IdbBackend {
     return DeviceBackend(
       device: IdbDevice(simulator: simulator), hid: IdbHID(session: session, simulator: simulator), hidTransport: transport,
       screenshots: IdbScreenshots(simulator: simulator), apps: IdbApps(simulator: simulator),
-      orientation: IdbOrientation(simulator: simulator), axBridge: bridgeReader, axHost: hostReader, bridge: bridge,
+      orientation: IdbOrientation(simulator: simulator), display: IdbDisplay(simulator: simulator), axBridge: bridgeReader, axHost: hostReader, bridge: bridge,
       coreSimulatorVersion: coreSimulatorVersion)
   }
 
@@ -122,6 +123,55 @@ final class NullLogger: ControlCoreLogger, @unchecked Sendable {
   func withDateFormatEnabled(_ enabled: Bool) -> any ControlCoreLogger { self }
 }
 
+/// The main display's framebuffer (`stream.*`).
+struct IdbDisplay: DisplaySource, @unchecked Sendable {
+  let simulator: Simulator
+
+  func attach() async throws -> any DisplayAttachment {
+    try await IdbErrors.mapping {
+      let framebuffer = try await simulator.framebuffer.connect()
+      return IdbDisplayAttachment(framebuffer: framebuffer, attachment: try framebuffer.attach())
+    }
+  }
+}
+
+/// idb's attachment with its events mapped to `DisplayEvent`s. Holds the framebuffer: the attachment's events stop
+/// when it is released.
+final class IdbDisplayAttachment: DisplayAttachment, @unchecked Sendable {
+  private let framebuffer: Framebuffer
+  private let attachment: FramebufferAttachment
+  let events: AsyncStream<DisplayEvent>
+
+  init(framebuffer: Framebuffer, attachment: FramebufferAttachment) {
+    self.framebuffer = framebuffer
+    self.attachment = attachment
+    let source = attachment.events
+    events = AsyncStream { continuation in
+      let task = Task {
+        for await event in source {
+          switch event {
+          case let .surfaceChanged(surface): continuation.yield(.surfaceChanged(surface))
+          case .frameRendered: continuation.yield(.frameRendered)
+          case let .ended(reason):
+            continuation.yield(.ended("\(reason)"))
+            continuation.finish()
+            return
+          default: continue
+          }
+        }
+        continuation.finish()
+      }
+      continuation.onTermination = { _ in task.cancel() }
+    }
+  }
+
+  var initialSurface: IOSurface? { attachment.initialSurface }
+
+  func cancel() {
+    attachment.cancel()
+  }
+}
+
 struct IdbHID: HIDSender, @unchecked Sendable {
   let session: SimulatorHIDSession
   let simulator: Simulator
@@ -140,6 +190,12 @@ struct IdbHID: HIDSender, @unchecked Sendable {
   func send(stream: PacedKeyEvents) async throws {
     try await IdbErrors.mapping {
       try await session.hid.send(events: stream.map { Self.event($0) }, logger: logger)
+    }
+  }
+
+  func send<Events: AsyncSequence & Sendable>(events: Events) async throws where Events.Element == HIDEvent {
+    try await IdbErrors.mapping {
+      try await session.hid.send(events: events.map { Self.event($0) }, logger: logger)
     }
   }
 

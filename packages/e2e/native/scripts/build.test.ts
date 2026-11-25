@@ -53,16 +53,17 @@ describe("buildManifest", () => {
 });
 
 describe("stageSteps", () => {
-	test("stages the binary, guest resource and stub frameworks, signs everything after stripping", () => {
+	test("stages both binaries, guest resource and stub frameworks, signs everything after stripping", () => {
 		const steps = stageSteps({ binDir: "/b", libraries: "/l", dist: "/d", frameworks: ["A.framework", "B.framework"] });
 		expect(steps.copies).toEqual([
 			{ from: "/b/warden-simd", to: "/d/warden-simd" },
+			{ from: "/b/warden-emud", to: "/d/warden-emud" },
 			{ from: "/l/Resources/SimulatorFrameworkBridge-iOS", to: "/d/Resources/SimulatorFrameworkBridge-iOS" },
 			{ from: "/b/A.framework", to: "/d/A.framework" },
 			{ from: "/b/B.framework", to: "/d/B.framework" },
 		]);
-		expect(steps.strip).toEqual(["/d/warden-simd"]);
-		expect(steps.sign).toEqual(["/d/A.framework", "/d/B.framework", "/d/warden-simd"]);
+		expect(steps.strip).toEqual(["/d/warden-simd", "/d/warden-emud"]);
+		expect(steps.sign).toEqual(["/d/A.framework", "/d/B.framework", "/d/warden-simd", "/d/warden-emud"]);
 		// The prebuilt in-sim guest is ad-hoc signed upstream and must never be re-signed.
 		expect(steps.sign.some((path) => path.includes("SimulatorFrameworkBridge"))).toBe(false);
 	});

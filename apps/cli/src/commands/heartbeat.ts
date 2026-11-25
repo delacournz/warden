@@ -8,7 +8,7 @@ import {
 	selectorFrom,
 	withSelectOptions,
 } from "../lease-select";
-import { emit, reportError } from "../output";
+import { emit, reportError, warn } from "../output";
 
 type HeartbeatOpts = SelectOptionValues & { json?: true };
 
@@ -22,6 +22,16 @@ async function heartbeat(ctx: CommandContext, leaseIds: string[], opts: Heartbea
 	const { leases, unknown } = selectLeases(ctx, selector);
 	const ids = leases.map((l) => l.id);
 	ctx.store().heartbeat(ids, ctx.now());
+	if (leases.some((l) => l.resource.kind === "remote-device")) {
+		const { heartbeatRemoteLeases } = await import("../remote/claim");
+		for (const n of await heartbeatRemoteLeases(ctx, leases)) warn(ctx, n);
+	}
+	if (leases.some((l) => l.resource.kind === "host-device")) {
+		const { heartbeatHostLeases } = await import("../hosts/claim");
+		const beat = await heartbeatHostLeases(ctx, leases);
+		for (const n of beat.notes) warn(ctx, n);
+		for (const l of beat.gone) warn(ctx, `${l.id}: ${l.resource.host} no longer holds ${l.resource.remoteLeaseId}`);
+	}
 	for (const u of unknown) reportError(ctx, "heartbeat", `no lease for ${u}`);
 	emit(
 		ctx,

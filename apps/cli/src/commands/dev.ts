@@ -155,6 +155,8 @@ type DevOpts = ClaimFlagValues & {
 	hudInterval: string;
 	/** false = `--no-shutdown`: leave the sim dev leased booted when dev ends */
 	shutdown: boolean;
+	/** `--host <name>`: the device is on that warden host; Metro stays here (`dev-host.ts`) */
+	host?: string;
 	/** `--keychain-acl` / `--no-keychain-acl`: the iOS simulator's Keychain ACL shim on / off (undefined: as the device has it) */
 	keychainAcl?: boolean;
 };
@@ -1159,6 +1161,14 @@ async function dev(
 		reportError(rawCtx, "dev", `--hud-interval: ${hudInterval.error}`);
 		return 1;
 	}
+	if (opts.host !== undefined) {
+		const { hostDevConflicts } = await import("./dev-host");
+		const conflicts = hostDevConflicts(opts);
+		if (conflicts.length > 0) {
+			reportError(rawCtx, "dev", `--host can't be used with ${conflicts.join(", ")}`);
+			return 1;
+		}
+	}
 	// everything that can be wrong with the request or the app is found (and offered a fix) on the plain
 	// terminal, before the dashboard takes the screen: a failure there is a line, not a flash
 	const prepared = await prepareDev(rawCtx, platformArg, opts);
@@ -1166,6 +1176,7 @@ async function dev(
 		reportError(rawCtx, "dev", prepared.error);
 		return 1;
 	}
+	if (opts.host !== undefined) return devHost(rawCtx, deps, prepared.data, opts, opts.host);
 	const uiOpts: DevUiOpts = {
 		json: opts.json,
 		tui: opts.tui,
@@ -1177,6 +1188,21 @@ async function dev(
 	} finally {
 		await ui.close();
 	}
+}
+
+/** `--host`: hand the prepared request to `dev-host.ts` (plain output, no dashboard). */
+async function devHost(ctx: CommandContext, deps: DevDeps, p: Prepared, opts: DevOpts, host: string): Promise<number> {
+	const { devOnHost } = await import("./dev-host");
+	return devOnHost(ctx, deps, {
+		host,
+		platform: p.platform,
+		owner: p.owner,
+		timeoutMs: p.timeoutMs,
+		project: p.project,
+		app: p.app,
+		scheme: lazyScheme(ctx, p.project, opts.scheme),
+		flags: opts,
+	});
 }
 
 /** The request and the app, resolved and checked before anything is leased, built or drawn. */
@@ -1376,6 +1402,7 @@ export function createDevCommand(deps: DevDeps): Command {
 				)
 				.option("--no-keychain-acl", "turn the Keychain ACL shim off for the device")
 				.option("--no-open", "don't open the dev client (Metro + the leases only)")
+				.option("--host <name>", "run on a device of this warden host: Metro stays here, reached over ssh -R")
 				.option(
 					"--no-tui",
 					"plain output: Metro on this terminal, no dashboard (also WARDEN_TUI=0; --json and pipes are always plain)"

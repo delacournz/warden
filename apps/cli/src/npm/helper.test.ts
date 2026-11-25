@@ -29,5 +29,9 @@ describe("helper layout", () => {
 			"bin/B.framework",
 		]);
 		expect(helperFiles("bin", ["A.framework"], true).at(-1)).toBe("bin/libwarden-inject.dylib");
+		expect(helperFiles("bin", ["A.framework"], true, true).slice(-2)).toEqual([
+			"bin/libwarden-inject.dylib",
+			"bin/warden-emud",
+		]);
 	});
 });

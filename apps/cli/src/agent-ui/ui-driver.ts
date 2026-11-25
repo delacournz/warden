@@ -40,6 +40,11 @@ function iosA11y(ctx: CommandContext, device: UiDevice): { a11y?: true } {
  * (`--help`, no lease, `status`) never loads the engines.
  */
 export async function uiDriver(ctx: CommandContext, device: UiDevice): Promise<Result<Driver, UiError>> {
+	const { lease } = device;
+	if (lease.resource.kind === "host-device") {
+		const { connectHostDriver } = await import("../hosts/driver");
+		return connectHostDriver(ctx, { ...lease, resource: lease.resource });
+	}
 	if (device.platform === "ios") {
 		if (isPhysicalIosId(device.udid)) return connectIosRunner(ctx, device.udid);
 		const { leaseDriverExtras } = await import("./conditions-real");

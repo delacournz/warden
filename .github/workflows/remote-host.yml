@@ -1,0 +1,57 @@
+# A GitHub-hosted Mac as a warden host for a while: run it, then paste the `warden host add …` line from the
+# "Attach" step's log on your laptop and use the runner's simulators (`warden claim ios --host ci`, `warden ui`,
+# `warden dev --host ci`). Get the key to paste with `warden host key` on the laptop.
+#
+# The runner has no inbound port, so it joins your tailnet with a userspace tailscaled (no root, no TUN):
+# tailnet connections to its IP arrive on its loopback, where `warden host attach` runs a user-level sshd that lets
+# in only the key you pass, through warden's forced command (no shell). Needs a TS_AUTHKEY secret (an ephemeral,
+# tagged auth key); the tailnet's ACLs decide who may reach it.
+name: remote-host
+
+on:
+  workflow_dispatch:
+    inputs:
+      laptop_key:
+        description: "The laptop's warden key (`warden host key` on the laptop)"
+        required: true
+      name:
+        description: "Name for the host on the laptop"
+        default: ci
+      minutes:
+        description: "How long to keep the host up (at most 120)"
+        default: "60"
+
+permissions:
+  contents: read
+
+jobs:
+  host:
+    runs-on: macos-15
+    timeout-minutes: 130
+    env:
+      LAPTOP_KEY: ${{ inputs.laptop_key }}
+      HOST_NAME: ${{ inputs.name }}
+      MINUTES: ${{ inputs.minutes }}
+      TS_SOCKET: ${{ runner.temp }}/tailscaled.sock
+    steps:
+      - name: Install warden
+        run: |
+          npm install --global @delacour/warden
+          warden version
+          warden doctor --fetch-helper
+
+      - name: Join the tailnet (userspace)
+        env:
+          TS_AUTHKEY: ${{ secrets.TS_AUTHKEY }}
+        run: |
+          brew install tailscale
+          tailscaled --tun=userspace-networking --state=mem: --socket="$TS_SOCKET" >"$RUNNER_TEMP/tailscaled.log" 2>&1 &
+          for _ in $(seq 30); do tailscale --socket="$TS_SOCKET" status >/dev/null 2>&1 && break; sleep 1; done
+          tailscale --socket="$TS_SOCKET" up --auth-key="$TS_AUTHKEY" --hostname="warden-$GITHUB_RUN_ID"
+
+      - name: Attach
+        run: |
+          case "$MINUTES" in ''|*[!0-9]*) echo "minutes must be a number" >&2; exit 1;; esac
+          [ "$MINUTES" -le 120 ] || MINUTES=120
+          ip="$(tailscale --socket="$TS_SOCKET" ip -4 | head -n1)"
+          warden host attach --grant "$LAPTOP_KEY" --as "$HOST_NAME" --advertise "$ip" --for "${MINUTES}m"

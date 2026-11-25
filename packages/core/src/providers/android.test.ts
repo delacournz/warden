@@ -15,6 +15,7 @@ import {
 	bootSettingsCommand,
 	classifyOther,
 	createAndroidProvider,
+	headlessEmulatorFlags,
 	listAvds,
 	PHONE_PROBE_SCRIPT,
 	parseAdbDeviceList,
@@ -33,6 +34,7 @@ import {
 	EMULATOR_PROPS,
 	PHONE_PROPS,
 } from "./android.fixtures";
+import { GRPC_PORT_MIN, grpcArgv, grpcLeaseLabel } from "./android-grpc";
 import type { ProviderDeps } from "./provider.types";
 
 const SDK = "/sdk";
@@ -82,6 +84,12 @@ afterEach(() => {
 	store.close();
 	rmSync(dir, { recursive: true, force: true });
 });
+
+/** A bind probe that finds every port free except `busy`. */
+const freeExcept =
+	(...busy: number[]) =>
+	async (port: number): Promise<boolean> =>
+		!busy.includes(port);
 
 function deps(exec: Exec, now: () => number = () => 1_000): ProviderDeps {
 	return { exec, store, env: { ANDROID_HOME: SDK, WARDEN_HOME: dir }, now, owner };
@@ -279,7 +287,7 @@ describe("create", () => {
 	test("launches the AVD headless on a free port, records device + port lease", async () => {
 		const { exec } = fakeExec(baseHandlers(ADB_DEVICES_EMPTY));
 		const { spawn, spawned } = spawnRecorder();
-		const provider = createAndroidProvider(deps(exec), { spawnDetached: spawn });
+		const provider = createAndroidProvider(deps(exec), { spawnDetached: spawn, isPortFree: freeExcept() });
 		const result = await provider.create("warden-pixel-10-1", "pixel-10");
 		expect(result).toEqual(
 			ok({
@@ -303,8 +311,14 @@ describe("create", () => {
 			"-no-boot-anim",
 			"-no-audio",
 			"-no-metrics",
+			"-grpc",
+			String(GRPC_PORT_MIN),
+			"-grpc-use-token",
 		]);
 		expect(spawned[0]?.logPath).toBe(join(dir, "logs", "emulator-5554.log"));
+		expect(store.findLeaseByResource({ kind: "port", port: GRPC_PORT_MIN })?.label).toBe(
+			grpcLeaseLabel("emulator-5554")
+		);
 		const lease = store.findLeaseByResource({ kind: "port", port: 5554 });
 		expect(lease?.owner).toEqual(owner);
 		expect(lease?.ttlMs).toBe(DEFAULT_TTL_MS);
@@ -319,6 +333,19 @@ describe("create", () => {
 				lastUsedAt: 1_000,
 			},
 		]);
+	});
+
+	test("WARDEN_EMULATOR_GPU picks the renderer (-gpu <mode>); unset leaves the emulator's own choice", () => {
+		expect(headlessEmulatorFlags({})).toEqual(["-no-audio", "-no-metrics"]);
+		expect(headlessEmulatorFlags({ WARDEN_EMULATOR_GPU: "host" })).toEqual([
+			"-no-audio",
+			"-no-metrics",
+			"-gpu",
+			"host",
+		]);
+		expect(headlessEmulatorFlags({ WARDEN_EMULATOR_GPU: "swiftshader_indirect" })).toContain("swiftshader_indirect");
+		expect(headlessEmulatorFlags({ WARDEN_EMULATOR_GPU: "host; rm -rf /" })).toEqual(["-no-audio", "-no-metrics"]);
+		expect(headlessEmulatorFlags({ WARDEN_EMULATOR_GPU: "" })).toEqual(["-no-audio", "-no-metrics"]);
 	});
 
 	test("WARDEN_EMULATOR_AUDIO=1 keeps the emulator's audio (16-17)", async () => {
@@ -364,6 +391,7 @@ describe("create", () => {
 		const asked: string[] = [];
 		const provider = createAndroidProvider(deps(exec), {
 			spawnDetached: spawn,
+			isPortFree: freeExcept(),
 			snapshot: async (avd) => {
 				asked.push(avd);
 				return ok("warden-0123456789");
@@ -385,6 +413,7 @@ describe("create", () => {
 			"-no-boot-anim",
 			"-no-audio",
 			"-no-metrics",
+			...grpcArgv(GRPC_PORT_MIN),
 		]);
 	});
 
@@ -486,10 +515,46 @@ describe("create", () => {
 		expect(store.listLeases()).toHaveLength(0);
 	});
 
+	test("the gRPC port skips a busy one (a foreign emulator's bridge) and is never the console port", async () => {
+		const { exec } = fakeExec(baseHandlers(ADB_DEVICES_EMPTY));
+		const { spawn, spawned } = spawnRecorder();
+		await createAndroidProvider(deps(exec), { spawnDetached: spawn, isPortFree: freeExcept(GRPC_PORT_MIN) }).create(
+			"w",
+			"pixel-10"
+		);
+		const argv = spawned[0]?.cmd ?? [];
+		expect(argv[argv.indexOf("-grpc") + 1]).toBe(String(GRPC_PORT_MIN + 1));
+	});
+
+	test("WARDEN_EMULATOR_GRPC=0 launches without the gRPC bridge and leases no gRPC port", async () => {
+		const { exec } = fakeExec(baseHandlers(ADB_DEVICES_EMPTY));
+		const { spawn, spawned } = spawnRecorder();
+		const off = { ...deps(exec), env: { ANDROID_HOME: SDK, WARDEN_HOME: dir, WARDEN_EMULATOR_GRPC: "0" } };
+		await createAndroidProvider(off, { spawnDetached: spawn, isPortFree: freeExcept() }).create("w", "pixel-10");
+		expect(spawned[0]?.cmd).not.toContain("-grpc");
+		expect(store.listLeases().map((l) => l.label)).toEqual(["emulator w"]);
+	});
+
+	test("no free gRPC port: the emulator still launches, without the bridge, and says so", async () => {
+		const { exec } = fakeExec(baseHandlers(ADB_DEVICES_EMPTY));
+		const { spawn, spawned } = spawnRecorder();
+		const logs: string[] = [];
+		const provider = createAndroidProvider(
+			{ ...deps(exec), log: (line) => logs.push(line) },
+			{ spawnDetached: spawn, isPortFree: async () => false }
+		);
+		expect((await provider.create("w", "pixel-10")).success).toBe(true);
+		expect(spawned[0]?.cmd).not.toContain("-grpc");
+		expect(logs.some((l) => l.includes("without gRPC"))).toBe(true);
+	});
+
 	test("launch failure releases the port lease and records nothing", async () => {
 		const { exec } = fakeExec(baseHandlers(ADB_DEVICES_EMPTY));
 		const { spawn } = spawnRecorder("fail");
-		const result = await createAndroidProvider(deps(exec), { spawnDetached: spawn }).create("w", "pixel-10");
+		const result = await createAndroidProvider(deps(exec), { spawnDetached: spawn, isPortFree: freeExcept() }).create(
+			"w",
+			"pixel-10"
+		);
 		expect(result.success).toBe(false);
 		expect(store.listLeases()).toHaveLength(0);
 		expect(store.listDevices("android")).toHaveLength(0);
@@ -887,9 +952,13 @@ describe("shutdown", () => {
 		expect(calls).toEqual([`${ADB} devices -l`]);
 	});
 
-	test("kills a warden emulator, releases its port lease, forgets the device", async () => {
+	test("kills a warden emulator, releases its port leases (console + gRPC), forgets the device", async () => {
 		store.recordDevice({ platform: "android", id: "emulator-5556", name: "w", profile: "pixel-10" }, 1);
 		store.insertLease({ resource: { kind: "port", port: 5556 }, owner, ttlMs: 1, label: "emulator w" }, 1);
+		store.insertLease(
+			{ resource: { kind: "port", port: GRPC_PORT_MIN }, owner, ttlMs: 1, label: grpcLeaseLabel("emulator-5556") },
+			1
+		);
 		const other = store.insertLease(
 			{ resource: { kind: "port", port: 5558 }, owner, ttlMs: 1, label: "emulator x" },
 			1
@@ -1167,7 +1236,10 @@ describe("camera emulator", () => {
 	describe("relaunch", () => {
 		function recordCam(profile: string = CAM): void {
 			store.recordDevice({ platform: "android", id: "emulator-5554", name: "w", profile }, 1);
-			store.insertLease({ resource: { kind: "port", port: 5554 }, owner, ttlMs: 1, label: "emulator w" }, 1);
+			store.insertLease(
+				{ resource: { kind: "port", port: 5554 }, owner, ttlMs: DEFAULT_TTL_MS, label: "emulator w" },
+				1
+			);
 		}
 
 		/** `adb devices -l` lists the emulator until `emu kill` ran, then not. */

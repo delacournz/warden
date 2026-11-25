@@ -25,7 +25,6 @@ export const SKILL_OMITTED_OPTIONS: Readonly<Record<string, string>> = {
 	"dev --scheme": "derived from the Expo slug; only for a custom dev-client scheme",
 	"dev --ready-timeout": TUNING,
 	"dev --hud-interval": "dashboard HUD, people only; agents run `--json`",
-	"dev --no-open": TUNING,
 	"dev logs --tail": TUNING,
 	"perf js --sampling-interval": TUNING,
 	"perf logs --lines": TUNING,

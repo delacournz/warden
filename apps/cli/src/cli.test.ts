@@ -37,6 +37,17 @@ describe("cli", () => {
 		expect(ctx?.stdout.join("\n")).toContain("devices");
 	});
 
+	test("--host <name> <cmd…> routes to host run <name> -- <cmd…>", async () => {
+		let seen: string[] = [];
+		await main(["--host", "mac", "golden", "ls", "--json"], (rest) => {
+			seen = rest;
+			ctx = testContext(rest);
+			return ctx;
+		});
+		expect(seen).toEqual(["host", "run", "mac", "--", "golden", "ls", "--json"]);
+		expect(ctx?.stderr.join("\n")).toContain("no host named mac");
+	});
+
 	test("--version routes to the version command", async () => {
 		expect(await run(["--version"])).toBe(0);
 		expect(ctx?.stdout[0]).toMatch(/^warden \d+\.\d+\.\d+/);

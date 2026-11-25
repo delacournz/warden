@@ -56,6 +56,8 @@ final class Session: @unchecked Sendable {
   let screenshots: any ScreenCapturer
   let apps: any AppLifecycle
   let orientationControl: any OrientationControl
+  /// The main display's framebuffer for `stream.*`; nil when the backend has none.
+  let display: (any DisplaySource)?
   let hidTransport: String
   let axDefault: String
   /// The in-guest reader (`.exclusive` persistence, automation mode on): a guest this process owns, never the
@@ -95,6 +97,10 @@ final class Session: @unchecked Sendable {
   /// The pid each bundle id last resolved to, for `frontmost`.
   let bundlePids = BundlePidMemory()
   let orientationMemory = OrientationMemory()
+  /// `stream.*`: the live H.264 stream of the display, if one is running.
+  let streams = StreamHolder()
+  /// `touch.*`: the fingers a live viewer holds down.
+  let liveTouch = LiveTouchHolder()
   let interfaceMemory = InterfaceMemory()
   /// Text-field placeholders the bridge leaves out, learned from the host reader (`PlaceholderFill`).
   let placeholderMemory = PlaceholderMemory()
@@ -109,6 +115,7 @@ final class Session: @unchecked Sendable {
     self.screenshots = backend.screenshots
     self.apps = backend.apps
     self.orientationControl = backend.orientation
+    self.display = backend.display
     self.hidTransport = backend.hidTransport
     self.axDefault = axDefault
     self.axBridgeReader = backend.axBridge
@@ -137,6 +144,8 @@ final class Session: @unchecked Sendable {
   }
 
   func close() async {
+    _ = streams.stop()
+    await liveTouch.close()
     await quiescence.stop()
     await hid.close()
   }

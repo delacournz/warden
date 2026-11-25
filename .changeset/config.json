@@ -20,6 +20,7 @@
 		"@delacour/warden-smoke",
 		"@delacour/warden-ax-witness",
 		"@delacour/warden-release",
-		"@delacour/warden-perf"
+		"@delacour/warden-perf",
+		"@delacour/warden-viewer"
 	]
 }

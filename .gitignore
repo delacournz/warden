@@ -22,3 +22,6 @@ packages/e2e/native/android/.cache
 packages/e2e/native/android/dist-atf
 packages/e2e/native/android/dist-passkeys
 ax-witness-out/
+
+# Rust build outputs (each crate also ignores its own target/)
+crates/*/target

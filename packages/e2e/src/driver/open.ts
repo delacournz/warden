@@ -12,7 +12,9 @@ import { type ClockRecorder, leaseClockRecorder } from "./clock-recorder";
 import type { Driver, DriverResult } from "./driver.types";
 import { type OpenIosDeviceDriverOptions, openIosDeviceDriver } from "./ios/device/device-driver";
 import { type OpenIosDriverOptions, openIosDriver } from "./ios/ios-driver";
+import { stdioTransport } from "./ios/simd-transport";
 import { lazyLeaseNetworkProxy, type NetworkProxyPort } from "./network-proxy";
+import { connectRemoteDriver } from "./remote/remote-client";
 
 /**
  * Test seams for {@link openDriver}: everything the platform openers inject except what the env supplies.
@@ -132,26 +134,38 @@ export function deviceOptions(env: E2eEnv, deps: OpenDriverDeps, debug: boolean)
 	};
 }
 
-/** Open the `Driver` for the device in `env`, by platform. Android deep links go to `env.bundleId` only. */
+/**
+ * A warden host's device (`WARDEN_HOST_DRIVER`): the host's warden serves the device's driver on the stdio of that
+ * command (ssh), so every call crosses it. Closing the driver ends the command.
+ */
+async function openHostDriver(env: E2eEnv, cmd: readonly string[]): DriverResult<Driver> {
+	const client = await connectRemoteDriver({
+		transport: stdioTransport({ cmd }),
+		label: env.host ?? "host",
+		readyTimeoutMs: 30_000,
+	});
+	return client.success ? { success: true, data: client.data.driver() } : client;
+}
+
+function openIos(env: E2eEnv, deps: OpenDriverDeps, debug: boolean): DriverResult<Driver> {
+	if (isPhysicalIosId(env.udid)) return openIosDeviceDriver(deviceOptions(env, deps, debug));
+	return openIosDriver({
+		...deps,
+		...leaseSeams(env, deps, deps),
+		udid: env.udid,
+		bundleId: env.bundleId,
+		env,
+		exec: deps.exec ?? bunExec,
+		debug,
+		...(deps.log ? {} : debug ? { log: stderrLog } : {}),
+	});
+}
+
+/** Open the `Driver` for the device in `env`: a host's device over its command, else by platform. Android deep links go to `env.bundleId` only. */
 export async function openDriver(env: E2eEnv, deps: OpenDriverDeps = {}): DriverResult<Driver> {
+	if (env.hostDriver !== undefined) return openHostDriver(env, env.hostDriver);
 	const debug = deps.debug ?? process.env[DEBUG_ENV] === "1";
-	switch (env.platform) {
-		case "ios": {
-			if (isPhysicalIosId(env.udid)) return openIosDeviceDriver(deviceOptions(env, deps, debug));
-			return openIosDriver({
-				...deps,
-				...leaseSeams(env, deps, deps),
-				udid: env.udid,
-				bundleId: env.bundleId,
-				env,
-				exec: deps.exec ?? bunExec,
-				debug,
-				...(deps.log ? {} : debug ? { log: stderrLog } : {}),
-			});
-		}
-		case "android":
-			return openAndroidDriver(androidOptions(env, deps, debug));
-	}
+	return env.platform === "ios" ? openIos(env, deps, debug) : openAndroidDriver(androidOptions(env, deps, debug));
 }
 
 /** What the session uses when no factory is passed; `preload.ts` registers it with `setDefaultDriverFactory`. */

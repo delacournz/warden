@@ -1,0 +1,559 @@
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
+import { deleteHost, type HostRecord, listGrants, listHosts, putHost } from "@delacour/warden-core/hosts/registry";
+import { wardenHome } from "@delacour/warden-core/store";
+import { err, ok, type Result } from "@delacour/warden-types/result";
+import { defineCommand } from "../command";
+import type { CommandContext } from "../context";
+import type { AttachFlags } from "../hosts/attach-run";
+import type { RelayPin } from "../hosts/cloud";
+import type { FetchSpawn } from "../hosts/evidence";
+import { grantKey, revokeKey } from "../hosts/grant";
+import type { PassthroughSpawn } from "../hosts/passthrough";
+import { hostVersion, lookupHost, remoteFailure, wardenJson } from "../hosts/remote";
+import { ensureLaptopKey, laptopKeyPath, setupHost, type UploadFile } from "../hosts/setup";
+import { formatSshTarget, hostKnownHosts, parseSshTarget } from "../hosts/ssh";
+import { emit, note, reportError, success, table, warn } from "../output";
+import { reportClaimFailure } from "../physical-lock";
+import type { AuthPin } from "../remote/context";
+
+/** What `warden host` reaches the outside world through beyond the context; tests inject the upload. */
+export type HostDeps = {
+	upload?: UploadFile;
+	passthrough?: PassthroughSpawn;
+	fetch?: FetchSpawn;
+};
+
+const SCOPE = "host";
+const NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$/;
+
+type AddOpts = {
+	ssh?: string;
+	identity?: string;
+	proxyCommand?: string;
+	jump?: string;
+	hostKey?: string;
+	/** the host already grants this laptop's key (`warden host attach --grant`): use it, no setup */
+	granted?: true;
+	/** reach it through warden-api's relay (`warden host uplink` there), not ssh */
+	cloud?: true;
+	hostId?: string;
+	json?: true;
+};
+
+const SSH_ONLY: ReadonlyArray<[keyof AddOpts, string]> = [
+	["ssh", "--ssh"],
+	["identity", "--identity"],
+	["proxyCommand", "--proxy-command"],
+	["jump", "--jump"],
+	["hostKey", "--host-key"],
+	["granted", "--granted"],
+];
+
+/** `host add --cloud`: find the host on warden-api, record the relay and the session that dials it, say hello. */
+async function addCloud(ctx: CommandContext, name: string, opts: AddOpts): Promise<number> {
+	const clash = SSH_ONLY.filter(([k]) => opts[k] !== undefined).map(([, flag]) => flag);
+	if (clash.length > 0) return fail(ctx, `--cloud goes through warden-api, not ssh: drop ${clash.join(", ")}`);
+	if (!NAME.test(name)) return fail(ctx, `bad host name ${name}: letters, digits, . _ -`);
+	const [{ authedApi, pinOf }, { cloudRecord, pickRelayHost }] = await Promise.all([
+		import("../remote/session"),
+		import("../hosts/cloud"),
+	]);
+	const authed = authedApi(ctx);
+	if (!authed.success) return fail(ctx, authed.error);
+	const listed = await authed.data.api.listHosts();
+	if (!listed.success) return fail(ctx, `warden-api: ${listed.error.message}`);
+	const picked = pickRelayHost(listed.data, name, opts.hostId);
+	if (!picked.success) return fail(ctx, picked.error);
+	const record = cloudRecord(name, picked.data, relayPin(authed.data.apiUrl, pinOf(authed.data)), ctx.now());
+	const version = picked.data.status === "online" ? await hostVersion(ctx, record, { allowSkew: true }) : undefined;
+	if (version !== undefined && !version.success && /HOST_AUTH/.test(version.error)) {
+		return reportClaimFailure(ctx, SCOPE, version.error);
+	}
+	const recorded: HostRecord = { ...record, ...(version?.success ? { version: version.data } : {}) };
+	putHost(ctx.store(), recorded);
+	const warden = version?.success ? version.data : undefined;
+	if (opts.json) emit(ctx, true, { host: recorded, warden: warden ?? null }, "");
+	else success(ctx, cloudAddedText(name, picked.data.id, warden));
+	return 0;
+}
+
+function relayPin(apiUrl: string, pin: AuthPin): RelayPin {
+	return {
+		apiUrl,
+		...(pin.account !== undefined ? { account: pin.account } : {}),
+		...(pin.organizationId !== undefined ? { organization: pin.organizationId } : {}),
+	};
+}
+
+function cloudAddedText(name: string, hostId: string, warden: string | undefined): string {
+	return warden !== undefined
+		? `added ${name} (relay ${hostId}, warden ${warden}); next: warden host doctor ${name}`
+		: `added ${name} (relay ${hostId}); it is offline: run warden host uplink there`;
+}
+
+function fail(ctx: CommandContext, message: string): number {
+	reportError(ctx, SCOPE, message);
+	return 1;
+}
+
+/** The record `add` makes from its flags, or why the flags are wrong. */
+function hostFromFlags(ctx: CommandContext, name: string, opts: AddOpts): Result<HostRecord> {
+	if (!NAME.test(name)) return err(`bad host name ${name}: letters, digits, . _ -`);
+	if (opts.ssh === undefined) return err("--ssh user@host[:port] is required");
+	const target = parseSshTarget(opts.ssh);
+	if (!target.success) return target;
+	const laptopKey = laptopKeyPath(wardenHome(ctx.env));
+	if (opts.granted && opts.identity === undefined && !existsSync(laptopKey)) {
+		return err("--granted: this laptop has no warden key yet (warden host key makes one; grant it on the host)");
+	}
+	const identity = opts.identity ?? (opts.granted ? laptopKey : undefined);
+	return ok({
+		name,
+		ssh: target.data,
+		...(identity !== undefined ? { identity } : {}),
+		...(opts.proxyCommand !== undefined ? { proxyCommand: opts.proxyCommand } : {}),
+		...(opts.jump !== undefined ? { jump: opts.jump } : {}),
+		...(opts.hostKey !== undefined ? { hostKey: opts.hostKey.trim() } : {}),
+		addedAt: ctx.now(),
+	});
+}
+
+/** Start the host's known_hosts afresh: the pinned key when one was given, else empty (trusted on first contact). */
+function pinHostKey(ctx: CommandContext, host: HostRecord): string {
+	const knownHosts = hostKnownHosts(wardenHome(ctx.env), host.name);
+	mkdirSync(dirname(knownHosts), { recursive: true, mode: 0o700 });
+	rmSync(knownHosts, { force: true });
+	if (host.hostKey !== undefined) {
+		const { hostname, port } = host.ssh;
+		const label = port !== undefined ? `[${hostname}]:${port}` : hostname;
+		writeFileSync(knownHosts, `${label} ${host.hostKey}\n`, { mode: 0o600 });
+	}
+	return knownHosts;
+}
+
+function addedText(name: string, host: HostRecord, version: Result<string>, granted: boolean): string {
+	const at = formatSshTarget(host.ssh);
+	if (!version.success) return `added ${name} (${at}); warden is not set up there yet: warden host setup ${name}`;
+	const next = granted ? `warden host doctor ${name}` : `warden host setup ${name}`;
+	return `added ${name} (${at}, warden ${version.data}); next: ${next}`;
+}
+
+/** Record a host and make first contact (pins its host key; reads its warden version when one is installed). */
+async function add(ctx: CommandContext, name: string, opts: AddOpts): Promise<number> {
+	if (opts.cloud) return addCloud(ctx, name, opts);
+	if (opts.hostId !== undefined) return fail(ctx, "--host-id goes with --cloud");
+	const host = hostFromFlags(ctx, name, opts);
+	if (!host.success) {
+		reportError(ctx, SCOPE, host.error);
+		return 1;
+	}
+	const knownHosts = pinHostKey(ctx, host.data);
+	const version = await hostVersion(ctx, host.data, { trustNew: host.data.hostKey === undefined, allowSkew: true });
+	if (!version.success && /HOST_(AUTH|UNREACHABLE)/.test(version.error)) {
+		rmSync(knownHosts, { force: true });
+		return reportClaimFailure(ctx, SCOPE, version.error);
+	}
+	const recorded: HostRecord = { ...host.data, ...(version.success ? { version: version.data } : {}) };
+	putHost(ctx.store(), recorded);
+	if (opts.json) emit(ctx, true, { host: recorded, warden: version.success ? version.data : null }, "");
+	else success(ctx, addedText(name, recorded, version, opts.granted === true));
+	return 0;
+}
+
+function hostRows(hosts: readonly HostRecord[]): string[][] {
+	return hosts.map((h) => [
+		h.name,
+		formatSshTarget(h.ssh),
+		h.version ?? "-",
+		h.wardenPath !== undefined ? "yes" : "no",
+		[h.jump !== undefined ? `jump ${h.jump}` : "", h.proxyCommand !== undefined ? "proxy" : ""]
+			.filter(Boolean)
+			.join(", ") || "-",
+	]);
+}
+
+function ls(ctx: CommandContext, opts: { json?: true }): number {
+	const hosts = listHosts(ctx.store());
+	emit(
+		ctx,
+		opts.json === true,
+		{ hosts },
+		hosts.length === 0
+			? "no hosts (warden host add <name> --ssh user@host)"
+			: table(ctx, ["NAME", "SSH", "WARDEN", "SET UP", "VIA"], hostRows(hosts)),
+		{ scope: SCOPE, detail: `${hosts.length} host(s)` }
+	);
+	return 0;
+}
+
+function rm(ctx: CommandContext, name: string, opts: { json?: true }): number {
+	const held = ctx
+		.store()
+		.listLeases()
+		.filter((l) => l.resource.kind === "host-device" && l.resource.host === name);
+	if (held.length > 0) {
+		reportError(
+			ctx,
+			SCOPE,
+			`${name} still backs ${held.length} lease(s): release them first (warden release ${held.map((l) => l.id).join(" ")})`
+		);
+		return 1;
+	}
+	if (!deleteHost(ctx.store(), name)) return reportClaimFailure(ctx, SCOPE, `HOST_UNKNOWN: no host named ${name}`);
+	rmSync(hostKnownHosts(wardenHome(ctx.env), name), { force: true });
+	emit(ctx, opts.json === true, { removed: name }, `removed ${name}`);
+	return 0;
+}
+
+/** `warning`: the check passed but found something a person may want to clean up (never fails the doctor). */
+type Check = { name: string; ok: boolean; detail: string; warning?: true };
+
+/** `{ findings: [{ kind }] }` from the host's `doctor --leases --json` → `2 device_missing, 1 stale_claim_key`. */
+function findingKinds(json: unknown): { count: number; kinds: string } | undefined {
+	const findings: unknown = typeof json === "object" && json !== null ? Reflect.get(json, "findings") : undefined;
+	if (!Array.isArray(findings)) return undefined;
+	const counts = new Map<string, number>();
+	for (const f of findings) {
+		const kind: unknown = typeof f === "object" && f !== null ? Reflect.get(f, "kind") : undefined;
+		const name = typeof kind === "string" ? kind : "other";
+		counts.set(name, (counts.get(name) ?? 0) + 1);
+	}
+	const kinds = [...counts].map(([kind, n]) => `${n} ${kind}`).join(", ");
+	return { count: findings.length, kinds };
+}
+
+/**
+ * The host's own lease registry. Drift there (stale rows of deleted devices, orphan claim keys) is the host's
+ * housekeeping, not a link problem: a warning. Only a call that broke (ssh dropped, refused, no findings) fails.
+ */
+function leasesCheck(ran: Awaited<ReturnType<typeof wardenJson>>): Check {
+	if (!ran.success) return { name: "leases", ok: false, detail: ran.error };
+	const failure = remoteFailure(ran.data.json);
+	if (failure !== undefined) return { name: "leases", ok: false, detail: failure.message };
+	if (ran.data.exitCode === 0) return { name: "leases", ok: true, detail: "no drift" };
+	const found = findingKinds(ran.data.json);
+	if (found === undefined || found.count === 0) {
+		return { name: "leases", ok: false, detail: `doctor --leases exited ${ran.data.exitCode}` };
+	}
+	return {
+		name: "leases",
+		ok: true,
+		warning: true,
+		detail: `${found.count} finding(s) on the host: ${found.kinds} (there: warden doctor --leases --fix)`,
+	};
+}
+
+/**
+ * Reach, auth and version (`version --json`), then the host's own lease drift report (`doctor --leases --json`).
+ * Exit 1 only for the link; drift on the host is a `warn` line.
+ */
+async function doctor(ctx: CommandContext, name: string, opts: { json?: true }): Promise<number> {
+	const host = lookupHost(ctx, name);
+	if (!host.success) return reportClaimFailure(ctx, SCOPE, host.error);
+	const checks: Check[] = [];
+	const version = await hostVersion(ctx, host.data);
+	checks.push({ name: "warden", ok: version.success, detail: version.success ? version.data : version.error });
+	let leases: unknown;
+	if (version.success) {
+		putHost(ctx.store(), { ...host.data, version: version.data });
+		const ran = await wardenJson(ctx, host.data, ["doctor", "--leases", "--json"]);
+		leases = ran.success ? ran.data.json : undefined;
+		checks.push(leasesCheck(ran));
+	}
+	const okAll = checks.every((c) => c.ok);
+	const label = (c: Check) => (!c.ok ? "FAIL" : c.warning ? "warn" : "ok  ");
+	emit(
+		ctx,
+		opts.json === true,
+		{ host: name, ok: okAll, checks, leases },
+		checks.map((c) => `${label(c)} ${c.name}: ${c.detail}`).join("\n"),
+		{ scope: SCOPE, detail: name }
+	);
+	if (!version.success) return reportClaimFailure(ctx, SCOPE, version.error);
+	return okAll ? 0 : 1;
+}
+
+type SetupOpts = {
+	setupIdentity?: string;
+	binary?: string;
+	installDir?: string;
+	authorizedKeys?: string;
+	golden?: true;
+	helper?: boolean;
+	json?: true;
+};
+
+async function setup(ctx: CommandContext, deps: HostDeps, name: string, opts: SetupOpts): Promise<number> {
+	const host = lookupHost(ctx, name);
+	if (!host.success) return reportClaimFailure(ctx, SCOPE, host.error);
+	const done = await setupHost(ctx, host.data, {
+		...(opts.setupIdentity !== undefined ? { setupIdentity: opts.setupIdentity } : {}),
+		...(opts.binary !== undefined ? { binary: opts.binary } : {}),
+		...(opts.installDir !== undefined ? { installDir: opts.installDir } : {}),
+		...(opts.authorizedKeys !== undefined ? { authorizedKeys: opts.authorizedKeys } : {}),
+		...(opts.golden ? { golden: true } : {}),
+		...(opts.helper === false ? { noHelper: true } : {}),
+		...(deps.upload ? { upload: deps.upload } : {}),
+		log: (line) => note(ctx, line),
+	});
+	if (!done.success) return reportClaimFailure(ctx, SCOPE, done.error);
+	if (done.data.helper === "failed")
+		warn(ctx, `${name}: the iOS helper could not be fetched (run warden doctor there)`);
+	emit(
+		ctx,
+		opts.json === true,
+		done.data,
+		`${name} is set up: warden ${done.data.version} at ${done.data.wardenPath}, this laptop granted as ${done.data.machineId}`
+	);
+	return 0;
+}
+
+type GrantOpts = {
+	key?: string;
+	machine?: string;
+	user?: string;
+	authorizedKeys?: string;
+	warden?: string;
+	json?: true;
+};
+
+function grant(ctx: CommandContext, opts: GrantOpts): number {
+	if (opts.key === undefined) {
+		reportError(ctx, SCOPE, "--key <public key or .pub file> is required");
+		return 1;
+	}
+	const granted = grantKey(
+		ctx,
+		{
+			key: opts.key,
+			...(opts.machine !== undefined ? { machine: opts.machine } : {}),
+			...(opts.user !== undefined ? { user: opts.user } : {}),
+			...(opts.authorizedKeys !== undefined ? { authorizedKeys: opts.authorizedKeys } : {}),
+			...(opts.warden !== undefined ? { warden: opts.warden } : {}),
+		},
+		ctx.now()
+	);
+	if (!granted.success) {
+		reportError(ctx, SCOPE, granted.error);
+		return 1;
+	}
+	emit(
+		ctx,
+		opts.json === true,
+		granted.data,
+		`granted ${granted.data.user}@${granted.data.machineId} (${granted.data.fingerprint}) in ${granted.data.authorizedKeys}`
+	);
+	return 0;
+}
+
+function revoke(ctx: CommandContext, opts: { key?: string; authorizedKeys?: string; json?: true }): number {
+	if (opts.key === undefined) {
+		reportError(ctx, SCOPE, "--key <fingerprint, public key or .pub file> is required");
+		return 1;
+	}
+	const revoked = revokeKey(ctx, {
+		key: opts.key,
+		...(opts.authorizedKeys !== undefined ? { authorizedKeys: opts.authorizedKeys } : {}),
+	});
+	if (!revoked.success) {
+		reportError(ctx, SCOPE, revoked.error);
+		return 1;
+	}
+	emit(ctx, opts.json === true, revoked.data, `revoked ${revoked.data.fingerprint}`);
+	return 0;
+}
+
+function grants(ctx: CommandContext, opts: { json?: true }): number {
+	const all = listGrants(ctx.store());
+	emit(
+		ctx,
+		opts.json === true,
+		{ grants: all },
+		all.length === 0
+			? "no laptops granted on this host"
+			: table(
+					ctx,
+					["FINGERPRINT", "MACHINE", "USER"],
+					all.map((g) => [g.fingerprint, g.machineId, g.user])
+				)
+	);
+	return 0;
+}
+
+/**
+ * `warden host`: drive the devices of another Mac over ssh. On the laptop: `add` / `ls` / `rm` / `doctor` /
+ * `setup`. On the host: `grant` / `revoke` / `grants` (who may come in through the forced `__host-serve`).
+ */
+async function run(ctx: CommandContext, deps: HostDeps, name: string, args: string[]): Promise<number> {
+	if (args.length === 0) {
+		reportError(ctx, "host run", "nothing to run: warden host run <name> -- <warden command…>");
+		return 1;
+	}
+	const { runPassthrough } = await import("../hosts/passthrough");
+	return runPassthrough(ctx, name, args, {
+		tty: ctx.ui.interactive,
+		...(deps.passthrough ? { spawn: deps.passthrough } : {}),
+	});
+}
+
+async function fetchEvidence(
+	ctx: CommandContext,
+	deps: HostDeps,
+	name: string,
+	kind: string,
+	id: string,
+	opts: { out?: string; json?: true }
+): Promise<number> {
+	if (kind !== "perf") {
+		reportError(ctx, "host fetch", `${kind}: only perf sessions can be fetched (warden host fetch <name> perf <id>)`);
+		return 1;
+	}
+	const { fetchPerfFromHost } = await import("../hosts/evidence");
+	const got = await fetchPerfFromHost(ctx, name, id, opts.out, deps.fetch ? { spawn: deps.fetch } : {});
+	if (!got.success) return reportClaimFailure(ctx, "host fetch", got.error);
+	emit(ctx, opts.json === true, { host: name, session: id, dir: got.data }, got.data);
+	return 0;
+}
+
+async function key(ctx: CommandContext, opts: { json?: true }): Promise<number> {
+	const made = await ensureLaptopKey(ctx);
+	if (!made.success) {
+		reportError(ctx, "host key", made.error);
+		return 1;
+	}
+	emit(ctx, opts.json === true, { publicKey: made.data.publicKey, identity: made.data.path }, made.data.publicKey);
+	return 0;
+}
+
+async function uplink(ctx: CommandContext, opts: { api?: string; tokenFile?: string }): Promise<number> {
+	return (await import("../hosts/uplink-run")).uplinkHost(ctx, opts);
+}
+
+async function attach(ctx: CommandContext, opts: AttachFlags): Promise<number> {
+	const { attachHost } = await import("../hosts/attach-run");
+	return attachHost(ctx, opts);
+}
+
+export function createHostCommand(deps: HostDeps = {}) {
+	return defineCommand({
+		name: "host",
+		group: "Devices",
+		summary:
+			"drive another Mac's sims / emulators over ssh: add, setup, doctor, run, fetch, ls, rm (host side: grant, revoke)",
+		register: (cmd, ctx, done) => {
+			cmd
+				.command("add")
+				.description("record a Mac to drive over ssh and pin its host key (first contact)")
+				.argument("<name>", "short name for the host")
+				.option("--ssh <target>", "user@host[:port]")
+				.option("--identity <file>", "ssh key for the setup shell (default: ssh's own)")
+				.option("--proxy-command <cmd>", "ssh ProxyCommand (cloudflared, tailscale nc, an SSM bridge)")
+				.option("--jump <host>", "ssh jump host (ProxyJump), for a host with no inbound")
+				.option("--host-key <key>", "pin this host key (`ssh-ed25519 AAAA…`) instead of trusting the first one seen")
+				.option("--granted", "the host already grants this laptop's key (host attach): use it, no setup")
+				.option("--cloud", "reach it through warden-api (warden host uplink there, or a hosted Mac), not ssh")
+				.option("--host-id <id>", "with --cloud: which of the account's hosts (default: the one named <name>)")
+				.option("--json", "machine-readable output")
+				.action(async (name, opts) => done(await add(ctx, name, opts)));
+			cmd
+				.command("key")
+				.description("print this laptop's warden key (made on first use), to grant on a host or pass to host attach")
+				.option("--json", "machine-readable output")
+				.action(async (opts) => done(await key(ctx, opts)));
+			cmd
+				.command("attach")
+				.description("on a machine with no inbound ssh (a CI runner): a user-level sshd that lets one laptop key in")
+				.option("--grant <key>", "the laptop's key (warden host key there): public key line or .pub file")
+				.option("--as <name>", "the name to give this host on the laptop", "ci")
+				.option("--listen <addr>", "sshd listen address", "127.0.0.1")
+				.option("--port <port>", "sshd port (default: a free one)")
+				.option("--tailscale", "listen on this machine's tailnet address (tailscale ip -4)")
+				.option(
+					"--advertise <addr>",
+					"the address the laptop dials (a userspace tailscaled's IP, a NAT); sshd stays on --listen"
+				)
+				.option("--jump <target>", "dial out to this bastion (user@host) and forward its --jump-port here")
+				.option("--jump-port <port>", "the bastion's loopback port that reaches this sshd")
+				.option("--jump-identity <file>", "ssh key for the bastion")
+				.option("--for <duration>", "stop after this long (default: until Ctrl-C / SIGTERM)")
+				.option("--json", "machine-readable output")
+				.action(async (opts) => done(await attach(ctx, opts)));
+			cmd
+				.command("uplink")
+				.description("on the host: keep an outbound link to warden-api so laptops reach it with no inbound at all")
+				.option("--api <url>", "warden-api (default: $WARDEN_API_URL, else the hosted one)")
+				.option("--token-file <file>", "the host token (default: $WARDEN_HOST_TOKEN)")
+				.action(async (opts) => done(await uplink(ctx, opts)));
+			cmd
+				.command("setup")
+				.description("install this warden on the host (no sudo), fetch its helper, grant this laptop's key")
+				.argument("<name>", "host name")
+				.option("--setup-identity <file>", "ssh key that opens a normal shell on the host (default: --identity)")
+				.option("--binary <file>", "install this warden binary (a dev / local build) instead of the release")
+				.option("--install-dir <dir>", "where warden goes on the host (default: ~/.local/bin)")
+				.option("--authorized-keys <file>", "the host's authorized_keys (default: ~/.ssh/authorized_keys)")
+				.option("--golden", "also build the iOS golden image there (minutes)")
+				.option("--no-helper", "skip fetching the iOS driver helper there")
+				.option("--json", "machine-readable output")
+				.action(async (name, opts) => done(await setup(ctx, deps, name, opts)));
+			cmd
+				.command("doctor")
+				.description("check a host: reachable, key accepted, same warden version, lease drift there")
+				.argument("<name>", "host name")
+				.option("--json", "machine-readable output")
+				.action(async (name, opts) => done(await doctor(ctx, name, opts)));
+			cmd
+				.command("run")
+				.description("run one allowed warden command on the host (perf, golden ls/ensure, builds ls, capacity, queue)")
+				.argument("<name>", "host name")
+				.argument("[args...]", "the warden command and its flags, after --")
+				.allowUnknownOption()
+				.action(async (name, args) => done(await run(ctx, deps, name, args)));
+			cmd
+				.command("fetch")
+				.description("copy a perf session's files back from the host (into this machine's perf dir)")
+				.argument("<name>", "host name")
+				.argument("<kind>", "perf")
+				.argument("<id>", "the perf session id")
+				.option("--out <dir>", "put it here instead (default: $WARDEN_HOME/perf, where warden perf report reads)")
+				.option("--json", "machine-readable output")
+				.action(async (name, kind, id, opts) => done(await fetchEvidence(ctx, deps, name, kind, id, opts)));
+			cmd
+				.command("ls")
+				.description("list hosts")
+				.option("--json", "machine-readable output")
+				.action((opts) => done(ls(ctx, opts)));
+			cmd
+				.command("rm")
+				.description("forget a host")
+				.argument("<name>", "host name")
+				.option("--json", "machine-readable output")
+				.action((name, opts) => done(rm(ctx, name, opts)));
+			cmd
+				.command("grant")
+				.description("on the host: let a laptop key in, through the forced warden __host-serve")
+				.option("--key <key>", "the laptop's public key line or .pub file (comment warden:<machine>:<user>)")
+				.option("--machine <id>", "machine id when the key comment has none")
+				.option("--user <name>", "user name when the key comment has none")
+				.option("--authorized-keys <file>", "default ~/.ssh/authorized_keys")
+				.option("--warden <path>", "the warden the forced command runs (default: this one)")
+				.option("--json", "machine-readable output")
+				.action((opts) => done(grant(ctx, opts)));
+			cmd
+				.command("revoke")
+				.description("on the host: remove a laptop's grant and its authorized_keys line")
+				.option("--key <key>", "fingerprint (SHA256:…), public key line or .pub file")
+				.option("--authorized-keys <file>", "default ~/.ssh/authorized_keys")
+				.option("--json", "machine-readable output")
+				.action((opts) => done(revoke(ctx, opts)));
+			cmd
+				.command("grants")
+				.description("on the host: list the laptops granted")
+				.option("--json", "machine-readable output")
+				.action((opts) => done(grants(ctx, opts)));
+		},
+	});
+}
+
+export const hostCommand = createHostCommand();

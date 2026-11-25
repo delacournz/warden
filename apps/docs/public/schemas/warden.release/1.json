@@ -18,6 +18,33 @@
 				"type": "string"
 			}
 		},
+		"remoteStopped": {
+			"type": "array",
+			"items": {
+				"type": "string"
+			}
+		},
+		"remoteStopReasons": {
+			"type": "object",
+			"propertyNames": {
+				"type": "string"
+			},
+			"additionalProperties": {
+				"type": "string",
+				"enum": [
+					"user",
+					"idle",
+					"credits_exhausted",
+					"error"
+				]
+			}
+		},
+		"hostReleased": {
+			"type": "array",
+			"items": {
+				"type": "string"
+			}
+		},
 		"deleted": {
 			"type": "array",
 			"items": {

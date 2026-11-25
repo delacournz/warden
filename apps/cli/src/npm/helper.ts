@@ -13,6 +13,8 @@ export const HELPER_GUEST = `${HELPER_RESOURCES}/SimulatorFrameworkBridge-iOS`;
 export const HELPER_MANIFEST = "manifest.json";
 /** The injected network/clock dylib for simulator apps, built by `native:build` next to the helper. */
 export const HELPER_INJECT = "libwarden-inject.dylib";
+/** The Android emulator stream encoder (gRPC frames to VideoToolbox H.264), built by `native:build` beside the helper. */
+export const HELPER_EMUD = "warden-emud";
 /** GitHub release asset: a tarball of the native `dist/`, extracted into `$WARDEN_HOME/simd/<version>/`. */
 export const HELPER_ASSET = `${HELPER_BINARY}-${HELPER_TARGET}.tgz`;
 /** GitHub release asset holding the tarball's sha256 (`<hex>  <name>`). */
@@ -22,7 +24,7 @@ export const HELPER_SUMS_ASSET = "SHA256SUMS";
 export type HelperInfo = { version: string; idb: string; xcode: string };
 
 /** The helper as staged: its build info and the stub framework directory names (`X.framework`). */
-export type StagedHelper = HelperInfo & { frameworks: string[]; inject: boolean };
+export type StagedHelper = HelperInfo & { frameworks: string[]; inject: boolean; emud: boolean };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -45,12 +47,13 @@ export function parseHelperManifest(text: string): Result<HelperInfo> {
 }
 
 /** Paths (relative to the platform package root) the helper adds to its `files`. */
-export function helperFiles(binDir: string, frameworks: readonly string[], inject = false): string[] {
+export function helperFiles(binDir: string, frameworks: readonly string[], inject = false, emud = false): string[] {
 	return [
 		`${binDir}/${HELPER_BINARY}`,
 		`${binDir}/${HELPER_RESOURCES}`,
 		`${binDir}/${HELPER_MANIFEST}`,
 		...frameworks.map((framework) => `${binDir}/${framework}`),
 		...(inject ? [`${binDir}/${HELPER_INJECT}`] : []),
+		...(emud ? [`${binDir}/${HELPER_EMUD}`] : []),
 	];
 }

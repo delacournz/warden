@@ -14,7 +14,11 @@ export type ClaimErrorCode =
 	| "REQUESTER_LIMIT"
 	| "RUNTIME_MISSING"
 	| "HEALTH_FAILED"
-	| "LEASE_LOST";
+	| "LEASE_LOST"
+	| "HOST_UNREACHABLE"
+	| "HOST_AUTH"
+	| "HOST_VERSION_SKEW"
+	| "HOST_UNKNOWN";
 
 /** What a claim error says: its code, and for `NO_CAPACITY` which resource ran out. */
 export type ClaimErrorKind =
@@ -24,7 +28,7 @@ export type ClaimErrorKind =
 export type ClaimErrorEntry = { exit: number; hint: string };
 
 /**
- * Exit codes 5-11 are claim failures; 1 stays the generic failure, 2 someone else's device / an ambiguous pick,
+ * Exit codes 5-11 are claim failures, 12-15 a `warden host` that cannot be used; 1 stays the generic failure, 2 someone else's device / an ambiguous pick,
  * 3 a missing tool, 4 a stale ref, 124 a timed-out job and 130 an interrupt.
  */
 export const CLAIM_ERRORS: Record<ClaimErrorCode, ClaimErrorEntry> = {
@@ -55,6 +59,22 @@ export const CLAIM_ERRORS: Record<ClaimErrorCode, ClaimErrorEntry> = {
 	LEASE_LOST: {
 		exit: 11,
 		hint: "another process released this run's lease (warden release, SessionEnd) or its device died: claim again",
+	},
+	HOST_UNREACHABLE: {
+		exit: 12,
+		hint: "ssh could not reach the host (network, sshd off, --proxy-command / --jump): check it with warden host doctor <name>",
+	},
+	HOST_AUTH: {
+		exit: 13,
+		hint: "the host refused this laptop's key or its host key changed: re-run warden host setup <name>, or pin the new key with warden host add <name> --host-key",
+	},
+	HOST_VERSION_SKEW: {
+		exit: 14,
+		hint: "the host runs another warden version: warden host setup <name> installs this one there",
+	},
+	HOST_UNKNOWN: {
+		exit: 15,
+		hint: "no host by that name: list them with warden host ls, add one with warden host add <name> --ssh user@host",
 	},
 };
 

@@ -47,10 +47,8 @@ export function reactUiError(error: ReactError): UiError {
 /** Who holds the profile: stable across the `start` and `stop` invocations of one agent or shell, distinct between two. */
 export async function reactOwner(ctx: CommandContext): Promise<string> {
 	const { resolveOwner } = await import("../claim-flags");
-	const owner = resolveOwner(ctx);
-	if (owner.kind === "agent") return `agent:${owner.sessionId}`;
-	if (owner.kind === "user") return `user:${owner.pid}`;
-	return `ci:${owner.runId}`;
+	const { ownerKey } = await import("@delacour/warden-core/store");
+	return ownerKey(resolveOwner(ctx));
 }
 
 export type CpuCorrelation = { index: CpuIndex; label: FrameLabel };
