@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import type { Exec } from "../exec";
@@ -15,6 +15,30 @@ const KEY_FORMAT = "warden js-key v1";
 
 /** Env var names that are bundled into the app (Expo inlines `EXPO_PUBLIC_*`) or switch the bundler's mode. */
 const BUNDLE_ENV = /^(?:EXPO_PUBLIC_.*|NODE_ENV)$/;
+
+/** `.env*` files `@expo/env` loads into the bundler's env (`.env`, `.env.local`, `.env.production`, …). */
+const ENV_FILE = /^\.env(?:\.[\w.-]+)?$/;
+
+/**
+ * `name\0content` of each `.env*` file in `root`, sorted by name. The bundler reads these itself, and they are
+ * usually git-ignored, so neither the process env nor the JS inputs see their values.
+ */
+export function envFileLines(root: string | undefined): string[] {
+	if (root === undefined) return [];
+	let names: string[];
+	try {
+		names = readdirSync(root).filter((name) => ENV_FILE.test(name));
+	} catch {
+		return [];
+	}
+	return names.sort().map((name) => {
+		try {
+			return `${name}\0${readFileSync(join(root, name), "utf8")}`;
+		} catch {
+			return `${name}\0`;
+		}
+	});
+}
 
 /** Which key family: a repack over a simulator base, or a Release build that embeds its JS. Never equal for the same inputs. */
 export type JsKeyKind = "simulator" | "release";
@@ -51,7 +75,8 @@ export function bundleEnvLines(
 
 /**
  * The content key of a JS bundle: `sha256(salt, js-inputs v2 key, sorted bundle env, bundler flags, platform, native
- * fingerprint)`, 40 hex chars. The JS half is `jsInputsHash` (git blob ids, so committing an edit changes nothing);
+ * fingerprint, the root's `.env*` files when it has any)`, 40 hex chars. A project without `.env*` files keeps the key
+ * it had before those were covered. The JS half is `jsInputsHash` (git blob ids, so committing an edit changes nothing);
  * worktree path, branch and HEAD are never part of it, so two checkouts with the same JS share one repack and a branch
  * with a new commit that changed no input reuses its bundle. Errors as `jsInputsHash` does (globs matching nothing).
  */
@@ -63,6 +88,7 @@ export async function computeJsKey(deps: JsKeyDeps): AsyncResult<string> {
 		...(deps.readFile ? { readFile: deps.readFile } : {}),
 	});
 	if (!js.success) return js;
+	const envFiles = envFileLines(deps.root);
 	const text = [
 		`${KEY_FORMAT} ${deps.kind}`,
 		`js:${js.data}`,
@@ -70,6 +96,7 @@ export async function computeJsKey(deps: JsKeyDeps): AsyncResult<string> {
 		`flags:${(deps.bundlerFlags ?? []).join("\0")}`,
 		`platform:${deps.platform}`,
 		`native:${deps.nativeFp}`,
+		...(envFiles.length > 0 ? [`env-files:${envFiles.join("\0\0")}`] : []),
 	].join("\n");
 	return ok(createHash("sha256").update(text).digest("hex").slice(0, 40));
 }

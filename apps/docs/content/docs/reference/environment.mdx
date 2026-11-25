@@ -8,6 +8,8 @@ Every environment variable warden reads, and the ones `warden run`, `batch` and 
 
 ## Read by warden
 
+warden's environment is the one its caller passes: the shell's, the CI job's or the agent's. It never reads a `.env` file or a `bunfig.toml` from the directory it runs in, so a checkout cannot set these for you; `export` them or set them on the job. Your specs run in their own process, which loads the project's `.env` files as `bun test` does, and the bundler loads the project's `.env*` files itself.
+
 | Variable | Effect |
 |---|---|
 | `WARDEN_HOME` | state directory (default `~/.warden`): `warden.db`, `builds`, `batches`, `ccache`, `metro-cache`, `affected`, `dev`, `logs`, `skill`, `ui`, `simd`, `android`, `perf`, `tools` |

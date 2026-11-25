@@ -21,6 +21,11 @@ export const STRAY_SOURCE_MAP = "cli.js.map";
  * in the binary and `STRAY_SOURCE_MAP` is left beside it. Constraints: bytecode is CommonJS, so no top-level `await`
  * in anything bundled (`cli.ts` uses `.then`). `--external typescript`: the compiler is 28 MB of the bundle (a quarter
  * of the binary) for `warden affected`'s graph walk only, which loads the analysed project's own (`resolveTypescript`).
+ *
+ * `--no-compile-autoload-bunfig --no-compile-autoload-dotenv`: a compiled binary otherwise reads `bunfig.toml` (its
+ * `preload` runs before warden does) and `.env` from the directory it is started in. warden is run inside checkouts it
+ * does not own, so neither file may configure it: its environment is the caller's, nothing else. Spec runs are a
+ * separate process (`BUN_BE_BUN`) and read the project's own files as `bun test` does.
  */
 export function compileArgs(opts: {
 	entry: string;
@@ -37,6 +42,8 @@ export function compileArgs(opts: {
 		"--minify",
 		"--bytecode",
 		"--sourcemap=linked",
+		"--no-compile-autoload-bunfig",
+		"--no-compile-autoload-dotenv",
 		"--external",
 		"typescript",
 		opts.entry,

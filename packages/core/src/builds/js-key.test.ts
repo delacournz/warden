@@ -111,6 +111,28 @@ describe("computeJsKey", () => {
 		expect(await key(deps(root, { env: { HOME: "/h", PATH: "/bin", EXPO_TOKEN: "t" } }))).toBe(base);
 	});
 
+	test("a git-ignored .env* file is part of the key: its values reach the bundle without being in the process env", async () => {
+		const root = await repo("a", { ...APP, ".gitignore": ".env*\n" });
+		const base = await key(deps(root));
+		write(root, { ".env": "EXPO_PUBLIC_API=https://one\n" });
+		const one = await key(deps(root));
+		expect(one).not.toBe(base);
+		write(root, { ".env": "EXPO_PUBLIC_API=https://two\n" });
+		expect(await key(deps(root))).not.toBe(one);
+		write(root, { ".env": "EXPO_PUBLIC_API=https://one\n" });
+		expect(await key(deps(root))).toBe(one);
+		write(root, { ".env.local": "EXPO_PUBLIC_API=https://local\n" });
+		expect(await key(deps(root))).not.toBe(one);
+	});
+
+	test("two checkouts with the same .env* files share a key; other dotfiles do not count", async () => {
+		const a = await repo("a", { ...APP, ".gitignore": ".env*\n.envrc\n.other\n" });
+		const b = await repo("b", { ...APP, ".gitignore": ".env*\n.envrc\n.other\n" });
+		write(a, { ".env": "EXPO_PUBLIC_A=1\n" });
+		write(b, { ".env": "EXPO_PUBLIC_A=1\n", ".envrc": "x", ".other": "y" });
+		expect(await key(deps(a))).toBe(await key(deps(b)));
+	});
+
 	test("env order does not matter; kind env overrides and adds", async () => {
 		const root = await repo("a", APP);
 		const ab = await key(deps(root, { env: { EXPO_PUBLIC_A: "1", EXPO_PUBLIC_B: "2" } }));
